@@ -36,8 +36,8 @@ def _hex_byte(value: UInt8) -> String:
     # `_HEX_DIGITS` is a fixed, pure-ASCII literal, so a raw UTF-8 byte
     # index (`[byte=...]`) is exactly the character it looks like --
     # plain positional `s[i]` indexing was removed for Mojo `String` in
-    # favor of `[byte=]`/`[codepoint=]`/`[grapheme=]` (see canvas/
-    # ROADMAP.md's own entry on the Mojo 1.0.0 upgrade this fixed).
+    # favor of `[byte=]`/`[codepoint=]`/`[grapheme=]` (see the wiki's
+    # entry on the Mojo 1.0.0 upgrade this fixed).
     return String(_HEX_DIGITS[byte=v // 16]) + String(_HEX_DIGITS[byte=v % 16])
 
 
@@ -51,7 +51,7 @@ def _format_svg_float(value: Float64) -> String:
     larger file rather than a small standalone probe, produced a
     float one ULP away from the value the identical formula gave in
     isolation (confirmed via `python3` and cross-checked against an
-    isolated Mojo probe first -- see canvas_mojo/ROADMAP.md's own entry).
+    isolated Mojo probe first -- see the wiki for additional information).
     `String(Float64)`'s shortest-round-trip formatting makes that 1-
     ULP difference visible as a different *string*, even though both
     values are the same point to any real display. Rounding to a

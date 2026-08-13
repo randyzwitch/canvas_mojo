@@ -6,7 +6,7 @@ rendering real system fonts well -- hinting, correct font matching,
 Unicode shaping -- is its own large, mature subsystem, not worth
 rebuilding from scratch (an earlier from-scratch TrueType parser/
 rasterizer was explored and then deleted once this existed -- see
-canvas_mojo/ROADMAP.md's `text.mojo` entry). Instead this wraps
+the wiki's `text.mojo` entry). Instead this wraps
 `third_party/cairo_mojo` (a vendored, third-party Mojo binding to
 Cairo -- see its VENDORED.md for provenance and why it's vendored
 rather than a pixi dependency), which reaches real system fonts via

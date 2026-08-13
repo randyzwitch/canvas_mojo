@@ -19,8 +19,9 @@ test = "mojo run -I . canvas_mojo/tests/test_color.mojo && mojo run -I . canvas_
 # (confirmed directly against a minimal throwaway package, not just this
 # one -- this is a backend-wide bug against current Mojo, not specific to
 # this package). This section is shipped anyway, correct and ready to go
-# the moment that's fixed upstream -- see canvas_mojo/ROADMAP.md's own
-# "Deferred on purpose, not forgotten" entry for the retry condition.
+# the moment that's fixed upstream -- see the wiki for additional
+# information (the "Deferred on purpose, not forgotten" entry has the
+# retry condition).
 # Until then, consume this package the same way it's consumed today:
 # clone/vendor the source and import via `-I` search paths.
 [package]
