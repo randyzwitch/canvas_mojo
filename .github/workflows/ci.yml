@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Mojo compiles here are heavy (some individual test/example files
+    # take several minutes) -- generous timeout rather than a flaky
+    # default.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # canvas_mojo/text.mojo (via the vendored third_party/cairo_mojo)
+      # needs a system libcairo at runtime -- see third_party/cairo_mojo/
+      # VENDORED.md's own "Runtime dependency" section. Not bundled, not
+      # a pixi dependency of this workspace; installed here the same way
+      # the README documents for local development.
+      - name: Install libcairo
+        run: sudo apt-get update && sudo apt-get install -y libcairo2
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          cache: true
+
+      - name: Run tests
+        run: pixi run test
+
+      - name: Run examples
+        run: pixi run example

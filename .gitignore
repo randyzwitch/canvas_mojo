@@ -1,0 +1,11 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# generated example output
+canvas_mojo/examples/*.bmp
+canvas_mojo/examples/*.png
+
+# generated test artifacts
+canvas_mojo/tests/_test_*.bmp
+canvas_mojo/tests/_test_*.png

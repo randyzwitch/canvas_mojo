@@ -1,0 +1,46 @@
+[workspace]
+channels = ["https://conda.modular.com/max", "conda-forge"]
+name = "canvas_mojo"
+platforms = ["linux-64"]
+preview = ["pixi-build"]
+version = "0.1.0"
+
+[dependencies]
+mojo = ">=1.0.0,<2"
+
+[tasks]
+example = "mojo run -I . canvas_mojo/examples/fill_rect_blend.mojo && mojo run -I . canvas_mojo/examples/rect_stroke.mojo && mojo run -I . canvas_mojo/examples/lines.mojo && mojo run -I . canvas_mojo/examples/circles.mojo && mojo run -I . canvas_mojo/examples/ellipse.mojo && mojo run -I . canvas_mojo/examples/arc.mojo && mojo run -I . canvas_mojo/examples/polyline.mojo && mojo run -I . canvas_mojo/examples/polygon.mojo && mojo run -I . canvas_mojo/examples/path.mojo && mojo run -I . canvas_mojo/examples/fill_rule.mojo && mojo run -I . canvas_mojo/examples/gradient.mojo && mojo run -I . canvas_mojo/examples/dashes.mojo && mojo run -I . canvas_mojo/examples/transform.mojo && mojo run -I . canvas_mojo/examples/clipping.mojo && mojo run -I . canvas_mojo/examples/png_output.mojo && mojo run -I . -I third_party/cairo_mojo canvas_mojo/examples/text.mojo"
+test = "mojo run -I . canvas_mojo/tests/test_color.mojo && mojo run -I . canvas_mojo/tests/test_buffer.mojo && mojo run -I . canvas_mojo/tests/test_bmp.mojo && mojo run -I . canvas_mojo/tests/test_png.mojo && mojo run -I . canvas_mojo/tests/test_geometry.mojo && mojo run -I . canvas_mojo/tests/test_gradient.mojo && mojo run -I . canvas_mojo/tests/test_primitives.mojo && mojo run -I . canvas_mojo/tests/test_path.mojo && mojo run -I . canvas_mojo/tests/test_resize.mojo && mojo run -I . canvas_mojo/tests/test_svg.mojo && mojo run -I . -I third_party/cairo_mojo canvas_mojo/tests/test_text.mojo"
+
+# --- Package declaration -----------------------------------------------
+# NOT currently installable via `pixi build`/`pixi install` -- the
+# `pixi-build-mojo` backend still invokes Mojo's removed `mojo package`
+# command, which Mojo 1.0.0 hard-errors on rather than warns about
+# (confirmed directly against a minimal throwaway package, not just this
+# one -- this is a backend-wide bug against current Mojo, not specific to
+# this package). This section is shipped anyway, correct and ready to go
+# the moment that's fixed upstream -- see canvas_mojo/ROADMAP.md's own
+# "Deferred on purpose, not forgotten" entry for the retry condition.
+# Until then, consume this package the same way it's consumed today:
+# clone/vendor the source and import via `-I` search paths.
+[package]
+name = "canvas_mojo"
+version = "0.1.0"
+description = "A from-scratch, stdlib-only Mojo raster/drawing engine: pixel buffer, colors, primitives, text, image I/O."
+license = "MIT"
+
+[package.build]
+backend = { name = "pixi-build-mojo", version = "0.*" }
+source = { path = "." }
+
+[package.build.config.pkg]
+name = "canvas_mojo"
+path = "$RECIPE_DIR/canvas_mojo"
+
+[package.host-dependencies]
+mojo = ">=1.0.0,<2"
+cairo = ">=1.18,<2"
+
+[package.run-dependencies]
+mojo = ">=1.0.0,<2"
+cairo = ">=1.18,<2"
