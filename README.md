@@ -17,9 +17,9 @@ directory's own `VENDORED.md` for provenance and why it's vendored
 instead of a normal pixi dependency.
 
 This package is **not yet installable via `pixi build`/`pixi install`**
-— see `pixi.toml`'s own `[package]` section and `canvas_mojo/ROADMAP.md`
-for why (a real, confirmed bug in the `pixi-build-mojo` backend against
-current Mojo, external to this repo). For now, consume this package by
+— see `pixi.toml`'s own `[package]` section and the wiki for additional
+information (a real, confirmed bug in the `pixi-build-mojo` backend
+against current Mojo, external to this repo). For now, consume this package by
 cloning it and importing via Mojo's `-I` search-path flag, the same way
 it's developed here.
 

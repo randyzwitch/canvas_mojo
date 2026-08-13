@@ -7,7 +7,7 @@ system's `libcairo`, to get real system-font text rendering (hinting,
 fontconfig font matching) rather than reimplementing that from scratch.
 An earlier from-scratch TrueType parser/rasterizer (a standalone `fonts/`
 package) was explored first and then deleted once this existed -- see
-`canvas_mojo/ROADMAP.md`'s `text.mojo` entry for that history.
+the wiki's `text.mojo` entry for that history.
 
 - **Source**: https://github.com/MoSafi2/cairo-mojo
 - **Commit**: `c651c18f8c0033f22b118cfcb4e281103da976d5` (2026-05-18)
@@ -34,9 +34,9 @@ feature enabled) and is currently blocked by a different, external
 problem instead: that backend still invokes Mojo's now-removed `mojo
 package` command, which Mojo `1.0.0` hard-errors on rather than just
 warning about. This is a bug in third-party build tooling, not a
-version-pin conflict -- see `canvas_mojo/ROADMAP.md`'s own "Deferred on
-purpose, not forgotten" entry for the full attempt and the retry
-condition. Until that's fixed upstream, this stays a plain vendored
+version-pin conflict -- see the wiki's "Deferred on purpose, not
+forgotten" entry for the full attempt and the retry condition. Until
+that's fixed upstream, this stays a plain vendored
 source snapshot, imported the same way this workspace already imports its
 own packages -- via `-I` search paths (see the root `pixi.toml`'s
 `tasks`).

@@ -9,7 +9,7 @@ curve's visible shape, unlike a straight line's endpoints, which only
 ever needed whole pixels. Curve flattening uses a fixed step count per
 segment, not adaptive subdivision -- the same choice, for the same
 reason, fonts/raster.mojo made for TrueType's quadratic curves before
-this package had its own general path type (see canvas_mojo/ROADMAP.md's
+this package had its own general path type (see the wiki for that
 history): good enough at the sizes this exists for, and adaptive
 subdivision is real, deferrable complexity with no concrete need yet.
 
@@ -271,7 +271,7 @@ def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
     hole-punching and (with FillRule.NONZERO) union-filling work --
     the same multi-contour technique fonts/raster.mojo used for
     TrueType glyphs' counters, before this package had its own general
-    path type (see canvas_mojo/ROADMAP.md's history).
+    path type (see the wiki for that history).
     """
     var crossings = List[_Crossing]()
     for sp_idx in range(len(subpaths)):

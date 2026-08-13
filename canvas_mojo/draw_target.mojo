@@ -26,7 +26,7 @@ Deliberately excludes text -- `canvas_mojo.text`'s real text rendering
 depends on `cairo_mojo` (see that module's own docstring), and this
 trait needs to be implementable by `Canvas` (`canvas_mojo/buffer.mojo`)
 without buffer.mojo taking on that dependency for every caller, not
-just the ones that draw text (see canvas_mojo/ROADMAP.md's own entry for
+just the ones that draw text (see the wiki for additional information --
 the two things that were tried and didn't work before this: a `Canvas`
 method that called `canvas_mojo.text.draw_text` directly forced cairo onto
 every `Canvas` user transitively, and a move-in/move-out wrapper
