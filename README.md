@@ -1,15 +1,12 @@
 # canvas_mojo
 
-A from-scratch, stdlib-only Mojo raster/drawing engine — pixel buffer,
-colors, primitives (lines, shapes, curves, gradients), text, and image
-I/O. No chart or data-visualization concepts; see
-[`dataviz_mojo`](https://github.com/randyzwitch/dataviz_mojo) for a
-grammar-of-graphics-flavored charting library built entirely on this
-package's public API.
+A Mojo raster/drawing engine — pixel buffer, colors, primitives (lines, shapes, curves, gradients), text, and image I/O.
 
-Split out of a combined `graphics` workspace on 2026-08-13 into its own
-standalone repo — see `canvas_mojo/ROADMAP.md` for the full history and
-design rationale of everything in this package.
+## Why?
+
+Scratching the itch of "What would it take to not using Cairo or other existing libraries as base for data visualization"! 
+
+Please note that this is heavily Claude-influenced, so I do not guarantee consistency, logic, mapping to Cairo concepts or anything else. If you know what you're doing and what to contribute, let's chat! 
 
 ## Status
 
@@ -44,11 +41,6 @@ def test_something() raises:
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
 ```
-
-`mojo test` was removed upstream (Oct 2025); run a test file directly
-with `mojo run`, or `pixi run test` to run the whole suite. Any function
-named `test_*` in a file is discovered and run automatically — no
-registration needed.
 
 Everything imports with `-I .` except `canvas_mojo/text.mojo` and
 anything that imports it directly or transitively
