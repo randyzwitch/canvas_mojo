@@ -24,8 +24,13 @@ jobs:
       - name: Install libcairo
         run: sudo apt-get update && sudo apt-get install -y libcairo2
 
+      # Pinned to match the pixi version pixi.lock (v7 format) was
+      # generated with locally -- an older pixi here would just hit the
+      # same "lock file uses an older format" warning in reverse (or
+      # worse, fail to read a v7 lock file at all).
       - uses: prefix-dev/setup-pixi@v0.9.0
         with:
+          pixi-version: v0.76.2
           cache: true
 
       - name: Run tests
