@@ -4,7 +4,7 @@ A Mojo raster/drawing engine — pixel buffer, colors, primitives (lines, shapes
 
 ## Why?
 
-Scratching the itch of "What would it take to not using Cairo or other existing libraries as base for data visualization"! 
+Scratching the itch of "What would it take to not use Cairo or other existing libraries as base for data visualization"! 
 
 Please note that this is heavily Claude-influenced, so I do not guarantee consistency, logic, mapping to Cairo concepts or anything else. If you know what you're doing and what to contribute, let's chat! 
 
