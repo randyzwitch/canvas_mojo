@@ -10,12 +10,16 @@ entries for the raster-only problem this sidesteps).
 
 Deliberately minimal, matching `DrawTarget`'s own six methods one for
 one -- this is not a general-purpose SVG builder (no gradients, no
-groups/transforms, no clipping); grow it if and when something
-concrete through `dataviz` needs more of SVG's own surface, the same
-restraint every other part of this project has held to.
+general groups/transforms, no clipping); grow it if and when something
+concrete needs more of SVG's own surface, the same restraint every
+other part of this project has held to. `draw_text`'s own `rotation`
+parameter is the one narrow exception -- a per-`<text>`-element
+`transform="rotate(...)"`, not a general transform stack -- added when
+a real caller (a chart's rotated y-axis title) needed it; see that
+method's own docstring.
 """
 
-from std.math import cos, sin
+from std.math import cos, pi, sin
 
 from canvas_mojo.color import Color
 from canvas_mojo.draw_target import DrawTarget
@@ -337,7 +341,14 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body += '<path d="' + _path_d(path) + '" fill="' + _hex_color(color) + '"/>\n'
 
     def draw_text(
-        mut self, x: Int, y: Int, text: String, color: Color, size: Float64, align: TextAlign
+        mut self,
+        x: Int,
+        y: Int,
+        text: String,
+        color: Color,
+        size: Float64,
+        align: TextAlign,
+        rotation: Float64 = 0.0,
     ):
         """Not part of `DrawTarget` (see that trait's own docstring
         for why text is excluded) -- called directly by `dataviz_mojo.plot.
@@ -352,12 +363,38 @@ struct SvgCanvas(DrawTarget, Movable):
         a raster API without that default might need. `text-anchor`
         (`start`/`middle`/`end`) is the direct SVG equivalent of
         `align`'s own three values, also both measured from `(x, y)`.
+
+        `rotation` (radians, matching `canvas_mojo.text.draw_text`'s own
+        convention exactly -- not degrees) rotates the whole `<text>`
+        element around its own `(x, y)` anchor, via SVG's `transform=
+        "rotate(<degrees> <x> <y>)"` -- omitted entirely when `rotation
+        == 0.0` (the overwhelming common case), so every pre-existing
+        `draw_text` call/output stays byte-for-byte unchanged. No sign
+        flip needed converting from `canvas_mojo.text.draw_text`'s own
+        Cairo-rotation convention: both Cairo's user space and SVG's
+        viewport space put y pointing *down*, so a positive angle reads
+        as clockwise-on-screen in both -- confirmed directly (not just
+        argued) by this method's own hand-derived rotation test, not
+        assumed to carry over from the raster path unchanged just
+        because the reasoning sounds right.
         """
         var anchor = "start"
         if align == TextAlign.CENTER:
             anchor = "middle"
         elif align == TextAlign.RIGHT:
             anchor = "end"
+        var transform = ""
+        if rotation != 0.0:
+            var degrees = rotation * (180.0 / pi)
+            transform = (
+                ' transform="rotate('
+                + _format_svg_float(degrees)
+                + " "
+                + String(x)
+                + " "
+                + String(y)
+                + ')"'
+            )
         self._body += (
             '<text x="'
             + String(x)
@@ -369,7 +406,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _hex_color(color)
             + '" text-anchor="'
             + anchor
-            + '">'
+            + '"'
+            + transform
+            + ">"
             + _escape_xml_text(text)
             + "</text>\n"
         )

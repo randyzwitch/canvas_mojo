@@ -6,6 +6,7 @@ here to sample. No cairo needed -- SvgCanvas never touches
 canvas_mojo.text (see its own docstring).
 """
 
+from std.math import pi
 from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas_mojo.color import Color
@@ -187,6 +188,35 @@ def test_draw_text_escapes_xml_special_characters() raises:
     assert_true(
         ">5 &lt; 10 &amp; 10 &gt; 5<" in svg.to_string(),
         "<, &, > all escaped -- & escaped first so the other two don't get double-escaped",
+    )
+
+
+def test_draw_text_default_rotation_omits_transform_attribute() raises:
+    # rotation's own default (0.0) must reproduce the exact pre-
+    # existing no-transform output byte-for-byte -- the same "purely
+    # additive" bar every optional parameter added to an existing,
+    # already-depended-on method has to clear in this workspace.
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    assert_true(
+        '<text x="10" y="20" font-size="12.000" fill="#000000" text-anchor="start">hi</text>'
+        in svg.to_string(),
+        "rotation=0.0 (the default) -- no transform attribute at all",
+    )
+
+
+def test_draw_text_rotation_emits_hand_derived_rotate_transform() raises:
+    # pi/2 radians -> exactly 90.0 degrees (90.000 through
+    # _format_svg_float's own 3-decimal formatting) -- no sign flip
+    # from canvas_mojo.text.draw_text's own Cairo-rotation convention,
+    # since both Cairo's user space and SVG's viewport space put y
+    # pointing down (see draw_text's own docstring).
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=pi / 2.0)
+    assert_true(
+        '<text x="10" y="20" font-size="12.000" fill="#000000" text-anchor="start"'
+        ' transform="rotate(90.000 10 20)">hi</text>' in svg.to_string(),
+        "rotate(<degrees> <x> <y>), rotating around the text's own anchor point",
     )
 
 
