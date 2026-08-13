@@ -9,11 +9,21 @@ rasterizer was explored and then deleted once this existed -- see
 the wiki's `text.mojo` entry). Instead this wraps
 `third_party/cairo_mojo` (a vendored, third-party Mojo binding to
 Cairo -- see its VENDORED.md for provenance and why it's vendored
-rather than a pixi dependency), which reaches real system fonts via
-Cairo's "toy" text API (font-name matching through fontconfig,
-rasterization and hinting through FreeType) -- both already installed
-as transitive dependencies on this machine, not new system
-requirements introduced by this package.
+rather than a pixi dependency) for rasterization and hinting, both
+still through FreeType, both already installed as transitive
+dependencies on this machine, not new system requirements introduced
+by this package.
+
+Font *matching* (family/slant/weight -> an actual font file) is no
+longer Cairo's job here, though -- `_select_native_font_face` resolves
+it via `font_discovery.resolve_font_file` (this package's own direct
+fontconfig FFI) and loads the result via `freetype_face.FreeTypeFace`
+(this package's own direct FreeType FFI), then hands Cairo that
+already-loaded face via `cairo_ft_font_face_create_for_ft_face`
+instead of calling `Context.select_font_face` and letting Cairo do
+that same lookup internally. See font_discovery.mojo's own docstring
+for the 4-job breakdown this is job 1 of; rasterization/hinting
+(jobs 2-4) are still Cairo/FreeType's job, not native yet.
 
 Cairo renders into its own ARGB32 surface; this module's real job is
 converting that into canvas pixels (unpremultiplying Cairo's
@@ -70,15 +80,23 @@ for both a previously-broken 23-byte string and a previously-working
 from std.ffi import c_char, c_uchar
 from std.math import ceil, cos, floor, sin
 
-from cairo_mojo import Context, FontSlant, FontWeight, Format, ImageSurface, TextExtents
+from cairo_mojo import Context, FontFace, FontSlant, FontWeight, Format, ImageSurface, TextExtents
 from cairo_mojo._bindings import (
+    cairo_ft_font_face_create_for_ft_face as _raw_cairo_ft_font_face_create_for_ft_face,
     cairo_show_text as _raw_cairo_show_text,
     cairo_text_extents as _raw_cairo_text_extents,
     cairo_text_extents_t as _RawTextExtents,
+    FT_FaceRec_ as _CairoFTFaceRec,
 )
 
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
+from canvas_mojo.font_discovery import (
+    FontSlant as _NativeFontSlant,
+    FontWeight as _NativeFontWeight,
+    resolve_font_file,
+)
+from canvas_mojo.freetype_face import FreeTypeFace
 from canvas_mojo.text_align import TextAlign
 
 # Padding (pixels) around Cairo's own ink extents when sizing the
@@ -226,7 +244,7 @@ def _layout_block(
 
     var probe_surface = ImageSurface(1, 1, Format.ARGB32)
     var probe_ctx = Context(probe_surface)
-    probe_ctx.select_font_face(family, slant=slant, weight=weight)
+    var ft_face = _select_native_font_face(probe_ctx, family, slant, weight, size)
     probe_ctx.set_font_size(size)
     var line_height = probe_ctx.font_extents().height
 
@@ -247,6 +265,16 @@ def _layout_block(
         if layout.has_ink():
             any_ink = True
         lines.append(layout)
+
+    # Keep ft_face alive through every probe_ctx call above -- Mojo's
+    # ASAP destruction would otherwise free it right after assignment
+    # (its last *Mojo-visible* use), while Cairo's own scaled-font
+    # machinery reads the underlying FT_Face lazily, on first real use
+    # (font_extents()/text_extents() above, not at set_font_face() time)
+    # -- confirmed the hard way: omitting this crashed deep inside
+    # FT_Set_Transform via cairo_scaled_font_create, a real segfault
+    # from a freed-too-early FT_Face, not a hypothetical concern.
+    _ = ft_face.unsafe_raw_face_ptr()
 
     var c = cos(rotation)
     var s = sin(rotation)
@@ -325,6 +353,73 @@ def _show_text(ctx: Context, text: String) raises:
     buf.free()
 
 
+def _to_native_slant(slant: FontSlant) -> _NativeFontSlant:
+    # cairo_mojo's own FontSlant has no __eq__ (see cairo_enums.mojo) --
+    # compared via its own FFI encoding instead, which cairo_mojo's own
+    # _to_ffi()/_from_ffi() pair confirms is numerically NORMAL=0/
+    # ITALIC=1/OBLIQUE=2, the same numbering this package's own
+    # font_discovery.FontSlant already uses.
+    var value = Int(slant._to_ffi().value)
+    if value == Int(FontSlant.ITALIC._to_ffi().value):
+        return _NativeFontSlant.ITALIC
+    if value == Int(FontSlant.OBLIQUE._to_ffi().value):
+        return _NativeFontSlant.OBLIQUE
+    return _NativeFontSlant.NORMAL
+
+
+def _to_native_weight(weight: FontWeight) -> _NativeFontWeight:
+    # Same reasoning as _to_native_slant, above.
+    var value = Int(weight._to_ffi().value)
+    if value == Int(FontWeight.BOLD._to_ffi().value):
+        return _NativeFontWeight.BOLD
+    return _NativeFontWeight.NORMAL
+
+
+def _select_native_font_face(
+    mut ctx: Context, family: String, slant: FontSlant, weight: FontWeight, size: Float64
+) raises -> FreeTypeFace:
+    """Set `ctx`'s font face by resolving `family`/`slant`/`weight`
+    through `font_discovery.resolve_font_file` (fontconfig, called
+    directly by this package -- see that module's own docstring) and
+    loading the result through `freetype_face.FreeTypeFace` (FreeType,
+    also called directly), then handing Cairo that already-loaded face
+    via `cairo_ft_font_face_create_for_ft_face` instead of
+    `Context.select_font_face`. Cairo's own `select_font_face` would
+    otherwise do this exact family/slant/weight -> file resolution a
+    second time, internally, via its own fontconfig call -- this
+    replaces that internal lookup with this package's own, without yet
+    touching how Cairo/FreeType hint or rasterize the glyphs once
+    they're loaded (still Cairo's job, not a native one yet).
+
+    Also sets the FT_Face's own active size to `size` pixels via
+    `FreeTypeFace.set_pixel_size` before handing it to Cairo -- see
+    that method's own docstring for the real, probe-confirmed bug this
+    works around (an unsized FT_Face renders at some small default
+    size regardless of the caller's later `Context.set_font_size`,
+    even though *measurement* reports the correctly-requested size --
+    a real, confirmed discrepancy, not a hypothetical one). `size` is
+    passed to this call at all only for that reason -- the actual
+    Cairo-visible font size is still set the normal way, via the
+    caller's own subsequent `ctx.set_font_size(size)`.
+
+    Returns the owning `FreeTypeFace` -- the caller MUST keep it alive
+    (assigned to a local `var`, not discarded) for as long as `ctx` is
+    used to measure or draw text with the face this sets: Cairo's own
+    font face wraps the `FT_Face` by reference, not by copy, so
+    dropping it early would free memory Cairo still expects to read
+    from on the next `show_text`/`text_extents` call.
+    """
+    var font_path = resolve_font_file(family, _to_native_slant(slant), _to_native_weight(weight))
+    var ft_face = FreeTypeFace(font_path)
+    ft_face.set_pixel_size(Int(ceil(size)))
+    var cairo_face_ptr = _raw_cairo_ft_font_face_create_for_ft_face(
+        ft_face.unsafe_raw_face_ptr().unsafe_bitcast[_CairoFTFaceRec](), 0
+    )
+    var font_face = FontFace.unsafe_from_owned_raw(cairo_face_ptr)
+    ctx.set_font_face(font_face)
+    return ft_face^
+
+
 def measure_text(
     text: String,
     size: Float64,
@@ -344,9 +439,12 @@ def measure_text(
     """
     var probe_surface = ImageSurface(1, 1, Format.ARGB32)
     var probe_ctx = Context(probe_surface)
-    probe_ctx.select_font_face(family, slant=slant, weight=weight)
+    var ft_face = _select_native_font_face(probe_ctx, family, slant, weight, size)
     probe_ctx.set_font_size(size)
     var extents = _text_extents(probe_ctx, text)
+    # See _layout_block's own comment on this same pattern: ft_face
+    # must outlive every probe_ctx call above.
+    _ = ft_face.unsafe_raw_face_ptr()
     return TextMetrics(extents.width, extents.height, extents.x_advance)
 
 
@@ -479,7 +577,7 @@ def draw_text(
 
     var surface = ImageSurface(render_width, render_height, Format.ARGB32)
     var ctx = Context(surface)
-    ctx.select_font_face(family, slant=slant, weight=weight)
+    var ft_face = _select_native_font_face(ctx, family, slant, weight, size)
     ctx.set_font_size(size)
     ctx.set_source_rgba(
         Float64(color.r) / 255.0,
@@ -501,6 +599,10 @@ def draw_text(
         ctx.move_to(line.x, line.y)
         _show_text(ctx, line.text)
     surface.flush()
+    # See _layout_block's own comment on this same pattern: ft_face
+    # must outlive every ctx call above, through the actual rendering
+    # surface.flush() triggers.
+    _ = ft_face.unsafe_raw_face_ptr()
 
     # Where the scratch surface's (0, 0) lands in canvas space: the
     # combined ink's nominal top-left, offset back by the margin,
