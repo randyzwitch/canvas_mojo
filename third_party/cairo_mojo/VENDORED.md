@@ -51,9 +51,16 @@ Mojo patch versions -- `MutExternalOrigin`/`ImmutExternalOrigin` renamed to
 
 ## Updating this vendored copy
 
-Deliberate only -- re-copy `cairo_mojo/` and `LICENSE` from a chosen
-upstream commit, update the commit hash above, and re-run `pixi run test`
-before committing. Don't silently drift onto upstream's `main`.
+Deliberate only -- never automated (no CI hook, no `pixi run` task), and
+never tracks a moving branch. Run `./update_vendor.sh <commit-ish>` with
+an explicit commit (or tag) from upstream: it re-copies `cairo_mojo/` and
+`LICENSE` from that commit and rewrites the `Commit` line above to match.
+It does not run tests or commit anything itself -- run `pixi run test`
+and review the diff yourself before committing a bump. This whole
+directory goes away once the real pixi git dependency is unblocked (see
+"Why a vendored copy instead of a pixi dependency," above); this script
+just makes staying current in the meantime a single command instead of a
+manual copy-paste.
 
 ## Runtime dependency
 
