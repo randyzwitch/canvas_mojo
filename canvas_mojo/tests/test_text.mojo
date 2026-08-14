@@ -1,29 +1,37 @@
 """Tests for canvas_mojo/text.mojo.
 
 Unlike primitives.mojo's tests, these can't assert exact pixel sets --
-Cairo's real system-font rasterization isn't something this repo can
-independently re-derive by hand the way Bresenham/midpoint-circle
-output can (see canvas_mojo/text.mojo's module docstring). What's tested
-instead are the properties this module's own code is actually
-responsible for, verified against this module's real behavior (via
-probe scripts, not assumption) before being locked in here:
+real system-font rasterization (hinting, AA, glyph shapes) isn't
+something this repo can independently re-derive by hand the way
+Bresenham/midpoint-circle output can (see canvas_mojo/text.mojo's
+module docstring). What's tested instead are the properties this
+module's own code is actually responsible for, verified against this
+module's real behavior (via probe scripts, not assumption) before
+being locked in here:
 
   - the early-exit edge cases (empty string, whitespace-only text,
     fully transparent color) are true no-ops
-  - the premultiply/unpremultiply + coordinate math actually places
+  - the glyph-outline-to-Path-to-fill_path_aa pipeline actually places
     ink where requested, in the requested color, for at least one
-    pixel a solid glyph interior guarantees full coverage on --
-    confirmed by probe: a 60pt "I" gives 176 pixels with a==255 that
-    exactly equal the requested opaque color, not zero
+    pixel a solid glyph interior guarantees full coverage on
   - anti-aliasing is genuinely happening (mixed-coverage edge pixels
-    exist, not just pure background/pure foreground) -- confirmed by
-    the same probe: 185 such pixels for that same "I"
+    exist, not just pure background/pure foreground)
   - every touched pixel obeys the src-over blend invariant (result is
     a convex combination of background and foreground per channel,
-    never overshooting either) -- this is the property that would
-    break first if unpremultiply math were wrong
-  - two identical calls produce identical output (Cairo's toy text API
-    has no hidden state this module doesn't explicitly set each call)
+    never overshooting either) -- the same blend_over every other
+    filled primitive in this package already goes through, via
+    Canvas.set_pixel, not a text-specific mechanism
+  - two identical calls produce identical output (no hidden state
+    between calls -- each one resolves and loads its own font face
+    fresh)
+
+Confirmed by direct comparison, not assumed: this entire suite passed
+unchanged, same exact locked-in numbers included (e.g.
+test_measure_text_matches_known_glyph_extents' width=3.0/height=18.0
+for "I" at size 24), across the module's rewrite from wrapping Cairo
+to this fully native fontconfig+FreeType+fill_path_aa pipeline -- real
+evidence the native path reproduces the old one's behavior where it
+matters, not just "looks plausible."
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- true of most Linux/macOS systems, but not guaranteed
