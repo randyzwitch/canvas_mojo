@@ -43,7 +43,7 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.text import draw_text, measure_text, measure_text_block, TextAlign
+from canvas_mojo.text import draw_text, measure_text, measure_text_block, TextAlign, _visual_codepoints
 
 comptime BG = Color(255, 255, 255)
 comptime FG = Color(200, 20, 20, 255)
@@ -477,6 +477,61 @@ def test_measure_text_block_rotation_zero_matches_omitting_the_argument() raises
     assert_equal(explicit.y, omitted.y)
     assert_equal(explicit.width, omitted.width)
     assert_equal(explicit.height, omitted.height)
+
+
+def test_hebrew_word_renders_ink() raises:
+    # "שלום" -- DejaVu Sans genuinely has Hebrew glyphs (confirmed via
+    # probe against the real font before writing this test), so this
+    # isn't measuring a fallback-to-.notdef box.
+    var c = Canvas(150, 60, BG)
+    draw_text(c, 20, 40, "שלום", FG, 30.0)
+    var bbox = _ink_bbox(c, BG)
+    assert_true(bbox.found_any)
+
+
+def test_hebrew_measure_matches_rendered_ink() raises:
+    # Same cross-check methodology as
+    # test_measure_text_block_matches_rendered_ink_unrotated above,
+    # applied to a right-to-left script -- draw_text's render pass and
+    # measure_text's own measurement both go through bidi.visual_order
+    # (see text.mojo's own _visual_codepoints), so if that reordering
+    # were only applied on one side and not the other, this would be
+    # the test to catch it.
+    var c = Canvas(150, 60, BG)
+    draw_text(c, 20, 40, "שלום", FG, 30.0)
+    var actual = _ink_bbox(c, BG)
+    assert_true(actual.found_any)
+
+    var m = measure_text("שלום", 30.0)
+    assert_true(m.width > 0.0)
+    var actual_width = Float64(actual.max_x - actual.min_x)
+    assert_true(actual_width > m.width - 3.0 and actual_width < m.width + 3.0)
+
+
+def test_measure_and_draw_agree_on_bidi_reordering() raises:
+    # text.mojo's own _visual_codepoints is the one integration point
+    # both _measure_line (used by measure_text/measure_text_block) and
+    # draw_text's render pass go through -- calling it directly here
+    # (Mojo doesn't enforce leading-underscore privacy, same
+    # established pattern this codebase already relies on elsewhere,
+    # e.g. testing _is_dash_on directly) confirms the wiring itself,
+    # the thing most likely to drift if a future change touched one
+    # call site and not the other, distinct from bidi.mojo's own
+    # test_bidi.mojo, which tests the reordering algorithm in
+    # isolation.
+    var out = _visual_codepoints("שלום 12")
+    # Digits stay in reading order (see test_bidi.mojo's own
+    # test_digit_run_inside_hebrew_stays_in_reading_order for the
+    # equivalent direct check against bidi.visual_order).
+    var one_idx = -1
+    var two_idx = -1
+    for i in range(len(out)):
+        if out[i] == 0x31:
+            one_idx = i
+        if out[i] == 0x32:
+            two_idx = i
+    assert_true(one_idx >= 0 and two_idx >= 0)
+    assert_true(one_idx < two_idx)
 
 
 def main() raises:
