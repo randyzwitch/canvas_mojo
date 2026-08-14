@@ -17,10 +17,7 @@ and `libfreetype` (glyph outlines/metrics/hinting — `freetype_face.mojo`,
 `glyph_outline.mojo`). Both are typical, near-universally-installed
 system libraries, not new requirements this package introduces.
 Rasterization is this package's own `fill_path_aa` — no third-party
-rendering engine anywhere in the pipeline. This used to wrap Cairo
-(`third_party/cairo_mojo`, a vendored binding); that dependency has
-since been fully removed — see the wiki's `text.mojo` entry for the
-history.
+rendering engine (i.e. Cairo) anywhere in the pipeline.
 
 This package is **not yet installable via `pixi build`/`pixi install`**
 — see `pixi.toml`'s own `[package]` section and the wiki for additional
@@ -47,10 +44,6 @@ def test_something() raises:
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
 ```
-
-Everything, including `canvas_mojo/text.mojo` and anything that
-imports it, resolves with plain `-I .` — no second search path needed
-anymore now that Cairo is gone.
 
 ## License
 
