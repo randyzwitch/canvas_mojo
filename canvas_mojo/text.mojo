@@ -42,6 +42,19 @@ reduces exactly to what a simpler single-purpose implementation would
 have done -- confirmed by direct comparison, not just argued (see
 canvas_mojo/tests/test_text.mojo).
 
+Each line's own codepoints go through `bidi.visual_order` before
+either measurement or drawing ever sees them (`_visual_codepoints`,
+the one shared call site both use) -- mixed Hebrew/Arabic/Latin/digit
+text lays out and renders in correct reading order (right-to-left
+words, embedded digit runs staying left-to-right, mirrored
+parens/brackets) without draw_text or _measure_line needing any
+direction-handling logic of their own. See bidi.mojo's own docstring
+for exactly what's covered (Hebrew renders fully correctly; Arabic
+gets correct ordering and mirroring but not contextual letter-shaping
+-- a separate, larger feature not attempted here) and what's
+deliberately simplified relative to the full Unicode Bidirectional
+Algorithm.
+
 Public FontSlant/FontWeight (re-exported here from font_discovery.mojo)
 replace what used to be cairo_mojo's own identically-shaped types --
 same NORMAL/ITALIC/OBLIQUE and NORMAL/BOLD values, just no longer
@@ -55,6 +68,7 @@ established for its move into text_align.mojo).
 
 from std.math import ceil, cos, sin
 
+from canvas_mojo.bidi import detect_base_level, visual_order
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
 from canvas_mojo.font_discovery import FontSlant, FontWeight, resolve_font_file
@@ -210,12 +224,33 @@ struct _LineMetrics(ImplicitlyCopyable, Movable):
         return self.width > 0.0 and self.height > 0.0
 
 
+def _visual_codepoints(line_text: String) -> List[Int]:
+    """`line_text`'s own codepoints, reordered left-to-right-drawable
+    via `bidi.visual_order` -- both `_measure_line` and draw_text's
+    own render pass walk this instead of `line_text.codepoints()`
+    directly, so mixed Hebrew/Arabic/Latin/digit text lays out and
+    draws correctly without either of them needing their own
+    direction-handling logic (see bidi.mojo's own docstring for
+    exactly what this does and doesn't cover). A pure left-to-right
+    line's own bidi.visual_order call is a no-op (every codepoint
+    stays at the same even level, so `_reorder_indices` never
+    reverses anything) -- confirmed directly, not just argued (see
+    canvas_mojo/tests/test_bidi.mojo).
+    """
+    var codepoints = List[Int](capacity=line_text.byte_length())
+    for cp in line_text.codepoints():
+        codepoints.append(Int(cp))
+    var base_level = detect_base_level(codepoints)
+    return visual_order(codepoints, base_level)
+
+
 def _measure_line(mut face: FreeTypeFace, line_text: String) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
     all zero for a blank/whitespace-only line) and total advance,
     native equivalent of Cairo's own `text_extents()` -- walks every
-    Unicode codepoint, accumulating each glyph's own advance and
-    combining every glyph that actually has ink into one tight bbox.
+    Unicode codepoint (in bidi visual order -- see _visual_codepoints),
+    accumulating each glyph's own advance and combining every glyph
+    that actually has ink into one tight bbox.
     """
     var pen_x = 0.0
     var min_x = 1.0e18
@@ -223,7 +258,7 @@ def _measure_line(mut face: FreeTypeFace, line_text: String) raises -> _LineMetr
     var min_y = 1.0e18
     var max_y = -1.0e18
     var any_ink = False
-    for cp in line_text.codepoints():
+    for cp in _visual_codepoints(line_text):
         var gm = glyph_metrics(face, Int(cp))
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
@@ -533,8 +568,7 @@ def draw_text(
         if line.text == "":
             continue
         var pen_x = line.x
-        for cp in line.text.codepoints():
-            var codepoint = Int(cp)
+        for codepoint in _visual_codepoints(line.text):
             var gm = glyph_metrics(face, codepoint)
             if gm.width > 0.0 and gm.height > 0.0:
                 var local_path = glyph_path(face, codepoint, pen_x, line.y)

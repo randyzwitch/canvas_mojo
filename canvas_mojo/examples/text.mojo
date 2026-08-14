@@ -20,7 +20,7 @@ from canvas_mojo.io.bmp import write_bmp
 
 
 def main() raises:
-    var c = Canvas(600, 480, Color(250, 250, 248))
+    var c = Canvas(600, 560, Color(250, 250, 248))
 
     draw_text(c, 20, 50, "The quick brown fox", Color(20, 24, 32), 28.0)
     draw_text(c, 20, 90, "jumps over the lazy dog", Color(60, 70, 90), 22.0)
@@ -85,6 +85,17 @@ def main() raises:
         Int(bounds.height),
         Color(180, 180, 180),
     )
+
+    # Bidirectional text (bidi.mojo): right-to-left scripts lay out
+    # and render correctly -- Hebrew fully (no contextual shaping
+    # needed), Arabic with correct ordering/mirroring but each letter
+    # in its isolated form (see bidi.mojo's own docstring on scope).
+    # A digit run embedded in RTL text stays in reading order ("123",
+    # not "321"), and TextAlign.RIGHT anchors the same way it does for
+    # LTR text -- both demonstrated together on the same line.
+    draw_text(c, 580, 470, "שלום עולם 123", Color(20, 24, 32), 24.0, align=TextAlign.RIGHT)
+    draw_text(c, 580, 500, "مرحبا بالعالم", Color(20, 24, 32), 24.0, align=TextAlign.RIGHT)
+    draw_text(c, 20, 530, "mixed: Hello שלום World", Color(60, 70, 90), 22.0)
 
     write_bmp(c, "canvas_mojo/examples/out_text.bmp")
     print("wrote canvas_mojo/examples/out_text.bmp")
