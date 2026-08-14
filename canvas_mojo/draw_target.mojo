@@ -22,21 +22,30 @@ path` function of the same name, trimmed to just the arguments
 choose its own supersample factor internally; a vector one has no
 equivalent knob to expose at all).
 
-Deliberately excludes text -- `canvas_mojo.text`'s real text rendering
-depends on `cairo_mojo` (see that module's own docstring), and this
-trait needs to be implementable by `Canvas` (`canvas_mojo/buffer.mojo`)
-without buffer.mojo taking on that dependency for every caller, not
-just the ones that draw text (see the wiki for additional information --
-the two things that were tried and didn't work before this: a `Canvas`
-method that called `canvas_mojo.text.draw_text` directly forced cairo onto
-every `Canvas` user transitively, and a move-in/move-out wrapper
-struct hit a real Mojo ownership-tracking limitation on extracting a
-field back out after calling `mut self` methods on it). `dataviz/
-plot.mojo`'s generic rendering core collects text as a `List` of
-plain data (position, string, color, size, alignment) instead of
-drawing it inline through this trait, then each backend (raster or
-SVG) draws that list its own way, outside the generic path -- see that
-module's own comments for exactly where.
+Deliberately excludes text -- raster and vector backends draw it
+through fundamentally different mechanisms (`Canvas` rasterizes glyph
+outlines to pixels via `fill_path_aa`; `SvgCanvas` emits `<text>`
+markup for the viewer's own font engine to render, never touching a
+glyph outline at all), so there's no single shared operation for this
+trait's six shape primitives to generalize over the way there is for
+`fill_rect`/`draw_line_aa`/etc. `dataviz/plot.mojo`'s generic rendering
+core collects text as a `List` of plain data (position, string, color,
+size, alignment) instead of drawing it inline through this trait, then
+each backend draws that list its own way, outside the generic path --
+see that module's own comments for exactly where.
+
+`canvas_mojo.text` used to depend on `cairo_mojo`, which was a second,
+compile-time reason this exclusion mattered (importing it required an
+extra `-I` search path, and forced that dependency onto every `Canvas`
+user transitively, confirmed directly: a `Canvas` method that called
+`canvas_mojo.text.draw_text` broke compilation for any file merely
+importing `Canvas`, text or no text, since Mojo resolves a struct's
+entire method surface eagerly, not lazily per call). `canvas_mojo.text`
+is fully native now (fontconfig/FreeType FFI, no Cairo, no extra `-I`
+path -- see its own module docstring) and no longer forces anything
+onto callers who don't use it, so that second reason is gone; the
+raster-vs-markup mechanism difference above is reason enough to keep
+this exclusion on its own.
 
 Conformance is nominal, not structural (Mojo's own trait rule, not a
 choice made here) -- `Canvas` (`canvas_mojo/buffer.mojo`) and `SvgCanvas`

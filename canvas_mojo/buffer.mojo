@@ -62,10 +62,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
     before -- these methods are additive, not a replacement.
 
     Deliberately does *not* include a `draw_text` method (`DrawTarget`
-    itself has none either -- see that trait's own docstring for why):
-    conforming to a text-drawing method here would mean importing
-    `canvas_mojo.text`, which needs `cairo_mojo`, making every `Canvas`
-    user pay that dependency whether or not they ever draw text. Use
+    itself has none either -- see that trait's own docstring for the
+    current reasoning: raster and vector backends draw text through
+    fundamentally different mechanisms, not a shared operation like
+    this trait's other six methods). Use
     `canvas_mojo.text.draw_text(canvas, ...)` directly, exactly as every
     existing call site already does.
     """

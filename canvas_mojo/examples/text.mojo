@@ -1,12 +1,8 @@
-"""Demo: draw_text() rendering real system-font text via cairo-mojo
-(third_party/cairo_mojo -- see its VENDORED.md and canvas_mojo/text.mojo's
-module docstring for why this is the one part of canvas that isn't
-stdlib-only), composited onto a Canvas the same way every other
+"""Demo: draw_text() rendering real system-font text -- font matching
+via fontconfig, glyph outlines/metrics via FreeType, rasterization via
+this package's own fill_path_aa (see canvas_mojo/text.mojo's module
+docstring) -- composited onto a Canvas the same way every other
 primitive is: through set_pixel.
-
-Requires an extra -I path beyond the rest of this workspace's examples,
-since it's the only one reaching outside canvas:
-    pixi run mojo run -I . -I third_party/cairo_mojo canvas_mojo/examples/text.mojo
 
 Run with:
     pixi run example
@@ -14,7 +10,7 @@ Run with:
 
 from std.math import pi
 
-from cairo_mojo import FontSlant, FontWeight
+from canvas_mojo.font_discovery import FontSlant, FontWeight
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
@@ -44,8 +40,8 @@ def main() raises:
         slant=FontSlant.ITALIC,
     )
 
-    # Multi-line: one draw_text call, "\n"-separated -- Cairo's own
-    # toy API has no line-break handling, so this module does it.
+    # Multi-line: one draw_text call, "\n"-separated -- line-break
+    # handling this module does itself (see _layout_block).
     draw_text(c, 20, 230, "first line\nsecond line\nthird line", Color(20, 24, 32), 20.0)
 
     # Rotation: tilted axis-tick-label-style text, and a fully

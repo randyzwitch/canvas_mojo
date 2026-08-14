@@ -16,13 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # canvas_mojo/text.mojo (via the vendored third_party/cairo_mojo)
-      # needs a system libcairo at runtime -- see third_party/cairo_mojo/
-      # VENDORED.md's own "Runtime dependency" section. Not bundled, not
-      # a pixi dependency of this workspace; installed here the same way
-      # the README documents for local development.
-      - name: Install libcairo
-        run: sudo apt-get update && sudo apt-get install -y libcairo2
+      # canvas_mojo/text.mojo links directly against libfontconfig
+      # (font_discovery.mojo) and libfreetype (freetype_face.mojo/
+      # glyph_outline.mojo) at runtime -- not bundled, not a pixi
+      # dependency of this workspace, installed here explicitly rather
+      # than assumed present on the runner image.
+      - name: Install libfontconfig and libfreetype
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 libfreetype6
 
       # Pinned to match the pixi version pixi.lock (v7 format) was
       # generated with locally -- an older pixi here would just hit the

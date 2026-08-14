@@ -10,11 +10,17 @@ Please note that this is heavily Claude-influenced, so I do not guarantee consis
 
 ## Status
 
-Stdlib-only except one deliberate exception: `third_party/cairo_mojo`
-(vendored, MIT-licensed), used only by `canvas_mojo/text.mojo` for real
-system-font text rendering via the system's `libcairo` — see that
-directory's own `VENDORED.md` for provenance and why it's vendored
-instead of a normal pixi dependency.
+Stdlib-only, plus two small direct FFI dependencies on system
+libraries `canvas_mojo/text.mojo` links against for real system-font
+text rendering: `libfontconfig` (font matching — `font_discovery.mojo`)
+and `libfreetype` (glyph outlines/metrics/hinting — `freetype_face.mojo`,
+`glyph_outline.mojo`). Both are typical, near-universally-installed
+system libraries, not new requirements this package introduces.
+Rasterization is this package's own `fill_path_aa` — no third-party
+rendering engine anywhere in the pipeline. This used to wrap Cairo
+(`third_party/cairo_mojo`, a vendored binding); that dependency has
+since been fully removed — see the wiki's `text.mojo` entry for the
+history.
 
 This package is **not yet installable via `pixi build`/`pixi install`**
 — see `pixi.toml`'s own `[package]` section and the wiki for additional
@@ -42,13 +48,9 @@ def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
 ```
 
-Everything imports with `-I .` except `canvas_mojo/text.mojo` and
-anything that imports it directly or transitively
-(`canvas_mojo/examples/text.mojo`, `canvas_mojo/tests/test_text.mojo`,
-or anything importing `canvas_mojo/__init__.mojo` directly, since it
-re-exports text functions too) — those also need
-`-I third_party/cairo_mojo`. `pixi.toml`'s own `test`/`example` tasks
-already pass both flags where needed.
+Everything, including `canvas_mojo/text.mojo` and anything that
+imports it, resolves with plain `-I .` — no second search path needed
+anymore now that Cairo is gone.
 
 ## License
 
