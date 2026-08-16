@@ -1,7 +1,7 @@
 """Font discovery via libfontconfig -- resolves a family/slant/weight
 request to an actual font file path on disk, the same job Cairo's own
 `select_font_face` currently does invisibly (via fontconfig underneath
-it) in `canvas_mojo/text.mojo`. This is "job 1" of a 4-job breakdown
+it) in `canvas_mojo/text/render.mojo`. This is "job 1" of a 4-job breakdown
 for eventually removing the Cairo dependency: font discovery (this
 module, via fontconfig), glyph resolution & metrics + hinting (both
 FreeType, not yet built), and rasterization (already covered natively
@@ -18,12 +18,12 @@ to be usable, and eventually keep working, independent of Cairo. That
 independence is also why `FontSlant`/`FontWeight` and the raw C-string
 helpers below are small local duplicates of concepts that already
 exist elsewhere in this codebase (`cairo_mojo`'s own `FontSlant`/
-`FontWeight`, `canvas_mojo/text.mojo`'s own `_c_string`) rather than
+`FontWeight`, `canvas_mojo/text/render.mojo`'s own `_c_string`) rather than
 imports of them -- importing either would pull in `cairo_mojo`'s own
 top-level dependency chain transitively, the same "a struct's method
 surface (and whatever it imports) resolves eagerly, not lazily"
-lesson `draw_target.mojo`'s own docstring documents for `DrawTarget`
-excluding `draw_text`.
+lesson `canvas_mojo/vector/draw_target.mojo`'s own docstring documents
+for `DrawTarget` excluding `draw_text`.
 
 This module resolves a font *file*, nothing more -- it does not parse
 that file, measure text, hint, or rasterize anything. `canvas_mojo.text`
@@ -81,7 +81,7 @@ struct FontWeight(Copyable, ImplicitlyCopyable, Movable):
 # and documents. FC_WEIGHT_REGULAR/FC_WEIGHT_BOLD (not the 100-900
 # OpenType-style scale fontconfig also supports via FcWeightFromOpenType)
 # since only NORMAL/BOLD are exposed here, matching what
-# canvas_mojo/text.mojo's own FontWeight currently offers.
+# canvas_mojo/text/render.mojo's own FontWeight currently offers.
 comptime _FC_SLANT_ROMAN = c_int(0)
 comptime _FC_SLANT_ITALIC = c_int(100)
 comptime _FC_SLANT_OBLIQUE = c_int(110)
@@ -218,7 +218,7 @@ def _open_fontconfig_library() raises -> OwnedDLHandle:
 
 
 # --- Raw C-string helpers -------------------------------------------------
-# Duplicated from canvas_mojo/text.mojo's own _c_string, deliberately --
+# Duplicated from canvas_mojo/text/render.mojo's own _c_string, deliberately --
 # see this module's own docstring for why importing it instead isn't an
 # option. Same manually-built-NUL-terminated-buffer approach that
 # module's own docstring documents working around a real, root-caused
@@ -310,7 +310,7 @@ def resolve_font_file_for_char(
 ) raises -> String:
     """Like `resolve_font_file`, but also constrains the match to a
     font that actually contains `codepoint` (via `FC_CHARSET`) -- the
-    font-fallback lookup `canvas_mojo/text.mojo` uses when the
+    font-fallback lookup `canvas_mojo/text/render.mojo` uses when the
     caller's own requested family lacks a glyph for some character
     (e.g. CJK text requested under a Latin-only "Sans" family):
     fontconfig's own family/generic-alias fallback chain (the same

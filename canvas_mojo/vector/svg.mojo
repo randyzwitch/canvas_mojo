@@ -23,10 +23,10 @@ method's own docstring.
 from std.math import cos, pi, sin
 
 from canvas_mojo.color import Color
-from canvas_mojo.draw_target import DrawTarget
+from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.geometry import _round_to_int
 from canvas_mojo.path import Path, _CLOSE, _CUBIC_TO, _LINE_TO, _MOVE_TO, _QUAD_TO
-from canvas_mojo.text_align import TextAlign
+from canvas_mojo.text.text_align import TextAlign
 
 comptime _HEX_DIGITS = "0123456789abcdef"
 

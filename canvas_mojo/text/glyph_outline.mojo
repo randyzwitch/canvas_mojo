@@ -1,6 +1,6 @@
 """Glyph outlines and metrics via direct FreeType FFI -- job 2 of the
 4-job breakdown (font discovery / glyph resolution & metrics / hinting
-/ rasterization) for removing canvas_mojo/text.mojo's Cairo dependency.
+/ rasterization) for removing canvas_mojo/text/render.mojo's Cairo dependency.
 `font_discovery.mojo` (job 1) resolves a family/slant/weight to a file;
 `freetype_face.mojo` loads that file into an `FT_Face`. This module
 reads a loaded `FT_Face`'s own glyph data directly -- no more Cairo
@@ -9,7 +9,7 @@ this package's own `Path` (`canvas_mojo/path.mojo`), ready for
 `fill_path_aa` (job 4, already built) to rasterize, with zero Cairo
 round-trip (no scratch ARGB32 surface, no premultiply/unpremultiply,
 none of the `unsafe_data_ptr()` boundary-garbage workaround
-canvas_mojo/text.mojo's own docstring documents -- that whole category
+canvas_mojo/text/render.mojo's own docstring documents -- that whole category
 of bug doesn't exist for a path filled directly onto `Canvas`).
 
 Hinting (job 3) comes along for free at default `FT_Load_Glyph` flags
@@ -66,7 +66,7 @@ mapping, applied here for font-design-space-to-pixel mapping instead.
 from std.ffi import c_char, c_int, c_long, c_short, c_uint, c_ushort
 from std.memory import MutOpaquePointer
 
-from canvas_mojo.freetype_face import FreeTypeFace, _open_freetype_library
+from canvas_mojo.text.freetype_face import FreeTypeFace, _open_freetype_library
 from canvas_mojo.path import Path
 
 
@@ -284,7 +284,7 @@ def has_glyph(mut face: FreeTypeFace, codepoint: Int) raises -> Bool:
     directly, not assumed: 'A' against DejaVu Sans returns a real
     index, a CJK character against the same face returns exactly 0).
     Checked via `FT_Get_Char_Index` alone, without `FT_Load_Glyph` --
-    cheaper than `glyph_metrics`/`glyph_path` for a caller (`text.mojo`'s
+    cheaper than `glyph_metrics`/`glyph_path` for a caller (`render.mojo`'s
     own font-fallback logic) that just needs to know whether to keep
     using this face or resolve a different one for this character,
     not load the glyph itself.

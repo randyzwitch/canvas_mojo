@@ -2,13 +2,14 @@
 own `puff.c` reference decoder (Mark Adler, zlib-licensed; "a simple
 inflate written to be an unambiguous way to specify the deflate
 format"), not independently re-derived from the RFC alone. Same
-reasoning `canvas_mojo/glyph_outline.mojo`'s own docstring gives for
+reasoning `canvas_mojo/text/glyph_outline.mojo`'s own docstring gives for
 translating FreeType's `FT_Outline_Decompose` faithfully rather than
 re-deriving TrueType outline decoding from memory: DEFLATE is a
 closed, formally specified, decades-stable algorithm (unlike font
-discovery/shaping, which `font_discovery.mojo`'s own docstring
-explains are open-ended, system-dependent subsystems better left to a
-linked library) -- exactly the kind of thing this package already
+discovery/shaping, which `canvas_mojo/text/font_discovery.mojo`'s own
+docstring explains are open-ended, system-dependent subsystems better
+left to a linked library) -- exactly the kind of thing this package
+already
 builds from spec elsewhere (Bresenham lines, midpoint circles, glyph
 outlines), so writing it natively here rather than linking zlib is
 consistent with that, not a special case.
@@ -110,8 +111,9 @@ def _construct(lengths: List[Int], n: Int, mut left_out: Int) raises -> _Huffman
     rather than a two-field return struct: extracting one field out of
     a local multi-field struct value hits a real Mojo ownership
     limitation ("field ... destroyed out of the middle of a value"),
-    the same one `draw_target.mojo`'s own history documents for a
-    move-in/move-out wrapper struct -- confirmed here directly (this
+    the same one `canvas_mojo/vector/draw_target.mojo`'s own history
+    documents for a move-in/move-out wrapper struct -- confirmed here
+    directly (this
     function originally returned `_ConstructResult(table, left)`,
     and every call site's `result.table^` failed to compile with
     exactly that error) before switching to this shape instead.

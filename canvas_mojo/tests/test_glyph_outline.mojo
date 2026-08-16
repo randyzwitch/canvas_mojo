@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/glyph_outline.mojo.
+"""Tests for canvas_mojo/text/glyph_outline.mojo.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- same real-machine dependency canvas_mojo/tests/
@@ -18,9 +18,9 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
-from canvas_mojo.font_discovery import resolve_font_file
-from canvas_mojo.freetype_face import FreeTypeFace
-from canvas_mojo.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph
+from canvas_mojo.text.font_discovery import resolve_font_file
+from canvas_mojo.text.freetype_face import FreeTypeFace
+from canvas_mojo.text.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph
 from canvas_mojo.path import fill_path_aa
 
 comptime BG = Color(255, 255, 255)

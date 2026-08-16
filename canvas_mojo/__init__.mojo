@@ -31,7 +31,7 @@ from canvas_mojo.primitives import (
     fill_ring_sector,
     fill_ring_sector_aa,
 )
-from canvas_mojo.text import draw_text, measure_text, measure_text_block, TextAlign, TextMetrics, TextBlockBounds
+from canvas_mojo.text.render import draw_text, measure_text, measure_text_block, TextAlign, TextMetrics, TextBlockBounds
 from canvas_mojo.path import (
     Path,
     FPoint,

@@ -1,11 +1,16 @@
-"""TextAlign -- split out of text.mojo specifically so it can be
-referenced (by `canvas_mojo.draw_target`, and transitively by `canvas.
+"""TextAlign -- split out of render.mojo specifically so it can be
+referenced (by `canvas_mojo.vector.draw_target`, and transitively by `canvas.
 buffer`'s own `Canvas` -- see that trait's own docstring for why)
-without pulling in `canvas_mojo.text`'s own `cairo_mojo` dependency. Every
-existing `from canvas_mojo.text import TextAlign` call site keeps working
-unchanged -- text.mojo re-exports this same type, it just no longer
-defines it -- this split changes nothing about TextAlign itself, only
-where the cairo-free zero-dependency type it already was now lives.
+without pulling in render.mojo's own heavier FFI-touching imports
+(font_discovery.mojo/freetype_face.mojo/glyph_outline.mojo/bidi.mojo)
+-- originally to avoid a transitive `cairo_mojo` dependency before
+Cairo was removed entirely (see the wiki's "Cairo removed entirely"
+entry), still true today for the same reason with FFI in place of
+Cairo. Every existing `from canvas_mojo.text.render import TextAlign`
+call site keeps working unchanged -- render.mojo re-exports this same
+type, it just no longer defines it -- this split changes nothing about
+TextAlign itself, only where the zero-dependency type it already was
+now lives.
 """
 
 

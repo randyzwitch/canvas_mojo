@@ -1,9 +1,9 @@
-"""Tests for canvas_mojo/text.mojo.
+"""Tests for canvas_mojo/text/render.mojo.
 
 Unlike primitives.mojo's tests, these can't assert exact pixel sets --
 real system-font rasterization (hinting, AA, glyph shapes) isn't
 something this repo can independently re-derive by hand the way
-Bresenham/midpoint-circle output can (see canvas_mojo/text.mojo's
+Bresenham/midpoint-circle output can (see canvas_mojo/text/render.mojo's
 module docstring). What's tested instead are the properties this
 module's own code is actually responsible for, verified against this
 module's real behavior (via probe scripts, not assumption) before
@@ -47,7 +47,7 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.text import draw_text, measure_text, measure_text_block, TextAlign, _visual_codepoints
+from canvas_mojo.text.render import draw_text, measure_text, measure_text_block, TextAlign, _visual_codepoints
 
 comptime BG = Color(255, 255, 255)
 comptime FG = Color(200, 20, 20, 255)
