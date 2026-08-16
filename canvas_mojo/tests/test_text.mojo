@@ -35,7 +35,11 @@ matters, not just "looks plausible."
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- true of most Linux/macOS systems, but not guaranteed
-the way a checked-in fixture would be.
+the way a checked-in fixture would be. The font-fallback tests need a
+second, more specific fact about this machine (the "Ubuntu" font
+lacking a snowman glyph "DejaVu Sans" has) -- see
+test_font_discovery.mojo's own docstring for the same dependency and
+why it's safe to assert here.
 """
 
 from std.math import pi
@@ -532,6 +536,35 @@ def test_measure_and_draw_agree_on_bidi_reordering() raises:
             two_idx = i
     assert_true(one_idx >= 0 and two_idx >= 0)
     assert_true(one_idx < two_idx)
+
+
+def test_draw_text_falls_back_to_a_font_with_the_glyph() raises:
+    # Real, end-to-end proof that draw_text's own font-fallback wiring
+    # (text.mojo's _resolve_glyph) actually reaches rendering, not
+    # just font_discovery.resolve_font_file_for_char in isolation
+    # (see test_font_discovery.mojo's own tests for that layer alone).
+    # "Ubuntu" (the font) has no snowman glyph (U+2603, confirmed via
+    # probe); if fallback works, drawing it anyway produces real ink,
+    # not nothing (a family that genuinely lacked *any* fallback would
+    # render this as an empty, zero-size .notdef with no ink at all,
+    # the same as any other glyph-less codepoint here would).
+    var c = Canvas(60, 60, BG)
+    draw_text(c, 10, 45, "☃", FG, 32.0, family="Ubuntu")
+    var bbox = _ink_bbox(c, BG)
+    assert_true(bbox.found_any)
+
+
+def test_measure_text_falls_back_to_a_font_with_the_glyph() raises:
+    # Same property as the render test above, for measure_text: a
+    # font that actually has the glyph reports real, non-zero ink
+    # dimensions -- not the same measurement a truly glyph-less
+    # character would (this file has no test asserting a specific
+    # numeric .notdef size, deliberately -- what matters here is that
+    # measurement and rendering agree fallback happened, not a second
+    # copy of glyph_outline.mojo's own locked-in font metrics).
+    var m = measure_text("☃", 32.0, family="Ubuntu")
+    assert_true(m.width > 0.0)
+    assert_true(m.height > 0.0)
 
 
 def main() raises:

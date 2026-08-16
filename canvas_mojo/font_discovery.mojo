@@ -31,7 +31,7 @@ still does all of that via Cairo today; this is a standalone building
 block, not yet wired into `draw_text`/`measure_text`.
 """
 
-from std.ffi import OwnedDLHandle, RTLD, c_char, c_int
+from std.ffi import OwnedDLHandle, RTLD, c_char, c_int, c_uint
 from std.os import getenv
 from std.subprocess import run
 from std.sys.info import CompilationTarget
@@ -277,6 +277,11 @@ struct _FcPattern(Copyable, Movable):
     pass
 
 
+@fieldwise_init
+struct _FcCharSet(Copyable, Movable):
+    pass
+
+
 def resolve_font_file(
     family: String,
     slant: FontSlant = FontSlant.NORMAL,
@@ -292,6 +297,60 @@ def resolve_font_file(
     and per-system default-substitution mean an actual "no match at
     all" is rare in practice, but not impossible on a font-less
     system).
+    """
+    return _resolve_font_file_impl(family, slant, weight, -1)
+
+
+def resolve_font_file_for_char(
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    codepoint: Int,
+) raises -> String:
+    """Like `resolve_font_file`, but also constrains the match to a
+    font that actually contains `codepoint` (via `FC_CHARSET`) -- the
+    font-fallback lookup `canvas_mojo/text.mojo` uses when the
+    caller's own requested family lacks a glyph for some character
+    (e.g. CJK text requested under a Latin-only "Sans" family):
+    fontconfig's own family/generic-alias fallback chain (the same
+    system-wide configuration real desktop text stacks already rely
+    on) picks a *different* font that actually has the glyph, if one
+    is installed.
+
+    Verified against real, contrasting behavior, not assumed from the
+    API alone: on a system where the "Ubuntu" font lacks a glyph (a
+    snowman symbol) that "DejaVu Sans" happens to have,
+    `resolve_font_file_for_char("Ubuntu", ..., snowman)` returns
+    DejaVu Sans's file, while the identical call for a character
+    "Ubuntu" *does* have (a plain "A") returns Ubuntu's own file
+    unchanged -- real, contrasting fallback, not just "always returns
+    the same thing regardless of the charset constraint."
+
+    If no installed font has `codepoint` at all, fontconfig's own
+    default-substitution still returns its best-effort closest match
+    (confirmed directly: requesting a font for a CJK character with no
+    CJK font installed anywhere on the system still returns a real
+    font file, just one that -- like every other installed font --
+    doesn't actually contain that glyph). Callers that need to
+    distinguish "found a font with the glyph" from "fontconfig gave up
+    and returned its best guess" should check the *result* (e.g. via
+    `glyph_outline.has_glyph`) against whatever this returns, not
+    trust the return value alone.
+    """
+    return _resolve_font_file_impl(family, slant, weight, codepoint)
+
+
+def _resolve_font_file_impl(
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    char_constraint: Int,
+) raises -> String:
+    """Shared implementation for `resolve_font_file`/
+    `resolve_font_file_for_char` -- `char_constraint == -1` means "no
+    charset constraint" (plain family/slant/weight matching); any
+    other value adds an `FC_CHARSET` containing exactly that one
+    codepoint to the pattern before matching.
     """
     var handle = _open_fontconfig_library()
 
@@ -335,6 +394,28 @@ def resolve_font_file(
     ](pattern, _imm(weight_obj), _fc_weight_value(weight))
     weight_obj.free()
 
+    # Always create a real FcCharSet (cheap) rather than a conditionally-
+    # initialized pointer variable -- only *attaching* it to the pattern
+    # is conditional, sidestepping any need for a placeholder/null value
+    # for the "no constraint" path (constructing a null pointer to a
+    # custom opaque struct type isn't straightforward here -- see
+    # freetype_face.mojo's own history with this exact issue).
+    var have_charset = char_constraint != -1
+    var charset = handle.call["FcCharSetCreate", UnsafePointer[_FcCharSet, MutExternalOrigin]]()
+    if have_charset:
+        _ = handle.call[
+            "FcCharSetAddChar", c_int, UnsafePointer[_FcCharSet, MutExternalOrigin], c_uint
+        ](charset, c_uint(char_constraint))
+        var charset_obj = _c_string("charset")
+        _ = handle.call[
+            "FcPatternAddCharSet",
+            c_int,
+            UnsafePointer[_FcPattern, MutExternalOrigin],
+            UnsafePointer[c_char, ImmutExternalOrigin],
+            UnsafePointer[_FcCharSet, MutExternalOrigin],
+        ](pattern, _imm(charset_obj), charset)
+        charset_obj.free()
+
     handle.call["FcDefaultSubstitute", NoneType, UnsafePointer[_FcPattern, MutExternalOrigin]](pattern)
 
     _ = handle.call[
@@ -357,6 +438,7 @@ def resolve_font_file(
     result_code.free()
 
     handle.call["FcPatternDestroy", NoneType, UnsafePointer[_FcPattern, MutExternalOrigin]](pattern)
+    handle.call["FcCharSetDestroy", NoneType, UnsafePointer[_FcCharSet, MutExternalOrigin]](charset)
 
     if Int(match_result) != Int(_FC_RESULT_MATCH):
         raise Error(

@@ -20,7 +20,7 @@ from canvas_mojo.io.bmp import write_bmp
 
 
 def main() raises:
-    var c = Canvas(600, 560, Color(250, 250, 248))
+    var c = Canvas(600, 590, Color(250, 250, 248))
 
     draw_text(c, 20, 50, "The quick brown fox", Color(20, 24, 32), 28.0)
     draw_text(c, 20, 90, "jumps over the lazy dog", Color(60, 70, 90), 22.0)
@@ -96,6 +96,14 @@ def main() raises:
     draw_text(c, 580, 470, "שלום עולם 123", Color(20, 24, 32), 24.0, align=TextAlign.RIGHT)
     draw_text(c, 580, 500, "مرحبا بالعالم", Color(20, 24, 32), 24.0, align=TextAlign.RIGHT)
     draw_text(c, 20, 530, "mixed: Hello שלום World", Color(60, 70, 90), 22.0)
+
+    # Font fallback (text.mojo's own _resolve_glyph, via font_discovery.
+    # resolve_font_file_for_char): the requested family here ("Ubuntu")
+    # has no snowman glyph of its own -- fontconfig resolves a
+    # different installed font for that one character instead of
+    # falling through to an empty placeholder box, the same real
+    # fallback mechanism any desktop text stack already relies on.
+    draw_text(c, 20, 570, "Requested Ubuntu, but ☃ isn't in it", Color(20, 24, 32), 22.0, family="Ubuntu")
 
     write_bmp(c, "canvas_mojo/examples/out_text.bmp")
     print("wrote canvas_mojo/examples/out_text.bmp")

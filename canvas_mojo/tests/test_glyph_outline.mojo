@@ -20,7 +20,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
 from canvas_mojo.font_discovery import resolve_font_file
 from canvas_mojo.freetype_face import FreeTypeFace
-from canvas_mojo.glyph_outline import face_line_metrics, glyph_metrics, glyph_path
+from canvas_mojo.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph
 from canvas_mojo.path import fill_path_aa
 
 comptime BG = Color(255, 255, 255)
@@ -141,6 +141,21 @@ def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
     var bbox_area = Int(gm.width + 2.0) * Int(gm.height + 2.0)
     assert_true(ink_pixels > bbox_area // 10)
     assert_true(ink_pixels < bbox_area * 8 // 10)
+
+
+def test_has_glyph_true_for_a_real_character() raises:
+    var face = _sans_face(24)
+    assert_true(has_glyph(face, 0x41))  # 'A'
+
+
+def test_has_glyph_false_for_a_codepoint_this_font_lacks() raises:
+    # Confirmed via probe: DejaVu Sans has no CJK coverage --
+    # FT_Get_Char_Index returns glyph index 0 (.notdef) for it, not a
+    # real glyph. If this ever starts failing because DejaVu Sans
+    # gained CJK glyphs, that's a real environment change, not a sign
+    # has_glyph itself is wrong.
+    var face = _sans_face(24)
+    assert_true(not has_glyph(face, 0x4E2D))  # 中
 
 
 def main() raises:
