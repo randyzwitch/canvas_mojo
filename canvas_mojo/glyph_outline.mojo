@@ -72,8 +72,8 @@ from canvas_mojo.path import Path
 
 @fieldwise_init
 struct FT_Generic(Copyable, ImplicitlyCopyable, Movable):
-    var data: MutOpaquePointer[MutExternalOrigin]
-    var finalizer: MutOpaquePointer[MutExternalOrigin]
+    var data: MutOpaquePointer[MutUntrackedOrigin]
+    var finalizer: MutOpaquePointer[MutUntrackedOrigin]
 
 
 @fieldwise_init
@@ -107,28 +107,28 @@ struct FT_Bitmap(Copyable, ImplicitlyCopyable, Movable):
     var rows: c_uint
     var width: c_uint
     var pitch: c_int
-    var buffer: MutOpaquePointer[MutExternalOrigin]
+    var buffer: MutOpaquePointer[MutUntrackedOrigin]
     var num_grays: c_ushort
     var pixel_mode: UInt8
     var palette_mode: UInt8
-    var palette: MutOpaquePointer[MutExternalOrigin]
+    var palette: MutOpaquePointer[MutUntrackedOrigin]
 
 
 @fieldwise_init
 struct FT_Outline(Copyable, ImplicitlyCopyable, Movable):
     var n_contours: c_short
     var n_points: c_short
-    var points: UnsafePointer[FT_Vector, MutExternalOrigin]
-    var tags: UnsafePointer[Int8, MutExternalOrigin]
-    var contours: UnsafePointer[c_short, MutExternalOrigin]
+    var points: Pointer[FT_Vector, MutUntrackedOrigin]
+    var tags: Pointer[Int8, MutUntrackedOrigin]
+    var contours: Pointer[c_short, MutUntrackedOrigin]
     var flags: c_int
 
 
 @fieldwise_init
 struct FT_GlyphSlotRec(Copyable, ImplicitlyCopyable, Movable):
-    var library: MutOpaquePointer[MutExternalOrigin]
-    var face: MutOpaquePointer[MutExternalOrigin]
-    var next: MutOpaquePointer[MutExternalOrigin]
+    var library: MutOpaquePointer[MutUntrackedOrigin]
+    var face: MutOpaquePointer[MutUntrackedOrigin]
+    var next: MutOpaquePointer[MutUntrackedOrigin]
     var glyph_index: c_uint
     var generic: FT_Generic
     var metrics: FT_Glyph_Metrics
@@ -156,7 +156,7 @@ struct FT_Size_Metrics(Copyable, ImplicitlyCopyable, Movable):
 
 @fieldwise_init
 struct FT_SizeRec(Copyable, ImplicitlyCopyable, Movable):
-    var face: MutOpaquePointer[MutExternalOrigin]
+    var face: MutOpaquePointer[MutUntrackedOrigin]
     var generic: FT_Generic
     var metrics: FT_Size_Metrics
 
@@ -175,12 +175,12 @@ struct _FT_FaceRec_full(Copyable, ImplicitlyCopyable, Movable):
     var face_flags: c_long
     var style_flags: c_long
     var num_glyphs: c_long
-    var family_name: UnsafePointer[c_char, MutExternalOrigin]
-    var style_name: UnsafePointer[c_char, MutExternalOrigin]
+    var family_name: Pointer[c_char, MutUntrackedOrigin]
+    var style_name: Pointer[c_char, MutUntrackedOrigin]
     var num_fixed_sizes: c_int
-    var available_sizes: MutOpaquePointer[MutExternalOrigin]
+    var available_sizes: MutOpaquePointer[MutUntrackedOrigin]
     var num_charmaps: c_int
-    var charmaps: MutOpaquePointer[MutExternalOrigin]
+    var charmaps: MutOpaquePointer[MutUntrackedOrigin]
     var generic: FT_Generic
     var bbox: FT_BBox
     var units_per_EM: c_ushort
@@ -191,12 +191,12 @@ struct _FT_FaceRec_full(Copyable, ImplicitlyCopyable, Movable):
     var max_advance_height: c_short
     var underline_position: c_short
     var underline_thickness: c_short
-    var glyph: UnsafePointer[FT_GlyphSlotRec, MutExternalOrigin]
-    var size: UnsafePointer[FT_SizeRec, MutExternalOrigin]
-    var charmap: MutOpaquePointer[MutExternalOrigin]
+    var glyph: Pointer[FT_GlyphSlotRec, MutUntrackedOrigin]
+    var size: Pointer[FT_SizeRec, MutUntrackedOrigin]
+    var charmap: MutOpaquePointer[MutUntrackedOrigin]
 
 
-def _as_full(face: FreeTypeFace) -> UnsafePointer[_FT_FaceRec_full, MutExternalOrigin]:
+def _as_full(face: FreeTypeFace) -> Pointer[_FT_FaceRec_full, MutUntrackedOrigin]:
     """Reinterpret freetype_face.mojo's opaque `_FT_FaceRec` pointer as
     this module's own fully-fielded `_FT_FaceRec_full` -- both name the
     exact same underlying `FT_Face`; the opaque version just doesn't
@@ -223,7 +223,7 @@ struct LineMetrics(ImplicitlyCopyable, Movable):
         self.line_height = line_height
 
 
-def _require_active_size(full: UnsafePointer[_FT_FaceRec_full, MutExternalOrigin]) raises -> FT_Size_Metrics:
+def _require_active_size(full: Pointer[_FT_FaceRec_full, MutUntrackedOrigin]) raises -> FT_Size_Metrics:
     """Confirmed necessary via probe, not assumed: reading metrics
     before `FreeTypeFace.set_pixel_size` is ever called doesn't crash
     or raise on its own -- it silently returns zeroed line metrics and
@@ -292,12 +292,12 @@ def has_glyph(mut face: FreeTypeFace, codepoint: Int) raises -> Bool:
     var handle = _open_freetype_library()
     var full = _as_full(face)
     var glyph_index = handle.call[
-        "FT_Get_Char_Index", c_uint, UnsafePointer[_FT_FaceRec_full, MutExternalOrigin], c_long
+        "FT_Get_Char_Index", c_uint, Pointer[_FT_FaceRec_full, MutUntrackedOrigin], c_long
     ](full, c_long(codepoint))
     return Int(glyph_index) != 0
 
 
-def _load_glyph(mut face: FreeTypeFace, codepoint: Int) raises -> UnsafePointer[FT_GlyphSlotRec, MutExternalOrigin]:
+def _load_glyph(mut face: FreeTypeFace, codepoint: Int) raises -> Pointer[FT_GlyphSlotRec, MutUntrackedOrigin]:
     """`FT_Get_Char_Index` (Unicode codepoint -> glyph index, via this
     face's own cmap, set to Unicode by FT_New_Face automatically when
     the font has one) then `FT_Load_Glyph` (default flags -- hinted,
@@ -311,11 +311,11 @@ def _load_glyph(mut face: FreeTypeFace, codepoint: Int) raises -> UnsafePointer[
     _ = _require_active_size(full)
 
     var glyph_index = handle.call[
-        "FT_Get_Char_Index", c_uint, UnsafePointer[_FT_FaceRec_full, MutExternalOrigin], c_long
+        "FT_Get_Char_Index", c_uint, Pointer[_FT_FaceRec_full, MutUntrackedOrigin], c_long
     ](full, c_long(codepoint))
 
     var load_err = handle.call[
-        "FT_Load_Glyph", c_int, UnsafePointer[_FT_FaceRec_full, MutExternalOrigin], c_uint, c_int
+        "FT_Load_Glyph", c_int, Pointer[_FT_FaceRec_full, MutUntrackedOrigin], c_uint, c_int
     ](full, glyph_index, c_int(0))
     if Int(load_err) != 0:
         raise Error(String("FT_Load_Glyph failed for codepoint ", codepoint, " with error code ", Int(load_err)))
@@ -357,18 +357,18 @@ def _decompose_contour(
     if last < first:
         return
 
-    var v_start_raw = outline.points[first]
-    var v_last_raw = outline.points[last]
+    var v_start_raw = outline.points[unsafe_offset=first]
+    var v_last_raw = outline.points[unsafe_offset=last]
 
     var limit = last
     var point_idx = first
-    var start_tag = Int(outline.tags[first]) & 3
+    var start_tag = Int(outline.tags[unsafe_offset=first]) & 3
 
     var v_start_x: c_long
     var v_start_y: c_long
 
     if start_tag == 0:  # FT_CURVE_TAG_CONIC -- contour starts on a control point
-        var last_tag = Int(outline.tags[last]) & 3
+        var last_tag = Int(outline.tags[unsafe_offset=last]) & 3
         if last_tag == 1:  # FT_CURVE_TAG_ON
             v_start_x = v_last_raw.x
             v_start_y = v_last_raw.y
@@ -389,8 +389,8 @@ def _decompose_contour(
 
     while point_idx < limit and not closed:
         point_idx += 1
-        var p = outline.points[point_idx]
-        var tag = Int(outline.tags[point_idx]) & 3
+        var p = outline.points[unsafe_offset=point_idx]
+        var tag = Int(outline.tags[unsafe_offset=point_idx]) & 3
 
         if tag == 1:  # ON
             path.line_to(_px(pen_x, p.x), _py(pen_y, p.y))
@@ -400,8 +400,8 @@ def _decompose_contour(
             var emitted = False
             while point_idx < limit:
                 point_idx += 1
-                var p2 = outline.points[point_idx]
-                var tag2 = Int(outline.tags[point_idx]) & 3
+                var p2 = outline.points[unsafe_offset=point_idx]
+                var tag2 = Int(outline.tags[unsafe_offset=point_idx]) & 3
                 if tag2 == 1:  # ON -- ends this conic run
                     path.quad_curve_to(_px(pen_x, v_control_x), _py(pen_y, v_control_y), _px(pen_x, p2.x), _py(pen_y, p2.y))
                     emitted = True
@@ -424,12 +424,12 @@ def _decompose_contour(
             var c1x = p.x
             var c1y = p.y
             point_idx += 1
-            var p_c2 = outline.points[point_idx]
+            var p_c2 = outline.points[unsafe_offset=point_idx]
             var c2x = p_c2.x
             var c2y = p_c2.y
             if point_idx < limit:
                 point_idx += 1
-                var p3 = outline.points[point_idx]
+                var p3 = outline.points[unsafe_offset=point_idx]
                 path.cubic_curve_to(_px(pen_x, c1x), _py(pen_y, c1y), _px(pen_x, c2x), _py(pen_y, c2y), _px(pen_x, p3.x), _py(pen_y, p3.y))
             else:
                 path.cubic_curve_to(_px(pen_x, c1x), _py(pen_y, c1y), _px(pen_x, c2x), _py(pen_y, c2y), _px(pen_x, v_start_x), _py(pen_y, v_start_y))
@@ -461,6 +461,6 @@ def glyph_path(mut face: FreeTypeFace, codepoint: Int, pen_x: Float64, pen_y: Fl
     var last = -1
     for n in range(Int(outline.n_contours)):
         var first = last + 1
-        last = Int(outline.contours[n])
+        last = Int(outline.contours[unsafe_offset=n])
         _decompose_contour(outline, first, last, path, pen_x, pen_y)
     return path^

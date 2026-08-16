@@ -29,6 +29,7 @@ representing the same underlying C pointer), not an import from here.
 """
 
 from std.ffi import OwnedDLHandle, RTLD, c_char, c_int, c_long, c_uint
+from std.memory.alloc import unsafe_alloc
 from std.os import getenv
 from std.subprocess import run
 from std.sys.info import CompilationTarget
@@ -150,22 +151,22 @@ def _open_freetype_library() raises -> OwnedDLHandle:
     raise Error(message)
 
 
-def _c_string(text: String) -> UnsafePointer[c_char, MutExternalOrigin]:
+def _c_string(text: String) -> Pointer[c_char, MutUntrackedOrigin]:
     # Duplicated from font_discovery.mojo's own _c_string -- same
     # "stay independent, don't import across these small FFI modules
     # just to save a few lines" reasoning as font_discovery.mojo's own
     # docstring gives for duplicating it from canvas_mojo/text.mojo.
     var bytes = text.as_bytes()
     var n = len(bytes)
-    var buf = alloc[c_char](n + 1)
+    var buf = unsafe_alloc[c_char](n + 1)
     for i in range(n):
-        buf[i] = c_char(bytes[i])
-    buf[n] = c_char(0)
+        buf[unsafe_offset=i] = c_char(bytes[i])
+    buf[unsafe_offset=n] = c_char(0)
     return buf
 
 
-def _imm(ptr: UnsafePointer[c_char, MutExternalOrigin]) -> UnsafePointer[c_char, ImmutExternalOrigin]:
-    return ptr.unsafe_mut_cast[target_mut=False]().unsafe_origin_cast[ImmutExternalOrigin]()
+def _imm(ptr: Pointer[c_char, MutUntrackedOrigin]) -> Pointer[c_char, ImmUntrackedOrigin]:
+    return ptr.unsafe_mut_cast[target_mut=False]().unsafe_origin_cast[ImmUntrackedOrigin]()
 
 
 struct FreeTypeFace(Movable):
@@ -180,39 +181,39 @@ struct FreeTypeFace(Movable):
     introduces.
     """
 
-    var _library: UnsafePointer[_FT_LibraryRec, MutExternalOrigin]
-    var _face: UnsafePointer[_FT_FaceRec, MutExternalOrigin]
+    var _library: Pointer[_FT_LibraryRec, MutUntrackedOrigin]
+    var _face: Pointer[_FT_FaceRec, MutUntrackedOrigin]
 
     def __init__(out self, file_path: String) raises:
         var handle = _open_freetype_library()
 
-        var lib_ptr_out = alloc[UnsafePointer[_FT_LibraryRec, MutExternalOrigin]](1)
+        var lib_ptr_out = unsafe_alloc[Pointer[_FT_LibraryRec, MutUntrackedOrigin]](1)
         var init_err = handle.call[
             "FT_Init_FreeType",
             c_int,
-            UnsafePointer[UnsafePointer[_FT_LibraryRec, MutExternalOrigin], MutExternalOrigin],
+            Pointer[Pointer[_FT_LibraryRec, MutUntrackedOrigin], MutUntrackedOrigin],
         ](lib_ptr_out)
         if Int(init_err) != 0:
-            lib_ptr_out.free()
+            lib_ptr_out.unsafe_free()
             raise Error(String("FT_Init_FreeType failed with error code ", Int(init_err)))
         var library = lib_ptr_out[]
-        lib_ptr_out.free()
+        lib_ptr_out.unsafe_free()
 
         var path_buf = _c_string(file_path)
-        var face_ptr_out = alloc[UnsafePointer[_FT_FaceRec, MutExternalOrigin]](1)
+        var face_ptr_out = unsafe_alloc[Pointer[_FT_FaceRec, MutUntrackedOrigin]](1)
         var new_face_err = handle.call[
             "FT_New_Face",
             c_int,
-            UnsafePointer[_FT_LibraryRec, MutExternalOrigin],
-            UnsafePointer[c_char, ImmutExternalOrigin],
+            Pointer[_FT_LibraryRec, MutUntrackedOrigin],
+            Pointer[c_char, ImmUntrackedOrigin],
             c_long,
-            UnsafePointer[UnsafePointer[_FT_FaceRec, MutExternalOrigin], MutExternalOrigin],
+            Pointer[Pointer[_FT_FaceRec, MutUntrackedOrigin], MutUntrackedOrigin],
         ](library, _imm(path_buf), 0, face_ptr_out)
-        path_buf.free()
+        path_buf.unsafe_free()
         if Int(new_face_err) != 0:
-            face_ptr_out.free()
+            face_ptr_out.unsafe_free()
             _ = handle.call[
-                "FT_Done_FreeType", c_int, UnsafePointer[_FT_LibraryRec, MutExternalOrigin]
+                "FT_Done_FreeType", c_int, Pointer[_FT_LibraryRec, MutUntrackedOrigin]
             ](library)
             raise Error(
                 String(
@@ -225,16 +226,16 @@ struct FreeTypeFace(Movable):
 
         self._library = library
         self._face = face_ptr_out[]
-        face_ptr_out.free()
+        face_ptr_out.unsafe_free()
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         try:
             var handle = _open_freetype_library()
-            _ = handle.call["FT_Done_Face", c_int, UnsafePointer[_FT_FaceRec, MutExternalOrigin]](
+            _ = handle.call["FT_Done_Face", c_int, Pointer[_FT_FaceRec, MutUntrackedOrigin]](
                 self._face
             )
             _ = handle.call[
-                "FT_Done_FreeType", c_int, UnsafePointer[_FT_LibraryRec, MutExternalOrigin]
+                "FT_Done_FreeType", c_int, Pointer[_FT_LibraryRec, MutUntrackedOrigin]
             ](self._library)
         except:
             pass
@@ -260,14 +261,14 @@ struct FreeTypeFace(Movable):
         var err = handle.call[
             "FT_Set_Pixel_Sizes",
             c_int,
-            UnsafePointer[_FT_FaceRec, MutExternalOrigin],
+            Pointer[_FT_FaceRec, MutUntrackedOrigin],
             c_uint,
             c_uint,
         ](self._face, c_uint(0), c_uint(pixel_size))
         if Int(err) != 0:
             raise Error(String("FT_Set_Pixel_Sizes failed with error code ", Int(err)))
 
-    def unsafe_raw_face_ptr(self) -> UnsafePointer[_FT_FaceRec, MutExternalOrigin]:
+    def unsafe_raw_face_ptr(self) -> Pointer[_FT_FaceRec, MutUntrackedOrigin]:
         """Expose the raw `FT_Face` pointer for a caller (e.g.
         canvas_mojo/text.mojo) to hand to something else -- Cairo's own
         `cairo_ft_font_face_create_for_ft_face`, or a future native
