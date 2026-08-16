@@ -1,7 +1,8 @@
 """Demo: the full pipeline Transform2D exists for -- map a data
 coordinate through a transform, then call a primitive. Nothing here
-knows about "charts"; this is exactly the raw mechanism dataviz will
-build on, exercised directly with a small line-plus-markers plot.
+knows about "charts"; this is exactly the raw mechanism a charting
+layer built on top of this package would use, exercised directly with
+a small line-plus-markers plot.
 
 Note scale_y is negative: pixel-space y increases downward, but the
 data's y increases upward, so the transform flips it -- data point

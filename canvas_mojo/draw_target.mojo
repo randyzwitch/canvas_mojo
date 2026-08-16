@@ -1,26 +1,25 @@
-"""DrawTarget -- the minimal drawing-primitive interface `dataviz`
-renders through, so its Plot/Scale/Theme grammar layer can target
+"""DrawTarget -- the minimal drawing-primitive interface a higher-level
+charting/plotting layer can render through, so a chart-grammar (plot/
+scale/theme-style) layer built on top of this package can target
 either a raster `Canvas` or a vector `SvgCanvas` (or any future
-backend) without knowing which one it's drawing into -- see
-dataviz_mojo/ROADMAP.md's own entry for the concrete problem this solves
-(a vector backend has no fixed pixel resolution to get wrong in the
-first place, sidestepping the whole `Theme.scale`/`downsample()`
-supersampling story for anything rendered through it).
+backend) without knowing which one it's drawing into (a vector
+backend has no fixed pixel resolution to get wrong in the first
+place, sidestepping raster-only supersampling concerns for anything
+rendered through it).
 
-Deliberately narrow: exactly the *shape* primitives `dataviz_mojo/plot.mojo`
-actually calls today (`fill_rect`, `draw_line_aa`, `fill_circle_aa`,
+Deliberately narrow: exactly the *shape* primitives a chart-rendering
+core actually needs (`fill_rect`, `draw_line_aa`, `fill_circle_aa`,
 `fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa`,
 `fill_path_aa`), not `canvas_mojo.primitives`'s full surface -- no
 `draw_ellipse`, no `fill_polygon`, no gradients here; add them if and
 when something concrete needs them through this interface, matching
-this whole project's stance on speculative API surface elsewhere
-(`Plot`'s own channels, `Theme`'s own fields, all grew the same way).
+this whole project's stance on speculative API surface elsewhere.
 Every method's own parameters mirror the `canvas_mojo.primitives`/`canvas.
-path` function of the same name, trimmed to just the arguments
-`dataviz` actually passes explicitly (no `supersample`, `dashes`,
-`fill_rule` -- a raster `DrawTarget` implementation still gets to
-choose its own supersample factor internally; a vector one has no
-equivalent knob to expose at all).
+path` function of the same name, trimmed to just the arguments a
+generic chart-rendering caller would pass explicitly (no `supersample`,
+`dashes`, `fill_rule` -- a raster `DrawTarget` implementation still
+gets to choose its own supersample factor internally; a vector one has
+no equivalent knob to expose at all).
 
 Deliberately excludes text -- raster and vector backends draw it
 through fundamentally different mechanisms (`Canvas` rasterizes glyph
@@ -28,11 +27,11 @@ outlines to pixels via `fill_path_aa`; `SvgCanvas` emits `<text>`
 markup for the viewer's own font engine to render, never touching a
 glyph outline at all), so there's no single shared operation for this
 trait's six shape primitives to generalize over the way there is for
-`fill_rect`/`draw_line_aa`/etc. `dataviz/plot.mojo`'s generic rendering
-core collects text as a `List` of plain data (position, string, color,
-size, alignment) instead of drawing it inline through this trait, then
-each backend draws that list its own way, outside the generic path --
-see that module's own comments for exactly where.
+`fill_rect`/`draw_line_aa`/etc. A generic chart-rendering core built on
+top of this trait would instead collect text as a `List` of plain data
+(position, string, color, size, alignment) rather than drawing it
+inline through this trait, then have each backend draw that list its
+own way, outside the generic path.
 
 `canvas_mojo.text` used to depend on `cairo_mojo`, which was a second,
 compile-time reason this exclusion mattered (importing it required an

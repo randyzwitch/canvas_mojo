@@ -4,7 +4,7 @@ fill_rect_radial_gradient/fill_path_radial_gradient (RadialGradient)
 are the only gradient-aware fill entry points (see primitives.mojo/
 path.mojo), not every fill_* primitive retrofitted with a gradient
 variant. Narrower than that on purpose: these cover the concrete
-dataviz cases (bar/area fills, and radial ones like bubble/donut
+chart use cases (bar/area fills, and radial ones like bubble/donut
 centers or a radial legend swatch) this exists for; circle/ellipse/
 polygon gradient variants are easy to add later if something concrete
 needs one, not built speculatively now.
@@ -171,7 +171,7 @@ struct RadialGradient(Movable):
     can itself have a nonzero radius" gradient real vector graphics
     APIs (SVG, Cairo, HTML5 Canvas) also offer -- that generality
     exists mainly to fake a 3D-lit-sphere look via an off-center focal
-    point, not a dataviz need identified so far (bubble/donut centers
+    point, not a chart need identified so far (bubble/donut centers
     and radial legend swatches all want a plain concentric gradient).
     Easy to widen later if something concrete asks for it.
 

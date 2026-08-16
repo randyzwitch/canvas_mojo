@@ -56,10 +56,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
     six methods just below `fill` -- each a thin delegation to the
     matching free function in `canvas_mojo.primitives`/`canvas_mojo.path` (the
     exact functions every existing call site already calls directly,
-    e.g. `draw_line_aa(canvas, ...)`, unchanged) so `dataviz` can
-    render generically through a `Canvas` the same way it does through
-    an `SvgCanvas`. Free-function call sites keep working exactly as
-    before -- these methods are additive, not a replacement.
+    e.g. `draw_line_aa(canvas, ...)`, unchanged) so a caller can render
+    generically through a `Canvas` the same way it can through an
+    `SvgCanvas` (see `DrawTarget`, `canvas_mojo/draw_target.mojo`).
+    Free-function call sites keep working exactly as before -- these
+    methods are additive, not a replacement.
 
     Deliberately does *not* include a `draw_text` method (`DrawTarget`
     itself has none either -- see that trait's own docstring for the

@@ -11,9 +11,10 @@ shape, only the fill rule differs, to make the divergence obvious
 rather than needing two different shapes to compare.
 
 See fill_rule.mojo's own module docstring for why this matters for
-dataviz: overlapping regions (stacked/unioned areas, self-crossing
-paths from data with duplicate or looping segments) need NONZERO to
-render as one solid region rather than showing a spurious seam.
+chart rendering: overlapping regions (stacked/unioned areas, self-
+crossing paths from data with duplicate or looping segments) need
+NONZERO to render as one solid region rather than showing a spurious
+seam.
 
 Run with:
     pixi run example
