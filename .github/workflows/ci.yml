@@ -21,8 +21,23 @@ jobs:
       # glyph_outline.mojo) at runtime -- not bundled, not a pixi
       # dependency of this workspace, installed here explicitly rather
       # than assumed present on the runner image.
-      - name: Install libfontconfig and libfreetype
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 libfreetype6
+      #
+      # fonts-ubuntu is a real test dependency, not a cosmetic extra:
+      # test_font_discovery.mojo's char-constrained-resolution tests
+      # (canvas_mojo/tests/test_font_discovery.mojo) hard-code "the
+      # 'Ubuntu' font lacks a snowman glyph (U+2603) that 'DejaVu Sans'
+      # has" as their real, contrasting fallback case -- true on a
+      # desktop Ubuntu install (where that assumption was originally
+      # probe-confirmed), but not on this bare runner image, which
+      # ships libfontconfig/libfreetype (the *libraries*) without any
+      # actual "Ubuntu"-family font file. Without this package,
+      # `resolve_font_file("Ubuntu")` silently falls back to whatever
+      # default font fontconfig substitutes instead, collapsing the
+      # "falls back to a *different* font" assertion the test depends
+      # on -- confirmed as the exact, sole cause of a real CI failure
+      # (run 31965206350) before this fix, not a guess.
+      - name: Install libfontconfig, libfreetype, and test fonts
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 libfreetype6 fonts-ubuntu fonts-dejavu-core
 
       # Pinned to match the pixi version pixi.lock (v7 format) was
       # generated with locally -- an older pixi here would just hit the
