@@ -1,32 +1,34 @@
-"""Write a Canvas out as a PNG file -- stdlib-only, no zlib/libpng
-dependency, matching this whole workspace's approach to binary
-formats elsewhere (BMP here, TrueType/sfnt in the deleted `fonts/`
-package's history).
+"""Read and write PNG files -- stdlib-only, no zlib/libpng dependency,
+matching this whole workspace's approach to binary formats elsewhere
+(BMP here, TrueType/sfnt in the deleted `fonts/` package's history).
 
 PNG's image data is always wrapped in a zlib stream (RFC 1950), which
 in turn wraps a DEFLATE stream (RFC 1951) -- normally LZ77 + Huffman
-coding, real compression. This writer sidesteps implementing DEFLATE's
+coding, real compression. `write_png` sidesteps implementing DEFLATE's
 compression at all: RFC 1951 section 3.2.4 defines a "stored" block
 type (BTYPE=00) that copies bytes through uncompressed, a fully valid
 DEFLATE encoding any conforming decoder must accept, just a larger one
 than a compressed stream would be. That's an acceptable trade here --
 BMP already made the same call (uncompressed) for the same reason:
 "viewable, lossless, trivial to verify byte-by-byte" doesn't need
-small files, and this workspace has no compression library to lean on
-anyway. PNG earns its place alongside BMP despite that for one reason:
-unlike BMP, decent viewers actually preview it well, and it's the
-format someone downstream would expect to receive.
+small files. `read_png`, added later, has no such shortcut available
+to it -- a *reader* has to handle whatever real-world encoder actually
+produced the file, stored blocks or genuine LZ77+Huffman compression
+alike, so it depends on `canvas_mojo/io/deflate.mojo`'s own real
+DEFLATE decoder (see that module's own docstring for why that's
+translated from zlib's own reference decoder rather than re-derived,
+and how it's verified). PNG earns its place alongside BMP despite
+`write_png`'s own uncompressed-by-choice output for one reason: unlike
+BMP, decent viewers actually preview it well, and it's the format
+someone downstream would expect to receive -- or hand you.
 
 Two checksum algorithms, hand-rolled per their public specs
 (PNG spec Appendix D for CRC-32; RFC 1950 section 9 for Adler-32),
 each independently verified against zlib's own `crc32`/`adler32` on
-the same byte sequences before being trusted. Every byte of a written
-file was also round-tripped through a from-scratch PNG chunk parser
-(signature, IHDR, IDAT-as-zlib-stream, IEND -- not relying on any
-existing PNG/imaging library, matching how the CRC/Adler code was
-verified against the spec itself, not against a library that might
-hide the same bug this code could have), confirming the pixels decode
-back out exactly.
+the same byte sequences before being trusted. `read_png` verifies both
+checksums against every real file it reads too (chunk CRC-32s, and the
+decompressed data's own Adler-32 against the zlib trailer) -- not just
+trusting that decoding "worked" because it produced *some* output.
 
 Two byte orders in play, worth being explicit about since getting
 this wrong is a classic mistake: PNG's own chunk framing (length,
@@ -34,11 +36,32 @@ CRC-32) and the zlib wrapper's Adler-32 trailer are big-endian: but
 DEFLATE's stored-block LEN/NLEN fields are little-endian -- a real
 RFC 1951 detail, not a typo, confirmed against zlib's own output.
 
-Color type 2 (truecolor, no alpha), 8-bit depth: matches Canvas's own
-storage (RGB, no per-pixel alpha -- see buffer.mojo's docstring).
+`write_png` only ever emits color type 2 (truecolor, no alpha), 8-bit
+depth: matches Canvas's own storage (RGB, no per-pixel alpha -- see
+buffer.mojo's docstring). `read_png` accepts more of what real
+encoders actually produce -- color types 0/2/4/6 (grayscale,
+truecolor, grayscale+alpha, truecolor+alpha) at 8-bit depth, non-
+interlaced -- but not all of PNG's own full breadth: indexed/palette
+color (type 3), bit depths other than 8, and Adam7 interlacing all
+raise a clear, specific error rather than silently misreading pixels.
+That's a deliberate v1 scope, not an oversight: 8-bit RGB/RGBA/
+grayscale (with or without alpha), non-interlaced, is what the
+overwhelming majority of real-world PNGs (including every one this
+package's own `write_png` produces) actually are; the rest is real,
+addressable scope if a concrete file needs it, not attempted
+speculatively ahead of one. A PNG with an alpha channel loses that
+alpha on read -- `read_png` composites each pixel through `Canvas.
+set_pixel`'s own existing blend_over, same as every other draw
+operation, flattening onto the fresh canvas's own white background,
+because `Canvas` itself has no per-pixel alpha channel to preserve it
+in (see buffer.mojo's own docstring) -- this is that same, already-
+documented architectural fact showing up here, not a new limitation
+`read_png` introduces.
 """
 
 from canvas_mojo.buffer import Canvas
+from canvas_mojo.color import Color
+from canvas_mojo.io.deflate import inflate
 
 
 def _append_u16_le(mut buf: List[UInt8], value: UInt16):
@@ -207,3 +230,256 @@ def write_png(canvas: Canvas, path: String) raises:
     var f = open(path, "w")
     f.write_bytes(Span(file_buf))
     f.close()
+
+
+def _read_u32_be(data: List[UInt8], pos: Int) raises -> Int:
+    if pos + 4 > len(data):
+        raise Error("png: truncated file (expected a 4-byte big-endian value)")
+    return (Int(data[pos]) << 24) | (Int(data[pos + 1]) << 16) | (Int(data[pos + 2]) << 8) | Int(data[pos + 3])
+
+
+def _paeth_predictor(a: Int, b: Int, c: Int) -> Int:
+    """PNG spec section 9.4 -- picks whichever of the left (a), above
+    (b), or upper-left (c) neighbor is closest to `a + b - c`, in that
+    exact tie-breaking order (the spec is explicit that the comparison
+    order is load-bearing, not arbitrary).
+    """
+    var p = a + b - c
+    var pa = abs(p - a)
+    var pb = abs(p - b)
+    var pc = abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    elif pb <= pc:
+        return b
+    else:
+        return c
+
+
+def _bytes_per_pixel(color_type: Int) raises -> Int:
+    """8-bit-depth-only byte width per pixel, by color type -- see
+    this file's own module docstring for which color types `read_png`
+    actually accepts (0/2/4/6) and why (3, indexed/palette, is a real,
+    deliberately out-of-scope gap, not covered here).
+    """
+    if color_type == 0:
+        return 1  # grayscale
+    if color_type == 2:
+        return 3  # truecolor (RGB)
+    if color_type == 4:
+        return 2  # grayscale + alpha
+    if color_type == 6:
+        return 4  # truecolor + alpha (RGBA)
+    raise Error(String("png: unsupported color type ", color_type, " (only 0/2/4/6 at 8-bit depth are supported)"))
+
+
+def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) raises -> List[UInt8]:
+    """Reverses PNG's own per-scanline filtering (spec section 9) --
+    `raw` is `inflate`'s own output: one filter-type byte followed by
+    `width * bpp` filtered bytes, repeated `height` times. Reconstructs
+    each row using the row directly above it (already reconstructed,
+    never the still-filtered version) and the current row's own
+    already-reconstructed bytes to the left -- exactly the dependency
+    order the spec's own reconstruction formulas assume. Bytes "to the
+    left of" the first pixel, and the entire row above the first
+    scanline, are treated as zero (the spec's own stated convention),
+    not a special case this code has to detect separately -- `a`/`c`
+    default to 0 when `x < bpp`, and `prev_row` starts zeroed.
+    """
+    var row_bytes = width * bpp
+    var out = List[UInt8](capacity=height * row_bytes)
+    var prev_row = List[UInt8](capacity=row_bytes)
+    for _ in range(row_bytes):
+        prev_row.append(0)
+
+    var pos = 0
+    for _ in range(height):
+        if pos >= len(raw):
+            raise Error("png: truncated scanline data (fewer rows than IHDR's own height)")
+        var filter_type = Int(raw[pos])
+        pos += 1
+        if pos + row_bytes > len(raw):
+            raise Error("png: truncated scanline data (row cut short)")
+
+        var cur_row = List[UInt8](capacity=row_bytes)
+        for x in range(row_bytes):
+            var filt_x = Int(raw[pos + x])
+            var a = Int(cur_row[x - bpp]) if x >= bpp else 0
+            var b = Int(prev_row[x])
+            var c = Int(prev_row[x - bpp]) if x >= bpp else 0
+
+            var recon: Int
+            if filter_type == 0:
+                recon = filt_x
+            elif filter_type == 1:
+                recon = filt_x + a
+            elif filter_type == 2:
+                recon = filt_x + b
+            elif filter_type == 3:
+                recon = filt_x + (a + b) // 2
+            elif filter_type == 4:
+                recon = filt_x + _paeth_predictor(a, b, c)
+            else:
+                raise Error(String("png: invalid filter type ", filter_type))
+            cur_row.append(UInt8(recon & 0xFF))
+
+        pos += row_bytes
+        for b in cur_row:
+            out.append(b)
+        prev_row = cur_row^
+
+    return out^
+
+
+def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, color_type: Int) raises -> Canvas:
+    """Converts already-unfiltered scanline bytes into a Canvas,
+    compositing every pixel through `set_pixel`'s own existing
+    blend_over -- see this file's own module docstring for why a PNG
+    with an alpha channel loses it here (Canvas has no per-pixel alpha
+    of its own to preserve it in), not a gap specific to this function.
+    """
+    var canvas = Canvas(width, height)
+    var bpp = _bytes_per_pixel(color_type)
+    var row_bytes = width * bpp
+    for y in range(height):
+        var row_start = y * row_bytes
+        for x in range(width):
+            var px = row_start + x * bpp
+            var color: Color
+            if color_type == 0:
+                var gray = unfiltered[px]
+                color = Color(gray, gray, gray)
+            elif color_type == 2:
+                color = Color(unfiltered[px], unfiltered[px + 1], unfiltered[px + 2])
+            elif color_type == 4:
+                var gray = unfiltered[px]
+                color = Color(gray, gray, gray, unfiltered[px + 1])
+            else:  # 6 -- _bytes_per_pixel already rejected anything else
+                color = Color(unfiltered[px], unfiltered[px + 1], unfiltered[px + 2], unfiltered[px + 3])
+            canvas.set_pixel(x, y, color)
+    return canvas^
+
+
+def read_png(path: String) raises -> Canvas:
+    """Read a PNG file into a Canvas -- see this file's own module
+    docstring for exactly which PNGs this handles (8-bit depth,
+    color types 0/2/4/6, non-interlaced) and what it deliberately
+    doesn't (indexed color, other bit depths, Adam7 interlacing --
+    all raise a clear, specific error rather than misreading pixels).
+
+    Every chunk's CRC-32 is checked against the file's own trailing
+    4 bytes, and the fully-decompressed image data's Adler-32 is
+    checked against the zlib stream's own trailing 4 bytes -- a
+    corrupted or truncated file is rejected explicitly, not silently
+    misdecoded into a plausible-looking wrong image.
+    """
+    var f = open(path, "r")
+    var content = f.read_bytes()
+    f.close()
+    var data = List[UInt8](capacity=len(content))
+    for b in content:
+        data.append(b)
+
+    var signature: List[UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+    if len(data) < 8:
+        raise Error("png: file too short to contain a PNG signature")
+    for i in range(8):
+        if data[i] != signature[i]:
+            raise Error("png: missing PNG signature -- not a PNG file")
+
+    var crc_table = _crc32_table()
+
+    var width = 0
+    var height = 0
+    var color_type = -1
+    var have_ihdr = False
+    var idat = List[UInt8]()
+    var seen_iend = False
+
+    var pos = 8
+    while not seen_iend:
+        var length = _read_u32_be(data, pos)
+        pos += 4
+        if pos + 4 > len(data):
+            raise Error("png: truncated chunk header")
+        var type_bytes = List[UInt8](capacity=4)
+        for i in range(4):
+            type_bytes.append(data[pos + i])
+        var chunk_type = String()
+        for b in type_bytes:
+            chunk_type += chr(Int(b))
+        pos += 4
+
+        if pos + length + 4 > len(data):
+            raise Error(String("png: truncated '", chunk_type, "' chunk data"))
+
+        var type_and_data = List[UInt8](capacity=4 + length)
+        for b in type_bytes:
+            type_and_data.append(b)
+        for i in range(length):
+            type_and_data.append(data[pos + i])
+
+        var expected_crc = _read_u32_be(data, pos + length)
+        var actual_crc = Int(_crc32(type_and_data, crc_table))
+        if actual_crc != expected_crc:
+            raise Error(String("png: CRC-32 mismatch in '", chunk_type, "' chunk -- corrupted file"))
+
+        if chunk_type == "IHDR":
+            if length != 13:
+                raise Error("png: malformed IHDR chunk")
+            width = _read_u32_be(data, pos)
+            height = _read_u32_be(data, pos + 4)
+            var bit_depth = Int(data[pos + 8])
+            color_type = Int(data[pos + 9])
+            var compression_method = Int(data[pos + 10])
+            var filter_method = Int(data[pos + 11])
+            var interlace_method = Int(data[pos + 12])
+            if compression_method != 0:
+                raise Error("png: unsupported compression method (only method 0/deflate is supported)")
+            if filter_method != 0:
+                raise Error("png: unsupported filter method (only method 0 is supported)")
+            if interlace_method != 0:
+                raise Error("png: Adam7 interlacing is not supported")
+            if bit_depth != 8:
+                raise Error(String("png: unsupported bit depth ", bit_depth, " (only 8-bit depth is supported)"))
+            if width <= 0 or height <= 0:
+                raise Error("png: invalid image dimensions")
+            have_ihdr = True
+        elif chunk_type == "IDAT":
+            if not have_ihdr:
+                raise Error("png: IDAT chunk before IHDR")
+            for i in range(length):
+                idat.append(data[pos + i])
+        elif chunk_type == "IEND":
+            seen_iend = True
+        # Any other chunk type (PLTE, ancillary chunks like tEXt/pHYs/
+        # gAMA/...) is safely skipped -- read_png doesn't need them for
+        # any color type it supports (see this file's own module
+        # docstring: palette/indexed color is explicitly out of scope,
+        # so PLTE is never actually required here).
+
+        pos += length + 4
+
+    if not have_ihdr:
+        raise Error("png: missing IHDR chunk")
+    if len(idat) == 0:
+        raise Error("png: missing IDAT data")
+
+    # Strip the zlib wrapper (RFC 1950): 2-byte header, N bytes of raw
+    # DEFLATE data, 4-byte Adler-32 trailer.
+    if len(idat) < 6:
+        raise Error("png: IDAT data too short to be a valid zlib stream")
+    var deflate_data = List[UInt8](capacity=len(idat) - 6)
+    for i in range(2, len(idat) - 4):
+        deflate_data.append(idat[i])
+    var expected_adler = _read_u32_be(idat, len(idat) - 4)
+
+    var raw = inflate(deflate_data^)
+
+    var actual_adler = Int(_adler32(raw))
+    if actual_adler != expected_adler:
+        raise Error("png: Adler-32 mismatch after decompression -- corrupted file")
+
+    var bpp = _bytes_per_pixel(color_type)
+    var unfiltered = _unfilter_scanlines(raw, width, height, bpp)
+    return _canvas_from_scanlines(unfiltered, width, height, color_type)
