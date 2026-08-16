@@ -32,6 +32,7 @@ block, not yet wired into `draw_text`/`measure_text`.
 """
 
 from std.ffi import OwnedDLHandle, RTLD, c_char, c_int, c_uint
+from std.memory.alloc import unsafe_alloc
 from std.os import getenv
 from std.subprocess import run
 from std.sys.info import CompilationTarget
@@ -226,21 +227,21 @@ def _open_fontconfig_library() raises -> OwnedDLHandle:
 # not because this specific bug is confirmed present in fontconfig calls.
 
 
-def _c_string(text: String) -> UnsafePointer[c_char, MutExternalOrigin]:
+def _c_string(text: String) -> Pointer[c_char, MutUntrackedOrigin]:
     var bytes = text.as_bytes()
     var n = len(bytes)
-    var buf = alloc[c_char](n + 1)
+    var buf = unsafe_alloc[c_char](n + 1)
     for i in range(n):
-        buf[i] = c_char(bytes[i])
-    buf[n] = c_char(0)
+        buf[unsafe_offset=i] = c_char(bytes[i])
+    buf[unsafe_offset=n] = c_char(0)
     return buf
 
 
-def _string_from_c_string(ptr: UnsafePointer[c_char, ImmutExternalOrigin]) -> String:
+def _string_from_c_string(ptr: Pointer[c_char, ImmUntrackedOrigin]) -> String:
     """Read a NUL-terminated C string back into a Mojo String.
 
     Confirmed necessary, not assumed: `String(ptr)` for a raw
-    `UnsafePointer[c_char, ImmutExternalOrigin]` does NOT decode the
+    `Pointer[c_char, ImmUntrackedOrigin]` does NOT decode the
     pointee bytes in this Mojo version -- it formats the pointer's own
     address instead. Verified against cairo_mojo's own
     `cairo_version_string()` (a real, already-shipping `char*`-
@@ -250,7 +251,7 @@ def _string_from_c_string(ptr: UnsafePointer[c_char, ImmutExternalOrigin]) -> St
     var out = String()
     var i = 0
     while True:
-        var b = UInt8(ptr[i])
+        var b = UInt8(ptr[unsafe_offset=i])
         if b == 0:
             break
         out += chr(Int(b))
@@ -258,8 +259,8 @@ def _string_from_c_string(ptr: UnsafePointer[c_char, ImmutExternalOrigin]) -> St
     return out
 
 
-def _imm(ptr: UnsafePointer[c_char, MutExternalOrigin]) -> UnsafePointer[c_char, ImmutExternalOrigin]:
-    return ptr.unsafe_mut_cast[target_mut=False]().unsafe_origin_cast[ImmutExternalOrigin]()
+def _imm(ptr: Pointer[c_char, MutUntrackedOrigin]) -> Pointer[c_char, ImmUntrackedOrigin]:
+    return ptr.unsafe_mut_cast[target_mut=False]().unsafe_origin_cast[ImmUntrackedOrigin]()
 
 
 # --- Opaque fontconfig types -----------------------------------------------
@@ -358,41 +359,41 @@ def _resolve_font_file_impl(
     if Int(init_ok) == 0:
         raise Error("FcInit failed")
 
-    var config = handle.call["FcConfigGetCurrent", UnsafePointer[_FcConfig, MutExternalOrigin]]()
+    var config = handle.call["FcConfigGetCurrent", Pointer[_FcConfig, MutUntrackedOrigin]]()
 
-    var pattern = handle.call["FcPatternCreate", UnsafePointer[_FcPattern, MutExternalOrigin]]()
+    var pattern = handle.call["FcPatternCreate", Pointer[_FcPattern, MutUntrackedOrigin]]()
 
     var family_obj = _c_string("family")
     var family_val = _c_string(family)
     _ = handle.call[
         "FcPatternAddString",
         c_int,
-        UnsafePointer[_FcPattern, MutExternalOrigin],
-        UnsafePointer[c_char, ImmutExternalOrigin],
-        UnsafePointer[UInt8, ImmutExternalOrigin],
+        Pointer[_FcPattern, MutUntrackedOrigin],
+        Pointer[c_char, ImmUntrackedOrigin],
+        Pointer[UInt8, ImmUntrackedOrigin],
     ](pattern, _imm(family_obj), _imm(family_val).unsafe_bitcast[UInt8]())
-    family_obj.free()
-    family_val.free()
+    family_obj.unsafe_free()
+    family_val.unsafe_free()
 
     var slant_obj = _c_string("slant")
     _ = handle.call[
         "FcPatternAddInteger",
         c_int,
-        UnsafePointer[_FcPattern, MutExternalOrigin],
-        UnsafePointer[c_char, ImmutExternalOrigin],
+        Pointer[_FcPattern, MutUntrackedOrigin],
+        Pointer[c_char, ImmUntrackedOrigin],
         c_int,
     ](pattern, _imm(slant_obj), _fc_slant_value(slant))
-    slant_obj.free()
+    slant_obj.unsafe_free()
 
     var weight_obj = _c_string("weight")
     _ = handle.call[
         "FcPatternAddInteger",
         c_int,
-        UnsafePointer[_FcPattern, MutExternalOrigin],
-        UnsafePointer[c_char, ImmutExternalOrigin],
+        Pointer[_FcPattern, MutUntrackedOrigin],
+        Pointer[c_char, ImmUntrackedOrigin],
         c_int,
     ](pattern, _imm(weight_obj), _fc_weight_value(weight))
-    weight_obj.free()
+    weight_obj.unsafe_free()
 
     # Always create a real FcCharSet (cheap) rather than a conditionally-
     # initialized pointer variable -- only *attaching* it to the pattern
@@ -401,44 +402,44 @@ def _resolve_font_file_impl(
     # custom opaque struct type isn't straightforward here -- see
     # freetype_face.mojo's own history with this exact issue).
     var have_charset = char_constraint != -1
-    var charset = handle.call["FcCharSetCreate", UnsafePointer[_FcCharSet, MutExternalOrigin]]()
+    var charset = handle.call["FcCharSetCreate", Pointer[_FcCharSet, MutUntrackedOrigin]]()
     if have_charset:
         _ = handle.call[
-            "FcCharSetAddChar", c_int, UnsafePointer[_FcCharSet, MutExternalOrigin], c_uint
+            "FcCharSetAddChar", c_int, Pointer[_FcCharSet, MutUntrackedOrigin], c_uint
         ](charset, c_uint(char_constraint))
         var charset_obj = _c_string("charset")
         _ = handle.call[
             "FcPatternAddCharSet",
             c_int,
-            UnsafePointer[_FcPattern, MutExternalOrigin],
-            UnsafePointer[c_char, ImmutExternalOrigin],
-            UnsafePointer[_FcCharSet, MutExternalOrigin],
+            Pointer[_FcPattern, MutUntrackedOrigin],
+            Pointer[c_char, ImmUntrackedOrigin],
+            Pointer[_FcCharSet, MutUntrackedOrigin],
         ](pattern, _imm(charset_obj), charset)
-        charset_obj.free()
+        charset_obj.unsafe_free()
 
-    handle.call["FcDefaultSubstitute", NoneType, UnsafePointer[_FcPattern, MutExternalOrigin]](pattern)
+    handle.call["FcDefaultSubstitute", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]](pattern)
 
     _ = handle.call[
         "FcConfigSubstitute",
         c_int,
-        UnsafePointer[_FcConfig, MutExternalOrigin],
-        UnsafePointer[_FcPattern, MutExternalOrigin],
+        Pointer[_FcConfig, MutUntrackedOrigin],
+        Pointer[_FcPattern, MutUntrackedOrigin],
         c_int,
     ](config, pattern, _FC_MATCH_PATTERN)
 
-    var result_code = alloc[c_int](1)
+    var result_code = unsafe_alloc[c_int](1)
     var matched = handle.call[
         "FcFontMatch",
-        UnsafePointer[_FcPattern, MutExternalOrigin],
-        UnsafePointer[_FcConfig, MutExternalOrigin],
-        UnsafePointer[_FcPattern, MutExternalOrigin],
-        UnsafePointer[c_int, MutExternalOrigin],
+        Pointer[_FcPattern, MutUntrackedOrigin],
+        Pointer[_FcConfig, MutUntrackedOrigin],
+        Pointer[_FcPattern, MutUntrackedOrigin],
+        Pointer[c_int, MutUntrackedOrigin],
     ](config, pattern, result_code)
     var match_result = result_code[]
-    result_code.free()
+    result_code.unsafe_free()
 
-    handle.call["FcPatternDestroy", NoneType, UnsafePointer[_FcPattern, MutExternalOrigin]](pattern)
-    handle.call["FcCharSetDestroy", NoneType, UnsafePointer[_FcCharSet, MutExternalOrigin]](charset)
+    handle.call["FcPatternDestroy", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]](pattern)
+    handle.call["FcCharSetDestroy", NoneType, Pointer[_FcCharSet, MutUntrackedOrigin]](charset)
 
     if Int(match_result) != Int(_FC_RESULT_MATCH):
         raise Error(
@@ -446,23 +447,23 @@ def _resolve_font_file_impl(
         )
 
     var file_obj = _c_string("file")
-    var file_ptr_out = alloc[UnsafePointer[c_char, ImmutExternalOrigin]](1)
+    var file_ptr_out = unsafe_alloc[Pointer[c_char, ImmUntrackedOrigin]](1)
     var get_result = handle.call[
         "FcPatternGetString",
         c_int,
-        UnsafePointer[_FcPattern, MutExternalOrigin],
-        UnsafePointer[c_char, ImmutExternalOrigin],
+        Pointer[_FcPattern, MutUntrackedOrigin],
+        Pointer[c_char, ImmUntrackedOrigin],
         c_int,
-        UnsafePointer[UnsafePointer[c_char, ImmutExternalOrigin], MutExternalOrigin],
+        Pointer[Pointer[c_char, ImmUntrackedOrigin], MutUntrackedOrigin],
     ](matched, _imm(file_obj), 0, file_ptr_out)
-    file_obj.free()
+    file_obj.unsafe_free()
 
     var resolved_path = String()
     if Int(get_result) == Int(_FC_RESULT_MATCH):
         resolved_path = _string_from_c_string(file_ptr_out[])
-    file_ptr_out.free()
+    file_ptr_out.unsafe_free()
 
-    handle.call["FcPatternDestroy", NoneType, UnsafePointer[_FcPattern, MutExternalOrigin]](matched)
+    handle.call["FcPatternDestroy", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]](matched)
 
     if resolved_path == "":
         raise Error(
