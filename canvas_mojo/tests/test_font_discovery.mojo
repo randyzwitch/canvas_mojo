@@ -14,12 +14,17 @@ The BOLD-differs-from-NORMAL assertion is a real, probe-confirmed fact
 about this machine's fonts (DejaVu Sans ships separate Regular/Bold
 files), not a cross-platform guarantee -- if it ever starts failing on
 a different CI image, that's a real environment difference to look at,
-not a flaky test to loosen.
+not a flaky test to loosen. The char-constrained-resolution tests rely
+on a second machine-specific fact, also probe-confirmed: the "Ubuntu"
+font lacks a snowman glyph (U+2603) that "DejaVu Sans" has -- if a
+future CI image's Ubuntu font gains that glyph, the "falls back"
+assertion would need a different missing-character example, not a
+sign the fallback mechanism itself broke.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.font_discovery import FontSlant, FontWeight, resolve_font_file
+from canvas_mojo.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
 
 
 def _looks_like_a_font_file(path: String) -> Bool:
@@ -87,6 +92,38 @@ def test_font_slant_equality() raises:
 def test_font_weight_equality() raises:
     assert_true(FontWeight.NORMAL == FontWeight.NORMAL)
     assert_true(not (FontWeight.NORMAL == FontWeight.BOLD))
+
+
+def test_char_constrained_resolution_falls_back_to_a_font_that_has_the_glyph() raises:
+    # Real, contrasting fallback confirmed via probe on this machine
+    # specifically (see this file's own docstring on why that's safe
+    # to assert here): "Ubuntu" (the font, not the OS) has no snowman
+    # glyph (U+2603), but "DejaVu Sans" does -- requesting the Ubuntu
+    # family constrained to that one character must fall back to a
+    # font that actually has it, not just return Ubuntu's own file
+    # regardless of the constraint.
+    var fallback_path = resolve_font_file_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603)
+    var plain_ubuntu_path = resolve_font_file("Ubuntu")
+    assert_true(not (fallback_path == plain_ubuntu_path))
+    assert_true(_looks_like_a_font_file(fallback_path))
+
+
+def test_char_constrained_resolution_is_a_noop_when_the_family_already_has_it() raises:
+    # 'A' -- Ubuntu's own font has this already, so the charset
+    # constraint shouldn't change anything.
+    var constrained_path = resolve_font_file_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x41)
+    var plain_path = resolve_font_file("Ubuntu")
+    assert_equal(constrained_path, plain_path)
+
+
+def test_char_constrained_resolution_degrades_gracefully_with_no_real_match() raises:
+    # Confirmed via probe: with no CJK font installed anywhere on this
+    # machine, fontconfig's own default-substitution still returns a
+    # real font file (its best-effort guess), not an error -- this
+    # must not raise just because no installed font actually has the
+    # requested character.
+    var path = resolve_font_file_for_char("Sans", FontSlant.NORMAL, FontWeight.NORMAL, 0x4E2D)
+    assert_true(_looks_like_a_font_file(path))
 
 
 def main() raises:

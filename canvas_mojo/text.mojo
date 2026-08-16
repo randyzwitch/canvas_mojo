@@ -55,6 +55,26 @@ gets correct ordering and mirroring but not contextual letter-shaping
 deliberately simplified relative to the full Unicode Bidirectional
 Algorithm.
 
+Every glyph also goes through font *fallback*, not just the single
+family the caller requested (`_resolve_glyph`): if the requested
+family's face has no real glyph for a codepoint (`glyph_outline.
+has_glyph` -- distinguishing an actual glyph from FreeType's own
+".notdef" placeholder), a different font is resolved for that one
+character via `font_discovery.resolve_font_file_for_char`, which
+constrains fontconfig's own match to a font that actually contains
+it -- the same real fallback mechanism system text stacks already
+rely on, not a hand-rolled substitute. This matters concretely for a
+package with no bundled fonts of its own: a CJK/Cyrillic/symbol
+character requested under a Latin-only family renders via whatever
+font on the system actually has it, if one is installed, instead of
+FreeType's own generic empty-box placeholder -- confirmed directly via
+probe (a font missing a glyph falls back to one that has it; a font
+that already has the glyph is left alone; a character genuinely
+missing from every installed font degrades gracefully to fontconfig's
+own best-effort match, not an error). No caching of resolved fallback
+faces across calls -- see _resolve_glyph's own docstring for why
+that's a deliberate simplification, not an oversight.
+
 Public FontSlant/FontWeight (re-exported here from font_discovery.mojo)
 replace what used to be cairo_mojo's own identically-shaped types --
 same NORMAL/ITALIC/OBLIQUE and NORMAL/BOLD values, just no longer
@@ -71,9 +91,9 @@ from std.math import ceil, cos, sin
 from canvas_mojo.bidi import detect_base_level, visual_order
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
-from canvas_mojo.font_discovery import FontSlant, FontWeight, resolve_font_file
+from canvas_mojo.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
 from canvas_mojo.freetype_face import FreeTypeFace
-from canvas_mojo.glyph_outline import face_line_metrics, glyph_metrics, glyph_path
+from canvas_mojo.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph, GlyphMetrics
 from canvas_mojo.path import (
     fill_path_aa,
     FPoint,
@@ -244,13 +264,73 @@ def _visual_codepoints(line_text: String) -> List[Int]:
     return visual_order(codepoints, base_level)
 
 
-def _measure_line(mut face: FreeTypeFace, line_text: String) raises -> _LineMetrics:
+struct _PositionedGlyph(Movable):
+    """One glyph's own metrics plus its outline, already positioned at
+    the (pen_x, pen_y) it was resolved for -- see _resolve_glyph's own
+    docstring for why these two are bundled into one result instead of
+    two separate calls at each call site.
+    """
+
+    var metrics: GlyphMetrics
+    var path: Path
+
+    def __init__(out self, var metrics: GlyphMetrics, var path: Path):
+        self.metrics = metrics^
+        self.path = path^
+
+
+def _resolve_glyph(
+    mut primary: FreeTypeFace,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    size: Float64,
+    codepoint: Int,
+    pen_x: Float64,
+    pen_y: Float64,
+) raises -> _PositionedGlyph:
+    """This one character's metrics and outline, from `primary` if it
+    actually has a glyph for `codepoint`, or from a freshly resolved
+    and loaded fallback font otherwise (`font_discovery.
+    resolve_font_file_for_char` -- see that function's own docstring
+    for how fontconfig's own charset-aware matching picks a font that
+    actually contains the character, e.g. CJK text requested under a
+    Latin-only family). No caching of resolved fallback faces across
+    calls -- each fallback glyph re-resolves and re-loads its own font
+    fresh, a deliberate simplification (correctness first, matching
+    this package's own established "don't reach for a performance path
+    before profiling says it's needed" stance -- see the wiki's
+    UnsafePointer-backed-buffer entry for the same reasoning applied
+    elsewhere) rather than a caching layer built ahead of a concrete
+    need.
+
+    Metrics and outline are resolved together, from the same face, in
+    one call -- not two separate has_glyph-gated calls at each of this
+    module's own two glyph-walking sites (_measure_line, draw_text's
+    render pass) -- so they can never disagree about which face's data
+    they came from.
+    """
+    if has_glyph(primary, codepoint):
+        return _PositionedGlyph(glyph_metrics(primary, codepoint), glyph_path(primary, codepoint, pen_x, pen_y))
+
+    var fallback_path = resolve_font_file_for_char(family, slant, weight, codepoint)
+    var fallback = FreeTypeFace(fallback_path)
+    fallback.set_pixel_size(Int(ceil(size)))
+    return _PositionedGlyph(glyph_metrics(fallback, codepoint), glyph_path(fallback, codepoint, pen_x, pen_y))
+
+
+def _measure_line(
+    mut face: FreeTypeFace, line_text: String, family: String, slant: FontSlant, weight: FontWeight, size: Float64
+) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
     all zero for a blank/whitespace-only line) and total advance,
     native equivalent of Cairo's own `text_extents()` -- walks every
     Unicode codepoint (in bidi visual order -- see _visual_codepoints),
     accumulating each glyph's own advance and combining every glyph
-    that actually has ink into one tight bbox.
+    that actually has ink into one tight bbox. `family`/`slant`/
+    `weight`/`size` are only needed for _resolve_glyph's own font-
+    fallback lookup (see its own docstring) -- `face` itself already
+    determines everything else.
     """
     var pen_x = 0.0
     var min_x = 1.0e18
@@ -259,7 +339,7 @@ def _measure_line(mut face: FreeTypeFace, line_text: String) raises -> _LineMetr
     var max_y = -1.0e18
     var any_ink = False
     for cp in _visual_codepoints(line_text):
-        var gm = glyph_metrics(face, Int(cp))
+        var gm = _resolve_glyph(face, family, slant, weight, size, Int(cp), pen_x, 0.0).metrics
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
             var right = left + gm.width
@@ -314,7 +394,7 @@ def _layout_block(
     var any_ink = False
     for i in range(len(raw_lines)):
         var line_text = String(raw_lines[i])
-        var measured = _measure_line(face, line_text)
+        var measured = _measure_line(face, line_text, family, slant, weight, size)
         var baseline_y = Float64(i) * line_height
         var x_offset = 0.0
         if align == TextAlign.CENTER:
@@ -383,7 +463,7 @@ def measure_text(
     internally via _measure_line.
     """
     var face = _load_sized_face(family, slant, weight, size)
-    var measured = _measure_line(face, text)
+    var measured = _measure_line(face, text, family, slant, weight, size)
     return TextMetrics(measured.width, measured.height, measured.advance)
 
 
@@ -569,9 +649,8 @@ def draw_text(
             continue
         var pen_x = line.x
         for codepoint in _visual_codepoints(line.text):
-            var gm = glyph_metrics(face, codepoint)
-            if gm.width > 0.0 and gm.height > 0.0:
-                var local_path = glyph_path(face, codepoint, pen_x, line.y)
-                var placed = _place_glyph_path(local_path, c, s, anchor_x, anchor_y)
+            var g = _resolve_glyph(face, family, slant, weight, size, codepoint, pen_x, line.y)
+            if g.metrics.width > 0.0 and g.metrics.height > 0.0:
+                var placed = _place_glyph_path(g.path, c, s, anchor_x, anchor_y)
                 fill_path_aa(canvas, placed, color)
-            pen_x += gm.advance
+            pen_x += g.metrics.advance

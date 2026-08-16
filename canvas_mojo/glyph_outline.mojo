@@ -278,6 +278,25 @@ struct GlyphMetrics(ImplicitlyCopyable, Movable):
         self.height = height
 
 
+def has_glyph(mut face: FreeTypeFace, codepoint: Int) raises -> Bool:
+    """Whether `face` has a real glyph for `codepoint` -- glyph index
+    0 is FreeType's own universal ".notdef" placeholder (confirmed
+    directly, not assumed: 'A' against DejaVu Sans returns a real
+    index, a CJK character against the same face returns exactly 0).
+    Checked via `FT_Get_Char_Index` alone, without `FT_Load_Glyph` --
+    cheaper than `glyph_metrics`/`glyph_path` for a caller (`text.mojo`'s
+    own font-fallback logic) that just needs to know whether to keep
+    using this face or resolve a different one for this character,
+    not load the glyph itself.
+    """
+    var handle = _open_freetype_library()
+    var full = _as_full(face)
+    var glyph_index = handle.call[
+        "FT_Get_Char_Index", c_uint, UnsafePointer[_FT_FaceRec_full, MutExternalOrigin], c_long
+    ](full, c_long(codepoint))
+    return Int(glyph_index) != 0
+
+
 def _load_glyph(mut face: FreeTypeFace, codepoint: Int) raises -> UnsafePointer[FT_GlyphSlotRec, MutExternalOrigin]:
     """`FT_Get_Char_Index` (Unicode codepoint -> glyph index, via this
     face's own cmap, set to Unicode by FT_New_Face automatically when
