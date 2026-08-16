@@ -5,8 +5,9 @@ scanline algorithm -- an SVG renderer (a browser, an image viewer, a
 PDF exporter) does all of that itself, at whatever resolution it's
 displayed at, which is the entire point: content drawn through this
 has no fixed pixel size to get wrong the way `canvas_mojo.Canvas`'s raster
-output can (see dataviz_mojo/ROADMAP.md's own `Theme.scale`/`downsample()`
-entries for the raster-only problem this sidesteps).
+output can (a raster target has to pick a resolution and can blur or
+alias when scaled after the fact; a vector target sidesteps that
+entirely).
 
 Deliberately minimal, matching `DrawTarget`'s own six methods one for
 one -- this is not a general-purpose SVG builder (no gradients, no
@@ -61,11 +62,12 @@ def _format_svg_float(value: Float64) -> String:
     values are the same point to any real display. Rounding to a
     fixed, coarse decimal precision (millipixels -- far finer than any
     real display needs) makes the two collapse to the identical
-    string, the same fix `dataviz_mojo/scale.mojo`'s own `_format_fixed`
-    uses for tick labels for an unrelated reason (there, `String
-    (Float64)`'s own drift, like `0.1 + 0.2` printing extra trailing
-    digits) -- duplicated here rather than imported, since `canvas`
-    doesn't depend on `dataviz` (the dependency runs the other way).
+    string -- the same fixed-precision-rounding fix works for any
+    caller hitting `String(Float64)`'s own drift (e.g. `0.1 + 0.2`
+    printing extra trailing digits) for tick-label formatting or
+    similar, but isn't factored out to be shared with a caller here:
+    this package has no downstream dependents of its own to share code
+    with (the dependency, if any exists, only ever runs the other way).
     """
     var scale = 1000.0  # 10 ** _SVG_DECIMALS
     var scaled = _round_to_int(value * scale)
@@ -351,10 +353,11 @@ struct SvgCanvas(DrawTarget, Movable):
         rotation: Float64 = 0.0,
     ):
         """Not part of `DrawTarget` (see that trait's own docstring
-        for why text is excluded) -- called directly by `dataviz_mojo.plot.
-        render_svg()` once it already knows it's holding an
-        `SvgCanvas`, the same way `canvas_mojo.text.draw_text` is called
-        directly by `render()` once it knows it's holding a `Canvas`.
+        for why text is excluded) -- meant to be called directly by a
+        caller's own SVG-rendering path once it already knows it's
+        holding an `SvgCanvas`, the same way `canvas_mojo.text.draw_text`
+        would be called directly by a raster-rendering path once it
+        knows it's holding a `Canvas`.
 
         `(x, y)` is the text baseline anchor, matching `canvas_mojo.text.
         draw_text`'s own convention exactly -- SVG `<text>` already

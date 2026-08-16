@@ -43,10 +43,11 @@ struct Transform2D(ImplicitlyCopyable, Movable):
     Deliberately minimal beyond that one fixed pipeline: no general
     matrix composition, and no "map this data range onto this pixel
     range" convenience constructor. That domain/range awareness
-    belongs one layer up, in dataviz's eventual scale types
-    (LinearScale and friends), which will compute a Transform2D's
-    scale/translate from a domain and a range; this type only knows
-    the raw affine math, matching canvas's low-level "no hidden state,
+    belongs one layer up, in whatever scale types a higher-level
+    charting layer eventually provides (a linear scale and friends),
+    which would compute a Transform2D's scale/translate from a domain
+    and a range; this type only knows the raw affine math, matching
+    canvas's low-level "no hidden state,
     no chart concepts" scope.
 
     scale_y is commonly negative in practice: pixel-space y increases
