@@ -11,7 +11,7 @@ category as libcairo/libfontconfig already are).
 This module only *loads* a face -- it doesn't read glyph outlines,
 metrics, or do any hinting. `FreeTypeFace` exposes the raw `FT_Face`
 pointer (`unsafe_raw_face_ptr`) specifically so a caller can hand it to
-something else that does -- today that's `canvas_mojo/text.mojo`,
+something else that does -- today that's `canvas_mojo/text/render.mojo`,
 which passes it to Cairo's own `cairo_ft_font_face_create_for_ft_face`
 so Cairo renders using a face this package resolved and loaded itself,
 bypassing Cairo's internal fontconfig lookup. A future native glyph-
@@ -155,7 +155,7 @@ def _c_string(text: String) -> Pointer[c_char, MutUntrackedOrigin]:
     # Duplicated from font_discovery.mojo's own _c_string -- same
     # "stay independent, don't import across these small FFI modules
     # just to save a few lines" reasoning as font_discovery.mojo's own
-    # docstring gives for duplicating it from canvas_mojo/text.mojo.
+    # docstring gives for duplicating it from canvas_mojo/text/render.mojo.
     var bytes = text.as_bytes()
     var n = len(bytes)
     var buf = unsafe_alloc[c_char](n + 1)
@@ -270,7 +270,7 @@ struct FreeTypeFace(Movable):
 
     def unsafe_raw_face_ptr(self) -> Pointer[_FT_FaceRec, MutUntrackedOrigin]:
         """Expose the raw `FT_Face` pointer for a caller (e.g.
-        canvas_mojo/text.mojo) to hand to something else -- Cairo's own
+        canvas_mojo/text/render.mojo) to hand to something else -- Cairo's own
         `cairo_ft_font_face_create_for_ft_face`, or a future native
         glyph-outline reader. Borrowed, not transferred: `self` still
         owns and will free it in `__del__`, so the caller must keep

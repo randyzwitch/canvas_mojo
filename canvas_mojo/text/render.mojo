@@ -80,20 +80,20 @@ replace what used to be cairo_mojo's own identically-shaped types --
 same NORMAL/ITALIC/OBLIQUE and NORMAL/BOLD values, just no longer
 imported from a third-party binding. Any existing call site that did
 `from cairo_mojo import FontSlant, FontWeight` needs to switch to
-`from canvas_mojo.font_discovery import FontSlant, FontWeight` (or
-`from canvas_mojo.text import FontSlant, FontWeight` -- both work, the
+`from canvas_mojo.text.font_discovery import FontSlant, FontWeight` (or
+`from canvas_mojo.text.render import FontSlant, FontWeight` -- both work, the
 same re-export convenience TextAlign's own docstring already
 established for its move into text_align.mojo).
 """
 
 from std.math import ceil, cos, sin
 
-from canvas_mojo.bidi import detect_base_level, visual_order
+from canvas_mojo.text.bidi import detect_base_level, visual_order
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
-from canvas_mojo.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
-from canvas_mojo.freetype_face import FreeTypeFace
-from canvas_mojo.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph, GlyphMetrics
+from canvas_mojo.text.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
+from canvas_mojo.text.freetype_face import FreeTypeFace
+from canvas_mojo.text.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph, GlyphMetrics
 from canvas_mojo.path import (
     fill_path_aa,
     FPoint,
@@ -104,7 +104,7 @@ from canvas_mojo.path import (
     _MOVE_TO,
     _QUAD_TO,
 )
-from canvas_mojo.text_align import TextAlign
+from canvas_mojo.text.text_align import TextAlign
 
 
 struct TextMetrics(ImplicitlyCopyable, Movable):

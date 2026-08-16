@@ -1,7 +1,7 @@
 """The pixel raster buffer at the core of the canvas package."""
 
 from canvas_mojo.color import Color
-from canvas_mojo.draw_target import DrawTarget
+from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.path import Path, fill_path_aa, stroke_path_aa
 from canvas_mojo.primitives import (
     draw_line_aa,
@@ -58,7 +58,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     exact functions every existing call site already calls directly,
     e.g. `draw_line_aa(canvas, ...)`, unchanged) so a caller can render
     generically through a `Canvas` the same way it can through an
-    `SvgCanvas` (see `DrawTarget`, `canvas_mojo/draw_target.mojo`).
+    `SvgCanvas` (see `DrawTarget`, `canvas_mojo/vector/draw_target.mojo`).
     Free-function call sites keep working exactly as before -- these
     methods are additive, not a replacement.
 

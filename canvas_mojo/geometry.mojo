@@ -69,7 +69,8 @@ struct Transform2D(ImplicitlyCopyable, Movable):
     This is a different feature from rotating a single rendered
     primitive (e.g. an angled axis-tick label) around its own anchor
     point -- that's draw_text's own `rotation` parameter (see
-    text.mojo), unrelated to this data-to-pixel mapping. This type's
+    canvas_mojo/text/render.mojo), unrelated to this data-to-pixel
+    mapping. This type's
     rotation tilts the whole coordinate frame every data point passes
     through, useful for a rotated plot layout generally, not for
     angling one label while keeping everything else upright.

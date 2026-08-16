@@ -11,8 +11,8 @@ from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas_mojo.color import Color
 from canvas_mojo.path import Path
-from canvas_mojo.svg import SvgCanvas
-from canvas_mojo.text_align import TextAlign
+from canvas_mojo.vector.svg import SvgCanvas
+from canvas_mojo.text.text_align import TextAlign
 
 
 def test_fill_rect_emits_expected_rect_element() raises:

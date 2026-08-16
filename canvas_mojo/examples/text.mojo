@@ -1,6 +1,6 @@
 """Demo: draw_text() rendering real system-font text -- font matching
 via fontconfig, glyph outlines/metrics via FreeType, rasterization via
-this package's own fill_path_aa (see canvas_mojo/text.mojo's module
+this package's own fill_path_aa (see canvas_mojo/text/render.mojo's module
 docstring) -- composited onto a Canvas the same way every other
 primitive is: through set_pixel.
 
@@ -10,11 +10,11 @@ Run with:
 
 from std.math import pi
 
-from canvas_mojo.font_discovery import FontSlant, FontWeight
+from canvas_mojo.text.font_discovery import FontSlant, FontWeight
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.text import draw_text, measure_text_block, TextAlign
+from canvas_mojo.text.render import draw_text, measure_text_block, TextAlign
 from canvas_mojo.primitives import draw_rect
 from canvas_mojo.io.bmp import write_bmp
 
@@ -97,7 +97,7 @@ def main() raises:
     draw_text(c, 580, 500, "مرحبا بالعالم", Color(20, 24, 32), 24.0, align=TextAlign.RIGHT)
     draw_text(c, 20, 530, "mixed: Hello שלום World", Color(60, 70, 90), 22.0)
 
-    # Font fallback (text.mojo's own _resolve_glyph, via font_discovery.
+    # Font fallback (render.mojo's own _resolve_glyph, via font_discovery.
     # resolve_font_file_for_char): the requested family here ("Ubuntu")
     # has no snowman glyph of its own -- fontconfig resolves a
     # different installed font for that one character instead of

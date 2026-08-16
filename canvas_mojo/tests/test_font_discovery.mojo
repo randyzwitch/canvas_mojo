@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/font_discovery.mojo.
+"""Tests for canvas_mojo/text/font_discovery.mojo.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- the same real-machine dependency canvas_mojo/tests/
@@ -31,7 +31,7 @@ failure hit once on CI, see .github/workflows/ci.yml's own
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
+from canvas_mojo.text.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
 
 
 def _looks_like_a_font_file(path: String) -> Bool:

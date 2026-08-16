@@ -11,11 +11,13 @@ Please note that this is heavily Claude-influenced, so I do not guarantee consis
 ## Status
 
 Stdlib-only, plus two small direct FFI dependencies on system
-libraries `canvas_mojo/text.mojo` links against for real system-font
-text rendering: `libfontconfig` (font matching — `font_discovery.mojo`)
-and `libfreetype` (glyph outlines/metrics/hinting — `freetype_face.mojo`,
-`glyph_outline.mojo`). Both are typical, near-universally-installed
-system libraries, not new requirements this package introduces.
+libraries `canvas_mojo/text/render.mojo` links against for real
+system-font text rendering: `libfontconfig` (font matching —
+`canvas_mojo/text/font_discovery.mojo`) and `libfreetype` (glyph
+outlines/metrics/hinting — `canvas_mojo/text/freetype_face.mojo`,
+`canvas_mojo/text/glyph_outline.mojo`). Both are typical,
+near-universally-installed system libraries, not new requirements
+this package introduces.
 Rasterization is this package's own `fill_path_aa` — no third-party
 rendering engine (i.e. Cairo) anywhere in the pipeline.
 

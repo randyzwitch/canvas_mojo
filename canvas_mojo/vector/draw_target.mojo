@@ -48,7 +48,7 @@ this exclusion on its own.
 
 Conformance is nominal, not structural (Mojo's own trait rule, not a
 choice made here) -- `Canvas` (`canvas_mojo/buffer.mojo`) and `SvgCanvas`
-(`canvas_mojo/svg.mojo`) each explicitly declare `DrawTarget` in their own
+(`canvas_mojo/vector/svg.mojo`) each explicitly declare `DrawTarget` in their own
 struct signature.
 """
 
