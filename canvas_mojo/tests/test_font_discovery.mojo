@@ -19,7 +19,14 @@ on a second machine-specific fact, also probe-confirmed: the "Ubuntu"
 font lacks a snowman glyph (U+2603) that "DejaVu Sans" has -- if a
 future CI image's Ubuntu font gains that glyph, the "falls back"
 assertion would need a different missing-character example, not a
-sign the fallback mechanism itself broke.
+sign the fallback mechanism itself broke. This needs the "Ubuntu" font
+family actually installed (not just fontconfig/freetype's own runtime
+libraries) to be meaningful at all -- without it, "Ubuntu" silently
+resolves to whatever fontconfig substitutes instead, which can
+collapse the "falls back to a different font" assertion for reasons
+that have nothing to do with the fallback code under test (a real
+failure hit once on CI, see .github/workflows/ci.yml's own
+`fonts-ubuntu` install step and its comment for the full story).
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
