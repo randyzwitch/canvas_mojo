@@ -40,7 +40,7 @@ setting a context-wide transform before drawing. With one line and
 rotation=0.0, cos=1/sin=0 leaves every point unchanged, so this
 reduces exactly to what a simpler single-purpose implementation would
 have done -- confirmed by direct comparison, not just argued (see
-canvas_mojo/tests/test_text.mojo).
+tests/test_text.mojo).
 
 Each line's own codepoints go through `bidi.visual_order` before
 either measurement or drawing ever sees them (`_visual_codepoints`,
@@ -255,7 +255,7 @@ def _visual_codepoints(line_text: String) -> List[Int]:
     line's own bidi.visual_order call is a no-op (every codepoint
     stays at the same even level, so `_reorder_indices` never
     reverses anything) -- confirmed directly, not just argued (see
-    canvas_mojo/tests/test_bidi.mojo).
+    tests/test_bidi.mojo).
     """
     var codepoints = List[Int](capacity=line_text.byte_length())
     for cp in line_text.codepoints():

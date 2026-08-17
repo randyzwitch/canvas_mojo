@@ -33,5 +33,5 @@ def main() raises:
     zigzag_aa.append(Point(200, 340))
     draw_polyline_aa(c, zigzag_aa, Color(210, 130, 20))
 
-    write_bmp(c, "canvas_mojo/examples/out_polyline.bmp")
-    print("wrote canvas_mojo/examples/out_polyline.bmp")
+    write_bmp(c, "examples/out_polyline.bmp")
+    print("wrote examples/out_polyline.bmp")

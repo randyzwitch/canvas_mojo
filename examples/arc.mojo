@@ -46,5 +46,5 @@ def main() raises:
     fill_ring_sector_aa(c, donut_cx, donut_cy, 50.0, 95.0, -pi / 2.0, pi / 2.0, Color(230, 150, 40))
     fill_ring_sector_aa(c, donut_cx, donut_cy, 50.0, 95.0, pi / 2.0, 3.0 * pi / 2.0, Color(60, 130, 190))
 
-    write_bmp(c, "canvas_mojo/examples/out_arc.bmp")
-    print("wrote canvas_mojo/examples/out_arc.bmp")
+    write_bmp(c, "examples/out_arc.bmp")
+    print("wrote examples/out_arc.bmp")

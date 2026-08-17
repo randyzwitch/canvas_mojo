@@ -282,7 +282,7 @@ struct SvgCanvas(DrawTarget, Movable):
         describes for the raster path, expressed as two SVG arc
         commands instead of two point-sampled polylines. Hand-derived
         (and cross-checked via python3) against a concrete 90-degree
-        wedge before trusting this shape -- see canvas_mojo/tests/test_svg.
+        wedge before trusting this shape -- see tests/test_svg.
         mojo's own test.
         """
         var outer_x0 = cx + outer_radius * cos(start_angle)

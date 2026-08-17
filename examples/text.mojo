@@ -105,5 +105,5 @@ def main() raises:
     # fallback mechanism any desktop text stack already relies on.
     draw_text(c, 20, 570, "Requested Ubuntu, but ☃ isn't in it", Color(20, 24, 32), 22.0, family="Ubuntu")
 
-    write_bmp(c, "canvas_mojo/examples/out_text.bmp")
-    print("wrote canvas_mojo/examples/out_text.bmp")
+    write_bmp(c, "examples/out_text.bmp")
+    print("wrote examples/out_text.bmp")

@@ -32,11 +32,11 @@ def main() raises:
     draw_circle_aa(c, 150, 100, 40, Color(230, 230, 230))
     draw_line_aa(c, 20, 20, 280, 180, Color(220, 60, 40), width=3.0)
 
-    write_bmp(c, "canvas_mojo/examples/out_png_output.bmp")
-    write_png(c, "canvas_mojo/examples/out_png_output.png")
-    print("wrote canvas_mojo/examples/out_png_output.bmp and .png")
+    write_bmp(c, "examples/out_png_output.bmp")
+    write_png(c, "examples/out_png_output.png")
+    print("wrote examples/out_png_output.bmp and .png")
 
-    var decoded = read_png("canvas_mojo/examples/out_png_output.png")
+    var decoded = read_png("examples/out_png_output.png")
     var mismatches = 0
     for y in range(c.height):
         for x in range(c.width):

@@ -19,7 +19,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.io.png import read_png, write_png
 
-comptime TMP_PATH = "canvas_mojo/tests/_test_png_output.png"
+comptime TMP_PATH = "tests/_test_png_output.png"
 
 # Independently computed by hand for a 2x1 canvas with pixels
 # (10,20,30) and (40,50,60) -- see this file's own docstring.
@@ -113,7 +113,7 @@ def test_iend_crc_is_the_universal_constant() raises:
     assert_equal(buf[74], UInt8(0x82))
 
 
-comptime READ_TMP_PATH = "canvas_mojo/tests/_test_png_read_input.png"
+comptime READ_TMP_PATH = "tests/_test_png_read_input.png"
 
 
 def _read_png_bytes() -> List[UInt8]:
@@ -192,7 +192,7 @@ def test_read_write_round_trip() raises:
 
 def test_read_rejects_bad_signature() raises:
     var bad: List[UInt8] = [1, 2, 3, 4, 5, 6, 7, 8, 9]
-    var path = "canvas_mojo/tests/_test_png_bad_signature.png"
+    var path = "tests/_test_png_bad_signature.png"
     var f = open(path, "w")
     f.write_bytes(Span(bad))
     f.close()
@@ -208,7 +208,7 @@ def test_read_rejects_bad_signature() raises:
 def test_read_rejects_corrupted_crc() raises:
     var corrupted = _read_png_bytes()
     corrupted[20] = corrupted[20] ^ UInt8(0xFF)  # flip a byte inside IHDR's data
-    var path = "canvas_mojo/tests/_test_png_bad_crc.png"
+    var path = "tests/_test_png_bad_crc.png"
     var f = open(path, "w")
     f.write_bytes(Span(corrupted))
     f.close()

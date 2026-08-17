@@ -1,7 +1,7 @@
 """Tests for canvas_mojo/text/glyph_outline.mojo.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
-alias) to run -- same real-machine dependency canvas_mojo/tests/
+alias) to run -- same real-machine dependency tests/
 test_text.mojo and test_font_discovery.mojo already document.
 
 Locked-in values below are all probe-confirmed against this machine's
@@ -111,7 +111,7 @@ def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
     # rule), and covers a plausible fraction of its own bounding box
     # (a ring covers meaningfully less than a solid disc would, but
     # nowhere near zero) -- confirmed by direct pixel inspection, the
-    # same rigor canvas_mojo/tests/test_text.mojo's own ink-bbox checks
+    # same rigor tests/test_text.mojo's own ink-bbox checks
     # use for Cairo-rendered text.
     var face = _sans_face(40)
     var gm = glyph_metrics(face, 79)  # 'O'

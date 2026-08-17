@@ -41,5 +41,5 @@ def main() raises:
         points.append(Point(Int(x), Int(y)))
     draw_polygon_aa(c, points, Color(40, 100, 200), dashes=dashes)
 
-    write_bmp(c, "canvas_mojo/examples/out_dashes.bmp")
-    print("wrote canvas_mojo/examples/out_dashes.bmp")
+    write_bmp(c, "examples/out_dashes.bmp")
+    print("wrote examples/out_dashes.bmp")

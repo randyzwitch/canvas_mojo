@@ -15,5 +15,5 @@ def main() raises:
 
     draw_rect(c, 20, 20, 100, 100, Color(40, 160, 60))
 
-    write_bmp(c, "canvas_mojo/examples/out_rect_stroke.bmp")
-    print("wrote canvas_mojo/examples/out_rect_stroke.bmp")
+    write_bmp(c, "examples/out_rect_stroke.bmp")
+    print("wrote examples/out_rect_stroke.bmp")

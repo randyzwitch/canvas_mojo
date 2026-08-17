@@ -43,5 +43,5 @@ def main() raises:
 
     c.pop_clip()  # back to no clip
 
-    write_bmp(c, "canvas_mojo/examples/out_clipping.bmp")
-    print("wrote canvas_mojo/examples/out_clipping.bmp")
+    write_bmp(c, "examples/out_clipping.bmp")
+    print("wrote examples/out_clipping.bmp")
