@@ -10,7 +10,7 @@ Please note that this is heavily Claude-influenced, so I do not guarantee consis
 
 ## Status
 
-Stdlib-only, plus one small direct FFI dependency on a system
+Mojo-only, plus one small direct FFI dependency on a system
 library `canvas_mojo/text/render.mojo` links against for real
 system-font text rendering: `libfontconfig` (font matching —
 resolving a family/style name to an actual installed font file --
@@ -21,26 +21,11 @@ this package introduces. Font *parsing* (glyph outlines, metrics,
 `fill_path_aa`) are both native Mojo -- no FreeType, no Cairo, no
 other third-party rendering/font engine anywhere in the pipeline.
 
-For now, consume this package by cloning it and importing via Mojo's
-`-I` search-path flag, the same way it's developed here.
-
 ## Development
 
 ```sh
 pixi run test      # tests/*.mojo
 pixi run example    # examples/*.mojo, writes examples/out_*.{bmp,png}
-```
-
-Tests use the stdlib's `TestSuite`:
-
-```mojo
-from std.testing import assert_equal, TestSuite
-
-def test_something() raises:
-    assert_equal(1 + 1, 2)
-
-def main() raises:
-    TestSuite.discover_tests[__functions_in_module()]().run()
 ```
 
 ## License
