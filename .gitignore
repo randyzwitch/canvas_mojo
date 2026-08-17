@@ -2,6 +2,10 @@
 .pixi/*
 !.pixi/config.toml
 
+# pixi build/publish output -- `pixi build` writes the built package
+# directly into the current directory by default
+*.conda
+
 # generated example output
 examples/*.bmp
 examples/*.png
