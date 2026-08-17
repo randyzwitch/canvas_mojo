@@ -26,16 +26,22 @@ jobs:
       # v7 is built against Node 24 natively, no forced-compat warning.
       - uses: actions/checkout@v7
 
-      # canvas_mojo/text/render.mojo links directly against libfontconfig
-      # (font_discovery.mojo) and libfreetype (freetype_face.mojo/
-      # glyph_outline.mojo) at runtime -- not bundled, not a pixi
-      # dependency of this workspace, installed here explicitly rather
-      # than assumed present on the runner image. Neither library is
-      # part of a stock macOS install the way it's part of a stock
-      # Linux desktop install (macOS has its own native Core Text font
-      # stack) -- Homebrew is the standard way to get them there, the
-      # same "system library, not bundled by this package" story as
-      # Linux's apt packages, just a different package manager.
+      # canvas_mojo/text/font_discovery.mojo links directly against
+      # libfontconfig at runtime -- not bundled, not a pixi dependency
+      # of this workspace, installed here explicitly rather than
+      # assumed present on the runner image. Font *parsing* itself
+      # (canvas_mojo/text/ttf.mojo) is native Mojo, no linked library
+      # at all -- libfreetype was the other direct FFI dependency here
+      # until it was replaced by that native TrueType parser; only
+      # fontconfig (font *discovery* -- resolving a family name to an
+      # actual installed file) remains linked, a deliberately different
+      # call than the one made for FreeType, see ttf.mojo's own module
+      # docstring for why. Not part of a stock macOS install the way
+      # it's part of a stock Linux desktop install (macOS has its own
+      # native Core Text font stack) -- Homebrew is the standard way to
+      # get it there, the same "system library, not bundled by this
+      # package" story as Linux's apt packages, just a different
+      # package manager.
       #
       # fonts-ubuntu/fonts-dejavu-core (and their Homebrew-cask
       # equivalents below) are a real test dependency, not a cosmetic
@@ -45,13 +51,13 @@ jobs:
       # Sans' has" as their real, contrasting fallback case -- true on
       # a desktop Ubuntu install (where that assumption was originally
       # probe-confirmed), but not on a bare runner image, which ships
-      # libfontconfig/libfreetype (the *libraries*) without any actual
-      # font files. Without these packages, `resolve_font_file
-      # ("Ubuntu")` silently falls back to whatever default font
-      # fontconfig substitutes instead, collapsing the "falls back to
-      # a *different* font" assertion the test depends on -- confirmed
-      # as the exact, sole cause of a real CI failure (run 31965206350)
-      # on Linux before that fix landed, not a guess.
+      # libfontconfig (the *library*) without any actual font files.
+      # Without these packages, `resolve_font_file("Ubuntu")` silently
+      # falls back to whatever default font fontconfig substitutes
+      # instead, collapsing the "falls back to a *different* font"
+      # assertion the test depends on -- confirmed as the exact, sole
+      # cause of a real CI failure (run 31965206350) on Linux before
+      # that fix landed, not a guess.
       #
       # fonts-urw-base35 (font-urw-base35 on macOS) is a real,
       # genuinely CFF/OpenType-CFF font family (confirmed by reading
@@ -59,13 +65,13 @@ jobs:
       # -- tests/test_ttf.mojo's own CFF-rejection test resolves
       # "Nimbus Sans" from it via fontconfig, the same real font this
       # was developed and verified against, not a synthetic stand-in.
-      - name: Install libfontconfig, libfreetype, and test fonts (Linux)
+      - name: Install libfontconfig and test fonts (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 libfreetype6 fonts-ubuntu fonts-dejavu-core fonts-urw-base35
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 fonts-ubuntu fonts-dejavu-core fonts-urw-base35
 
-      - name: Install libfontconfig, libfreetype, and test fonts (macOS)
+      - name: Install libfontconfig and test fonts (macOS)
         if: runner.os == 'macOS'
-        run: brew install fontconfig freetype && brew install --cask font-ubuntu font-dejavu font-urw-base35 && fc-cache -f
+        run: brew install fontconfig && brew install --cask font-ubuntu font-dejavu font-urw-base35 && fc-cache -f
 
       # Pinned to match the pixi version pixi.lock (v7 format) was
       # generated with locally -- an older pixi here would just hit the

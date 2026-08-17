@@ -40,8 +40,9 @@ user transitively, confirmed directly: a `Canvas` method that called
 `canvas_mojo.text.draw_text` broke compilation for any file merely
 importing `Canvas`, text or no text, since Mojo resolves a struct's
 entire method surface eagerly, not lazily per call). `canvas_mojo.text`
-is fully native now (fontconfig/FreeType FFI, no Cairo, no extra `-I`
-path -- see its own module docstring) and no longer forces anything
+is fully native now (a single fontconfig FFI call for font discovery,
+no Cairo, no FreeType, no extra `-I` path -- see its own module
+docstring) and no longer forces anything
 onto callers who don't use it, so that second reason is gone; the
 raster-vs-markup mechanism difference above is reason enough to keep
 this exclusion on its own.

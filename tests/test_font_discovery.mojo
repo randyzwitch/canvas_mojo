@@ -20,8 +20,8 @@ font lacks a snowman glyph (U+2603) that "DejaVu Sans" has -- if a
 future CI image's Ubuntu font gains that glyph, the "falls back"
 assertion would need a different missing-character example, not a
 sign the fallback mechanism itself broke. This needs the "Ubuntu" font
-family actually installed (not just fontconfig/freetype's own runtime
-libraries) to be meaningful at all -- without it, "Ubuntu" silently
+family actually installed (not just fontconfig's own runtime
+library) to be meaningful at all -- without it, "Ubuntu" silently
 resolves to whatever fontconfig substitutes instead, which can
 collapse the "falls back to a different font" assertion for reasons
 that have nothing to do with the fallback code under test (a real

@@ -10,16 +10,16 @@ Please note that this is heavily Claude-influenced, so I do not guarantee consis
 
 ## Status
 
-Stdlib-only, plus two small direct FFI dependencies on system
-libraries `canvas_mojo/text/render.mojo` links against for real
+Stdlib-only, plus one small direct FFI dependency on a system
+library `canvas_mojo/text/render.mojo` links against for real
 system-font text rendering: `libfontconfig` (font matching —
-`canvas_mojo/text/font_discovery.mojo`) and `libfreetype` (glyph
-outlines/metrics/hinting — `canvas_mojo/text/freetype_face.mojo`,
-`canvas_mojo/text/glyph_outline.mojo`). Both are typical,
-near-universally-installed system libraries, not new requirements
-this package introduces.
-Rasterization is this package's own `fill_path_aa` — no third-party
-rendering engine (i.e. Cairo) anywhere in the pipeline.
+resolving a family/style name to an actual installed font file --
+`canvas_mojo/text/font_discovery.mojo`), a typical,
+near-universally-installed system library, not a new requirement
+this package introduces. Font *parsing* (glyph outlines, metrics,
+`canvas_mojo/text/ttf.mojo`) and rasterization (this package's own
+`fill_path_aa`) are both native Mojo -- no FreeType, no Cairo, no
+other third-party rendering/font engine anywhere in the pipeline.
 
 For now, consume this package by cloning it and importing via Mojo's
 `-I` search-path flag, the same way it's developed here.
