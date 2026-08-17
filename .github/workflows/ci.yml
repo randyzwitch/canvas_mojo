@@ -14,9 +14,15 @@ jobs:
     # default.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      # v7 specifically, not just "latest v4" -- v4 is built against
+      # Node.js 20, which GitHub Actions runners now force onto Node 24
+      # instead (a real, visible "Node.js 20 is deprecated" annotation
+      # on every run otherwise, confirmed on this repo's own CI: see
+      # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/).
+      # v7 is built against Node 24 natively, no forced-compat warning.
+      - uses: actions/checkout@v7
 
-      # canvas_mojo/text.mojo links directly against libfontconfig
+      # canvas_mojo/text/render.mojo links directly against libfontconfig
       # (font_discovery.mojo) and libfreetype (freetype_face.mojo/
       # glyph_outline.mojo) at runtime -- not bundled, not a pixi
       # dependency of this workspace, installed here explicitly rather

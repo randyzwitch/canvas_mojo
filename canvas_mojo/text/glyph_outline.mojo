@@ -383,8 +383,6 @@ def _decompose_contour(
 
     path.move_to(_px(pen_x, v_start_x), _py(pen_y, v_start_y))
 
-    var v_control_x = v_start_x
-    var v_control_y = v_start_y
     var closed = False
 
     while point_idx < limit and not closed:
@@ -395,8 +393,13 @@ def _decompose_contour(
         if tag == 1:  # ON
             path.line_to(_px(pen_x, p.x), _py(pen_y, p.y))
         elif tag == 0:  # CONIC
-            v_control_x = p.x
-            v_control_y = p.y
+            # Scoped to this branch on purpose, not declared outside the
+            # loop: every read of these two below happens only after
+            # this exact assignment (this branch's own while loop and
+            # its "ran out of points" fallback), so there's no earlier
+            # value that would ever need a wider-scoped variable.
+            var v_control_x = p.x
+            var v_control_y = p.y
             var emitted = False
             while point_idx < limit:
                 point_idx += 1
