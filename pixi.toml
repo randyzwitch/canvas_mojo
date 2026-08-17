@@ -23,22 +23,6 @@ test = "mojo run -I . tests/test_color.mojo && mojo run -I . tests/test_buffer.m
 # package dir for exactly this reason. `-I .` (repo root) still resolves
 # `from canvas_mojo.X import Y` in every test/example unchanged, since
 # it never depended on where `tests/`/`examples/` themselves lived.
-#
-# NOT YET installable via `pixi build`/`pixi install` on a stock pixi
-# install -- the published `pixi-build-mojo` backend (confirmed against
-# 0.2.5, the latest release as of 2026-08-17) still invokes Mojo's
-# removed `mojo package` command, which Mojo 1.0.0 hard-errors on rather
-# than warns about. This is a real, confirmed upstream bug (not
-# specific to this package -- reproduced against a minimal throwaway
-# package too), already root-caused, fixed, and verified end-to-end
-# against a locally-patched build of the backend (one-line template fix:
-# `mojo package` -> `mojo precompile`, its now-current, non-deprecated
-# equivalent) -- this whole `[package]` section, including this
-# `tests`/`examples` layout, is confirmed correct and ready to go the
-# moment that fix lands upstream, not just hoped to be. See the wiki's
-# "Deferred on purpose, not forgotten" entry for the retry condition.
-# Until then, consume this package the same way it's consumed today:
-# clone/vendor the source and import via `-I` search paths.
 [package]
 name = "canvas_mojo"
 version = "0.1.0"
