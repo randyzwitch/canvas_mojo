@@ -52,13 +52,20 @@ jobs:
       # a *different* font" assertion the test depends on -- confirmed
       # as the exact, sole cause of a real CI failure (run 31965206350)
       # on Linux before that fix landed, not a guess.
+      #
+      # fonts-urw-base35 (font-urw-base35 on macOS) is a real,
+      # genuinely CFF/OpenType-CFF font family (confirmed by reading
+      # its own sfntVersion field directly -- 'OTTO', not guessed at)
+      # -- tests/test_ttf.mojo's own CFF-rejection test resolves
+      # "Nimbus Sans" from it via fontconfig, the same real font this
+      # was developed and verified against, not a synthetic stand-in.
       - name: Install libfontconfig, libfreetype, and test fonts (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 libfreetype6 fonts-ubuntu fonts-dejavu-core
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 libfreetype6 fonts-ubuntu fonts-dejavu-core fonts-urw-base35
 
       - name: Install libfontconfig, libfreetype, and test fonts (macOS)
         if: runner.os == 'macOS'
-        run: brew install fontconfig freetype && brew install --cask font-ubuntu font-dejavu && fc-cache -f
+        run: brew install fontconfig freetype && brew install --cask font-ubuntu font-dejavu font-urw-base35 && fc-cache -f
 
       # Pinned to match the pixi version pixi.lock (v7 format) was
       # generated with locally -- an older pixi here would just hit the
