@@ -20,5 +20,5 @@ def main() raises:
     # ...with a semi-transparent blue square overlapping it.
     fill_rect(c, 50, 50, 100, 100, Color(40, 80, 220, 128))
 
-    write_bmp(c, "canvas_mojo/examples/out_fill_rect_blend.bmp")
-    print("wrote canvas_mojo/examples/out_fill_rect_blend.bmp")
+    write_bmp(c, "examples/out_fill_rect_blend.bmp")
+    print("wrote examples/out_fill_rect_blend.bmp")

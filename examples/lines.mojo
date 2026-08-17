@@ -18,5 +18,5 @@ def main() raises:
     draw_line(c, 20, 160, 280, 20, Color(120, 120, 120))
     draw_line_aa(c, 20, 175, 280, 35, Color(120, 120, 120))
 
-    write_bmp(c, "canvas_mojo/examples/out_lines.bmp")
-    print("wrote canvas_mojo/examples/out_lines.bmp")
+    write_bmp(c, "examples/out_lines.bmp")
+    print("wrote examples/out_lines.bmp")

@@ -22,5 +22,5 @@ def main() raises:
     fill_circle(c, 420, 80, 60, Color(150, 40, 180))
     fill_circle_aa(c, 580, 80, 60, Color(150, 40, 180))
 
-    write_bmp(c, "canvas_mojo/examples/out_circles.bmp")
-    print("wrote canvas_mojo/examples/out_circles.bmp")
+    write_bmp(c, "examples/out_circles.bmp")
+    print("wrote examples/out_circles.bmp")

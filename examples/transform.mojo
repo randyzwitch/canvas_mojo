@@ -67,5 +67,5 @@ def main() raises:
     var rotated = Transform2D(32.0, -2.4, 400.0, 280.0, rotation=pi / 15.0)
     _draw_panel(c, rotated)
 
-    write_bmp(c, "canvas_mojo/examples/out_transform.bmp")
-    print("wrote canvas_mojo/examples/out_transform.bmp")
+    write_bmp(c, "examples/out_transform.bmp")
+    print("wrote examples/out_transform.bmp")

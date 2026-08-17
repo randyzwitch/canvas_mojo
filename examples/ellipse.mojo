@@ -28,5 +28,5 @@ def main() raises:
     fill_ellipse(c, 420, 80, 70, 45, Color(150, 40, 180))
     fill_ellipse_aa(c, 580, 80, 70, 45, Color(150, 40, 180))
 
-    write_bmp(c, "canvas_mojo/examples/out_ellipse.bmp")
-    print("wrote canvas_mojo/examples/out_ellipse.bmp")
+    write_bmp(c, "examples/out_ellipse.bmp")
+    print("wrote examples/out_ellipse.bmp")

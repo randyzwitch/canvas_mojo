@@ -51,5 +51,5 @@ def main() raises:
     pentagon_fill_aa.append(Point(978, 126))
     fill_polygon_aa(c, pentagon_fill_aa, Color(20, 130, 150))
 
-    write_bmp(c, "canvas_mojo/examples/out_polygon.bmp")
-    print("wrote canvas_mojo/examples/out_polygon.bmp")
+    write_bmp(c, "examples/out_polygon.bmp")
+    print("wrote examples/out_polygon.bmp")

@@ -3,9 +3,9 @@
 !.pixi/config.toml
 
 # generated example output
-canvas_mojo/examples/*.bmp
-canvas_mojo/examples/*.png
+examples/*.bmp
+examples/*.png
 
 # generated test artifacts
-canvas_mojo/tests/_test_*.bmp
-canvas_mojo/tests/_test_*.png
+tests/_test_*.bmp
+tests/_test_*.png

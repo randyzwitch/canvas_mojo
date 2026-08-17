@@ -18,7 +18,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.io.bmp import write_bmp
 
-comptime TMP_PATH = "canvas_mojo/tests/_test_bmp_output.bmp"
+comptime TMP_PATH = "tests/_test_bmp_output.bmp"
 
 
 def _write_sample() raises -> List[UInt8]:

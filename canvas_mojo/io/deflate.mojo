@@ -23,7 +23,7 @@ Verified against real zlib output, not just "translated carefully and
 hoped": every stage was checked by round-tripping actual
 `zlib.compress()` output (stored, fixed-Huffman, and dynamic-Huffman
 blocks all separately exercised) back to the exact original bytes --
-see canvas_mojo/tests/test_deflate.mojo.
+see tests/test_deflate.mojo.
 """
 
 comptime _MAX_BITS = 15

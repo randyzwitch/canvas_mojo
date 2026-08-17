@@ -88,5 +88,5 @@ def main() raises:
     leaf_aa.close()
     fill_path_aa(c, leaf_aa, Color(40, 130, 90))
 
-    write_bmp(c, "canvas_mojo/examples/out_path.bmp")
-    print("wrote canvas_mojo/examples/out_path.bmp")
+    write_bmp(c, "examples/out_path.bmp")
+    print("wrote examples/out_path.bmp")

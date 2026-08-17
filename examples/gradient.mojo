@@ -37,7 +37,7 @@ def main() raises:
     vertical.add_stop(1.0, Color(150, 30, 60))
     fill_rect_gradient(c, 40, 140, 200, 80, vertical)
 
-    # fill_path_gradient on a donut (see canvas_mojo/examples/path.mojo) --
+    # fill_path_gradient on a donut (see examples/path.mojo) --
     # the gradient still applies per-pixel across both the outer shape
     # and around the punched-through hole correctly.
     var donut = Path()
@@ -80,5 +80,5 @@ def main() raises:
     swatch_radial.add_stop(1.0, Color(120, 70, 20))
     fill_rect_radial_gradient(c, 470, 40, 160, 180, swatch_radial)
 
-    write_bmp(c, "canvas_mojo/examples/out_gradient.bmp")
-    print("wrote canvas_mojo/examples/out_gradient.bmp")
+    write_bmp(c, "examples/out_gradient.bmp")
+    print("wrote examples/out_gradient.bmp")

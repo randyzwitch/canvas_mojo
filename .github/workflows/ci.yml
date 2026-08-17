@@ -40,7 +40,7 @@ jobs:
       # fonts-ubuntu/fonts-dejavu-core (and their Homebrew-cask
       # equivalents below) are a real test dependency, not a cosmetic
       # extra: test_font_discovery.mojo's char-constrained-resolution
-      # tests (canvas_mojo/tests/test_font_discovery.mojo) hard-code
+      # tests (tests/test_font_discovery.mojo) hard-code
       # "the 'Ubuntu' font lacks a snowman glyph (U+2603) that 'DejaVu
       # Sans' has" as their real, contrasting fallback case -- true on
       # a desktop Ubuntu install (where that assumption was originally

@@ -48,5 +48,5 @@ def main() raises:
     _square(p2, 270.0, 70.0, 370.0, 170.0)
     fill_path(c, p2, Color(40, 100, 200), fill_rule=FillRule.NONZERO)
 
-    write_bmp(c, "canvas_mojo/examples/out_fill_rule.bmp")
-    print("wrote canvas_mojo/examples/out_fill_rule.bmp")
+    write_bmp(c, "examples/out_fill_rule.bmp")
+    print("wrote examples/out_fill_rule.bmp")

@@ -1,7 +1,7 @@
 """Tests for canvas_mojo/text/font_discovery.mojo.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
-alias) to run -- the same real-machine dependency canvas_mojo/tests/
+alias) to run -- the same real-machine dependency tests/
 test_text.mojo's own docstring already documents for Cairo's identical
 underlying fontconfig lookup, not a new one this file introduces.
 

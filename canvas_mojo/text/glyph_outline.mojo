@@ -36,7 +36,7 @@ correct because it compiles: loading DejaVu Sans and reading
 1901/-483 -- matching this exact font's well-known real metrics.
 Loading capital "I" gave exactly 1 contour, 4 points, all on-curve
 (tag & 3 == 1) -- correct for a glyph that's just a rectangle, no
-curves. See canvas_mojo/tests/test_glyph_outline.mojo for the
+curves. See tests/test_glyph_outline.mojo for the
 locked-in versions of these same checks.
 
 Outline decomposition (`_decompose_contour`) is a direct translation

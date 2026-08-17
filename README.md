@@ -21,18 +21,21 @@ this package introduces.
 Rasterization is this package's own `fill_path_aa` — no third-party
 rendering engine (i.e. Cairo) anywhere in the pipeline.
 
-This package is **not yet installable via `pixi build`/`pixi install`**
-— see `pixi.toml`'s own `[package]` section and the wiki for additional
-information (a real, confirmed bug in the `pixi-build-mojo` backend
-against current Mojo, external to this repo). For now, consume this package by
-cloning it and importing via Mojo's `-I` search-path flag, the same way
-it's developed here.
+This package is **not yet installable via `pixi build`/`pixi install`
+on a stock pixi install** — see `pixi.toml`'s own `[package]` section
+and the wiki for additional information (a real, confirmed bug in the
+published `pixi-build-mojo` backend against current Mojo, external to
+this repo -- already root-caused and fixed, verified end-to-end
+against a locally-patched build of the backend, waiting on the fix to
+land upstream). For now, consume this package by cloning it and
+importing via Mojo's `-I` search-path flag, the same way it's
+developed here.
 
 ## Development
 
 ```sh
-pixi run test      # canvas_mojo/tests/*.mojo
-pixi run example    # canvas_mojo/examples/*.mojo, writes canvas_mojo/examples/out_*.{bmp,png}
+pixi run test      # tests/*.mojo
+pixi run example    # examples/*.mojo, writes examples/out_*.{bmp,png}
 ```
 
 Tests use the stdlib's `TestSuite`:
