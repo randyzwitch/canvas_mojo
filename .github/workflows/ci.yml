@@ -8,7 +8,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     # Mojo compiles here are heavy (some individual test/example files
     # take several minutes) -- generous timeout rather than a flaky
     # default.
@@ -26,24 +30,35 @@ jobs:
       # (font_discovery.mojo) and libfreetype (freetype_face.mojo/
       # glyph_outline.mojo) at runtime -- not bundled, not a pixi
       # dependency of this workspace, installed here explicitly rather
-      # than assumed present on the runner image.
+      # than assumed present on the runner image. Neither library is
+      # part of a stock macOS install the way it's part of a stock
+      # Linux desktop install (macOS has its own native Core Text font
+      # stack) -- Homebrew is the standard way to get them there, the
+      # same "system library, not bundled by this package" story as
+      # Linux's apt packages, just a different package manager.
       #
-      # fonts-ubuntu is a real test dependency, not a cosmetic extra:
-      # test_font_discovery.mojo's char-constrained-resolution tests
-      # (canvas_mojo/tests/test_font_discovery.mojo) hard-code "the
-      # 'Ubuntu' font lacks a snowman glyph (U+2603) that 'DejaVu Sans'
-      # has" as their real, contrasting fallback case -- true on a
-      # desktop Ubuntu install (where that assumption was originally
-      # probe-confirmed), but not on this bare runner image, which
-      # ships libfontconfig/libfreetype (the *libraries*) without any
-      # actual "Ubuntu"-family font file. Without this package,
-      # `resolve_font_file("Ubuntu")` silently falls back to whatever
-      # default font fontconfig substitutes instead, collapsing the
-      # "falls back to a *different* font" assertion the test depends
-      # on -- confirmed as the exact, sole cause of a real CI failure
-      # (run 31965206350) before this fix, not a guess.
-      - name: Install libfontconfig, libfreetype, and test fonts
+      # fonts-ubuntu/fonts-dejavu-core (and their Homebrew-cask
+      # equivalents below) are a real test dependency, not a cosmetic
+      # extra: test_font_discovery.mojo's char-constrained-resolution
+      # tests (canvas_mojo/tests/test_font_discovery.mojo) hard-code
+      # "the 'Ubuntu' font lacks a snowman glyph (U+2603) that 'DejaVu
+      # Sans' has" as their real, contrasting fallback case -- true on
+      # a desktop Ubuntu install (where that assumption was originally
+      # probe-confirmed), but not on a bare runner image, which ships
+      # libfontconfig/libfreetype (the *libraries*) without any actual
+      # font files. Without these packages, `resolve_font_file
+      # ("Ubuntu")` silently falls back to whatever default font
+      # fontconfig substitutes instead, collapsing the "falls back to
+      # a *different* font" assertion the test depends on -- confirmed
+      # as the exact, sole cause of a real CI failure (run 31965206350)
+      # on Linux before that fix landed, not a guess.
+      - name: Install libfontconfig, libfreetype, and test fonts (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1 libfreetype6 fonts-ubuntu fonts-dejavu-core
+
+      - name: Install libfontconfig, libfreetype, and test fonts (macOS)
+        if: runner.os == 'macOS'
+        run: brew install fontconfig freetype && brew install --cask font-ubuntu font-dejavu && fc-cache -f
 
       # Pinned to match the pixi version pixi.lock (v7 format) was
       # generated with locally -- an older pixi here would just hit the
