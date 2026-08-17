@@ -140,7 +140,7 @@ def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
     """
     var n = len(codepoints)
     var levels = List[Int](capacity=n)
-    for i in range(n):
+    for _ in range(n):
         levels.append(-1)
 
     for i in range(n):
