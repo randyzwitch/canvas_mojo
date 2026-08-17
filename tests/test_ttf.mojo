@@ -79,8 +79,8 @@ def test_missing_codepoint_maps_to_notdef() raises:
 
 def test_i_glyph_is_a_simple_rectangle() raises:
     # Capital "I" -- the same real, hand-verifiable fact already locked
-    # in for the FreeType path (glyph_outline.mojo's own module
-    # docstring): exactly 1 contour, 4 points, all on-curve (a glyph
+    # in for the old, since-replaced FreeType path (glyph_outline.mojo's
+    # own module docstring): exactly 1 contour, 4 points, all on-curve (a glyph
     # that's just a rectangle, no curves at all).
     var face = _sans_face()
     var gid = face.glyph_index_for_codepoint(0x49)
@@ -94,7 +94,7 @@ def test_i_glyph_is_a_simple_rectangle() raises:
 def test_o_glyph_has_off_curve_points_and_two_contours() raises:
     # "O" -- a genuinely curved, multi-contour glyph (outer ring +
     # inner hole), the same structural fact glyph_outline.mojo's own
-    # tests confirm for the FreeType path.
+    # tests confirm for the old, since-replaced FreeType path.
     var face = _sans_face()
     var gid = face.glyph_index_for_codepoint(0x4F)
     var outline = face.glyph_outline(gid)
@@ -108,7 +108,7 @@ def test_o_glyph_has_off_curve_points_and_two_contours() raises:
 
 def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
     # The real end-to-end check, mirroring glyph_outline.mojo's own
-    # identically-named test for the FreeType path: decompose a
+    # identically-named test for the old, since-replaced FreeType path: decompose a
     # genuinely curved, multi-contour glyph and rasterize it through
     # this package's own fill_path_aa. A correct render has ink (the
     # ring itself) and a real hole at the visual center (the inner

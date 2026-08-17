@@ -1,16 +1,18 @@
 """Text rendering -- once the one place `canvas` reached outside the
 stdlib, now fully native: font matching (fontconfig, `font_discovery.
-mojo`), glyph outlines/metrics (FreeType, `glyph_outline.mojo`), and
-rasterization (this package's own `fill_path_aa`, `path.mojo`) are all
-direct, hand-verified code, not a wrapped third-party rendering
-engine. `third_party/cairo_mojo` is no longer a dependency of this
-module -- see the wiki's `text.mojo` entry for the earlier from-scratch
-TrueType exploration this supersedes a second time, and font_discovery.
-mojo's own docstring for the 4-job breakdown (font discovery / glyph
-resolution & metrics / hinting / rasterization) this completes: hinting
-came for free at `FT_Load_Glyph`'s default flags (see glyph_outline.
-mojo), and rasterization was already built for other shapes before
-text needed it.
+mojo`) is this module's only remaining direct FFI dependency; glyph
+outlines/metrics (this package's own TrueType parser, `ttf.mojo`, via
+`glyph_outline.mojo`) and rasterization (this package's own
+`fill_path_aa`, `path.mojo`) are both direct, hand-verified code, not
+wrapped third-party libraries. `third_party/cairo_mojo` is no longer a
+dependency of this module -- see the wiki's `text.mojo` entry for the
+earlier from-scratch TrueType exploration this supersedes a second
+time, and font_discovery.mojo's own docstring for the three jobs (font
+discovery / glyph resolution & metrics / rasterization) this
+completes. This native path is unhinted -- see ttf.mojo's own module
+docstring for what that means for exact glyph metrics relative to the
+FreeType-hinted values this module used to produce -- and rasterization
+was already built for other shapes before text needed it.
 
 Removing Cairo also removes a whole category of workaround code that
 used to live here: no scratch ARGB32 surface, no premultiply/
@@ -58,8 +60,8 @@ Algorithm.
 Every glyph also goes through font *fallback*, not just the single
 family the caller requested (`_resolve_glyph`): if the requested
 family's face has no real glyph for a codepoint (`glyph_outline.
-has_glyph` -- distinguishing an actual glyph from FreeType's own
-".notdef" placeholder), a different font is resolved for that one
+has_glyph` -- distinguishing an actual glyph from the font's own
+".notdef" placeholder, TrueType glyph index 0), a different font is resolved for that one
 character via `font_discovery.resolve_font_file_for_char`, which
 constrains fontconfig's own match to a font that actually contains
 it -- the same real fallback mechanism system text stacks already
@@ -67,7 +69,7 @@ rely on, not a hand-rolled substitute. This matters concretely for a
 package with no bundled fonts of its own: a CJK/Cyrillic/symbol
 character requested under a Latin-only family renders via whatever
 font on the system actually has it, if one is installed, instead of
-FreeType's own generic empty-box placeholder -- confirmed directly via
+the requested font's own generic empty-box placeholder -- confirmed directly via
 probe (a font missing a glyph falls back to one that has it; a font
 that already has the glyph is left alone; a character genuinely
 missing from every installed font degrades gracefully to fontconfig's
@@ -92,8 +94,8 @@ from canvas_mojo.text.bidi import detect_base_level, visual_order
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
 from canvas_mojo.text.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
-from canvas_mojo.text.freetype_face import FreeTypeFace
 from canvas_mojo.text.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph, GlyphMetrics
+from canvas_mojo.text.ttf import TTFFace
 from canvas_mojo.path import (
     fill_path_aa,
     FPoint,
@@ -199,9 +201,9 @@ struct _BlockLayout(Movable):
         self.rot_max_y = rot_max_y
 
 
-def _load_sized_face(family: String, slant: FontSlant, weight: FontWeight, size: Float64) raises -> FreeTypeFace:
-    """font_discovery.resolve_font_file (fontconfig) -> freetype_face.
-    FreeTypeFace (FreeType), sized to `size` pixels -- the one place
+def _load_sized_face(family: String, slant: FontSlant, weight: FontWeight, size: Float64) raises -> TTFFace:
+    """font_discovery.resolve_font_file (fontconfig) -> ttf.TTFFace
+    (native TrueType parsing), sized to `size` pixels -- the one place
     every measuring/drawing entry point below goes to get a ready-to-
     use face. A fresh face per call, not a shared/cached one -- the
     same "no global handle available yet" constraint font_discovery.
@@ -209,7 +211,7 @@ def _load_sized_face(family: String, slant: FontSlant, weight: FontWeight, size:
     introduces.
     """
     var font_path = resolve_font_file(family, slant, weight)
-    var face = FreeTypeFace(font_path)
+    var face = TTFFace(font_path)
     face.set_pixel_size(Int(ceil(size)))
     return face^
 
@@ -280,7 +282,7 @@ struct _PositionedGlyph(Movable):
 
 
 def _resolve_glyph(
-    mut primary: FreeTypeFace,
+    mut primary: TTFFace,
     family: String,
     slant: FontSlant,
     weight: FontWeight,
@@ -314,13 +316,13 @@ def _resolve_glyph(
         return _PositionedGlyph(glyph_metrics(primary, codepoint), glyph_path(primary, codepoint, pen_x, pen_y))
 
     var fallback_path = resolve_font_file_for_char(family, slant, weight, codepoint)
-    var fallback = FreeTypeFace(fallback_path)
+    var fallback = TTFFace(fallback_path)
     fallback.set_pixel_size(Int(ceil(size)))
     return _PositionedGlyph(glyph_metrics(fallback, codepoint), glyph_path(fallback, codepoint, pen_x, pen_y))
 
 
 def _measure_line(
-    mut face: FreeTypeFace, line_text: String, family: String, slant: FontSlant, weight: FontWeight, size: Float64
+    mut face: TTFFace, line_text: String, family: String, slant: FontSlant, weight: FontWeight, size: Float64
 ) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
     all zero for a blank/whitespace-only line) and total advance,
@@ -343,8 +345,9 @@ def _measure_line(
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
             var right = left + gm.width
-            # FreeType's horiBearingY is positive *upward* from the
-            # baseline; local layout space here is y-down (matching
+            # gm.bearing_y is positive *upward* from the baseline
+            # (TrueType's own y-up font-design-unit convention, see
+            # ttf.mojo); local layout space here is y-down (matching
             # every other pixel-space convention in this package), so
             # the ink's local top is the negated bearing.
             var top = -gm.bearing_y

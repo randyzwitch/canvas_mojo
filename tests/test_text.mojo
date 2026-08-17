@@ -26,12 +26,21 @@ being locked in here:
     fresh)
 
 Confirmed by direct comparison, not assumed: this entire suite passed
-unchanged, same exact locked-in numbers included (e.g.
-test_measure_text_matches_known_glyph_extents' width=3.0/height=18.0
-for "I" at size 24), across the module's rewrite from wrapping Cairo
-to this fully native fontconfig+FreeType+fill_path_aa pipeline -- real
-evidence the native path reproduces the old one's behavior where it
-matters, not just "looks plausible."
+unchanged (structural checks, ink-bbox cross-checks, no-op edge cases,
+the lot) across two real rewrites -- first from wrapping Cairo to a
+native fontconfig+FreeType+fill_path_aa pipeline, later from that to
+fully native TrueType parsing (`ttf.mojo`, no FreeType either). The
+one exception both times was `test_measure_text_matches_known_glyph_
+extents`'s own hand-locked exact pixel values, which *did* need
+updating on the FreeType-removal rewrite specifically: FreeType's
+default hinting rounds thin stems (like "I"'s own single vertical
+stroke) to whole pixels for on-screen crispness, and `ttf.mojo`
+deliberately never hints (see that module's own docstring for why) --
+a real, understood, expected difference in the *exact* number, not a
+regression in what the pipeline actually does. Every other test here
+being insensitive to that same difference is exactly what "properties
+this module is responsible for, not exact rasterizer output" (see
+above) is supposed to buy.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- true of most Linux/macOS systems, but not guaranteed
@@ -214,13 +223,19 @@ def test_draw_text_is_deterministic() raises:
 
 
 def test_measure_text_matches_known_glyph_extents() raises:
-    # Locked-in values confirmed by probe (see this module's own
-    # history): "I" in Sans at size 24 has ink width=3.0, height=18.0,
-    # advance~=7.0 (floating point -- 6.999999999999999 exactly).
+    # Locked-in values confirmed by probe against the native, unhinted
+    # ttf.mojo path specifically (see this file's own module docstring
+    # for why these differ from the old FreeType-hinted 3.0/18.0/~7.0):
+    # "I" in Sans at size 24 has ink width=2.3671875, height=
+    # 17.49609375, advance=7.078125 -- all exact (raw font-design-unit
+    # counts times a power-of-two-denominator fraction, the same
+    # "provably exact, not a tolerance" reasoning
+    # test_glyph_outline.mojo's own docstring gives for the identical
+    # glyph at a different size).
     var m = measure_text("I", 24.0)
-    assert_equal(m.width, 3.0)
-    assert_equal(m.height, 18.0)
-    assert_true(m.advance > 6.9 and m.advance < 7.1)
+    assert_equal(m.width, 2.3671875)
+    assert_equal(m.height, 17.49609375)
+    assert_equal(m.advance, 7.078125)
 
 
 def test_measure_text_long_string_is_not_empty() raises:

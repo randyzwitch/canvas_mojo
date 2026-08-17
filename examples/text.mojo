@@ -1,6 +1,7 @@
 """Demo: draw_text() rendering real system-font text -- font matching
-via fontconfig, glyph outlines/metrics via FreeType, rasterization via
-this package's own fill_path_aa (see canvas_mojo/text/render.mojo's module
+via fontconfig, glyph outlines/metrics via this package's own native
+TrueType parser (ttf.mojo), rasterization via this package's own
+fill_path_aa (see canvas_mojo/text/render.mojo's module
 docstring) -- composited onto a Canvas the same way every other
 primitive is: through set_pixel.
 

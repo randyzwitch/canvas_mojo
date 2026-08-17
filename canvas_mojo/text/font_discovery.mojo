@@ -1,11 +1,11 @@
 """Font discovery via libfontconfig -- resolves a family/slant/weight
 request to an actual font file path on disk, the same job Cairo's own
-`select_font_face` currently does invisibly (via fontconfig underneath
-it) in `canvas_mojo/text/render.mojo`. This is "job 1" of a 4-job breakdown
-for eventually removing the Cairo dependency: font discovery (this
-module, via fontconfig), glyph resolution & metrics + hinting (both
-FreeType, not yet built), and rasterization (already covered natively
-by this package's own `fill_path_aa` -- see `path.mojo`).
+`select_font_face` used to do invisibly (via fontconfig underneath
+it) before Cairo was removed from `canvas_mojo/text/render.mojo`. This
+is one of three jobs text rendering needs: font discovery (this
+module, via fontconfig), glyph resolution & metrics (native, `ttf.
+mojo`), and rasterization (also native, this package's own
+`fill_path_aa` -- see `path.mojo`).
 
 Deliberately linked directly against libfontconfig rather than
 translated from its source: fontconfig is MIT-licensed, a small,
@@ -399,8 +399,9 @@ def _resolve_font_file_impl(
     # initialized pointer variable -- only *attaching* it to the pattern
     # is conditional, sidestepping any need for a placeholder/null value
     # for the "no constraint" path (constructing a null pointer to a
-    # custom opaque struct type isn't straightforward here -- see
-    # freetype_face.mojo's own history with this exact issue).
+    # custom opaque struct type isn't straightforward here -- the same
+    # workaround this codebase's own now-removed FreeType FFI binding
+    # needed for the same reason, back when it existed).
     var have_charset = char_constraint != -1
     var charset = handle.call["FcCharSetCreate", Pointer[_FcCharSet, MutUntrackedOrigin]]()
     if have_charset:

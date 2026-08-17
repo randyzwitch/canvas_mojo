@@ -40,9 +40,7 @@ path = "canvas_mojo"
 [package.host-dependencies]
 mojo = ">=1.0.0,<2"
 fontconfig = ">=2.13"
-freetype = ">=2.10"
 
 [package.run-dependencies]
 mojo = ">=1.0.0,<2"
 fontconfig = ">=2.13"
-freetype = ">=2.10"

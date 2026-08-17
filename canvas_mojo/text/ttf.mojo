@@ -133,6 +133,38 @@ struct RawGlyphOutline(Movable):
         self.on_curve = List[Bool]()
         self.contour_ends = List[Int]()
 
+    def bounding_box(self) -> Tuple[Int, Int, Int, Int]:
+        """(xMin, yMin, xMax, yMax) across every point -- computed
+        directly from the point coordinate data, exactly how the
+        OpenType spec itself defines a glyph's bounding box ("obtained
+        directly from the point coordinate data for the glyph, comparing
+        all on-curve and off-curve points"), rather than trusting the
+        `glyf` header's own xMin/yMin/xMax/yMax fields -- those exist
+        for simple glyphs, but scanning the (already fully assembled,
+        post-transform) point list works uniformly for composite glyphs
+        too, with no extra table reads or format-specific cases needed.
+        A glyph with no points (whitespace) returns all zeros, matching
+        FreeType's own convention for an empty outline's metrics.
+        """
+        if len(self.points_x) == 0:
+            return (0, 0, 0, 0)
+        var x_min = self.points_x[0]
+        var y_min = self.points_y[0]
+        var x_max = self.points_x[0]
+        var y_max = self.points_y[0]
+        for i in range(1, len(self.points_x)):
+            var x = self.points_x[i]
+            var y = self.points_y[i]
+            if x < x_min:
+                x_min = x
+            if x > x_max:
+                x_max = x
+            if y < y_min:
+                y_min = y
+            if y > y_max:
+                y_max = y
+        return (x_min, y_min, x_max, y_max)
+
 
 struct TTFFace(Movable):
     """A parsed TrueType font file -- owns the raw file bytes plus the
@@ -153,6 +185,15 @@ struct TTFFace(Movable):
     var _glyf_offset: Int
     var _loca_offset: Int
     var _hmtx_offset: Int
+    var _pixel_size: Int
+    """-1 until `set_pixel_size` is called -- deliberately not a valid
+    size by default, the same "no unset-size default to silently trust"
+    stance this codebase's now-removed FreeType FFI binding needed for
+    the same reason (confirmed via probe there that an unset size
+    doesn't crash on its own, it just silently returns a small,
+    wrong-looking size instead -- the same trap worth guarding against
+    here, not a new concern this module introduces).
+    """
 
     def __init__(out self, path: String) raises:
         var f = open(path, "r")
@@ -220,7 +261,29 @@ struct TTFFace(Movable):
         self._glyf_offset = glyf_off
         self._loca_offset = loca_off
         self._hmtx_offset = hmtx_off
+        self._pixel_size = -1
         self.data = data^
+
+    def set_pixel_size(mut self, pixel_size: Int):
+        """Set this face's own active rasterization size, in pixels --
+        must be called before `scale()`/any pixel-space metric or
+        outline query.
+        """
+        self._pixel_size = pixel_size
+
+    def scale(self) raises -> Float64:
+        """Raw font-design-units -> pixels conversion factor at this
+        face's own active pixel size (`pixel_size / units_per_em`) --
+        raises if `set_pixel_size` was never called, the same "don't
+        silently trust an unset size" stance this codebase's
+        now-removed FreeType FFI binding took for the same reason.
+        """
+        if self._pixel_size < 0:
+            raise Error(
+                "ttf: no active pixel size on this TTFFace -- call set_pixel_size()"
+                " before measuring or loading glyphs"
+            )
+        return Float64(self._pixel_size) / Float64(self.units_per_em)
 
     def advance_width(self, glyph_index: Int) raises -> Int:
         """`hmtx`'s own "if fewer hMetrics entries than glyphs, the
@@ -509,21 +572,20 @@ def _native_px(pen_x: Float64, raw: Int, scale: Float64) -> Float64:
 
 def _native_py(pen_y: Float64, raw: Int, scale: Float64) -> Float64:
     # Font-design space has y increasing upward; canvas pixel space has
-    # y increasing downward -- same flip glyph_outline.mojo's own `_py`
-    # applies for the FreeType path.
+    # y increasing downward -- same flip glyph_outline.mojo applies.
     return pen_y - Float64(raw) * scale
 
 
 def _decompose_contour_native(
     outline: RawGlyphOutline, first: Int, last: Int, mut path: Path, pen_x: Float64, pen_y: Float64, scale: Float64
 ) raises:
-    """Same algorithm as `glyph_outline.mojo`'s own `_decompose_contour`
-    (itself a direct translation of FreeType's `FT_Outline_Decompose`),
-    adapted to this module's plain-`List`-based `RawGlyphOutline`
-    instead of FreeType's own pointer-based `FT_Outline` -- and
-    simplified accordingly: `glyf` outlines are always quadratic
+    """Same algorithm this codebase's now-removed FreeType FFI binding
+    used (itself a direct translation of FreeType's own
+    `FT_Outline_Decompose`), adapted to this module's plain-`List`-based
+    `RawGlyphOutline` instead of FreeType's pointer-based `FT_Outline`
+    -- and simplified accordingly: `glyf` outlines are always quadratic
     (on-curve/off-curve only), never cubic, so the CUBIC branch that
-    function needs (FreeType's outline API is format-agnostic; it can
+    algorithm needs (FreeType's outline API is format-agnostic; it can
     hand back cubic control points for CFF-outline fonts) simply never
     applies to native TrueType parsing and is omitted, not forgotten.
     """
@@ -619,7 +681,7 @@ def _decompose_contour_native(
 def outline_to_path(outline: RawGlyphOutline, pen_x: Float64, pen_y: Float64, scale: Float64) raises -> Path:
     """One glyph's full outline (all contours) as a `Path`, positioned
     so its own local (0, 0) lands at (pen_x, pen_y) -- same convention
-    `glyph_outline.mojo`'s own `glyph_path` uses for the FreeType path.
+    `glyph_outline.mojo`'s own `glyph_path` uses.
     `scale` converts raw font-design-units (this font's own
     `units_per_em` grid) to pixels -- typically `pixel_size /
     face.units_per_em`.
