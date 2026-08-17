@@ -13,4 +13,3 @@ examples/*.png
 # generated test artifacts
 tests/_test_*.bmp
 tests/_test_*.png
-tests/_test_*.otf

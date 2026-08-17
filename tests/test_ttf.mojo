@@ -192,16 +192,13 @@ def test_advance_width_matches_hmtx() raises:
 
 
 def test_cff_font_raises_a_clear_error() raises:
-    # A minimal synthetic file with only the 'OTTO' sfntVersion magic
-    # number -- enough to exercise the rejection path without needing a
-    # real CFF font file on disk (none happened to be installed on the
-    # machine this was developed on).
-    var otto_bytes: List[UInt8] = [0x4F, 0x54, 0x54, 0x4F, 0, 1, 0, 0, 0, 0, 0, 0]
-    var path = "tests/_test_ttf_fake_otto.otf"
-    var f = open(path, "w")
-    f.write_bytes(Span(otto_bytes))
-    f.close()
-
+    # A real CFF/OpenType-CFF font ("Nimbus Sans", from the
+    # `fonts-urw-base35` package -- URW's metric-compatible
+    # replacements for the 35 PostScript Level 2 base fonts), not a
+    # synthetic stand-in: confirmed via probe that its own sfntVersion
+    # is genuinely 'OTTO' (0x4F54544F), the same real-world case this
+    # rejection path exists for, not a hypothetical one.
+    var path = resolve_font_file("Nimbus Sans")
     var raised = False
     var message = String()
     try:
