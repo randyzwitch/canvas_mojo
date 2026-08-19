@@ -13,7 +13,6 @@ rescales it.
 """
 
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
 
 
 def downsample(source: Canvas, factor: Int) raises -> Canvas:
@@ -46,9 +45,19 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
 
     var out_width = source.width // factor
     var out_height = source.height // factor
-    var result = Canvas(out_width, out_height)
     var n = factor * factor
 
+    # Built directly via append, in the same row-major (y outer, x
+    # inner, R-G-B per pixel) order Canvas's own pixels buffer already
+    # uses -- every output pixel is computed here and only ever written
+    # once, so there's nothing to gain from routing it through
+    # Canvas.set_pixel's in_bounds/in_clip checks (always true for a
+    # freshly built, clip-free canvas) the way a fresh `Canvas(out_width,
+    # out_height)` + per-pixel set_pixel would. See the (width, height,
+    # pixels) constructor's own docstring for why this also skips
+    # paying for a solid-fill Canvas() would otherwise do, immediately
+    # overwritten a moment later.
+    var pixels = List[UInt8](capacity=out_width * out_height * 3)
     for oy in range(out_height):
         for ox in range(out_width):
             var r_sum = 0
@@ -60,13 +69,7 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
                     r_sum += Int(p.r)
                     g_sum += Int(p.g)
                     b_sum += Int(p.b)
-            result.set_pixel(
-                ox,
-                oy,
-                Color(
-                    UInt8((r_sum + n // 2) // n),
-                    UInt8((g_sum + n // 2) // n),
-                    UInt8((b_sum + n // 2) // n),
-                ),
-            )
-    return result^
+            pixels.append(UInt8((r_sum + n // 2) // n))
+            pixels.append(UInt8((g_sum + n // 2) // n))
+            pixels.append(UInt8((b_sum + n // 2) // n))
+    return Canvas(out_width, out_height, pixels^)
