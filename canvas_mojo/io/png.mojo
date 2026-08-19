@@ -200,8 +200,7 @@ def write_png(canvas: Canvas, path: String) raises:
     zlib_stream.append(0x78)
     zlib_stream.append(0x01)
     var compressed = deflate(raw)
-    for b in compressed:
-        zlib_stream.append(b)
+    zlib_stream.extend(compressed^)
     _append_u32_be(zlib_stream, _adler32(raw))
 
     _write_chunk(file_buf, crc_table, "IDAT", zlib_stream)
@@ -304,8 +303,11 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
             cur_row.append(UInt8(recon & 0xFF))
 
         pos += row_bytes
-        for b in cur_row:
-            out.append(b)
+        # A copy, not a move -- cur_row is also what becomes prev_row
+        # for the next iteration right below, so out still needs its
+        # own independent bytes. One bulk .copy() instead of the
+        # manual per-byte loop this used to be.
+        out.extend(cur_row.copy())
         prev_row = cur_row^
 
     return out^
@@ -313,10 +315,16 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
 
 def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, color_type: Int) raises -> Canvas:
     """Converts already-unfiltered scanline bytes into a Canvas,
-    compositing every pixel through `set_pixel`'s own existing
+    compositing every pixel through `write_pixel`'s own existing
     blend_over -- see this file's own module docstring for why a PNG
     with an alpha channel loses it here (Canvas has no per-pixel alpha
     of its own to preserve it in), not a gap specific to this function.
+
+    write_pixel, not set_pixel: every (x, y) below is already known
+    in-bounds (the loop ranges come straight from width/height) on a
+    freshly constructed canvas with no clip pushed, so set_pixel's own
+    in_bounds/in_clip checks would only ever confirm what's already
+    guaranteed -- see buffer.mojo's own write_pixel docstring.
     """
     var canvas = Canvas(width, height)
     var bpp = _bytes_per_pixel(color_type)
@@ -336,7 +344,7 @@ def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, col
                 color = Color(gray, gray, gray, unfiltered[px + 1])
             else:  # 6 -- _bytes_per_pixel already rejected anything else
                 color = Color(unfiltered[px], unfiltered[px + 1], unfiltered[px + 2], unfiltered[px + 3])
-            canvas.set_pixel(x, y, color)
+            canvas.write_pixel(x, y, color)
     return canvas^
 
 
@@ -354,11 +362,8 @@ def read_png(path: String) raises -> Canvas:
     misdecoded into a plausible-looking wrong image.
     """
     var f = open(path, "r")
-    var content = f.read_bytes()
+    var data = f.read_bytes()
     f.close()
-    var data = List[UInt8](capacity=len(content))
-    for b in content:
-        data.append(b)
 
     var signature: List[UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
     if len(data) < 8:
