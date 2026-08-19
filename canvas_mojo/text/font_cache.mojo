@@ -4,27 +4,42 @@
 canvas_mojo/text/render.mojo's own _load_sized_face/_resolve_glyph
 docstrings flagged the *lack* of this caching as a deliberate
 simplification -- "correctness first... not a caching layer built
-ahead of a concrete need." Profiling now shows that need, directly:
+ahead of a concrete need." Profiling showed that need directly:
 resolve_font_file/resolve_font_file_for_char (font_discovery.mojo)
-each open libfontconfig and, on Linux, spawn real `ldconfig -p`/
-`pkg-config` subprocesses just to relocate a library that was already
-found the call before -- ~35ms per call, confirmed via a timing probe,
-*including* two back-to-back calls for the identical (family, slant,
-weight). Every fallback glyph (resolve_font_file_for_char, used when
-the requested font lacks a codepoint) pays this again on its own: a
-3-fallback-glyph string alone costs ~270ms. A single draw_text() call
-even pays it *twice* internally today (once measuring via
-_layout_block, once again rendering) before this cache existed.
+used to open libfontconfig and, on Linux, unconditionally spawn real
+`ldconfig -p`/`pkg-config` subprocesses on *every* call, ~35ms of it,
+just to relocate a library that was already found the call before.
+font_discovery.mojo's own _cheap_fontconfig_candidates/
+_open_fontconfig_library docstrings cover the real fix for that --
+try the library's plain canonical name (no subprocess) first, only
+falling through to the subprocess-based hints if that actually fails
+-- which cuts an uncached resolve_font_file call to a few ms on a
+first call and under a millisecond on every one after (the OS's own
+dlopen refcounting already makes a repeat load of the identical
+library near-free, once nothing is paying to rediscover its own path
+first).
+
+That leaves what this cache still exists for: fontconfig's own
+per-call pattern-construction/matching work (FcPatternCreate/
+FcFontMatch/etc, still real, still paid on every resolve_font_file
+call whether or not the library itself needed reloading) and, more
+concretely, draw_text()'s own internal duplication -- a single call
+resolves its font *twice* (once measuring via _layout_block, once
+again rendering) without this cache threading one FontCache through
+both passes. Every fallback glyph (resolve_font_file_for_char, used
+when the requested font lacks a codepoint) still resolves
+independently too, so a string with several fallback glyphs for the
+same missing codepoint benefits from being asked only once instead of
+once per glyph.
 
 Deliberately does *not* also cache the parsed TTFFace -- only the
 resolved path. TTFFace holds the entire font file's own raw bytes
 (`data: List[UInt8]`, Movable only, not ImplicitlyCopyable) and
-parsing one already costs only ~2ms of the ~35-40ms a path-cache hit
-here saves; making TTFFace copyable just to claw back that remaining
-~2ms would mean copying a multi-hundred-KB-to-multi-MB buffer out of
-the cache on every hit, and would widen TTFFace's own public trait
-surface for a sub-5% marginal win. Not worth it unless profiling says
-otherwise later.
+parsing one costs only a few ms; making TTFFace copyable just to
+avoid re-parsing would mean copying a multi-hundred-KB-to-multi-MB
+buffer out of the cache on every hit, and would widen TTFFace's own
+public trait surface for a small marginal win. Not worth it unless
+profiling says otherwise later.
 
 Mojo has no mutable global/module-level state (confirmed directly:
 declaring one raises "global variables are not supported"; the same
