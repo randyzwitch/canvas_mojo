@@ -176,6 +176,20 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
         if not self.in_clip(x, y):
             return
+        self.write_pixel(x, y, color)
+
+    def write_pixel(mut self, x: Int, y: Int, color: Color):
+        """Write `color` at (x, y) *without* the in_bounds/in_clip
+        checks set_pixel does -- the caller must already know (x, y)
+        is inside both the canvas and the active clip, typically
+        because it came from a range effective_fill_rect (below)
+        already intersected against both. set_pixel remains the safe,
+        checked entry point every single-pixel-at-a-time primitive
+        (draw_line_aa, fill_circle_aa, ...) still uses -- those can't
+        cheaply precompute one valid region up front the way a
+        rectangular fill can, so there's no per-pixel check to hoist
+        out of them.
+        """
         var idx = (y * self.width + x) * 3
         if color.a == 255:
             self.pixels[idx] = color.r
@@ -188,6 +202,39 @@ struct Canvas(Copyable, DrawTarget, Movable):
             self.pixels[idx + 1] = blended.g
             self.pixels[idx + 2] = blended.b
 
+    def effective_fill_rect(
+        self, x: Int, y: Int, width: Int, height: Int
+    ) -> Tuple[Int, Int, Int, Int]:
+        """The actual (x, y, width, height) a rectangular fill covering
+        [x, x+width) x [y, y+height) is allowed to touch: intersected
+        against both the canvas's own bounds and whatever clip is
+        currently active -- the identical intersection in_bounds/
+        in_clip already enforce, one pixel at a time, inside set_pixel.
+        Computed once here instead, for a caller that's about to loop
+        over a whole rectangular region itself (fill_rect/
+        fill_rect_gradient/fill() below): every pixel in that loop
+        would otherwise re-check itself against exactly the same,
+        unchanging-for-the-whole-loop bounds. Pair with write_pixel
+        (above) to skip straight to the write once inside the
+        returned range.
+
+        A returned width/height of 0 means nothing in the requested
+        rectangle is actually drawable (fully outside the canvas
+        and/or the active clip) -- looping `range(0)` is already a
+        no-op, so callers don't need a separate check for this.
+        """
+        var left = max(0, x)
+        var top = max(0, y)
+        var right = min(self.width, x + width)
+        var bottom = min(self.height, y + height)
+        if len(self.clip_stack) > 0:
+            var top_clip = self.clip_stack[len(self.clip_stack) - 1]
+            left = max(left, top_clip.x)
+            top = max(top, top_clip.y)
+            right = min(right, top_clip.x + top_clip.width)
+            bottom = min(bottom, top_clip.y + top_clip.height)
+        return (left, top, max(0, right - left), max(0, bottom - top))
+
     def get_pixel(self, x: Int, y: Int) -> Color:
         if not self.in_bounds(x, y):
             return Color(0, 0, 0)
@@ -195,9 +242,14 @@ struct Canvas(Copyable, DrawTarget, Movable):
         return Color(self.pixels[idx], self.pixels[idx + 1], self.pixels[idx + 2])
 
     def fill(mut self, color: Color):
-        for y in range(self.height):
-            for x in range(self.width):
-                self.set_pixel(x, y, color)
+        var region = self.effective_fill_rect(0, 0, self.width, self.height)
+        var rx = region[0]
+        var ry = region[1]
+        var rw = region[2]
+        var rh = region[3]
+        for y in range(ry, ry + rh):
+            for x in range(rx, rx + rw):
+                self.write_pixel(x, y, color)
 
     def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color):
         fill_rect(self, x, y, width, height, color)

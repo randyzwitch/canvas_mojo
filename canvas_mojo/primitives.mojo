@@ -816,13 +816,25 @@ def draw_rect(mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color
 
 
 def fill_rect(mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color: Color):
-    """Fill a solid rectangle (x, y is the top-left corner)."""
+    """Fill a solid rectangle (x, y is the top-left corner).
+
+    Clamps to the canvas's own bounds and the active clip *once*, up
+    front, via effective_fill_rect -- not per pixel through set_pixel
+    -- since every pixel in this loop shares the identical, unchanging
+    bounds check; see that method's own docstring on buffer.mojo's
+    Canvas.
+    """
     if width <= 0 or height <= 0:
         return
 
-    for yy in range(y, y + height):
-        for xx in range(x, x + width):
-            canvas.set_pixel(xx, yy, color)
+    var region = canvas.effective_fill_rect(x, y, width, height)
+    var rx = region[0]
+    var ry = region[1]
+    var rw = region[2]
+    var rh = region[3]
+    for yy in range(ry, ry + rh):
+        for xx in range(rx, rx + rw):
+            canvas.write_pixel(xx, yy, color)
 
 
 def fill_rect_gradient(
@@ -830,14 +842,20 @@ def fill_rect_gradient(
 ):
     """Fill a solid rectangle the same way fill_rect does, but
     sourcing each pixel's color from `gradient` (see gradient.mojo)
-    instead of one flat Color.
+    instead of one flat Color. Same once-up-front clamp as fill_rect,
+    for the same reason -- see that function's own docstring.
     """
     if width <= 0 or height <= 0:
         return
 
-    for yy in range(y, y + height):
-        for xx in range(x, x + width):
-            canvas.set_pixel(xx, yy, gradient.color_at(Float64(xx), Float64(yy)))
+    var region = canvas.effective_fill_rect(x, y, width, height)
+    var rx = region[0]
+    var ry = region[1]
+    var rw = region[2]
+    var rh = region[3]
+    for yy in range(ry, ry + rh):
+        for xx in range(rx, rx + rw):
+            canvas.write_pixel(xx, yy, gradient.color_at(Float64(xx), Float64(yy)))
 
 
 def fill_rect_radial_gradient(
@@ -850,14 +868,20 @@ def fill_rect_radial_gradient(
     is), but it's the same "concrete case that exists" reasoning as
     fill_rect_gradient: a rectangular legend swatch or background panel
     wanting a radial highlight doesn't need a circle primitive
-    involved at all.
+    involved at all. Same once-up-front clamp as fill_rect, for the
+    same reason -- see that function's own docstring.
     """
     if width <= 0 or height <= 0:
         return
 
-    for yy in range(y, y + height):
-        for xx in range(x, x + width):
-            canvas.set_pixel(xx, yy, gradient.color_at(Float64(xx), Float64(yy)))
+    var region = canvas.effective_fill_rect(x, y, width, height)
+    var rx = region[0]
+    var ry = region[1]
+    var rw = region[2]
+    var rh = region[3]
+    for yy in range(ry, ry + rh):
+        for xx in range(rx, rx + rw):
+            canvas.write_pixel(xx, yy, gradient.color_at(Float64(xx), Float64(yy)))
 
 
 def draw_circle(mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color):
