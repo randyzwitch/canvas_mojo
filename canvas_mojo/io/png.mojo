@@ -3,24 +3,24 @@ matching this whole workspace's approach to binary formats elsewhere
 (BMP here, TrueType/sfnt in the deleted `fonts/` package's history).
 
 PNG's image data is always wrapped in a zlib stream (RFC 1950), which
-in turn wraps a DEFLATE stream (RFC 1951) -- normally LZ77 + Huffman
-coding, real compression. `write_png` sidesteps implementing DEFLATE's
-compression at all: RFC 1951 section 3.2.4 defines a "stored" block
-type (BTYPE=00) that copies bytes through uncompressed, a fully valid
-DEFLATE encoding any conforming decoder must accept, just a larger one
-than a compressed stream would be. That's an acceptable trade here --
-BMP already made the same call (uncompressed) for the same reason:
-"viewable, lossless, trivial to verify byte-by-byte" doesn't need
-small files. `read_png`, added later, has no such shortcut available
-to it -- a *reader* has to handle whatever real-world encoder actually
-produced the file, stored blocks or genuine LZ77+Huffman compression
-alike, so it depends on `canvas_mojo/io/deflate.mojo`'s own real
-DEFLATE decoder (see that module's own docstring for why that's
-translated from zlib's own reference decoder rather than re-derived,
-and how it's verified). PNG earns its place alongside BMP despite
-`write_png`'s own uncompressed-by-choice output for one reason: unlike
-BMP, decent viewers actually preview it well, and it's the format
-someone downstream would expect to receive -- or hand you.
+in turn wraps a DEFLATE stream (RFC 1951) -- LZ77 + Huffman coding,
+real compression. `write_png` used to sidestep implementing DEFLATE's
+compression side at all, via RFC 1951 3.2.4's "stored" block type
+(BTYPE=00, a fully valid but uncompressed DEFLATE encoding) -- the
+same trade BMP still makes ("viewable, lossless, trivial to verify
+byte-by-byte" over small files). `write_png` no longer needs to make
+that trade: `canvas_mojo/io/deflate.mojo` now has a real LZ77 + fixed-
+Huffman `deflate()` alongside its own decoder (`inflate`, which
+`read_png` already depended on, since a *reader* has to handle
+whatever real-world encoder actually produced the file, stored blocks
+or genuine compression alike) -- see that module's own docstring for
+how each side is built and verified. PNG earns its place alongside BMP
+for the same reason it always did (decent viewers preview it well,
+it's the format someone downstream would expect to receive or hand
+you), now with the small-file half of that bargain actually delivered
+too, natively -- no external compression tool, matching the "own the
+whole pipeline in Mojo" stance behind every other binary format this
+package reads or writes.
 
 Two checksum algorithms, hand-rolled per their public specs
 (PNG spec Appendix D for CRC-32; RFC 1950 section 9 for Adler-32),
@@ -61,7 +61,7 @@ documented architectural fact showing up here, not a new limitation
 
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
-from canvas_mojo.io.deflate import inflate
+from canvas_mojo.io.deflate import deflate, inflate
 
 
 def _append_u16_le(mut buf: List[UInt8], value: UInt16):
@@ -143,43 +143,6 @@ def _write_chunk(mut buf: List[UInt8], table: List[UInt32], chunk_type: String, 
     _append_u32_be(buf, _crc32(type_and_data, table))
 
 
-def _deflate_stored(data: List[UInt8]) -> List[UInt8]:
-    """Wrap `data` in DEFLATE stored (uncompressed) blocks -- RFC 1951
-    section 3.2.4. Each block: a 3-bit header (BFINAL + BTYPE=00)
-    padded out to a byte boundary (valid here because a stored block
-    always starts and ends byte-aligned, so the padding is simply the
-    rest of that first byte, all zero bits), then LEN/NLEN (16-bit
-    little-endian; NLEN is LEN's one's complement, a self-check real
-    decoders verify) and the raw bytes themselves. Max 65535 bytes per
-    block, so anything larger splits across multiple blocks -- BFINAL
-    set only on the last one.
-    """
-    var out = List[UInt8]()
-    comptime MAX_BLOCK = 65535
-    var pos = 0
-    var total = len(data)
-
-    while True:
-        var remaining = total - pos
-        var block_len = remaining if remaining < MAX_BLOCK else MAX_BLOCK
-        var is_final = pos + block_len >= total
-
-        # BFINAL in bit 0, BTYPE (00 = stored) in bits 1-2, remaining
-        # 5 bits of this byte are padding up to the next byte
-        # boundary -- all zero, so the header byte is just BFINAL itself.
-        out.append(UInt8(1) if is_final else UInt8(0))
-        _append_u16_le(out, UInt16(block_len))
-        _append_u16_le(out, UInt16(UInt32(0xFFFF) ^ UInt32(block_len)))
-        for i in range(block_len):
-            out.append(data[pos + i])
-
-        pos += block_len
-        if is_final:
-            break
-
-    return out^
-
-
 def write_png(canvas: Canvas, path: String) raises:
     var w = canvas.width
     var h = canvas.height
@@ -201,8 +164,12 @@ def write_png(canvas: Canvas, path: String) raises:
     _write_chunk(file_buf, crc_table, "IHDR", ihdr)
 
     # Raw scanlines: a filter-type byte (0 = None -- no per-pixel
-    # prediction, matching "no real compression" throughout this
-    # writer) followed by that row's RGB bytes, one row after another.
+    # prediction; deflate()'s own LZ77 already finds the same
+    # horizontal-run redundancy a predictor filter targets, and this
+    # package's own images are dominated by large flat-color regions
+    # where that already compresses extremely well, see deflate.mojo's
+    # own module docstring) followed by that row's RGB bytes, one row
+    # after another.
     var raw = List[UInt8](capacity=h * (1 + w * 3))
     for y in range(h):
         raw.append(0)
@@ -214,12 +181,15 @@ def write_png(canvas: Canvas, path: String) raises:
 
     var zlib_stream = List[UInt8]()
     # zlib header (RFC 1950 section 2.2): CMF=0x78 (deflate, 32K
-    # window), FLG=0x01 (fastest/no compression, matching what this
-    # actually is) -- and (0x78*256 + 0x01) % 31 == 0, the header's
-    # required self-check, confirmed not just assumed.
+    # window), FLG=0x01 (FLEVEL=0/"fastest", matching deflate()'s own
+    # single-fixed-Huffman-block, bounded-search-depth scope -- real
+    # compression, not the maximal effort a slower encoder could reach
+    # for the same bytes, see deflate.mojo's own module docstring) --
+    # and (0x78*256 + 0x01) % 31 == 0, the header's required self-
+    # check, confirmed not just assumed.
     zlib_stream.append(0x78)
     zlib_stream.append(0x01)
-    var compressed = _deflate_stored(raw)
+    var compressed = deflate(raw)
     for b in compressed:
         zlib_stream.append(b)
     _append_u32_be(zlib_stream, _adler32(raw))

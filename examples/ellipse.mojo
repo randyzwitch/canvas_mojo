@@ -18,6 +18,7 @@ from canvas_mojo.primitives import (
     fill_ellipse_aa,
 )
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -29,4 +30,5 @@ def main() raises:
     fill_ellipse_aa(c, 1740, 240, 210, 135, Color(150, 40, 180))
 
     write_bmp(c, "examples/out_ellipse.bmp")
-    print("wrote examples/out_ellipse.bmp")
+    write_png(c, "examples/out_ellipse.png")
+    print("wrote examples/out_ellipse.bmp and .png")

@@ -15,6 +15,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.path import Path, fill_path, fill_path_aa, stroke_path, stroke_path_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -128,4 +129,5 @@ def main() raises:
     fill_path_aa(c, ribbon, Color(60, 100, 190))
 
     write_bmp(c, "examples/out_path.bmp")
-    print("wrote examples/out_path.bmp")
+    write_png(c, "examples/out_path.png")
+    print("wrote examples/out_path.bmp and .png")

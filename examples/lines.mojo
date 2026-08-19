@@ -10,6 +10,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.primitives import draw_line, draw_line_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -19,4 +20,5 @@ def main() raises:
     draw_line_aa(c, 60, 525, 840, 105, Color(120, 120, 120))
 
     write_bmp(c, "examples/out_lines.bmp")
-    print("wrote examples/out_lines.bmp")
+    write_png(c, "examples/out_lines.png")
+    print("wrote examples/out_lines.bmp and .png")

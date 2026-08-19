@@ -14,6 +14,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
 from canvas_mojo.primitives import draw_polygon, draw_polygon_aa, fill_polygon, fill_polygon_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -52,4 +53,5 @@ def main() raises:
     fill_polygon_aa(c, pentagon_fill_aa, Color(20, 130, 150))
 
     write_bmp(c, "examples/out_polygon.bmp")
-    print("wrote examples/out_polygon.bmp")
+    write_png(c, "examples/out_polygon.png")
+    print("wrote examples/out_polygon.bmp and .png")

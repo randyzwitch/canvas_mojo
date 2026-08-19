@@ -27,6 +27,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point, Transform2D
 from canvas_mojo.primitives import draw_line, draw_polyline_aa, fill_circle_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def _draw_panel(mut c: Canvas, t: Transform2D):
@@ -68,4 +69,5 @@ def main() raises:
     _draw_panel(c, rotated)
 
     write_bmp(c, "examples/out_transform.bmp")
-    print("wrote examples/out_transform.bmp")
+    write_png(c, "examples/out_transform.png")
+    print("wrote examples/out_transform.bmp and .png")

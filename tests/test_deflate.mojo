@@ -1,24 +1,36 @@
-"""Tests for canvas_mojo/io/deflate.mojo.
+"""Tests for canvas_mojo/io/deflate.mojo: inflate() (decompression)
+and deflate() (compression).
 
-Every compressed byte sequence below is real `zlib.compress()` output
-(Python's stdlib zlib, itself wrapping the same C zlib every other
-tool uses), not hand-built -- these are the actual streams a real
-encoder produces, byte for byte, not a synthetic approximation of one.
-Each was chosen to force a specific DEFLATE block type (confirmed by
-inspecting the block header bits before trusting it as "the fixed-
-Huffman case" or "the dynamic-Huffman case"): stored, fixed Huffman,
-and dynamic Huffman are all exercised separately, since they're
-decoded by genuinely different code paths (_stored_block/_fixed_tables/
-_dynamic_tables) that a single passing test couldn't confirm all
-three of. See canvas_mojo/io/deflate.mojo's own docstring for how the
-decoder itself was verified (round-tripping real zlib output, not just
-these three vectors -- large multi-block and larger dynamic-Huffman
-streams were also checked via probe before this file was written).
+inflate(): every compressed byte sequence below is real
+`zlib.compress()` output (Python's stdlib zlib, itself wrapping the
+same C zlib every other tool uses), not hand-built -- these are the
+actual streams a real encoder produces, byte for byte, not a synthetic
+approximation of one. Each was chosen to force a specific DEFLATE
+block type (confirmed by inspecting the block header bits before
+trusting it as "the fixed-Huffman case" or "the dynamic-Huffman
+case"): stored, fixed Huffman, and dynamic Huffman are all exercised
+separately, since they're decoded by genuinely different code paths
+(_stored_block/_fixed_tables/_dynamic_tables) that a single passing
+test couldn't confirm all three of. See canvas_mojo/io/deflate.mojo's
+own docstring for how the decoder itself was verified (round-tripping
+real zlib output, not just these three vectors -- large multi-block
+and larger dynamic-Huffman streams were also checked via probe before
+this file was written).
+
+deflate(): the inverse direction, checked the same rigorous way in
+reverse -- round-tripped back through inflate() above (real, since
+that decoder is independently verified against real zlib output, not
+circular), an exact hand-and-cross-derived byte comparison for one
+small input (see that test's own docstring for exactly how those bytes
+were confirmed), and a real compression-effectiveness check (not just
+"round-trips correctly" -- a match finder that's technically correct
+but barely compresses anything would still pass every round-trip test
+here).
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.io.deflate import inflate
+from canvas_mojo.io.deflate import deflate, inflate
 
 
 def _assert_inflates_to(var compressed: List[UInt8], expected: List[UInt8]) raises:
@@ -95,6 +107,116 @@ def test_dynamic_huffman_block() raises:
             matches = False
             break
     assert_true(matches)
+
+
+def _round_trip(data: List[UInt8]) raises -> List[UInt8]:
+    """Borrowed, not owned, unlike inflate()'s own `var` parameter --
+    deflate() itself only reads `data` (see its own signature), so
+    there's nothing to transfer, and every caller below still needs
+    its own `data` afterward to check the result against.
+    """
+    var compressed = deflate(data)
+    return inflate(compressed^)
+
+
+def test_deflate_round_trips_empty_input() raises:
+    var result = _round_trip(List[UInt8]())
+    assert_equal(len(result), 0)
+
+
+def test_deflate_round_trips_literal_only_data() raises:
+    # No 3-byte sequence repeats anywhere in this input, so every byte
+    # must come out the other end as a plain Huffman-coded literal --
+    # zero LZ77 matches, a real code path (not just the repetitive-data
+    # one) this test exists specifically to exercise.
+    var data: List[UInt8] = [0, 10, 20, 30, 40, 50, 60]
+    var result = _round_trip(data)
+    assert_equal(len(result), len(data))
+    for i in range(len(data)):
+        assert_equal(result[i], data[i])
+
+
+def test_deflate_matches_hand_and_cross_derived_bytes_for_all_literal_input() raises:
+    # The same 7-byte all-literal input as the test above, but checked
+    # byte-for-byte against deflate()'s own actual output -- verified
+    # two independent ways before being locked in here (see this
+    # file's own module docstring for the general standard, and
+    # canvas_mojo/io/deflate.mojo's own module docstring for how
+    # deflate() itself is verified): (1) captured from a real run,
+    # decompressed back through both inflate() and Python's separate
+    # zlib.decompress(-15), both reproducing the original 7 bytes
+    # exactly; (2) the first two literal symbols' own Huffman codes
+    # (0 -> 8 bits 00110000, 10 -> 8 bits 00111010) hand-derived from
+    # RFC 1951 3.2.2's own canonical-code algorithm and confirmed to
+    # match this exact byte sequence's own first 16 post-header bits,
+    # bit for bit.
+    var data: List[UInt8] = [0, 10, 20, 30, 40, 50, 60]
+    var compressed = deflate(data)
+    var expected: List[UInt8] = [99, 224, 18, 145, 211, 48, 178, 1, 0]
+    assert_equal(len(compressed), len(expected))
+    for i in range(len(expected)):
+        assert_equal(compressed[i], expected[i])
+
+
+def test_deflate_output_starts_with_bfinal_and_fixed_huffman_btype() raises:
+    # BFINAL=1 (bit 0) and BTYPE=01/fixed-Huffman (bits 1-2), packed
+    # LSB-first into the very first byte -- deflate()'s own docstring
+    # promise that it always emits exactly one fixed-Huffman block.
+    # 1 | (1 << 1) == 3.
+    var data: List[UInt8] = [1, 2, 3, 4, 5]
+    var compressed = deflate(data)
+    assert_true(len(compressed) > 0)
+    assert_equal(Int(compressed[0] & 0b111), 3)
+
+
+def test_deflate_compresses_a_long_repeated_run_substantially() raises:
+    # LZ77's own best case -- a real compression-effectiveness check,
+    # not just a round-trip correctness one: a 10,000-byte solid run
+    # must come out far smaller than the input, not merely "some
+    # smaller size" (that alone wouldn't catch a match finder that's
+    # technically correct but barely finds anything).
+    var data = List[UInt8](capacity=10_000)
+    for _ in range(10_000):
+        data.append(77)
+    var compressed = deflate(data)
+    assert_true(len(compressed) < len(data) // 20)
+
+
+def test_deflate_round_trips_a_run_that_crosses_the_window_boundary() raises:
+    # 40,000 bytes -- past DEFLATE's own 32,768-byte max match distance
+    # (_WINDOW), so a match search partway through this input has
+    # candidates both inside and outside the legal window; confirms
+    # _find_match's own distance cutoff doesn't just avoid crashing on
+    # an out-of-window candidate but still finds a *correct* match
+    # among the ones that remain in range.
+    var data = List[UInt8](capacity=40_000)
+    for i in range(40_000):
+        data.append(UInt8(i % 251))
+    var result = _round_trip(data)
+    assert_equal(len(result), len(data))
+    for i in range(len(data)):
+        assert_equal(result[i], UInt8(i % 251))
+
+
+def test_deflate_round_trips_pseudo_random_incompressible_data() raises:
+    # Little to no LZ77 redundancy to exploit -- the worst case for any
+    # compressor, and specifically where a match-finder bug (an
+    # off-by-one in a match length, a wrong distance) would be likeliest
+    # to surface, since almost every byte takes the literal path instead
+    # of the match path this file's other tests already lean on.
+    var data = List[UInt8](capacity=20_000)
+    var state = UInt32(42)
+    for _ in range(20_000):
+        state = state * 1664525 + 1013904223
+        data.append(UInt8((state >> 24) & 0xFF))
+    var result = _round_trip(data)
+    assert_equal(len(result), len(data))
+    var i = 0
+    state = UInt32(42)
+    while i < len(data):
+        state = state * 1664525 + 1013904223
+        assert_equal(result[i], UInt8((state >> 24) & 0xFF))
+        i += 1
 
 
 def test_invalid_block_type_raises() raises:

@@ -19,6 +19,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.primitives import draw_arc_aa, fill_arc_aa, fill_ring_sector_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -47,4 +48,5 @@ def main() raises:
     fill_ring_sector_aa(c, donut_cx, donut_cy, 150.0, 285.0, pi / 2.0, 3.0 * pi / 2.0, Color(60, 130, 190))
 
     write_bmp(c, "examples/out_arc.bmp")
-    print("wrote examples/out_arc.bmp")
+    write_png(c, "examples/out_arc.png")
+    print("wrote examples/out_arc.bmp and .png")

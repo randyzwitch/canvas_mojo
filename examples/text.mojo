@@ -18,6 +18,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.text.render import draw_text, measure_text_block, TextAlign
 from canvas_mojo.primitives import draw_rect
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -107,4 +108,5 @@ def main() raises:
     draw_text(c, 60, 1710, "Requested Ubuntu, but ☃ isn't in it", Color(20, 24, 32), 66.0, family="Ubuntu")
 
     write_bmp(c, "examples/out_text.bmp")
-    print("wrote examples/out_text.bmp")
+    write_png(c, "examples/out_text.png")
+    print("wrote examples/out_text.bmp and .png")

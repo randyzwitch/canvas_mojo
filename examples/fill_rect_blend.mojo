@@ -9,6 +9,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.primitives import fill_rect
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -21,4 +22,5 @@ def main() raises:
     fill_rect(c, 150, 150, 300, 300, Color(40, 80, 220, 128))
 
     write_bmp(c, "examples/out_fill_rect_blend.bmp")
-    print("wrote examples/out_fill_rect_blend.bmp")
+    write_png(c, "examples/out_fill_rect_blend.png")
+    print("wrote examples/out_fill_rect_blend.bmp and .png")

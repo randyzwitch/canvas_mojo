@@ -12,6 +12,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
 from canvas_mojo.primitives import draw_polyline, draw_polyline_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -34,4 +35,5 @@ def main() raises:
     draw_polyline_aa(c, zigzag_aa, Color(210, 130, 20))
 
     write_bmp(c, "examples/out_polyline.bmp")
-    print("wrote examples/out_polyline.bmp")
+    write_png(c, "examples/out_polyline.png")
+    print("wrote examples/out_polyline.bmp and .png")

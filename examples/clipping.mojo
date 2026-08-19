@@ -19,6 +19,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.primitives import draw_rect, draw_line, fill_circle_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -44,4 +45,5 @@ def main() raises:
     c.pop_clip()  # back to no clip
 
     write_bmp(c, "examples/out_clipping.bmp")
-    print("wrote examples/out_clipping.bmp")
+    write_png(c, "examples/out_clipping.png")
+    print("wrote examples/out_clipping.bmp and .png")

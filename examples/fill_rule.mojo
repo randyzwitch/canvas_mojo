@@ -25,6 +25,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.path import Path, fill_path
 from canvas_mojo.fill_rule import FillRule
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def _square(mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Float64) raises:
@@ -49,4 +50,5 @@ def main() raises:
     fill_path(c, p2, Color(40, 100, 200), fill_rule=FillRule.NONZERO)
 
     write_bmp(c, "examples/out_fill_rule.bmp")
-    print("wrote examples/out_fill_rule.bmp")
+    write_png(c, "examples/out_fill_rule.png")
+    print("wrote examples/out_fill_rule.bmp and .png")

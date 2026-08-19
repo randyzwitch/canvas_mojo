@@ -16,6 +16,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
 from canvas_mojo.primitives import draw_line, draw_line_aa, draw_polygon, draw_polygon_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -42,4 +43,5 @@ def main() raises:
     draw_polygon_aa(c, points, Color(40, 100, 200), dashes=dashes)
 
     write_bmp(c, "examples/out_dashes.bmp")
-    print("wrote examples/out_dashes.bmp")
+    write_png(c, "examples/out_dashes.png")
+    print("wrote examples/out_dashes.bmp and .png")

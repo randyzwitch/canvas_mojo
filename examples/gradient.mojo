@@ -18,6 +18,7 @@ from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.path import Path, fill_path_gradient, fill_path_radial_gradient
 from canvas_mojo.primitives import fill_rect_gradient, fill_rect_radial_gradient
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -81,4 +82,5 @@ def main() raises:
     fill_rect_radial_gradient(c, 1410, 120, 480, 540, swatch_radial)
 
     write_bmp(c, "examples/out_gradient.bmp")
-    print("wrote examples/out_gradient.bmp")
+    write_png(c, "examples/out_gradient.png")
+    print("wrote examples/out_gradient.bmp and .png")

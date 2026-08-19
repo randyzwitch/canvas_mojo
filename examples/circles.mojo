@@ -12,6 +12,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.primitives import draw_circle, draw_circle_aa, fill_circle, fill_circle_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
@@ -23,4 +24,5 @@ def main() raises:
     fill_circle_aa(c, 1740, 240, 180, Color(150, 40, 180))
 
     write_bmp(c, "examples/out_circles.bmp")
-    print("wrote examples/out_circles.bmp")
+    write_png(c, "examples/out_circles.png")
+    print("wrote examples/out_circles.bmp and .png")
