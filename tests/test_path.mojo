@@ -2,6 +2,7 @@
 fill_path/stroke_path/stroke_path_aa entry points.
 """
 
+from std.math import cos, pi, sin, sqrt
 from std.testing import assert_equal, assert_true, assert_raises, TestSuite
 
 from canvas_mojo.color import Color
@@ -9,7 +10,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.primitives import fill_polygon, fill_polygon_aa
+from canvas_mojo.primitives import fill_arc, fill_polygon, fill_polygon_aa
 from canvas_mojo.path import (
     Path,
     FPoint,
@@ -58,6 +59,12 @@ def test_close_before_move_to_raises() raises:
     var p = Path()
     with assert_raises():
         p.close()
+
+
+def test_arc_to_before_move_to_raises() raises:
+    var p = Path()
+    with assert_raises():
+        p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
 
 
 def test_quad_point_matches_hand_derived_values() raises:
@@ -121,6 +128,100 @@ def test_flatten_cubic_curve_passes_through_hand_derived_midpoint() raises:
     assert_equal(pts[8].y, 8)  # 7.5 rounds up (half-away-from-zero)
     assert_equal(pts[16].x, 10)
     assert_equal(pts[16].y, 0)
+
+
+def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
+    # Center (0, 0), radius 10, start_angle=0 -> end_angle=pi/2: a
+    # quarter circle from (10, 0) to (0, 10) -- both endpoints exact,
+    # independently hand-derived (r*cos(0)=10, r*sin(0)=0; r*cos(pi/2)
+    # ~= 0, r*sin(pi/2) ~= 10, both rounding cleanly). arc_to's own
+    # flattening reuses primitives.mojo's _arc_points, so the arc's own
+    # start point (already present via move_to) must NOT be duplicated
+    # -- see arc_to's own docstring.
+    var p = Path()
+    p.move_to(10.0, 0.0)
+    p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
+    var subpaths = _flatten(p)
+    assert_equal(len(subpaths), 1)
+    ref pts = subpaths[0].points
+    # _arc_points's own step count: max(4, Int(radius * span)) ==
+    # max(4, Int(10 * pi/2)) == 15 steps -> 16 sampled points (steps+1,
+    # index 0 == the arc's own start). arc_to's flatten branch skips
+    # that index-0 duplicate (already present via move_to below), so
+    # the sub-path holds move_to's own point plus arc_points[1:] --
+    # 1 + 15 == 16, not 17. A wrong count here would mean the
+    # duplicate-skip silently broke.
+    assert_equal(len(pts), 16)
+    assert_equal(pts[0].x, 10)
+    assert_equal(pts[0].y, 0)
+    var last = pts[len(pts) - 1]
+    assert_equal(last.x, 0)
+    assert_equal(last.y, 10)
+    # every intermediate sample must be within a pixel of the circle
+    # itself (radius 10, centered at origin) -- confirms real curved
+    # sampling happened, not just "start and end points, straight line
+    # between" (which would also pass a start/end-only check).
+    for i in range(1, len(pts) - 1):
+        var p_i = pts[i]
+        var dist = sqrt(Float64(p_i.x * p_i.x + p_i.y * p_i.y))
+        assert_true(abs(dist - 10.0) < 1.0, "intermediate arc sample stays on the circle")
+
+
+def test_arc_to_updates_current_point_to_the_arc_end() raises:
+    # A line_to() right after arc_to() must start exactly where the
+    # arc left off (its own end point), not the arc's own center or
+    # start -- confirms arc_to's own _current_x/_current_y bookkeeping
+    # (path.mojo), the same contract line_to/quad_curve_to/
+    # cubic_curve_to already have.
+    var p = Path()
+    p.move_to(10.0, 0.0)
+    p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
+    p.line_to(20.0, 20.0)
+    var subpaths = _flatten(p)
+    ref pts = subpaths[0].points
+    var last = pts[len(pts) - 1]
+    assert_equal(last.x, 20)
+    assert_equal(last.y, 20)
+    var before_last = pts[len(pts) - 2]
+    assert_equal(before_last.x, 0)
+    assert_equal(before_last.y, 10)
+
+
+def test_fill_path_arc_to_matches_fill_arc_for_a_wedge() raises:
+    # arc_to's own flattening reuses the identical _arc_points helper
+    # fill_arc itself samples through, so a move_to(arc start) ->
+    # arc_to(...) -> line_to(center) -> close() wedge traces the exact
+    # same cyclic edge list fill_arc's own fill_polygon call does
+    # (arc_points[0] -> ... -> arc_points[-1] -> center ->
+    # arc_points[0]), just starting from a different point around the
+    # same loop -- fill_path's crossing scan is rotation-invariant, so
+    # the two must fill byte-identical, the same parity relationship
+    # test_fill_path_matches_fill_polygon_for_a_simple_triangle above
+    # confirms for straight edges.
+    var cx = 30.0
+    var cy = 30.0
+    var radius = 20.0
+    var start_angle = 0.0
+    var end_angle = pi / 2.0
+
+    var c1 = Canvas(60, 60, BG)
+    fill_arc(c1, cx, cy, radius, start_angle, end_angle, FG)
+
+    var p = Path()
+    p.move_to(cx + radius * cos(start_angle), cy + radius * sin(start_angle))
+    p.arc_to(cx, cy, radius, start_angle, end_angle)
+    p.line_to(cx, cy)
+    p.close()
+    var c2 = Canvas(60, 60, BG)
+    fill_path(c2, p, FG)
+
+    for y in range(60):
+        for x in range(60):
+            var a = c1.get_pixel(x, y)
+            var b = c2.get_pixel(x, y)
+            assert_equal(a.r, b.r)
+            assert_equal(a.g, b.g)
+            assert_equal(a.b, b.b)
 
 
 def test_flatten_splits_on_each_move_to() raises:

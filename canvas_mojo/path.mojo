@@ -1,17 +1,24 @@
-"""A general path type -- move/line/quadratic-curve/cubic-curve/close,
-built up via chained calls, then flattened into straight-line segments
-and handed off to primitives.mojo's already-tested polyline/polygon/
-fill machinery, rather than reimplementing fill or stroke logic here.
+"""A general path type -- move/line/quadratic-curve/cubic-curve/
+arc-to/close, built up via chained calls, then flattened into
+straight-line segments and handed off to primitives.mojo's already-
+tested polyline/polygon/fill machinery, rather than reimplementing
+fill or stroke logic here.
 
 Coordinates are Float64 (FPoint), not Point's integer pixels: a curve
 control point off by a fraction of a pixel changes the flattened
 curve's visible shape, unlike a straight line's endpoints, which only
-ever needed whole pixels. Curve flattening uses a fixed step count per
-segment, not adaptive subdivision -- the same choice, for the same
-reason, fonts/raster.mojo made for TrueType's quadratic curves before
-this package had its own general path type (see the wiki for that
-history): good enough at the sizes this exists for, and adaptive
-subdivision is real, deferrable complexity with no concrete need yet.
+ever needed whole pixels. Quad/cubic curve flattening uses a fixed
+step count per segment, not adaptive subdivision -- the same choice,
+for the same reason, fonts/raster.mojo made for TrueType's quadratic
+curves before this package had its own general path type (see the
+wiki for that history): good enough at the sizes this exists for, and
+adaptive subdivision is real, deferrable complexity with no concrete
+need yet. arc_to is the one exception: it reuses primitives.mojo's own
+_arc_points helper (radius-proportional step count), the same exact
+circle-math sampling draw_arc/fill_arc/fill_ring_sector already use --
+a fixed step count doesn't generalize across a path-drawn arc's own
+much wider practical radius range the way it does for a Bezier
+control-point-driven curve, see _arc_points's own docstring.
 
 A path can hold multiple sub-paths (more than one move_to). fill_path
 combines every sub-path's scanline crossings together (even-odd),
@@ -23,6 +30,8 @@ instead draw each sub-path independently, closed (draw_polygon) or
 open (draw_polyline) depending on whether that sub-path's own close()
 was called.
 """
+
+from std.math import cos, sin
 
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
@@ -37,6 +46,7 @@ from canvas_mojo.primitives import (
     _Crossing,
     _spans_from_crossings,
     _is_inside,
+    _arc_points,
 )
 
 comptime _MOVE_TO = 0
@@ -44,6 +54,7 @@ comptime _LINE_TO = 1
 comptime _QUAD_TO = 2
 comptime _CUBIC_TO = 3
 comptime _CLOSE = 4
+comptime _ARC_TO = 5
 
 # Fixed subdivision steps per curve segment when flattening -- see
 # this module's own docstring for why fixed, not adaptive.
@@ -68,8 +79,11 @@ struct _PathCommand(ImplicitlyCopyable, Movable):
     """One path command. Which of p1/p2/p3 are meaningful depends on
     `kind`: move_to/line_to use only p1 (the endpoint); quad_to uses
     p1 (control) and p2 (endpoint); cubic_to uses all three (control1,
-    control2, endpoint); close uses none. A tagged struct with unused
-    fields left zeroed, not a real union (Mojo doesn't have a
+    control2, endpoint); close uses none; arc_to packs its five plain
+    scalars (cx, cy, radius, start_angle, end_angle) across all three
+    points instead of a fourth field -- p1 = (cx, cy), p2 = (radius,
+    start_angle), p3.x = end_angle (p3.y unused). A tagged struct with
+    unused fields left zeroed, not a real union (Mojo doesn't have a
     lightweight one) -- wastes a little space per command, irrelevant
     at the command counts a chart-label-sized path ever reaches.
     """
@@ -87,8 +101,8 @@ struct _PathCommand(ImplicitlyCopyable, Movable):
 
 
 struct Path(Movable):
-    """Build with move_to/line_to/quad_curve_to/cubic_curve_to/close,
-    then hand to fill_path/stroke_path/stroke_path_aa. No chaining
+    """Build with move_to/line_to/quad_curve_to/cubic_curve_to/arc_to/
+    close, then hand to fill_path/stroke_path/stroke_path_aa. No chaining
     (each call is `mut self` returning nothing) -- matches Canvas's
     own builder-style methods (push_clip, set_pixel) rather than
     inventing a fluent style just for this type.
@@ -156,6 +170,39 @@ struct Path(Movable):
         self.commands.append(_PathCommand(_CUBIC_TO, FPoint(c1x, c1y), FPoint(c2x, c2y), FPoint(x, y)))
         self._current_x = x
         self._current_y = y
+
+    def arc_to(
+        mut self, cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64
+    ) raises:
+        """A circular arc segment, center (cx, cy), from `start_angle`
+        to `end_angle` (radians, start_angle <= end_angle expected --
+        same convention as primitives.mojo's own draw_arc/fill_arc/
+        fill_ring_sector family, including which way increasing angle
+        sweeps on screen: see _arc_points's own docstring). Flattened
+        via that same _arc_points helper at build time (not Path's own
+        fixed-step quad/cubic subdivision, see this module's own
+        docstring for why fixed-step curve flattening is fine for
+        those but wouldn't be here) -- radius-proportional step count,
+        so a raster fill_path_aa/stroke_path_aa render of an arc_to
+        traces the identical curve a direct draw_arc/fill_arc call
+        would, not just a visually-similar one.
+
+        Unlike Cairo's `arc()`, this does *not* insert a connecting
+        line from wherever the current point already is to the arc's
+        own start point -- matches every other Path method's absolute,
+        no-implicit-magic contract (see this struct's own docstring):
+        call move_to(cx + radius*cos(start_angle), cy +
+        radius*sin(start_angle)) first (or arrange the previous
+        segment to already end exactly there) if the two need to
+        connect with no seam.
+        """
+        if not self._has_current_point:
+            raise Error("Path.arc_to() called before any move_to() -- a path needs a starting point first")
+        self.commands.append(
+            _PathCommand(_ARC_TO, FPoint(cx, cy), FPoint(radius, start_angle), FPoint(end_angle, 0.0))
+        )
+        self._current_x = cx + radius * cos(end_angle)
+        self._current_y = cy + radius * sin(end_angle)
 
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's own
@@ -251,6 +298,18 @@ def _flatten(path: Path) -> List[_Subpath]:
                 current.append(Point(_round_to_int(p.x), _round_to_int(p.y)))
             cur_x = cmd.p3.x
             cur_y = cmd.p3.y
+        elif cmd.kind == _ARC_TO:
+            # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
+            # cmd.p3.x = end_angle -- see _PathCommand's own docstring
+            # for this packing. _arc_points includes the arc's own
+            # start point (index 0), which should already equal
+            # (cur_x, cur_y) per arc_to's own contract -- skipped here
+            # the same way the quad/cubic branches above skip t=0.
+            var arc_points = _arc_points(cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x)
+            for i in range(1, len(arc_points)):
+                current.append(arc_points[i])
+            cur_x = cmd.p1.x + cmd.p2.x * cos(cmd.p3.x)
+            cur_y = cmd.p1.y + cmd.p2.x * sin(cmd.p3.x)
         else:  # _CLOSE
             cur_x = start_x
             cur_y = start_y
