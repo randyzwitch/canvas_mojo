@@ -224,6 +224,73 @@ def test_fill_path_arc_to_matches_fill_arc_for_a_wedge() raises:
             assert_equal(a.b, b.b)
 
 
+def test_fill_path_aa_arc_to_wedge_has_a_real_antialiased_boundary() raises:
+    # Same wedge as test_fill_path_arc_to_matches_fill_arc_for_a_wedge
+    # above, through fill_path_aa instead of fill_path -- not a byte-
+    # identical parity test against fill_arc_aa this time: fill_arc_aa
+    # samples an analytic "within radius AND within angle span" test
+    # directly (see its own docstring), a genuinely different algorithm
+    # from fill_path_aa's flattened-boundary point-in-polygon
+    # supersampling, so the two don't agree pixel-for-pixel right at
+    # the edge the way the hard-edged pair does. What must still hold,
+    # confirmed directly rather than assumed: full coverage deep
+    # inside the wedge, zero coverage clearly outside it, and a real
+    # blended (neither pure BG nor pure FG) pixel exactly on the arc's
+    # own boundary -- proof AA supersampling actually ran on a curved
+    # edge, not just a straight one.
+    var cx = 30.0
+    var cy = 30.0
+    var radius = 20.0
+    var start_angle = 0.0
+    var end_angle = pi / 2.0
+
+    var p = Path()
+    p.move_to(cx + radius * cos(start_angle), cy + radius * sin(start_angle))
+    p.arc_to(cx, cy, radius, start_angle, end_angle)
+    p.line_to(cx, cy)
+    p.close()
+    var c = Canvas(60, 60, BG)
+    fill_path_aa(c, p, FG)
+
+    _assert_pixel(c, Int(cx) + 5, Int(cy) + 5, FG, "deep inside the wedge -- full coverage")
+    _assert_pixel(c, Int(cx) - 10, Int(cy) - 10, BG, "opposite quadrant -- clearly outside, zero coverage")
+
+    # (cx + r*cos(pi/4), cy + r*sin(pi/4)) sits exactly on the arc's
+    # own boundary -- hand-derived via the same formula _arc_points
+    # itself uses, not guessed.
+    var edge_x = Int(cx + radius * cos(pi / 4.0))
+    var edge_y = Int(cy + radius * sin(pi / 4.0))
+    var edge = c.get_pixel(edge_x, edge_y)
+    assert_true(edge.r > 0 and edge.r < 255, "on the arc boundary -- real partial coverage, neither pure BG nor pure FG")
+
+
+def test_stroke_path_aa_draws_along_an_open_arc_to_segment() raises:
+    # Same quarter-circle as the flatten test above, left open (no
+    # close()) -- confirms stroke_path_aa (draw_polyline_aa under the
+    # hood, see stroke_path_aa's own docstring) actually traces the
+    # curved edge itself: a point exactly on the arc (same pi/4
+    # boundary point as the fill_path_aa test above) picks up real
+    # stroke coverage, while a point well clear of the curve (near the
+    # wedge's own center, nowhere close to any drawn segment) stays
+    # untouched background.
+    var cx = 30.0
+    var cy = 30.0
+    var radius = 20.0
+
+    var p = Path()
+    p.move_to(cx + radius * cos(0.0), cy + radius * sin(0.0))
+    p.arc_to(cx, cy, radius, 0.0, pi / 2.0)
+
+    var c = Canvas(60, 60, BG)
+    stroke_path_aa(c, p, FG, width=3.0)
+
+    var edge_x = Int(cx + radius * cos(pi / 4.0))
+    var edge_y = Int(cy + radius * sin(pi / 4.0))
+    var edge = c.get_pixel(edge_x, edge_y)
+    assert_true(edge.r > 0, "on the arc's own curve -- picks up real stroke coverage")
+    _assert_pixel(c, Int(cx), Int(cy), BG, "wedge center -- nowhere near the stroked curve, untouched")
+
+
 def test_flatten_splits_on_each_move_to() raises:
     var p = Path()
     p.move_to(0.0, 0.0)
