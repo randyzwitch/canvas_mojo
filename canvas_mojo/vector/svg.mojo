@@ -25,7 +25,7 @@ from std.math import cos, pi, sin
 from canvas_mojo.color import Color
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.geometry import _round_to_int
-from canvas_mojo.path import Path, _CLOSE, _CUBIC_TO, _LINE_TO, _MOVE_TO, _QUAD_TO
+from canvas_mojo.path import Path, _ARC_TO, _CLOSE, _CUBIC_TO, _LINE_TO, _MOVE_TO, _QUAD_TO
 from canvas_mojo.text.text_align import TextAlign
 
 comptime _HEX_DIGITS = "0123456789abcdef"
@@ -103,11 +103,16 @@ def _hex_color(color: Color) -> String:
 
 def _path_d(path: Path) -> String:
     """Path.commands -> an SVG `d` attribute string -- a direct
-    one-to-one mapping (M/L/Q/C/Z), not a re-derivation: Path's own
-    five command kinds are already exactly SVG path's own move/line/
-    quadratic/cubic/close commands, absolute coordinates both ways
-    (see Path's own docstring: "All coordinates are absolute"),
-    so no coordinate-system translation is needed either.
+    one-to-one mapping (M/L/Q/C/A/Z), not a re-derivation: Path's own
+    six command kinds are already exactly SVG path's own move/line/
+    quadratic/cubic/elliptical-arc/close commands, absolute coordinates
+    both ways (see Path's own docstring: "All coordinates are
+    absolute"), so no coordinate-system translation is needed either.
+    arc_to's `sweep_flag=1` (positive-angle direction), no sign flip --
+    same reasoning as fill_arc_aa/fill_ring_sector_aa's own arc
+    commands below: SVG's coordinate space is y-down, same as
+    `canvas`'s, and increasing angle already sweeps clockwise in that
+    space, so the two conventions already agree.
     """
     var d = String("")
     var is_first = True
@@ -144,6 +149,34 @@ def _path_d(path: Path) -> String:
                 + _format_svg_float(cmd.p3.x)
                 + ","
                 + _format_svg_float(cmd.p3.y)
+            )
+        elif cmd.kind == _ARC_TO:
+            # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
+            # cmd.p3.x = end_angle -- see _PathCommand's own docstring
+            # (path.mojo) for this packing. No leading `L` to the arc's
+            # own start point the way fill_arc_aa's standalone wedge
+            # path needs one -- arc_to is always one segment inside a
+            # larger path, continuing from wherever the current point
+            # already is (arc_to's own docstring puts that contract on
+            # the caller), the same as the L/Q/C branches above.
+            var cx = cmd.p1.x
+            var cy = cmd.p1.y
+            var radius = cmd.p2.x
+            var end_angle = cmd.p3.x
+            var x1 = cx + radius * cos(end_angle)
+            var y1 = cy + radius * sin(end_angle)
+            var large_arc_flag = 1 if (end_angle - cmd.p2.y) > 3.14159265358979 else 0
+            d += (
+                "A"
+                + _format_svg_float(radius)
+                + ","
+                + _format_svg_float(radius)
+                + " 0 "
+                + String(large_arc_flag)
+                + ",1 "
+                + _format_svg_float(x1)
+                + ","
+                + _format_svg_float(y1)
             )
         else:  # _CLOSE
             d += "Z"

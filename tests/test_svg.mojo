@@ -146,6 +146,42 @@ def test_fill_path_aa_emits_closed_path_with_fill_color() raises:
     )
 
 
+def test_fill_path_aa_handles_arc_to_command() raises:
+    # Same cx/cy/radius/start/end (and the identical hand-derived
+    # endpoints) as test_fill_arc_aa_small_wedge_matches_hand_derived_
+    # endpoints above -- arc_to is one segment inside a larger path, so
+    # unlike fill_arc_aa's own standalone wedge (M center L start A ...
+    # Z), there's no leading M/L to the arc's own start point here:
+    # just the bare A command, continuing from move_to's own point
+    # (arc_to's own docstring puts matching that point on the caller).
+    var path = Path()
+    path.move_to(70.0, 60.0)
+    path.arc_to(50.0, 60.0, 20.0, 0.0, 1.5707963267948966)
+    var svg = SvgCanvas(100, 100)
+    svg.fill_path_aa(path, Color(0, 255, 0))
+    assert_true(
+        '<path d="M70.000,60.000 A20.000,20.000 0 0,1 50.000,80.000"'
+        ' fill="#00ff00"/>' in svg.to_string(),
+        "arc_to: bare A command, hand-derived endpoint, large-arc-flag 0",
+    )
+
+
+def test_fill_path_aa_arc_to_wide_span_sets_large_arc_flag() raises:
+    # Same cx/cy/radius/start/end (and the identical hand-derived
+    # endpoint) as test_fill_arc_aa_wide_wedge_sets_large_arc_flag
+    # above.
+    var path = Path()
+    path.move_to(70.0, 60.0)
+    path.arc_to(50.0, 60.0, 20.0, 0.0, 4.0)
+    var svg = SvgCanvas(100, 100)
+    svg.fill_path_aa(path, Color(0, 0, 255))
+    assert_true(
+        '<path d="M70.000,60.000 A20.000,20.000 0 1,1 36.927,44.864"'
+        ' fill="#0000ff"/>' in svg.to_string(),
+        "arc_to: wide span (> pi) sets large-arc-flag 1, same hand-derived endpoint as fill_arc_aa's own",
+    )
+
+
 def test_fill_path_aa_handles_quad_and_cubic_commands() raises:
     var path = Path()
     path.move_to(0.0, 0.0)

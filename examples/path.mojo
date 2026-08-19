@@ -1,12 +1,15 @@
 """Demo: the general Path API -- quadratic and cubic Bezier curves,
-multi-sub-path hole punching, and hard-edged vs. AA stroking and
-filling, none of which the discrete shape functions in primitives.mojo
-can do on their own (they're what fill_path/stroke_path actually call
-once a Path is flattened -- see path.mojo's own docstring).
+arc-to segments, multi-sub-path hole punching, and hard-edged vs. AA
+stroking and filling, none of which the discrete shape functions in
+primitives.mojo can do on their own (they're what fill_path/stroke_path
+actually call once a Path is flattened -- see path.mojo's own
+docstring).
 
 Run with:
     pixi run example
 """
+
+from std.math import cos, pi, sin
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
@@ -15,7 +18,7 @@ from canvas_mojo.io.bmp import write_bmp
 
 
 def main() raises:
-    var c = Canvas(900, 260, Color(255, 255, 255))
+    var c = Canvas(900, 460, Color(255, 255, 255))
 
     # A rounded, leaf-like shape mixing all three curve/line command
     # types in one sub-path, filled solid.
@@ -87,6 +90,42 @@ def main() raises:
     leaf_aa.cubic_curve_to(780.0, 180.0, 740.0, 180.0, 720.0, 140.0)
     leaf_aa.close()
     fill_path_aa(c, leaf_aa, Color(40, 130, 90))
+
+    # A pie-slice wedge, built directly from arc_to instead of
+    # primitives.mojo's own discrete fill_arc -- arc_to's own
+    # flattening reuses that same function's _arc_points helper (see
+    # path.mojo's own docstring), so move_to(arc's own start) ->
+    # arc_to(...) -> line_to(center) -> close() traces the identical
+    # curve fill_arc's own fill_polygon call does, not just a close
+    # approximation (see tests/test_path.mojo's own parity test).
+    var wedge_cx = 110.0
+    var wedge_cy = 340.0
+    var wedge_r = 70.0
+    var wedge = Path()
+    wedge.move_to(wedge_cx + wedge_r * cos(0.0), wedge_cy + wedge_r * sin(0.0))
+    wedge.arc_to(wedge_cx, wedge_cy, wedge_r, 0.0, pi * 1.3)
+    wedge.line_to(wedge_cx, wedge_cy)
+    wedge.close()
+    fill_path_aa(c, wedge, Color(200, 130, 20))
+
+    # A chord-diagram-style ribbon: two disjoint arcs on one circle
+    # (a "source" and a "target" span), connected by quadratic curves
+    # pulled toward the circle's own center -- exactly the shape a
+    # chord diagram's flow ribbons need, and exactly what wasn't
+    # buildable as one real curved path before arc_to existed (the rim
+    # had to be flattened to short straight-line segments by hand
+    # instead).
+    var ring_cx = 340.0
+    var ring_cy = 340.0
+    var ring_r = 80.0
+    var ribbon = Path()
+    ribbon.move_to(ring_cx + ring_r * cos(0.0), ring_cy + ring_r * sin(0.0))
+    ribbon.arc_to(ring_cx, ring_cy, ring_r, 0.0, 0.9)
+    ribbon.quad_curve_to(ring_cx, ring_cy, ring_cx + ring_r * cos(2.6), ring_cy + ring_r * sin(2.6))
+    ribbon.arc_to(ring_cx, ring_cy, ring_r, 2.6, 3.4)
+    ribbon.quad_curve_to(ring_cx, ring_cy, ring_cx + ring_r * cos(0.0), ring_cy + ring_r * sin(0.0))
+    ribbon.close()
+    fill_path_aa(c, ribbon, Color(60, 100, 190))
 
     write_bmp(c, "examples/out_path.bmp")
     print("wrote examples/out_path.bmp")
