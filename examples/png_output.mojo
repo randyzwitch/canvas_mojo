@@ -26,11 +26,11 @@ from canvas_mojo.io.png import read_png, write_png
 
 
 def main() raises:
-    var c = Canvas(300, 200, Color(250, 250, 248))
+    var c = Canvas(900, 600, Color(250, 250, 248))
 
-    fill_ellipse_aa(c, 150, 100, 110, 70, Color(40, 100, 200))
-    draw_circle_aa(c, 150, 100, 40, Color(230, 230, 230))
-    draw_line_aa(c, 20, 20, 280, 180, Color(220, 60, 40), width=3.0)
+    fill_ellipse_aa(c, 450, 300, 330, 210, Color(40, 100, 200))
+    draw_circle_aa(c, 450, 300, 120, Color(230, 230, 230))
+    draw_line_aa(c, 60, 60, 840, 540, Color(220, 60, 40), width=9.0)
 
     write_bmp(c, "examples/out_png_output.bmp")
     write_png(c, "examples/out_png_output.png")

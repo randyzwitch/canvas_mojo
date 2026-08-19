@@ -21,30 +21,30 @@ from canvas_mojo.io.bmp import write_bmp
 
 
 def main() raises:
-    var c = Canvas(640, 260, Color(255, 255, 255))
+    var c = Canvas(1920, 780, Color(255, 255, 255))
 
     # A horizontal bar-fill gradient -- axis matches the rect's own
     # width, so the gradient's two stops land exactly on its edges.
-    var horizontal = LinearGradient(40.0, 0.0, 240.0, 0.0)
+    var horizontal = LinearGradient(120.0, 0.0, 720.0, 0.0)
     horizontal.add_stop(0.0, Color(40, 100, 200))
     horizontal.add_stop(1.0, Color(220, 60, 120))
-    fill_rect_gradient(c, 40, 40, 200, 80, horizontal)
+    fill_rect_gradient(c, 120, 120, 600, 240, horizontal)
 
     # A vertical, three-stop gradient on a second rect.
-    var vertical = LinearGradient(0.0, 140.0, 0.0, 220.0)
+    var vertical = LinearGradient(0.0, 420.0, 0.0, 660.0)
     vertical.add_stop(0.0, Color(250, 220, 60))
     vertical.add_stop(0.5, Color(230, 100, 40))
     vertical.add_stop(1.0, Color(150, 30, 60))
-    fill_rect_gradient(c, 40, 140, 200, 80, vertical)
+    fill_rect_gradient(c, 120, 420, 600, 240, vertical)
 
     # fill_path_gradient on a donut (see examples/path.mojo) --
     # the gradient still applies per-pixel across both the outer shape
     # and around the punched-through hole correctly.
     var donut = Path()
-    var cx = 370.0
-    var cy = 130.0
+    var cx = 1110.0
+    var cy = 390.0
     var k = 0.5523
-    var r_outer = 90.0
+    var r_outer = 270.0
     var ko = r_outer * k
     donut.move_to(cx + r_outer, cy)
     donut.cubic_curve_to(cx + r_outer, cy + ko, cx + ko, cy + r_outer, cx, cy + r_outer)
@@ -53,7 +53,7 @@ def main() raises:
     donut.cubic_curve_to(cx + ko, cy - r_outer, cx + r_outer, cy - ko, cx + r_outer, cy)
     donut.close()
 
-    var r_inner = 40.0
+    var r_inner = 120.0
     var ki = r_inner * k
     donut.move_to(cx + r_inner, cy)
     donut.cubic_curve_to(cx + r_inner, cy + ki, cx + ki, cy + r_inner, cx, cy + r_inner)
@@ -73,12 +73,12 @@ def main() raises:
     # centered on it (a "spotlight"/"glow" panel background, or a
     # legend swatch that wants a soft highlight rather than a flat
     # fill or a hard-edged circle drawn on top).
-    var swatch_cx = 550.0
-    var swatch_cy = 130.0
-    var swatch_radial = RadialGradient(swatch_cx, swatch_cy, 90.0)
+    var swatch_cx = 1650.0
+    var swatch_cy = 390.0
+    var swatch_radial = RadialGradient(swatch_cx, swatch_cy, 270.0)
     swatch_radial.add_stop(0.0, Color(255, 240, 200))
     swatch_radial.add_stop(1.0, Color(120, 70, 20))
-    fill_rect_radial_gradient(c, 470, 40, 160, 180, swatch_radial)
+    fill_rect_radial_gradient(c, 1410, 120, 480, 540, swatch_radial)
 
     write_bmp(c, "examples/out_gradient.bmp")
     print("wrote examples/out_gradient.bmp")

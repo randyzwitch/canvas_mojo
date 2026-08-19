@@ -13,10 +13,10 @@ from canvas_mojo.io.bmp import write_bmp
 
 
 def main() raises:
-    var c = Canvas(300, 180, Color(255, 255, 255))
+    var c = Canvas(900, 540, Color(255, 255, 255))
 
-    draw_line(c, 20, 160, 280, 20, Color(120, 120, 120))
-    draw_line_aa(c, 20, 175, 280, 35, Color(120, 120, 120))
+    draw_line(c, 60, 480, 840, 60, Color(120, 120, 120))
+    draw_line_aa(c, 60, 525, 840, 105, Color(120, 120, 120))
 
     write_bmp(c, "examples/out_lines.bmp")
     print("wrote examples/out_lines.bmp")

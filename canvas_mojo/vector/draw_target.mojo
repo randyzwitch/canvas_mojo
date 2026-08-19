@@ -10,16 +10,25 @@ rendered through it).
 Deliberately narrow: exactly the *shape* primitives a chart-rendering
 core actually needs (`fill_rect`, `draw_line_aa`, `fill_circle_aa`,
 `fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa`,
-`fill_path_aa`), not `canvas_mojo.primitives`'s full surface -- no
-`draw_ellipse`, no `fill_polygon`, no gradients here; add them if and
-when something concrete needs them through this interface, matching
-this whole project's stance on speculative API surface elsewhere.
-Every method's own parameters mirror the `canvas_mojo.primitives`/`canvas.
-path` function of the same name, trimmed to just the arguments a
-generic chart-rendering caller would pass explicitly (no `supersample`,
-`dashes`, `fill_rule` -- a raster `DrawTarget` implementation still
-gets to choose its own supersample factor internally; a vector one has
-no equivalent knob to expose at all).
+`fill_path_aa`, `fill_rect_gradient`), not `canvas_mojo.primitives`'s
+full surface -- no `draw_ellipse`, no `fill_polygon`, no dashes, no
+clipping, no radial gradients, no path-shaped gradients here; add them
+if and when something concrete needs them through this interface,
+matching this whole project's stance on speculative API surface
+elsewhere. `fill_rect_gradient` (linear only) is the one gradient
+method that clears that bar today -- dataviz_mojo's own continuous
+color legend needs a real smooth gradient bar, not the discrete
+color-strip approximation it was reduced to without this (see that
+project's own plot.mojo, `_draw_continuous_color_legend`); nothing
+else in `canvas_mojo.gradient`'s own surface (`RadialGradient`,
+`fill_path_gradient`, `fill_path_radial_gradient`) has a concrete
+caller yet. Every method's own parameters mirror the
+`canvas_mojo.primitives`/`canvas.path` function of the same name,
+trimmed to just the arguments a generic chart-rendering caller would
+pass explicitly (no `supersample`, `dashes`, `fill_rule` -- a raster
+`DrawTarget` implementation still gets to choose its own supersample
+factor internally; a vector one has no equivalent knob to expose at
+all).
 
 Deliberately excludes text -- raster and vector backends draw it
 through fundamentally different mechanisms (`Canvas` rasterizes glyph
@@ -55,10 +64,15 @@ struct signature.
 
 from canvas_mojo.color import Color
 from canvas_mojo.path import Path
+from canvas_mojo.gradient import LinearGradient
 
 
 trait DrawTarget:
     def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color): ...
+
+    def fill_rect_gradient(
+        mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
+    ): ...
 
     def draw_line_aa(
         mut self, x0: Int, y0: Int, x1: Int, y1: Int, color: Color, width: Float64 = 1.0

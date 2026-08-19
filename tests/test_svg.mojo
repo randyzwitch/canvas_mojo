@@ -10,6 +10,7 @@ from std.math import pi
 from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas_mojo.color import Color
+from canvas_mojo.gradient import LinearGradient
 from canvas_mojo.path import Path
 from canvas_mojo.vector.svg import SvgCanvas
 from canvas_mojo.text.text_align import TextAlign
@@ -22,6 +23,56 @@ def test_fill_rect_emits_expected_rect_element() raises:
         '<rect x="10" y="20" width="30" height="40" fill="#123456"/>' in svg.to_string(),
         "fill_rect's own rect element, exact attributes",
     )
+
+
+def test_fill_rect_gradient_emits_expected_lineargradient_and_rect() raises:
+    # x0/y0/x1/y1 pass straight through to x1/y1/x2/y2 on the SVG
+    # <linearGradient> element unchanged (userSpaceOnUse -- see
+    # fill_rect_gradient's own docstring for why no translation is
+    # needed), and each stop's own offset/color/alpha map directly to
+    # offset/stop-color/stop-opacity. First gradient in a fresh
+    # SvgCanvas, so its own id is "grad1".
+    var svg = SvgCanvas(100, 80)
+    var g = LinearGradient(10.0, 0.0, 60.0, 0.0)
+    g.add_stop(0.0, Color(255, 0, 0, 255))
+    g.add_stop(1.0, Color(0, 0, 255, 128))
+    svg.fill_rect_gradient(10, 20, 50, 30, g)
+    var s = svg.to_string()
+    assert_true(
+        '<defs><linearGradient id="grad1" gradientUnits="userSpaceOnUse"'
+        ' x1="10.000" y1="0.000" x2="60.000" y2="0.000">'
+        '<stop offset="0.000" stop-color="#ff0000" stop-opacity="1.000"/>'
+        '<stop offset="1.000" stop-color="#0000ff" stop-opacity="0.502"/>'
+        "</linearGradient></defs>" in s,
+        "fill_rect_gradient: hand-derived <defs><linearGradient> markup, both stops, alpha as a 0-1 fraction",
+    )
+    assert_true(
+        '<rect x="10" y="20" width="50" height="30" fill="url(#grad1)"/>' in s,
+        "fill_rect_gradient: the filled <rect> itself references the gradient's own id via url(#...)",
+    )
+
+
+def test_fill_rect_gradient_mints_a_fresh_id_per_call() raises:
+    # Two gradients in the same document must not collide over the
+    # same <defs> id -- confirms _gradient_count actually increments
+    # (see that field's own docstring), not just that the first call
+    # alone looks right.
+    var svg = SvgCanvas(100, 80)
+    var g1 = LinearGradient(0.0, 0.0, 10.0, 0.0)
+    g1.add_stop(0.0, Color(0, 0, 0))
+    g1.add_stop(1.0, Color(255, 255, 255))
+    svg.fill_rect_gradient(0, 0, 10, 10, g1)
+
+    var g2 = LinearGradient(0.0, 0.0, 20.0, 0.0)
+    g2.add_stop(0.0, Color(0, 0, 0))
+    g2.add_stop(1.0, Color(255, 255, 255))
+    svg.fill_rect_gradient(20, 0, 20, 10, g2)
+
+    var s = svg.to_string()
+    assert_true('id="grad1"' in s, "first gradient keeps id grad1")
+    assert_true('id="grad2"' in s, "second gradient gets its own id, grad2, not a repeat of grad1")
+    assert_true('fill="url(#grad1)"' in s, "first rect references its own gradient")
+    assert_true('fill="url(#grad2)"' in s, "second rect references its own gradient, not the first one's")
 
 
 def test_draw_line_aa_emits_expected_line_element_with_default_width() raises:

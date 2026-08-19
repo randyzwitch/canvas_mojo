@@ -23,6 +23,7 @@ method's own docstring.
 from std.math import cos, pi, sin
 
 from canvas_mojo.color import Color
+from canvas_mojo.gradient import LinearGradient
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.geometry import _round_to_int
 from canvas_mojo.path import Path, _ARC_TO, _CLOSE, _CUBIC_TO, _LINE_TO, _MOVE_TO, _QUAD_TO
@@ -193,11 +194,17 @@ struct SvgCanvas(DrawTarget, Movable):
     var width: Int
     var height: Int
     var _body: String
+    # How many gradients this document has already emitted -- the only
+    # thing this is for is minting a fresh `<defs>` id ("grad" +
+    # String(...)) each call, so two fill_rect_gradient calls in the
+    # same document never collide over the same `id`.
+    var _gradient_count: Int
 
     def __init__(out self, width: Int, height: Int):
         self.width = width
         self.height = height
         self._body = ""
+        self._gradient_count = 0
 
     def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color):
         self._body += (
@@ -212,6 +219,71 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" fill="'
             + _hex_color(color)
             + '"/>\n'
+        )
+
+    def fill_rect_gradient(
+        mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
+    ):
+        """A real SVG `<linearGradient>` (`gradientUnits="userSpaceOnUse"`),
+        not a canvas_mojo.primitives.fill_rect_gradient-style per-pixel
+        raster fill -- `LinearGradient`'s own (x0, y0)-(x1, y1) axis
+        already lives in the identical absolute pixel-space coordinate
+        system this document's own `<rect>` does (the same space
+        `color_at(x, y)`'s raster interpolation assumes), so
+        `userSpaceOnUse` (SVG's own escape from its default, shape-
+        relative `objectBoundingBox` gradient units) is exactly what
+        lets that axis carry over unchanged, no coordinate translation
+        needed.
+
+        Emits a fresh `<defs><linearGradient id="gradN">...` before
+        every call (own id via `_gradient_count`, see that field's own
+        docstring) rather than trying to detect and dedupe an identical
+        gradient reused across multiple calls -- real duplication in
+        the output markup, but SVG readers already dedupe identical
+        `<defs>` content at parse time in practice, and a caller in
+        this codebase's own charting use case draws a given gradient
+        exactly once per legend/bar anyway (see dataviz_mojo's own
+        continuous color legend, the concrete caller this exists for).
+        """
+        self._gradient_count += 1
+        var gid = "grad" + String(self._gradient_count)
+        var defs = (
+            '<defs><linearGradient id="'
+            + gid
+            + '" gradientUnits="userSpaceOnUse" x1="'
+            + _format_svg_float(gradient.x0)
+            + '" y1="'
+            + _format_svg_float(gradient.y0)
+            + '" x2="'
+            + _format_svg_float(gradient.x1)
+            + '" y2="'
+            + _format_svg_float(gradient.y1)
+            + '">'
+        )
+        for stop in gradient.stops:
+            defs += (
+                '<stop offset="'
+                + _format_svg_float(stop.offset)
+                + '" stop-color="'
+                + _hex_color(stop.color)
+                + '" stop-opacity="'
+                + _format_svg_float(Float64(stop.color.a) / 255.0)
+                + '"/>'
+            )
+        defs += "</linearGradient></defs>\n"
+        self._body += defs
+        self._body += (
+            '<rect x="'
+            + String(x)
+            + '" y="'
+            + String(y)
+            + '" width="'
+            + String(width)
+            + '" height="'
+            + String(height)
+            + '" fill="url(#'
+            + gid
+            + ')"/>\n'
         )
 
     def draw_line_aa(

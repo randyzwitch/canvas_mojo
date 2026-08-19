@@ -18,15 +18,15 @@ from canvas_mojo.io.bmp import write_bmp
 
 
 def main() raises:
-    var c = Canvas(900, 460, Color(255, 255, 255))
+    var c = Canvas(2700, 1380, Color(255, 255, 255))
 
     # A rounded, leaf-like shape mixing all three curve/line command
     # types in one sub-path, filled solid.
     var leaf = Path()
-    leaf.move_to(80.0, 60.0)
-    leaf.line_to(160.0, 60.0)
-    leaf.quad_curve_to(210.0, 100.0, 160.0, 140.0)
-    leaf.cubic_curve_to(140.0, 180.0, 100.0, 180.0, 80.0, 140.0)
+    leaf.move_to(240.0, 180.0)
+    leaf.line_to(480.0, 180.0)
+    leaf.quad_curve_to(630.0, 300.0, 480.0, 420.0)
+    leaf.cubic_curve_to(420.0, 540.0, 300.0, 540.0, 240.0, 420.0)
     leaf.close()
     fill_path(c, leaf, Color(40, 130, 90))
 
@@ -35,29 +35,29 @@ def main() raises:
     # directly comparable (same technique circles.mojo/ellipse.mojo
     # use elsewhere in this examples/ directory).
     var outline_hard = Path()
-    outline_hard.move_to(280.0, 60.0)
-    outline_hard.line_to(360.0, 60.0)
-    outline_hard.quad_curve_to(410.0, 100.0, 360.0, 140.0)
-    outline_hard.cubic_curve_to(340.0, 180.0, 300.0, 180.0, 280.0, 140.0)
+    outline_hard.move_to(840.0, 180.0)
+    outline_hard.line_to(1080.0, 180.0)
+    outline_hard.quad_curve_to(1230.0, 300.0, 1080.0, 420.0)
+    outline_hard.cubic_curve_to(1020.0, 540.0, 900.0, 540.0, 840.0, 420.0)
     outline_hard.close()
     stroke_path(c, outline_hard, Color(150, 60, 20))
 
     var outline_aa = Path()
-    outline_aa.move_to(480.0, 60.0)
-    outline_aa.line_to(560.0, 60.0)
-    outline_aa.quad_curve_to(610.0, 100.0, 560.0, 140.0)
-    outline_aa.cubic_curve_to(540.0, 180.0, 500.0, 180.0, 480.0, 140.0)
+    outline_aa.move_to(1440.0, 180.0)
+    outline_aa.line_to(1680.0, 180.0)
+    outline_aa.quad_curve_to(1830.0, 300.0, 1680.0, 420.0)
+    outline_aa.cubic_curve_to(1620.0, 540.0, 1500.0, 540.0, 1440.0, 420.0)
     outline_aa.close()
-    stroke_path_aa(c, outline_aa, Color(150, 60, 20), width=2.0)
+    stroke_path_aa(c, outline_aa, Color(150, 60, 20), width=6.0)
 
     # A donut: an outer circle-ish sub-path (approximated with cubic
     # curves, the standard 4-curve circle trick) plus an inner one --
     # fill_path combines both sub-paths' crossings, punching the hole.
     var donut = Path()
-    var cx = 590.0
-    var cy = 210.0
+    var cx = 1770.0
+    var cy = 630.0
     var k = 0.5523  # magic constant for a 4-cubic circle approximation
-    var r_outer = 40.0
+    var r_outer = 120.0
     var ko = r_outer * k
     donut.move_to(cx + r_outer, cy)
     donut.cubic_curve_to(cx + r_outer, cy + ko, cx + ko, cy + r_outer, cx, cy + r_outer)
@@ -66,7 +66,7 @@ def main() raises:
     donut.cubic_curve_to(cx + ko, cy - r_outer, cx + r_outer, cy - ko, cx + r_outer, cy)
     donut.close()
 
-    var r_inner = 18.0
+    var r_inner = 54.0
     var ki = r_inner * k
     donut.move_to(cx + r_inner, cy)
     donut.cubic_curve_to(cx + r_inner, cy + ki, cx + ki, cy + r_inner, cx, cy + r_inner)
@@ -84,10 +84,10 @@ def main() raises:
     # hard-edged jaggedness is most visible, unlike the axis-aligned
     # shapes fill_polygon(_aa) examples tend to use.
     var leaf_aa = Path()
-    leaf_aa.move_to(720.0, 60.0)
-    leaf_aa.line_to(800.0, 60.0)
-    leaf_aa.quad_curve_to(850.0, 100.0, 800.0, 140.0)
-    leaf_aa.cubic_curve_to(780.0, 180.0, 740.0, 180.0, 720.0, 140.0)
+    leaf_aa.move_to(2160.0, 180.0)
+    leaf_aa.line_to(2400.0, 180.0)
+    leaf_aa.quad_curve_to(2550.0, 300.0, 2400.0, 420.0)
+    leaf_aa.cubic_curve_to(2340.0, 540.0, 2220.0, 540.0, 2160.0, 420.0)
     leaf_aa.close()
     fill_path_aa(c, leaf_aa, Color(40, 130, 90))
 
@@ -98,9 +98,9 @@ def main() raises:
     # arc_to(...) -> line_to(center) -> close() traces the identical
     # curve fill_arc's own fill_polygon call does, not just a close
     # approximation (see tests/test_path.mojo's own parity test).
-    var wedge_cx = 110.0
-    var wedge_cy = 340.0
-    var wedge_r = 70.0
+    var wedge_cx = 330.0
+    var wedge_cy = 1020.0
+    var wedge_r = 210.0
     var wedge = Path()
     wedge.move_to(wedge_cx + wedge_r * cos(0.0), wedge_cy + wedge_r * sin(0.0))
     wedge.arc_to(wedge_cx, wedge_cy, wedge_r, 0.0, pi * 1.3)
@@ -115,9 +115,9 @@ def main() raises:
     # buildable as one real curved path before arc_to existed (the rim
     # had to be flattened to short straight-line segments by hand
     # instead).
-    var ring_cx = 340.0
-    var ring_cy = 340.0
-    var ring_r = 80.0
+    var ring_cx = 1020.0
+    var ring_cy = 1020.0
+    var ring_r = 240.0
     var ribbon = Path()
     ribbon.move_to(ring_cx + ring_r * cos(0.0), ring_cy + ring_r * sin(0.0))
     ribbon.arc_to(ring_cx, ring_cy, ring_r, 0.0, 0.9)

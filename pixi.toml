@@ -9,6 +9,23 @@ version = "0.2.0"
 mojo = ">=1.0.0,<2"
 hugo = ">=0.164.0,<0.165"
 go = ">=1.26.6,<2"
+# docs-only: converts examples/out_*.bmp into real, DEFLATE-compressed
+# PNGs for the docs site (see docs-build's own `magick` step below).
+# canvas_mojo.io.png's own write_png deliberately writes *uncompressed*
+# "stored" DEFLATE blocks (see its own module docstring) -- a
+# deliberate, correct tradeoff for the library itself, but the wrong
+# one for a deployed docs site: a raw BMP or canvas_mojo's own
+# uncompressed PNG are both essentially the same size (confirmed
+# directly, not assumed -- out_png_output.bmp and its own
+# canvas_mojo-written .png land within a few KB of each other),
+# multiple megabytes each at this resolution, dozens of them per page
+# load. ImageMagick, not oxipng (which only re-compresses an already-
+# valid PNG -- 15 of these 16 examples never write one in the first
+# place) or a second canvas_mojo-side encoder (this package's own
+# uncompressed-by-choice tradeoff belongs to the library, not the docs
+# site) -- one external tool, doing real compression, on the BMP every
+# example already writes regardless.
+imagemagick = ">=7.1,<8"
 
 [tasks]
 example = "mojo run -I . examples/fill_rect_blend.mojo && mojo run -I . examples/rect_stroke.mojo && mojo run -I . examples/lines.mojo && mojo run -I . examples/circles.mojo && mojo run -I . examples/ellipse.mojo && mojo run -I . examples/arc.mojo && mojo run -I . examples/polyline.mojo && mojo run -I . examples/polygon.mojo && mojo run -I . examples/path.mojo && mojo run -I . examples/fill_rule.mojo && mojo run -I . examples/gradient.mojo && mojo run -I . examples/dashes.mojo && mojo run -I . examples/transform.mojo && mojo run -I . examples/clipping.mojo && mojo run -I . examples/png_output.mojo && mojo run -I . examples/text.mojo"
@@ -17,7 +34,7 @@ test = "mojo run -I . tests/test_color.mojo && mojo run -I . tests/test_buffer.m
 # Regenerates docs/site/content (nothing docs-build itself produces is
 # committed -- not that, not docs/site/public further downstream, not
 # docs/src/examples/, scripts/gen_example_docs.mojo's own output +
-# copied images). Everything deployed by docs/docs-serve below is
+# converted images). Everything deployed by docs/docs-serve below is
 # deployed straight to GitHub Pages by .github/workflows/docs.yml's
 # own Actions-based deploy, regenerated fresh each time. Only
 # docs/src/_index.md (the hand-written landing page), docs/modo.yaml,
@@ -27,19 +44,20 @@ test = "mojo run -I . tests/test_color.mojo && mojo run -I . tests/test_buffer.m
 # own docstring for how it turns examples/*.mojo into docs/src/
 # examples/ pages (a Mojo script, not Python -- this repo's own
 # tooling stays in the language it's showcasing). Assumes `pixi run
-# example` has already been run at least once (copies its output
-# images rather than re-rendering them itself, the same "separate,
-# independently-invoked task" split this file's own example/test
-# tasks already have). The trailing `sed` patches modo's own generated
-# canvas_mojo/_index.md front matter: modo always emits `weight: 400`
-# for a package's own root section, with no config flag to change it
-# (`modo build --help` has nothing for it, and there's no local modo
-# source to safely override via `--templates`), which sorted it
-# *after* Examples (weight: 200) in Hextra's left sidebar -- API
-# reference before Examples reads better, so this pins it to 150
-# post-build instead.
+# example` has already been run at least once (converts its output
+# images -- see scripts/convert_example_images.sh's own docstring for
+# why a real conversion, not a plain copy -- rather than re-rendering
+# them itself, the same "separate, independently-invoked task" split
+# this file's own example/test tasks already have). The trailing `sed`
+# patches modo's own generated canvas_mojo/_index.md front matter:
+# modo always emits `weight: 400` for a package's own root section,
+# with no config flag to change it (`modo build --help` has nothing
+# for it, and there's no local modo source to safely override via
+# `--templates`), which sorted it *after* Examples (weight: 200) in
+# Hextra's left sidebar -- API reference before Examples reads better,
+# so this pins it to 150 post-build instead.
 docs-install = "bash scripts/install-modo.sh"
-docs-build = { cmd = "rm -rf docs/site/content docs/site/public docs/src/examples && mkdir -p docs/src/examples && mojo run -I . scripts/gen_example_docs.mojo && cp examples/out_*.bmp examples/out_*.png docs/src/examples/ && mojo doc -I . -o docs/src/canvas_mojo.json canvas_mojo && .tools/modo build docs -c modo.yaml && sed -i 's/^weight: 400$/weight: 150/' docs/site/content/canvas_mojo/_index.md", depends-on = [
+docs-build = { cmd = "rm -rf docs/site/content docs/site/public docs/src/examples && mkdir -p docs/src/examples && mojo run -I . scripts/gen_example_docs.mojo && bash scripts/convert_example_images.sh && mojo doc -I . -o docs/src/canvas_mojo.json canvas_mojo && .tools/modo build docs -c modo.yaml && sed -i 's/^weight: 400$/weight: 150/' docs/site/content/canvas_mojo/_index.md", depends-on = [
     "docs-install",
 ] }
 # One-shot build into docs/site/public -- what docs-deploy.yml

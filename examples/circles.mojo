@@ -15,12 +15,12 @@ from canvas_mojo.io.bmp import write_bmp
 
 
 def main() raises:
-    var c = Canvas(680, 160, Color(255, 255, 255))
+    var c = Canvas(2040, 480, Color(255, 255, 255))
 
-    draw_circle(c, 100, 80, 60, Color(150, 40, 180))
-    draw_circle_aa(c, 260, 80, 60, Color(150, 40, 180))
-    fill_circle(c, 420, 80, 60, Color(150, 40, 180))
-    fill_circle_aa(c, 580, 80, 60, Color(150, 40, 180))
+    draw_circle(c, 300, 240, 180, Color(150, 40, 180))
+    draw_circle_aa(c, 780, 240, 180, Color(150, 40, 180))
+    fill_circle(c, 1260, 240, 180, Color(150, 40, 180))
+    fill_circle_aa(c, 1740, 240, 180, Color(150, 40, 180))
 
     write_bmp(c, "examples/out_circles.bmp")
     print("wrote examples/out_circles.bmp")

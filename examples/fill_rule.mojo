@@ -36,16 +36,16 @@ def _square(mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Float64) rai
 
 
 def main() raises:
-    var c = Canvas(400, 200, Color(255, 255, 255))
+    var c = Canvas(1200, 600, Color(255, 255, 255))
 
     var p1 = Path()
-    _square(p1, 20.0, 20.0, 120.0, 120.0)
-    _square(p1, 70.0, 70.0, 170.0, 170.0)
+    _square(p1, 60.0, 60.0, 360.0, 360.0)
+    _square(p1, 210.0, 210.0, 510.0, 510.0)
     fill_path(c, p1, Color(40, 100, 200), fill_rule=FillRule.EVEN_ODD)
 
     var p2 = Path()
-    _square(p2, 220.0, 20.0, 320.0, 120.0)
-    _square(p2, 270.0, 70.0, 370.0, 170.0)
+    _square(p2, 660.0, 60.0, 960.0, 360.0)
+    _square(p2, 810.0, 210.0, 1110.0, 510.0)
     fill_path(c, p2, Color(40, 100, 200), fill_rule=FillRule.NONZERO)
 
     write_bmp(c, "examples/out_fill_rule.bmp")

@@ -170,21 +170,20 @@ def _snippet_after_docstring(source: String) -> String:
     return String(rest.strip())
 
 
-def _image_for(name: String, source: String) -> String:
-    # PNG is the preferred display format where an example writes one
-    # (smaller, universally previewed) -- falls back to the BMP every
-    # example writes unconditionally otherwise. Only png_output.mojo
-    # writes both today.
-    if "write_png(" in source:
-        return "out_" + name + ".png"
-    return "out_" + name + ".bmp"
-
-
 def _build_page(name: String, title: String) raises -> String:
     var source = _read_file(_EXAMPLES_DIR + "/" + name + ".mojo")
     var docstring = _extract_docstring(source)
     var hook = _first_sentence(docstring)
-    var image = _image_for(name, source)
+    # Every example writes a .bmp unconditionally; docs display always
+    # uses the .png scripts/convert_example_images.sh converts that
+    # .bmp into (see pixi.toml's own imagemagick dependency comment
+    # for why a real conversion, not the raw .bmp, matters at this
+    # resolution) -- not canvas_mojo.io.png's own write_png output even
+    # for png_output.mojo (the one example that also writes one): that
+    # file's own .png is a demo of this package's own write_png/
+    # read_png round trip, not a docs-display asset, and is
+    # deliberately uncompressed (see that script's own docstring).
+    var image = "out_" + name + ".png"
     var snippet = _snippet_after_docstring(source)
 
     var page = List[String]()
