@@ -722,6 +722,64 @@ def _point_in_polygon(points: List[Point], fx: Float64, fy: Float64, fill_rule: 
     return _is_inside(winding, fill_rule)
 
 
+struct _AACrossing(ImplicitlyCopyable, Movable):
+    """One sub-scanline crossing at a real-valued x -- _Crossing's own
+    fractional-y counterpart, for fill_polygon_aa's sweep below (same
+    struct shape, and same role, as path.mojo's own _AACrossing; kept
+    as a separate local definition rather than imported from there to
+    avoid a new primitives.mojo -> path.mojo dependency for one small
+    struct -- path.mojo already imports *from* primitives.mojo, so the
+    reverse edge would be a real cycle, not just an inconvenience).
+    """
+
+    var x: Float64
+    var direction: Int
+
+    def __init__(out self, x: Float64, direction: Int):
+        self.x = x
+        self.direction = direction
+
+
+def _polygon_row_crossings_aa(points: List[Point], fy: Float64) -> List[_AACrossing]:
+    """_point_in_polygon's own per-sample ray-cast, factored out to run
+    once per sub-scanline instead of once per sub-pixel sample -- see
+    fill_polygon_aa's own docstring for why this is what makes its
+    sweep sub-quadratic (the identical technique, and the identical
+    reasoning, as path.mojo's fill_path_aa/_row_crossings_aa).
+    """
+    var crossings = List[_AACrossing]()
+    var n = len(points)
+    for i in range(n):
+        var p0 = points[i]
+        var p1 = points[(i + 1) % n]
+        var y0 = Float64(p0.y)
+        var y1 = Float64(p1.y)
+        if y0 == y1:
+            continue
+        var lo = min(y0, y1)
+        var hi = max(y0, y1)
+        if fy >= lo and fy < hi:
+            var t = (fy - y0) / (y1 - y0)
+            var x = Float64(p0.x) + t * Float64(p1.x - p0.x)
+            var direction = 1 if y1 > y0 else -1
+            crossings.append(_AACrossing(x, direction))
+    return crossings^
+
+
+def _sort_aa_crossings_by_x(mut crossings: List[_AACrossing]):
+    """Insertion sort -- one sub-scanline's own crossing count is
+    always small (a handful, not the polygon's full point count), the
+    same reasoning _spans_from_crossings' own identical insertion sort
+    already relies on."""
+    for i in range(1, len(crossings)):
+        var key = crossings[i]
+        var j = i - 1
+        while j >= 0 and crossings[j].x > key.x:
+            crossings[j + 1] = crossings[j]
+            j -= 1
+        crossings[j + 1] = key
+
+
 def fill_polygon_aa(
     mut canvas: Canvas,
     points: List[Point],
@@ -731,12 +789,10 @@ def fill_polygon_aa(
 ):
     """Anti-aliased filled polygon -- fill_polygon's counterpart the
     same way fill_circle_aa is fill_circle's: for every pixel near the
-    polygon, samples an NxN sub-pixel grid and tests each sub-sample
-    analytically against the true (real-valued) shape via
-    _point_in_polygon, turning the coverage fraction directly into
-    that pixel's alpha. Each output pixel is visited exactly once, so
-    there's no double-blend hazard the way a naive per-edge fill would
-    have.
+    polygon, samples an NxN sub-pixel grid and turns the coverage
+    fraction directly into that pixel's alpha. Each output pixel is
+    visited exactly once, so there's no double-blend hazard the way a
+    naive per-edge fill would have.
 
     Closes the one inconsistency left once every other filled
     primitive (circle/ellipse/arc/ring) already had an AA companion:
@@ -751,10 +807,22 @@ def fill_polygon_aa(
     itself takes, sharing `_is_inside` so the hard-edged and AA fills
     of the identical shape agree on where the boundary is.
 
+    Swept per sub-scanline (_polygon_row_crossings_aa), not per
+    sub-pixel sample via a fresh _point_in_polygon ray-cast -- the
+    identical rewrite, for the identical reason, path.mojo's own
+    fill_path_aa already went through (see that function's own
+    docstring for the full complexity argument: O(pixels *
+    supersample^2 * edges) collapses to O(pixels * supersample) once a
+    sub-scanline's crossings are collected once and swept left-to-right
+    with a single forward-only pointer instead of re-scanned per
+    sample). `_point_in_polygon` itself is untouched -- still the
+    tested, from-scratch reference implementation this sweep's own
+    output must agree with pixel-for-pixel.
+
     Not fused with fill_polygon behind an `antialias: Bool` -- see
     this module's own docstring for why that split is kept visible
-    everywhere else (a real O(edges) vs. O(edges * supersample^2)
-    complexity jump per pixel), the same reasoning applies here.
+    everywhere else (a real complexity-class jump per pixel), the same
+    reasoning applies here.
     """
     var n = len(points)
     if n < 3:
@@ -777,17 +845,40 @@ def fill_polygon_aa(
     var s = supersample
     var total_samples = s * s
     var step = 1.0 / Float64(s)
+    var row_first_px = min_x - 1
+    var row_width = (max_x + 2) - row_first_px
 
     for py in range(min_y - 1, max_y + 2):
-        for px in range(min_x - 1, max_x + 2):
-            var covered = 0
-            for sy in range(s):
-                var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+        var row_covered = List[Int](capacity=row_width)
+        for _ in range(row_width):
+            row_covered.append(0)
+
+        for sy in range(s):
+            var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+            var crossings = _polygon_row_crossings_aa(points, fy)
+            _sort_aa_crossings_by_x(crossings)
+            var k = len(crossings)
+
+            var suffix = List[Int](capacity=k + 1)
+            for _ in range(k + 1):
+                suffix.append(0)
+            for i in range(k - 1, -1, -1):
+                suffix[i] = suffix[i + 1] + crossings[i].direction
+
+            var idx = 0
+            for pxi in range(row_width):
+                var px = row_first_px + pxi
                 for sx in range(s):
                     var fx = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
-                    if _point_in_polygon(points, fx, fy, fill_rule):
-                        covered += 1
+                    while idx < k and crossings[idx].x <= fx:
+                        idx += 1
+                    if _is_inside(suffix[idx], fill_rule):
+                        row_covered[pxi] += 1
+
+        for pxi in range(row_width):
+            var covered = row_covered[pxi]
             if covered > 0:
+                var px = row_first_px + pxi
                 var alpha = UInt8(
                     Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
                 )
@@ -982,6 +1073,22 @@ def fill_circle_aa(
     exactly the same decision the hard-edged algorithms make, pixel
     for pixel, and what keeps this circle centered on the same point
     as draw_circle/fill_circle given identical (cx, cy, radius).
+
+    Before sampling a pixel at all, checks whether its own square
+    ([px-0.5, px+0.5] x [py-0.5, py+0.5], the same square every sample
+    point above is drawn from) is *provably* entirely inside or
+    entirely outside the disk, via the nearest/farthest point in that
+    square from the center -- standard point-to-AABB min/max distance.
+    Entirely outside means every one of the n*n samples would land
+    outside regardless of n (coverage 0, already skipped exactly like
+    this before); entirely inside means every sample would land inside
+    regardless of n (coverage total_samples, i.e. the pixel's full
+    alpha) -- both are the *same result* sampling would already reach,
+    computed without actually visiting the n*n grid to reach it. This
+    matters because most of a large circle's own bounding box is
+    interior pixels, not boundary ones: the expensive per-sample loop
+    now only ever runs for the O(radius) pixels actually straddling
+    the edge, not all O(radius^2) of them.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -994,6 +1101,22 @@ def fill_circle_aa(
 
     for py in range(cy - radius - 1, cy + radius + 2):
         for px in range(cx - radius - 1, cx + radius + 2):
+            var dx = abs(Float64(px - cx))
+            var dy = abs(Float64(py - cy))
+
+            var near_dx = max(0.0, dx - 0.5)
+            var near_dy = max(0.0, dy - 0.5)
+            if near_dx * near_dx + near_dy * near_dy > r2:
+                continue  # whole pixel square is outside the disk
+
+            var far_dx = dx + 0.5
+            var far_dy = dy + 0.5
+            if far_dx * far_dx + far_dy * far_dy <= r2:
+                # Whole pixel square is inside the disk -- the exact
+                # coverage/alpha every sample point would agree on.
+                canvas.set_pixel(px, py, color)
+                continue
+
             var covered = 0
             for sy in range(n):
                 var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
@@ -1189,6 +1312,13 @@ def fill_ellipse_aa(
     testing against the true ellipse boundary -- and reduces to
     fill_circle_aa's own `dx^2 + dy^2 <= r^2` test when rx == ry
     (dividing both terms by the same r first).
+
+    Same provably-inside/provably-outside fast path fill_circle_aa's
+    own docstring describes -- here in the identical normalized (rx,
+    ry) space the sample test itself uses, so a pixel square's nearest
+    and farthest normalized corners are just its raw nearest/farthest
+    corners (the same 0.5-away-from-center AABB fill_circle_aa
+    computes) each divided by rx/ry before squaring.
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -1202,6 +1332,20 @@ def fill_ellipse_aa(
 
     for py in range(cy - ry - 1, cy + ry + 2):
         for px in range(cx - rx - 1, cx + rx + 2):
+            var dx = abs(Float64(px - cx))
+            var dy = abs(Float64(py - cy))
+
+            var near_nx = max(0.0, dx - 0.5) / rx_f
+            var near_ny = max(0.0, dy - 0.5) / ry_f
+            if near_nx * near_nx + near_ny * near_ny > 1.0:
+                continue  # whole pixel square is outside the ellipse
+
+            var far_nx = (dx + 0.5) / rx_f
+            var far_ny = (dy + 0.5) / ry_f
+            if far_nx * far_nx + far_ny * far_ny <= 1.0:
+                canvas.set_pixel(px, py, color)  # whole pixel square is inside
+                continue
+
             var covered = 0
             for sy in range(n):
                 var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
@@ -1293,6 +1437,86 @@ def draw_ellipse_aa(
 
 
 comptime _TWO_PI = 6.283185307179586
+comptime _HALF_PI = 1.5707963267948966
+comptime _PI = 3.141592653589793
+comptime _THREE_HALF_PI = 4.71238898038469
+
+
+def _extend_bounds(
+    mut min_x: Float64, mut min_y: Float64, mut max_x: Float64, mut max_y: Float64, x: Float64, y: Float64
+):
+    if x < min_x:
+        min_x = x
+    if x > max_x:
+        max_x = x
+    if y < min_y:
+        min_y = y
+    if y > max_y:
+        max_y = y
+
+
+def _arc_bounds(
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    include_center: Bool,
+) -> Tuple[Float64, Float64, Float64, Float64]:
+    """The tight axis-aligned bounding box (min_x, min_y, max_x, max_y)
+    the arc/wedge (cx, cy, radius, start_angle, end_angle) actually
+    occupies -- used by fill_arc_aa/fill_ring_sector_aa (below) to
+    shrink their own pixel-scan range down from the full circumscribing
+    square (a large overestimate for anything short of a near-full
+    circle -- a thin 10-degree pie slice's true extent is a small
+    sliver of that square) to the shape's real footprint, with no
+    change to which pixels end up covered: every pixel this excludes is
+    one the existing per-pixel angle/radius tests would already have
+    found zero coverage in, derived here from the shape's own math
+    instead of sampled per pixel to discover the same thing.
+
+    Rigorous, not a heuristic: a circular arc's x and y coordinates are
+    each monotonic in angle *between* the four cardinal angles (0,
+    pi/2, pi, 3*pi/2 -- where cos/sin's own derivative is zero), the
+    only points where either coordinate can reach a local extreme.
+    So the arc's own bounds are exactly the bounds of its two endpoints
+    plus whichever cardinal-angle points actually fall inside
+    [start_angle, end_angle].
+
+    `include_center` covers the one difference between the two
+    callers: fill_arc_aa's wedge is bounded by two straight radii back
+    to (cx, cy), so the center itself can be the shape's own leftmost/
+    rightmost/etc. point (e.g. a thin slice near angle 0, whose two arc
+    endpoints are both near x = cx + radius, but whose straight edges
+    still reach back to x = cx). fill_ring_sector_aa's ring has no
+    center point in it at all (inner_radius > 0 there), and its inner
+    arc's own bounds are always a subset of the outer arc's (identical
+    angles, strictly smaller radius) -- so bounding via `radius` alone
+    (the outer one, from that caller) already covers the whole ring.
+    """
+    var start_x = cx + radius * cos(start_angle)
+    var start_y = cy + radius * sin(start_angle)
+    var min_x = start_x
+    var max_x = start_x
+    var min_y = start_y
+    var max_y = start_y
+    if include_center:
+        _extend_bounds(min_x, min_y, max_x, max_y, cx, cy)
+
+    var end_x = cx + radius * cos(end_angle)
+    var end_y = cy + radius * sin(end_angle)
+    _extend_bounds(min_x, min_y, max_x, max_y, end_x, end_y)
+
+    if _angle_in_span(0.0, start_angle, end_angle):
+        _extend_bounds(min_x, min_y, max_x, max_y, cx + radius, cy)
+    if _angle_in_span(_HALF_PI, start_angle, end_angle):
+        _extend_bounds(min_x, min_y, max_x, max_y, cx, cy + radius)
+    if _angle_in_span(_PI, start_angle, end_angle):
+        _extend_bounds(min_x, min_y, max_x, max_y, cx - radius, cy)
+    if _angle_in_span(_THREE_HALF_PI, start_angle, end_angle):
+        _extend_bounds(min_x, min_y, max_x, max_y, cx, cy - radius)
+
+    return (min_x, min_y, max_x, max_y)
 
 
 def _arc_points(cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64) -> List[Point]:
@@ -1408,6 +1632,14 @@ def fill_arc_aa(
     only; draw_polygon_aa is an AA *outline*, not a fill) -- and a
     wedge's membership test is clean enough analytically that
     inventing one wasn't needed here.
+
+    Scans only `_arc_bounds`' own tight bounding box (expanded by 1px
+    for the AA sampling margin at its own edge), not the full
+    circumscribing square of `radius` -- see that function's own
+    docstring. This is the dominant cost for anything but a near-full
+    pie: a thin slice's true footprint can be a small fraction of its
+    own circumscribing circle's bounding square, and every pixel
+    outside that footprint would have scored zero coverage anyway.
     """
     if radius <= 0.0:
         return
@@ -1416,10 +1648,33 @@ def fill_arc_aa(
     var n = supersample
     var total_samples = n * n
     var step = 1.0 / Float64(n)
-    var ir = Int(radius) + 1
 
-    for py in range(_round_to_int(cy) - ir, _round_to_int(cy) + ir + 1):
-        for px in range(_round_to_int(cx) - ir, _round_to_int(cx) + ir + 1):
+    var bounds = _arc_bounds(cx, cy, radius, start_angle, end_angle, True)
+    var min_px = _round_to_int(bounds[0]) - 1
+    var max_px = _round_to_int(bounds[2]) + 1
+    var min_py = _round_to_int(bounds[1]) - 1
+    var max_py = _round_to_int(bounds[3]) + 1
+
+    for py in range(min_py, max_py + 1):
+        for px in range(min_px, max_px + 1):
+            # A wedge's angular boundary makes a rigorous "whole pixel
+            # square is provably *inside*" test fiddly (angle
+            # wraparound, a pixel straddling the center where angle is
+            # undefined) -- not attempted here. But "provably *outside*
+            # the radius entirely, regardless of angle" is cheap and
+            # unconditionally valid (same AABB-vs-circle nearest-point
+            # test as fill_circle_aa's own fast path): most of this
+            # wedge's own square bounding box is actually outside its
+            # circumscribing circle already for anything but a full
+            # pie, so this alone skips a real fraction of the box
+            # without needing the angle math at all.
+            var dx = abs(Float64(px) - cx)
+            var dy = abs(Float64(py) - cy)
+            var near_dx = max(0.0, dx - 0.5)
+            var near_dy = max(0.0, dy - 0.5)
+            if near_dx * near_dx + near_dy * near_dy > r2:
+                continue
+
             var covered = 0
             for sy in range(n):
                 var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
@@ -1478,6 +1733,11 @@ def fill_ring_sector_aa(
     (see draw_ellipse_aa's own inner/outer ring test for the closest
     precedent: a fixed-width ring rather than an angular wedge, but
     the same "two independent boundary tests, both must pass" shape).
+
+    Scans only `_arc_bounds`' own tight bounding box (via outer_radius,
+    no center point -- see that function's own docstring for why the
+    outer arc's bounds already cover the whole ring), the same
+    dominant fix fill_arc_aa's own docstring explains.
     """
     if outer_radius <= 0.0 or inner_radius < 0.0 or inner_radius >= outer_radius:
         return
@@ -1487,10 +1747,33 @@ def fill_ring_sector_aa(
     var n = supersample
     var total_samples = n * n
     var step = 1.0 / Float64(n)
-    var ir = Int(outer_radius) + 1
 
-    for py in range(_round_to_int(cy) - ir, _round_to_int(cy) + ir + 1):
-        for px in range(_round_to_int(cx) - ir, _round_to_int(cx) + ir + 1):
+    var bounds = _arc_bounds(cx, cy, outer_radius, start_angle, end_angle, False)
+    var min_px = _round_to_int(bounds[0]) - 1
+    var max_px = _round_to_int(bounds[2]) + 1
+    var min_py = _round_to_int(bounds[1]) - 1
+    var max_py = _round_to_int(bounds[3]) + 1
+
+    for py in range(min_py, max_py + 1):
+        for px in range(min_px, max_px + 1):
+            # Same radius-only (angle-independent) fast-outside skip
+            # fill_arc_aa's own docstring explains -- valid here too,
+            # for both the outer edge (pixel square entirely beyond
+            # outer_radius) and the inner hole (pixel square's
+            # farthest point from center still inside inner_radius,
+            # so even the *closest-to-the-ring* corner never reaches
+            # it).
+            var dx = abs(Float64(px) - cx)
+            var dy = abs(Float64(py) - cy)
+            var near_dx = max(0.0, dx - 0.5)
+            var near_dy = max(0.0, dy - 0.5)
+            if near_dx * near_dx + near_dy * near_dy > outer_r2:
+                continue
+            var far_dx = dx + 0.5
+            var far_dy = dy + 0.5
+            if far_dx * far_dx + far_dy * far_dy < inner_r2:
+                continue
+
             var covered = 0
             for sy in range(n):
                 var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
