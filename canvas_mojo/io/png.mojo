@@ -128,6 +128,13 @@ def _adler32(data: List[UInt8]) -> UInt32:
 def _write_chunk(mut buf: List[UInt8], table: List[UInt32], chunk_type: String, data: List[UInt8]):
     """Append one PNG chunk: length(4, data only) + type(4 ASCII) +
     data + CRC-32(4, over type+data, NOT length) -- all big-endian.
+
+    Builds `type_and_data` once (needed as its own buffer regardless,
+    since _crc32 must see type+data combined), then *moves* it into
+    `buf` instead of copying it there byte-by-byte -- for IDAT (the
+    entire deflate-compressed image, the one chunk here actually large
+    enough for this to matter), that's the difference between one real
+    copy of the payload and two.
     """
     _append_u32_be(buf, UInt32(len(data)))
 
@@ -135,12 +142,11 @@ def _write_chunk(mut buf: List[UInt8], table: List[UInt32], chunk_type: String, 
     var type_bytes = chunk_type.as_bytes()
     for i in range(len(type_bytes)):
         type_and_data.append(UInt8(type_bytes[i]))
-    for b in data:
-        type_and_data.append(b)
+    type_and_data.extend(data.copy())
 
-    for b in type_and_data:
-        buf.append(b)
-    _append_u32_be(buf, _crc32(type_and_data, table))
+    var crc = _crc32(type_and_data, table)
+    buf.extend(type_and_data^)
+    _append_u32_be(buf, crc)
 
 
 def write_png(canvas: Canvas, path: String) raises:
@@ -170,14 +176,18 @@ def write_png(canvas: Canvas, path: String) raises:
     # where that already compresses extremely well, see deflate.mojo's
     # own module docstring) followed by that row's RGB bytes, one row
     # after another.
+    # Each row copied in one bulk slice, not pixel-by-pixel through
+    # get_pixel -- canvas.pixels is already exactly RGB, row-major, the
+    # identical layout a filter-type-0 scanline wants for its own RGB
+    # bytes, so there's no per-pixel transformation to justify paying
+    # for get_pixel's own in_bounds check and Color construction (both
+    # pure overhead here: every (x, y) below is already known
+    # in-bounds) w * h times over.
     var raw = List[UInt8](capacity=h * (1 + w * 3))
     for y in range(h):
         raw.append(0)
-        for x in range(w):
-            var c = canvas.get_pixel(x, y)
-            raw.append(c.r)
-            raw.append(c.g)
-            raw.append(c.b)
+        var row_start = y * w * 3
+        raw.extend(canvas.pixels[row_start : row_start + w * 3])
 
     var zlib_stream = List[UInt8]()
     # zlib header (RFC 1950 section 2.2): CMF=0x78 (deflate, 32K
