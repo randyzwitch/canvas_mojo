@@ -93,7 +93,8 @@ from std.math import ceil, cos, sin
 from canvas_mojo.text.bidi import detect_base_level, visual_order
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
-from canvas_mojo.text.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
+from canvas_mojo.text.font_cache import FontCache
+from canvas_mojo.text.font_discovery import FontSlant, FontWeight
 from canvas_mojo.text.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph, GlyphMetrics
 from canvas_mojo.text.ttf import TTFFace
 from canvas_mojo.path import (
@@ -201,16 +202,19 @@ struct _BlockLayout(Movable):
         self.rot_max_y = rot_max_y
 
 
-def _load_sized_face(family: String, slant: FontSlant, weight: FontWeight, size: Float64) raises -> TTFFace:
-    """font_discovery.resolve_font_file (fontconfig) -> ttf.TTFFace
-    (native TrueType parsing), sized to `size` pixels -- the one place
-    every measuring/drawing entry point below goes to get a ready-to-
-    use face. A fresh face per call, not a shared/cached one -- the
-    same "no global handle available yet" constraint font_discovery.
-    mojo's own loader already documents, not a new limitation this
-    introduces.
+def _load_sized_face(
+    family: String, slant: FontSlant, weight: FontWeight, size: Float64, mut cache: FontCache
+) raises -> TTFFace:
+    """font_discovery.resolve_font_file (fontconfig, via `cache` -- see
+    font_cache.mojo's own docstring) -> ttf.TTFFace (native TrueType
+    parsing), sized to `size` pixels -- the one place every measuring/
+    drawing entry point below goes to get a ready-to-use face. The
+    resolved *path* is cached (by `cache`, across every call sharing
+    it); the parsed face itself is still built fresh every call -- see
+    font_cache.mojo's own docstring for why that remaining, much
+    smaller cost isn't also cached.
     """
-    var font_path = resolve_font_file(family, slant, weight)
+    var font_path = cache.resolve(family, slant, weight)
     var face = TTFFace(font_path)
     face.set_pixel_size(Int(ceil(size)))
     return face^
@@ -290,21 +294,19 @@ def _resolve_glyph(
     codepoint: Int,
     pen_x: Float64,
     pen_y: Float64,
+    mut cache: FontCache,
 ) raises -> _PositionedGlyph:
     """This one character's metrics and outline, from `primary` if it
-    actually has a glyph for `codepoint`, or from a freshly resolved
-    and loaded fallback font otherwise (`font_discovery.
-    resolve_font_file_for_char` -- see that function's own docstring
-    for how fontconfig's own charset-aware matching picks a font that
-    actually contains the character, e.g. CJK text requested under a
-    Latin-only family). No caching of resolved fallback faces across
-    calls -- each fallback glyph re-resolves and re-loads its own font
-    fresh, a deliberate simplification (correctness first, matching
-    this package's own established "don't reach for a performance path
-    before profiling says it's needed" stance -- see the wiki's
-    UnsafePointer-backed-buffer entry for the same reasoning applied
-    elsewhere) rather than a caching layer built ahead of a concrete
-    need.
+    actually has a glyph for `codepoint`, or from a freshly loaded
+    fallback font otherwise (`font_discovery.resolve_font_file_for_char`,
+    via `cache` -- see that function's and font_cache.mojo's own
+    docstrings for how fontconfig's own charset-aware matching picks a
+    font that actually contains the character, e.g. CJK text requested
+    under a Latin-only family). The resolved fallback *path* is cached
+    (by `cache`, across every call sharing it, so a string with several
+    fallback glyphs for the same missing codepoint only asks fontconfig
+    once) -- the fallback face itself is still parsed fresh each call;
+    see font_cache.mojo's own docstring for why.
 
     Metrics and outline are resolved together, from the same face, in
     one call -- not two separate has_glyph-gated calls at each of this
@@ -315,14 +317,20 @@ def _resolve_glyph(
     if has_glyph(primary, codepoint):
         return _PositionedGlyph(glyph_metrics(primary, codepoint), glyph_path(primary, codepoint, pen_x, pen_y))
 
-    var fallback_path = resolve_font_file_for_char(family, slant, weight, codepoint)
+    var fallback_path = cache.resolve_for_char(family, slant, weight, codepoint)
     var fallback = TTFFace(fallback_path)
     fallback.set_pixel_size(Int(ceil(size)))
     return _PositionedGlyph(glyph_metrics(fallback, codepoint), glyph_path(fallback, codepoint, pen_x, pen_y))
 
 
 def _measure_line(
-    mut face: TTFFace, line_text: String, family: String, slant: FontSlant, weight: FontWeight, size: Float64
+    mut face: TTFFace,
+    line_text: String,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    size: Float64,
+    mut cache: FontCache,
 ) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
     all zero for a blank/whitespace-only line) and total advance,
@@ -330,9 +338,9 @@ def _measure_line(
     Unicode codepoint (in bidi visual order -- see _visual_codepoints),
     accumulating each glyph's own advance and combining every glyph
     that actually has ink into one tight bbox. `family`/`slant`/
-    `weight`/`size` are only needed for _resolve_glyph's own font-
-    fallback lookup (see its own docstring) -- `face` itself already
-    determines everything else.
+    `weight`/`size`/`cache` are only needed for _resolve_glyph's own
+    font-fallback lookup (see its own docstring) -- `face` itself
+    already determines everything else.
     """
     var pen_x = 0.0
     var min_x = 1.0e18
@@ -341,7 +349,7 @@ def _measure_line(
     var max_y = -1.0e18
     var any_ink = False
     for cp in _visual_codepoints(line_text):
-        var gm = _resolve_glyph(face, family, slant, weight, size, Int(cp), pen_x, 0.0).metrics
+        var gm = _resolve_glyph(face, family, slant, weight, size, Int(cp), pen_x, 0.0, cache).metrics
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
             var right = left + gm.width
@@ -376,6 +384,7 @@ def _layout_block(
     weight: FontWeight,
     rotation: Float64,
     align: TextAlign,
+    mut cache: FontCache,
 ) raises -> _BlockLayout:
     """The "two passes" layout math draw_text's own docstring
     describes: measure every "\\n"-separated line, compute each one's
@@ -390,14 +399,14 @@ def _layout_block(
     """
     var raw_lines = text.split("\n")
 
-    var face = _load_sized_face(family, slant, weight, size)
+    var face = _load_sized_face(family, slant, weight, size, cache)
     var line_height = face_line_metrics(face).line_height
 
     var lines = List[_LineLayout](capacity=len(raw_lines))
     var any_ink = False
     for i in range(len(raw_lines)):
         var line_text = String(raw_lines[i])
-        var measured = _measure_line(face, line_text, family, slant, weight, size)
+        var measured = _measure_line(face, line_text, family, slant, weight, size, cache)
         var baseline_y = Float64(i) * line_height
         var x_offset = 0.0
         if align == TextAlign.CENTER:
@@ -464,9 +473,34 @@ def measure_text(
     multi-line string's own per-line metrics, split on "\\n" and call
     this once per line yourself -- the same thing draw_text does
     internally via _measure_line.
+
+    Resolves its own font fresh every call (see font_cache.mojo's own
+    docstring on why that's real, measured cost, not a hypothetical
+    one) -- for repeated calls sharing a font, use the `cache=`
+    overload below instead, passing one `FontCache` you keep reusing.
     """
-    var face = _load_sized_face(family, slant, weight, size)
-    var measured = _measure_line(face, text, family, slant, weight, size)
+    var cache = FontCache()
+    return measure_text(text, size, family, slant, weight, cache=cache)
+
+
+def measure_text(
+    text: String,
+    size: Float64,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    *,
+    mut cache: FontCache,
+) raises -> TextMetrics:
+    """Like measure_text above, but resolving fonts through `cache`
+    (see font_cache.mojo's own docstring) instead of fresh every call
+    -- the call to reach for when measuring many strings that share a
+    font, e.g. every tick label on one chart axis. Pass the same
+    `FontCache` to every measure_text/draw_text/measure_text_block call
+    in the batch to actually get the reuse.
+    """
+    var face = _load_sized_face(family, slant, weight, size, cache)
+    var measured = _measure_line(face, text, family, slant, weight, size, cache)
     return TextMetrics(measured.width, measured.height, measured.advance)
 
 
@@ -523,10 +557,33 @@ def measure_text_block(
     matching draw_text's own no-op behavior for the identical input
     rather than reporting some nonzero "advance" box a caller might
     mistake for real ink.
+
+    Resolves its own font fresh every call -- see measure_text's own
+    docstring on the `cache=` overload below for repeated calls
+    sharing a font.
+    """
+    var cache = FontCache()
+    return measure_text_block(text, size, family, slant, weight, rotation, align, cache=cache)
+
+
+def measure_text_block(
+    text: String,
+    size: Float64,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    *,
+    mut cache: FontCache,
+) raises -> TextBlockBounds:
+    """Like measure_text_block above, but resolving fonts through
+    `cache` (see font_cache.mojo's own docstring) instead of fresh
+    every call -- see measure_text's own `cache=` overload docstring.
     """
     if text == "":
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
-    var block = _layout_block(text, size, family, slant, weight, rotation, align)
+    var block = _layout_block(text, size, family, slant, weight, rotation, align, cache)
     if not block.any_ink:
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
     return TextBlockBounds(
@@ -628,6 +685,40 @@ def draw_text(
     one rotate-plus-translate pass (_place_glyph_path) before filling
     directly onto `canvas` via fill_path_aa -- no intermediate scratch
     surface, unlike the Cairo-backed version this replaced.
+
+    Resolves its own font fresh, twice (once for each of the two
+    passes above) -- see measure_text's own docstring on the `cache=`
+    overload below, which also fixes that within-one-call duplication,
+    not just repeat calls.
+    """
+    var cache = FontCache()
+    draw_text(canvas, x, y, text, color, size, family, slant, weight, rotation, align, cache=cache)
+
+
+def draw_text(
+    mut canvas: Canvas,
+    x: Int,
+    y: Int,
+    text: String,
+    color: Color,
+    size: Float64,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    *,
+    mut cache: FontCache,
+) raises:
+    """Like draw_text above, but resolving fonts through `cache` (see
+    font_cache.mojo's own docstring) instead of fresh every call --
+    see measure_text's own `cache=` overload docstring for when to
+    reach for this. Also fixes a redundancy the uncached overload
+    still has even for one single call: draw_text's own two passes
+    (_layout_block's measuring pass, then the render pass below) each
+    resolve the same face -- with `cache` shared between them, the
+    second resolution is a cache hit instead of a second fontconfig
+    round-trip.
     """
     if text == "":
         return
@@ -636,12 +727,12 @@ def draw_text(
     # corner unchanged inside _layout_block, so this reduces to that
     # single line's own unrotated ink box -- one code path for both
     # cases, not two.
-    var block = _layout_block(text, size, family, slant, weight, rotation, align)
+    var block = _layout_block(text, size, family, slant, weight, rotation, align, cache)
     if not block.any_ink:
         # Every line whitespace-only/empty -- nothing to draw.
         return
 
-    var face = _load_sized_face(family, slant, weight, size)
+    var face = _load_sized_face(family, slant, weight, size, cache)
     var c = cos(rotation)
     var s = sin(rotation)
     var anchor_x = Float64(x)
@@ -652,7 +743,7 @@ def draw_text(
             continue
         var pen_x = line.x
         for codepoint in _visual_codepoints(line.text):
-            var g = _resolve_glyph(face, family, slant, weight, size, codepoint, pen_x, line.y)
+            var g = _resolve_glyph(face, family, slant, weight, size, codepoint, pen_x, line.y, cache)
             if g.metrics.width > 0.0 and g.metrics.height > 0.0:
                 var placed = _place_glyph_path(g.path, c, s, anchor_x, anchor_y)
                 fill_path_aa(canvas, placed, color)

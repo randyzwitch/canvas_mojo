@@ -81,6 +81,17 @@ struct Transform2D(ImplicitlyCopyable, Movable):
     var translate_x: Float64
     var translate_y: Float64
     var rotation: Float64
+    # cos(rotation)/sin(rotation), cached once here instead of
+    # recomputed by to_pixel on every call: rotation is fixed for a
+    # Transform2D's whole lifetime (nothing in this codebase mutates
+    # it after construction -- confirmed directly, not assumed), while
+    # to_pixel itself is the one function meant to be called once per
+    # data point -- thousands of times over, for a real scatter plot
+    # (see examples/transform.mojo's own to_pixel-in-a-loop usage) --
+    # so recomputing two trig calls per point for a value that never
+    # changes was pure waste multiplied by every point plotted.
+    var _cos_rotation: Float64
+    var _sin_rotation: Float64
 
     def __init__(
         out self,
@@ -95,6 +106,8 @@ struct Transform2D(ImplicitlyCopyable, Movable):
         self.translate_x = translate_x
         self.translate_y = translate_y
         self.rotation = rotation
+        self._cos_rotation = cos(rotation)
+        self._sin_rotation = sin(rotation)
 
     def to_pixel(self, x: Float64, y: Float64) -> Point:
         """Map a data-space point to the nearest integer pixel."""
@@ -104,10 +117,8 @@ struct Transform2D(ImplicitlyCopyable, Movable):
         var rx = sx
         var ry = sy
         if self.rotation != 0.0:
-            var c = cos(self.rotation)
-            var s = sin(self.rotation)
-            rx = sx * c - sy * s
-            ry = sx * s + sy * c
+            rx = sx * self._cos_rotation - sy * self._sin_rotation
+            ry = sx * self._sin_rotation + sy * self._cos_rotation
 
         var px = rx + self.translate_x
         var py = ry + self.translate_y

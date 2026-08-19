@@ -128,6 +128,13 @@ def _adler32(data: List[UInt8]) -> UInt32:
 def _write_chunk(mut buf: List[UInt8], table: List[UInt32], chunk_type: String, data: List[UInt8]):
     """Append one PNG chunk: length(4, data only) + type(4 ASCII) +
     data + CRC-32(4, over type+data, NOT length) -- all big-endian.
+
+    Builds `type_and_data` once (needed as its own buffer regardless,
+    since _crc32 must see type+data combined), then *moves* it into
+    `buf` instead of copying it there byte-by-byte -- for IDAT (the
+    entire deflate-compressed image, the one chunk here actually large
+    enough for this to matter), that's the difference between one real
+    copy of the payload and two.
     """
     _append_u32_be(buf, UInt32(len(data)))
 
@@ -135,12 +142,11 @@ def _write_chunk(mut buf: List[UInt8], table: List[UInt32], chunk_type: String, 
     var type_bytes = chunk_type.as_bytes()
     for i in range(len(type_bytes)):
         type_and_data.append(UInt8(type_bytes[i]))
-    for b in data:
-        type_and_data.append(b)
+    type_and_data.extend(data.copy())
 
-    for b in type_and_data:
-        buf.append(b)
-    _append_u32_be(buf, _crc32(type_and_data, table))
+    var crc = _crc32(type_and_data, table)
+    buf.extend(type_and_data^)
+    _append_u32_be(buf, crc)
 
 
 def write_png(canvas: Canvas, path: String) raises:
@@ -170,14 +176,18 @@ def write_png(canvas: Canvas, path: String) raises:
     # where that already compresses extremely well, see deflate.mojo's
     # own module docstring) followed by that row's RGB bytes, one row
     # after another.
+    # Each row copied in one bulk slice, not pixel-by-pixel through
+    # get_pixel -- canvas.pixels is already exactly RGB, row-major, the
+    # identical layout a filter-type-0 scanline wants for its own RGB
+    # bytes, so there's no per-pixel transformation to justify paying
+    # for get_pixel's own in_bounds check and Color construction (both
+    # pure overhead here: every (x, y) below is already known
+    # in-bounds) w * h times over.
     var raw = List[UInt8](capacity=h * (1 + w * 3))
     for y in range(h):
         raw.append(0)
-        for x in range(w):
-            var c = canvas.get_pixel(x, y)
-            raw.append(c.r)
-            raw.append(c.g)
-            raw.append(c.b)
+        var row_start = y * w * 3
+        raw.extend(canvas.pixels[row_start : row_start + w * 3])
 
     var zlib_stream = List[UInt8]()
     # zlib header (RFC 1950 section 2.2): CMF=0x78 (deflate, 32K
@@ -190,8 +200,7 @@ def write_png(canvas: Canvas, path: String) raises:
     zlib_stream.append(0x78)
     zlib_stream.append(0x01)
     var compressed = deflate(raw)
-    for b in compressed:
-        zlib_stream.append(b)
+    zlib_stream.extend(compressed^)
     _append_u32_be(zlib_stream, _adler32(raw))
 
     _write_chunk(file_buf, crc_table, "IDAT", zlib_stream)
@@ -294,8 +303,11 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
             cur_row.append(UInt8(recon & 0xFF))
 
         pos += row_bytes
-        for b in cur_row:
-            out.append(b)
+        # A copy, not a move -- cur_row is also what becomes prev_row
+        # for the next iteration right below, so out still needs its
+        # own independent bytes. One bulk .copy() instead of the
+        # manual per-byte loop this used to be.
+        out.extend(cur_row.copy())
         prev_row = cur_row^
 
     return out^
@@ -303,10 +315,16 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
 
 def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, color_type: Int) raises -> Canvas:
     """Converts already-unfiltered scanline bytes into a Canvas,
-    compositing every pixel through `set_pixel`'s own existing
+    compositing every pixel through `write_pixel`'s own existing
     blend_over -- see this file's own module docstring for why a PNG
     with an alpha channel loses it here (Canvas has no per-pixel alpha
     of its own to preserve it in), not a gap specific to this function.
+
+    write_pixel, not set_pixel: every (x, y) below is already known
+    in-bounds (the loop ranges come straight from width/height) on a
+    freshly constructed canvas with no clip pushed, so set_pixel's own
+    in_bounds/in_clip checks would only ever confirm what's already
+    guaranteed -- see buffer.mojo's own write_pixel docstring.
     """
     var canvas = Canvas(width, height)
     var bpp = _bytes_per_pixel(color_type)
@@ -326,7 +344,7 @@ def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, col
                 color = Color(gray, gray, gray, unfiltered[px + 1])
             else:  # 6 -- _bytes_per_pixel already rejected anything else
                 color = Color(unfiltered[px], unfiltered[px + 1], unfiltered[px + 2], unfiltered[px + 3])
-            canvas.set_pixel(x, y, color)
+            canvas.write_pixel(x, y, color)
     return canvas^
 
 
@@ -344,11 +362,8 @@ def read_png(path: String) raises -> Canvas:
     misdecoded into a plausible-looking wrong image.
     """
     var f = open(path, "r")
-    var content = f.read_bytes()
+    var data = f.read_bytes()
     f.close()
-    var data = List[UInt8](capacity=len(content))
-    for b in content:
-        data.append(b)
 
     var signature: List[UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
     if len(data) < 8:

@@ -197,11 +197,8 @@ struct TTFFace(Movable):
 
     def __init__(out self, path: String) raises:
         var f = open(path, "r")
-        var content = f.read_bytes()
+        var data = f.read_bytes()
         f.close()
-        var data = List[UInt8](capacity=len(content))
-        for b in content:
-            data.append(b)
 
         if len(data) < 12:
             raise Error("ttf: file too short to be a TrueType font")

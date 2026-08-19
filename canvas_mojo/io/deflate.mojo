@@ -147,20 +147,20 @@ struct _BitWriter(Movable):
         sitting in `bitbuf` above `bitcnt`'s own valid bits. Returns a
         copy of `self.data` rather than moving it out -- `mut self` is
         a borrow, not ownership, so `self` has to stay in a valid
-        state after this returns; `List[UInt8]` isn't cheaply/
-        implicitly copyable (the same reason inflate()'s own docstring
-        gives for taking its input by ownership instead), so this
-        copies element-by-element rather than reaching for a `.copy()`
-        this list type doesn't have.
+        state after this returns; `List[UInt8]` isn't *implicitly*
+        copyable (the same reason inflate()'s own docstring gives for
+        taking its input by ownership instead), but it does offer an
+        explicit `.copy()` -- one bulk copy instead of the manual
+        element-by-element loop this used to reach for instead
+        (mattering most here since `self.data` is the *entire*
+        DEFLATE-compressed output, easily tens to hundreds of KB for a
+        real image).
         """
         if self.bitcnt > 0:
             self.data.append(UInt8(self.bitbuf & 0xFF))
             self.bitbuf = 0
             self.bitcnt = 0
-        var result = List[UInt8](capacity=len(self.data))
-        for b in self.data:
-            result.append(b)
-        return result^
+        return self.data.copy()
 
 
 struct _Huffman(Movable):
