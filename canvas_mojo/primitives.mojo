@@ -412,15 +412,78 @@ def _draw_polyline_core_aa(
     min_y -= pad
     max_y += pad
 
+    # Each segment's own bounding box, expanded by half_width (a
+    # sample outside this can never be within half_width of the
+    # segment -- its closest point always lies on the segment itself,
+    # which lies inside this box by construction) plus a flat 1.0
+    # margin (a pixel's own samples can land up to 0.5 away from its
+    # (px, py) center in either axis, so testing the pixel's own
+    # coordinate against a box shrunk by less than that never
+    # incorrectly excludes a segment some sample could still reach).
+    # Precomputed once here, then used below to skip a segment
+    # entirely for a whole pixel -- its full per-sample projection
+    # math -- without visiting a single one of its samples, rather
+    # than discovering per sample that it was never going to matter.
+    # This is the actual fix for what would otherwise be O(pixels *
+    # supersample^2 * segments) even for a polyline whose own points
+    # are spread across most of a chart's canvas (a real line chart's
+    # own shape, not a rare pathological case): most segments are
+    # nowhere near most pixels in that bounding box, and this is what
+    # lets the inner sample loop skip straight past them.
+    var seg_min_x = List[Float64](capacity=num_segments)
+    var seg_max_x = List[Float64](capacity=num_segments)
+    var seg_min_y = List[Float64](capacity=num_segments)
+    var seg_max_y = List[Float64](capacity=num_segments)
+    for seg in range(num_segments):
+        var a = points[seg]
+        var b = points[(seg + 1) % count]
+        var ax = Float64(a.x)
+        var ay = Float64(a.y)
+        var bx = Float64(b.x)
+        var by = Float64(b.y)
+        seg_min_x.append(min(ax, bx) - half_width - 1.0)
+        seg_max_x.append(max(ax, bx) + half_width + 1.0)
+        seg_min_y.append(min(ay, by) - half_width - 1.0)
+        seg_max_y.append(max(ay, by) + half_width + 1.0)
+
+    var row_candidates = List[Int](capacity=num_segments)
+    var candidates = List[Int](capacity=num_segments)
     for py in range(min_y, max_y + 1):
+        var fpy = Float64(py)
+
+        # Row-level pre-filter first (by y alone), before the per-
+        # pixel x check below: a row spans many pixels but this y-only
+        # test is the same for every one of them, so computing it once
+        # per row instead of once per (row, pixel) pair -- O(rows *
+        # segments) instead of O(pixels * segments) for this part --
+        # is a real cost cut on its own for a wide canvas, on top of
+        # the per-pixel candidate filtering this feeds into.
+        row_candidates.clear()
+        for seg in range(num_segments):
+            if fpy >= seg_min_y[seg] and fpy <= seg_max_y[seg]:
+                row_candidates.append(seg)
+
+        if len(row_candidates) == 0:
+            continue  # no segment reaches this row at all
+
         for px in range(min_x, max_x + 1):
+            var fpx = Float64(px)
+            candidates.clear()
+            for ri in range(len(row_candidates)):
+                var seg = row_candidates[ri]
+                if fpx >= seg_min_x[seg] and fpx <= seg_max_x[seg]:
+                    candidates.append(seg)
+            if len(candidates) == 0:
+                continue  # no segment comes anywhere near this pixel
+
             var covered = 0
             for sy in range(n):
                 var sample_y = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
                 for sx in range(n):
                     var sample_x = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
                     var min_dist2 = -1.0
-                    for seg in range(num_segments):
+                    for ci in range(len(candidates)):
+                        var seg = candidates[ci]
                         var a = points[seg]
                         var b = points[(seg + 1) % count]
                         var fx0 = Float64(a.x)
@@ -1146,6 +1209,17 @@ def draw_circle_aa(
     keeps this centered on the same point as draw_circle given
     identical cx, cy, radius), but tests each sub-sample against a
     thin ring (radius +/- 0.5) instead of the filled disk.
+
+    A ring this thin (exactly 1 unit wide) never has a pixel square
+    that's *provably fully inside* it the way fill_circle_aa's own
+    fast path finds for a filled disk -- there's no fill_circle_aa-
+    style skip to add here. But most of this loop's own bounding
+    square -- everything well inside the hole, or well outside the
+    outer edge, both far more area than the thin ring itself for any
+    real radius -- *is* provably fully outside, via the same AABB
+    nearest/farthest-point test fill_ring_sector_aa's own docstring
+    describes; skipping those pixels here is the real win for a large
+    circle outline.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -1161,6 +1235,19 @@ def draw_circle_aa(
 
     for py in range(cy - radius - 1, cy + radius + 2):
         for px in range(cx - radius - 1, cx + radius + 2):
+            var dx = abs(Float64(px - cx))
+            var dy = abs(Float64(py - cy))
+
+            var near_dx = max(0.0, dx - 0.5)
+            var near_dy = max(0.0, dy - 0.5)
+            if near_dx * near_dx + near_dy * near_dy >= outer2:
+                continue  # whole pixel square is outside the outer edge
+
+            var far_dx = dx + 0.5
+            var far_dy = dy + 0.5
+            if far_dx * far_dx + far_dy * far_dy < inner2:
+                continue  # whole pixel square is inside the hole
+
             var covered = 0
             for sy in range(n):
                 var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
@@ -1416,6 +1503,25 @@ def draw_ellipse_aa(
 
     for py in range(cy - ry - 1, cy + ry + 2):
         for px in range(cx - rx - 1, cx + rx + 2):
+            var dx = abs(Float64(px - cx))
+            var dy = abs(Float64(py - cy))
+
+            # Same "provably fully outside the ring band" skip
+            # draw_circle_aa's own docstring describes, generalized to
+            # the two independent outer-/inner-ellipse normalized-space
+            # tests this function already uses -- no single shared
+            # distance to test against here either, so both directions
+            # get their own nearest/farthest check.
+            var near_onx = max(0.0, dx - 0.5) / outer_rx
+            var near_ony = max(0.0, dy - 0.5) / outer_ry
+            if near_onx * near_onx + near_ony * near_ony >= 1.0:
+                continue  # whole pixel square is outside the outer ellipse
+
+            var far_inx = (dx + 0.5) / inner_rx
+            var far_iny = (dy + 0.5) / inner_ry
+            if far_inx * far_inx + far_iny * far_iny < 1.0:
+                continue  # whole pixel square is inside the inner ellipse
+
             var covered = 0
             for sy in range(n):
                 var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
