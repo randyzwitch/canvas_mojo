@@ -54,7 +54,9 @@ def _round_channel(value: Float64) -> UInt8:
     return UInt8(value + 0.5)
 
 
-def _color_at_t(stops: List[_GradientStop], t_in: Float64) -> Color:
+def _color_at_t(
+    stops: List[_GradientStop], lowest: _GradientStop, highest: _GradientStop, t_in: Float64
+) -> Color:
     """The shared "given a projected position, what color" logic
     behind both LinearGradient.color_at and RadialGradient.color_at --
     see this module's own docstring for why the projection itself
@@ -63,6 +65,18 @@ def _color_at_t(stops: List[_GradientStop], t_in: Float64) -> Color:
     extend rule is about *how* it clamps -- e.g. radial clamps a
     distance that can't go negative in the first place -- not about
     this shared lookup, so the clamp itself isn't duplicated here).
+
+    `lowest`/`highest` (the stops with the smallest/largest offset)
+    are passed in already found, not rescanned from `stops` here --
+    they never change for a given gradient's fixed stop list, so
+    LinearGradient/RadialGradient each track them incrementally in
+    their own add_stop instead of this function re-scanning the whole
+    list on every single call, which color_at made once per pixel of
+    every gradient fill (fill_rect_gradient/fill_path_gradient and
+    their radial counterparts, canvas_mojo/primitives.mojo and
+    canvas_mojo/path.mojo) -- a hot enough path that an O(stops) scan
+    repeated per pixel was pure waste for a value that's the same
+    every time.
     """
     if len(stops) == 0:
         return Color(0, 0, 0, 0)
@@ -75,13 +89,6 @@ def _color_at_t(stops: List[_GradientStop], t_in: Float64) -> Color:
     elif t > 1.0:
         t = 1.0
 
-    var lowest = stops[0]
-    var highest = stops[0]
-    for s in stops:
-        if s.offset < lowest.offset:
-            lowest = s
-        if s.offset > highest.offset:
-            highest = s
     if t <= lowest.offset:
         return lowest.color
     if t >= highest.offset:
@@ -133,6 +140,19 @@ struct LinearGradient(Movable):
     var x1: Float64
     var y1: Float64
     var stops: List[_GradientStop]
+    # Cached once from x0/y0/x1/y1 (which never change after
+    # construction -- there's no setter) instead of recomputed by
+    # color_at on every call: color_at runs once per pixel of a
+    # gradient fill, and this axis/length math only ever depends on
+    # the endpoints, never on the query point.
+    var _axis_x: Float64
+    var _axis_y: Float64
+    var _len2: Float64
+    # The smallest-/largest-offset stop so far -- tracked incrementally
+    # here instead of scanned from `stops` by _color_at_t on every
+    # call; see that function's own docstring for why.
+    var _lowest: _GradientStop
+    var _highest: _GradientStop
 
     def __init__(out self, x0: Float64, y0: Float64, x1: Float64, y1: Float64):
         self.x0 = x0
@@ -140,10 +160,23 @@ struct LinearGradient(Movable):
         self.x1 = x1
         self.y1 = y1
         self.stops = List[_GradientStop]()
+        self._axis_x = x1 - x0
+        self._axis_y = y1 - y0
+        self._len2 = self._axis_x * self._axis_x + self._axis_y * self._axis_y
+        # Overwritten by the first real add_stop() call; _color_at_t
+        # never reads these unless len(stops) >= 2, so this placeholder
+        # (transparent black at offset 0.0) is never actually observed.
+        self._lowest = _GradientStop(0.0, Color(0, 0, 0, 0))
+        self._highest = self._lowest
 
     def add_stop(mut self, offset: Float64, color: Color):
         """Add a color stop at `offset` (0.0 to 1.0 along the axis)."""
-        self.stops.append(_GradientStop(offset, color))
+        var stop = _GradientStop(offset, color)
+        if len(self.stops) == 0 or offset < self._lowest.offset:
+            self._lowest = stop
+        if len(self.stops) == 0 or offset > self._highest.offset:
+            self._highest = stop
+        self.stops.append(stop)
 
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): project onto the axis,
@@ -151,13 +184,10 @@ struct LinearGradient(Movable):
         docstring), then linearly interpolate between whichever two
         stops that projected position falls between.
         """
-        var axis_x = self.x1 - self.x0
-        var axis_y = self.y1 - self.y0
-        var len2 = axis_x * axis_x + axis_y * axis_y
         var t = 0.0
-        if len2 != 0.0:
-            t = ((x - self.x0) * axis_x + (y - self.y0) * axis_y) / len2
-        return _color_at_t(self.stops, t)
+        if self._len2 != 0.0:
+            t = ((x - self.x0) * self._axis_x + (y - self.y0) * self._axis_y) / self._len2
+        return _color_at_t(self.stops, self._lowest, self._highest, t)
 
 
 struct RadialGradient(Movable):
@@ -183,17 +213,31 @@ struct RadialGradient(Movable):
     var cy: Float64
     var radius: Float64
     var stops: List[_GradientStop]
+    # Same incremental lowest-/highest-offset tracking as
+    # LinearGradient's own fields -- see that struct's and
+    # _color_at_t's own docstrings for why.
+    var _lowest: _GradientStop
+    var _highest: _GradientStop
 
     def __init__(out self, cx: Float64, cy: Float64, radius: Float64):
         self.cx = cx
         self.cy = cy
         self.radius = radius
         self.stops = List[_GradientStop]()
+        # Overwritten by the first real add_stop() call -- see
+        # LinearGradient.__init__'s own comment on this placeholder.
+        self._lowest = _GradientStop(0.0, Color(0, 0, 0, 0))
+        self._highest = self._lowest
 
     def add_stop(mut self, offset: Float64, color: Color):
         """Add a color stop at `offset` (0.0 at the center, 1.0 at
         `radius`)."""
-        self.stops.append(_GradientStop(offset, color))
+        var stop = _GradientStop(offset, color)
+        if len(self.stops) == 0 or offset < self._lowest.offset:
+            self._lowest = stop
+        if len(self.stops) == 0 or offset > self._highest.offset:
+            self._highest = stop
+        self.stops.append(stop)
 
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): project onto [0, 1] as
@@ -218,4 +262,4 @@ struct RadialGradient(Movable):
         var t = 1.0
         if self.radius != 0.0:
             t = dist / self.radius
-        return _color_at_t(self.stops, t)
+        return _color_at_t(self.stops, self._lowest, self._highest, t)

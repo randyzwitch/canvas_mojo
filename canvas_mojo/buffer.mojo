@@ -89,6 +89,39 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # empty stack == no clip active == the clip region is the whole canvas
         self.clip_stack = List[_ClipRect]()
 
+    def __init__(out self, width: Int, height: Int, var pixels: List[UInt8]) raises:
+        """Wrap an already-built RGB pixel buffer directly, skipping the
+        solid-fill loop the (width, height, fill) constructor above
+        always pays for. For a caller that's about to write every pixel
+        itself anyway -- downsample() in canvas_mojo/resize.mojo is the
+        concrete case this exists for, where every output pixel is
+        computed and appended before the canvas is ever handed back --
+        filling the buffer with a placeholder color first, only to
+        immediately overwrite every pixel, would double the total
+        pixel-write cost of the call for no benefit.
+
+        Raises if `pixels` isn't exactly width * height * 3 bytes (3
+        bytes -- RGB -- per pixel, row-major, the same layout get_pixel/
+        set_pixel assume): a caller handing over the wrong size is a
+        caller bug, not something to silently wrap anyway and corrupt
+        every later index into a mismatched buffer.
+        """
+        if len(pixels) != width * height * 3:
+            raise Error(
+                "Canvas(width, height, pixels): pixels must be exactly"
+                " width * height * 3 bytes (got "
+                + String(len(pixels))
+                + " for a "
+                + String(width)
+                + "x"
+                + String(height)
+                + " canvas)"
+            )
+        self.width = width
+        self.height = height
+        self.pixels = pixels^
+        self.clip_stack = List[_ClipRect]()
+
     def in_bounds(self, x: Int, y: Int) -> Bool:
         return x >= 0 and x < self.width and y >= 0 and y < self.height
 
