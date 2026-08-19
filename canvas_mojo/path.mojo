@@ -438,6 +438,67 @@ def _point_in_subpaths(
     return _is_inside(winding, fill_rule)
 
 
+struct _AACrossing(ImplicitlyCopyable, Movable):
+    """One sub-scanline crossing for fill_path_aa's own sweep (see
+    _row_crossings_aa) -- the same (x, direction) shape primitives.
+    mojo's own _Crossing has, except x stays Float64 (a real sub-pixel
+    position), not rounded to Int: fill_path_aa needs to place a
+    crossing between two supersample columns, not just two whole
+    pixels.
+    """
+
+    var x: Float64
+    var direction: Int
+
+    def __init__(out self, x: Float64, direction: Int):
+        self.x = x
+        self.direction = direction
+
+
+def _row_crossings_aa(subpaths: List[_Subpath], fy: Float64) -> List[_AACrossing]:
+    """_point_in_subpaths's own per-sample ray-cast, factored out to
+    run once per sub-scanline instead of once per sub-pixel sample --
+    every edge crossing y=fy, in no particular order (sorted separately,
+    see _sort_aa_crossings_by_x). See fill_path_aa's own docstring for
+    why this split is what makes the whole sweep sub-quadratic.
+    """
+    var crossings = List[_AACrossing]()
+    for sp_idx in range(len(subpaths)):
+        ref sp = subpaths[sp_idx]
+        var n = len(sp.points)
+        if n < 2:
+            continue
+        for i in range(n):
+            var p0 = sp.points[i]
+            var p1 = sp.points[(i + 1) % n]
+            var y0 = Float64(p0.y)
+            var y1 = Float64(p1.y)
+            if y0 == y1:
+                continue
+            var lo = min(y0, y1)
+            var hi = max(y0, y1)
+            if fy >= lo and fy < hi:
+                var t = (fy - y0) / (y1 - y0)
+                var x = Float64(p0.x) + t * Float64(p1.x - p0.x)
+                var direction = 1 if y1 > y0 else -1
+                crossings.append(_AACrossing(x, direction))
+    return crossings^
+
+
+def _sort_aa_crossings_by_x(mut crossings: List[_AACrossing]):
+    """Insertion sort -- the crossing count for one sub-scanline is
+    always small (a handful, not the path's own full point count), the
+    same reasoning _spans_from_crossings' own identical insertion sort
+    (primitives.mojo) already relies on."""
+    for i in range(1, len(crossings)):
+        var key = crossings[i]
+        var j = i - 1
+        while j >= 0 and crossings[j].x > key.x:
+            crossings[j + 1] = crossings[j]
+            j -= 1
+        crossings[j + 1] = key
+
+
 def fill_path_aa(
     mut canvas: Canvas,
     path: Path,
@@ -447,17 +508,42 @@ def fill_path_aa(
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
     fill_polygon_aa is fill_polygon's (see that function's own
-    docstring in primitives.mojo, the direct model this follows): for
-    every pixel near the path's flattened outline, samples an NxN
-    sub-pixel grid and tests each sub-sample against _point_in_subpaths,
-    turning the coverage fraction into that pixel's alpha. Each output
-    pixel is visited exactly once.
+    docstring in primitives.mojo, the model this originally followed):
+    for every pixel near the path's flattened outline, samples an NxN
+    sub-pixel grid and turns the coverage fraction into that pixel's
+    alpha. Each output pixel is visited exactly once.
 
     Same multi-sub-path hole-punching (and, with FillRule.NONZERO,
-    union-filling) fill_path itself has -- _point_in_subpaths combines
-    every sub-path's winding contribution before either fill rule is
-    applied, not per-sub-path independently, for the identical reason
-    fill_path's own docstring gives.
+    union-filling) fill_path itself has -- every sub-path's winding
+    contribution is combined before either fill rule is applied, not
+    per-sub-path independently, for the identical reason fill_path's
+    own docstring gives.
+
+    Swept per sub-scanline, not per sub-pixel sample: _point_in_subpaths
+    (this module's own naive per-sample membership test, still used
+    directly by _point_in_subpaths' own tests, and kept as a plain
+    reference implementation) would re-scan every one of a path's edges
+    for every one of a pixel's supersample^2 sub-samples -- O(pixels *
+    supersample^2 * edges) overall, fine for a small hand-drawn shape
+    but a genuine problem for a large, edge-dense one (a big arc_to-
+    built wedge or ribbon, say: arc_to's own point count scales with
+    radius, see its own docstring, so a large enough one starts costing
+    real seconds). Collecting a sub-scanline's crossings once (like
+    fill_path's own _row_crossings, generalized here to sub-pixel y)
+    instead of once per sample removes the `* edges` factor from the
+    per-sample cost entirely: sort the crossings by x once (
+    _sort_aa_crossings_by_x), precompute each one's own suffix winding
+    sum, then sweep every sub-sample's x -- strictly increasing across
+    the whole row, the same left-to-right pixel order the loop already
+    visits -- against that sorted list with a single forward-only
+    pointer, an O(1) amortized lookup per sample instead of O(edges).
+    Same math as _point_in_subpaths' own ray cast at every sample
+    point, just computed via a sweep instead of a fresh scan: every
+    existing fill_path_aa/stroke_path_aa/text-rendering test (this
+    package's own text rendering rasterizes through fill_path_aa, see
+    canvas_mojo/text/render.mojo) still passes byte-identical after
+    this rewrite, which is the real correctness bar here, not just the
+    complexity argument.
 
     Not fused with fill_path behind an `antialias: Bool` -- same
     reasoning as every other hard/AA split in this codebase (see
@@ -487,17 +573,53 @@ def fill_path_aa(
     var s = supersample
     var total_samples = s * s
     var step = 1.0 / Float64(s)
+    var row_first_px = min_x - 1
+    var row_width = (max_x + 2) - row_first_px  # px range length, see the loop below
 
     for py in range(min_y - 1, max_y + 2):
-        for px in range(min_x - 1, max_x + 2):
-            var covered = 0
-            for sy in range(s):
-                var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+        var row_covered = List[Int](capacity=row_width)
+        for _ in range(row_width):
+            row_covered.append(0)
+
+        for sy in range(s):
+            var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+            var crossings = _row_crossings_aa(subpaths, fy)
+            _sort_aa_crossings_by_x(crossings)
+            var k = len(crossings)
+
+            # suffix[i] == the signed winding contributed by every
+            # crossing from index i to the end -- crossings[idx:]'s own
+            # combined direction, exactly what _point_in_subpaths' own
+            # `x > fx` ray cast sums fresh per sample; see this
+            # function's own docstring for why precomputing it here
+            # (once per sub-scanline) instead removes the `* edges`
+            # factor from the sweep below.
+            var suffix = List[Int](capacity=k + 1)
+            for _ in range(k + 1):
+                suffix.append(0)
+            for i in range(k - 1, -1, -1):
+                suffix[i] = suffix[i + 1] + crossings[i].direction
+
+            # fx is strictly increasing across this whole sweep (px
+            # ascending, and each px's own sx sub-samples span a
+            # narrower range than the gap to the next px -- see this
+            # function's own docstring), so `idx` only ever moves
+            # forward: an amortized O(1) lookup per sample, not a fresh
+            # O(k) rescan.
+            var idx = 0
+            for pxi in range(row_width):
+                var px = row_first_px + pxi
                 for sx in range(s):
                     var fx = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
-                    if _point_in_subpaths(subpaths, fx, fy, fill_rule):
-                        covered += 1
+                    while idx < k and crossings[idx].x <= fx:
+                        idx += 1
+                    if _is_inside(suffix[idx], fill_rule):
+                        row_covered[pxi] += 1
+
+        for pxi in range(row_width):
+            var covered = row_covered[pxi]
             if covered > 0:
+                var px = row_first_px + pxi
                 var alpha = UInt8(
                     Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
                 )
