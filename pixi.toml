@@ -11,8 +11,24 @@ hugo = ">=0.164.0,<0.165"
 go = ">=1.26.6,<2"
 
 [tasks]
-example = "mojo run -I . examples/fill_rect_blend.mojo && mojo run -I . examples/rect_stroke.mojo && mojo run -I . examples/lines.mojo && mojo run -I . examples/circles.mojo && mojo run -I . examples/ellipse.mojo && mojo run -I . examples/arc.mojo && mojo run -I . examples/polyline.mojo && mojo run -I . examples/polygon.mojo && mojo run -I . examples/path.mojo && mojo run -I . examples/fill_rule.mojo && mojo run -I . examples/gradient.mojo && mojo run -I . examples/dashes.mojo && mojo run -I . examples/transform.mojo && mojo run -I . examples/clipping.mojo && mojo run -I . examples/png_output.mojo && mojo run -I . examples/text.mojo"
-test = "mojo run -I . tests/test_color.mojo && mojo run -I . tests/test_buffer.mojo && mojo run -I . tests/test_bmp.mojo && mojo run -I . tests/test_deflate.mojo && mojo run -I . tests/test_png.mojo && mojo run -I . tests/test_geometry.mojo && mojo run -I . tests/test_gradient.mojo && mojo run -I . tests/test_primitives.mojo && mojo run -I . tests/test_path.mojo && mojo run -I . tests/test_resize.mojo && mojo run -I . tests/test_svg.mojo && mojo run -I . tests/test_font_discovery.mojo && mojo run -I . tests/test_glyph_outline.mojo && mojo run -I . tests/test_ttf.mojo && mojo run -I . tests/test_bidi.mojo && mojo run -I . tests/test_text.mojo"
+# Both tasks below run every file in parallel via scripts/run_parallel.sh
+# (see that script's own docstring for the full "why" -- capped at the
+# machine's real CPU count, no new dependency: xargs -P, not GNU
+# parallel). Files write to disjoint output paths (examples/out_<name>.
+# {bmp,png}; only test_bmp.mojo/test_png.mojo touch disk at all, to
+# their own distinctly-named tests/_test_*.{bmp,png}, confirmed by
+# reading every test file's own temp-path constant before relying on
+# this), so concurrent execution is safe, not just fast.
+#
+# `test`'s own file order is deliberately NOT alphabetical: the four
+# fontconfig/glyph-heavy files (test_text.mojo alone dwarfs every other
+# file combined) are listed first so they occupy CPU slots from the
+# very start on a CPU-constrained CI runner -- the same "longest job
+# first" scheduling heuristic real parallel build systems use. Matters
+# far less locally (this machine's own core count comfortably exceeds
+# 16), but costs nothing to get right for CI too.
+example = "bash scripts/run_parallel.sh examples/fill_rect_blend.mojo examples/rect_stroke.mojo examples/lines.mojo examples/circles.mojo examples/ellipse.mojo examples/arc.mojo examples/polyline.mojo examples/polygon.mojo examples/path.mojo examples/fill_rule.mojo examples/gradient.mojo examples/dashes.mojo examples/transform.mojo examples/clipping.mojo examples/png_output.mojo examples/text.mojo"
+test = "bash scripts/run_parallel.sh tests/test_text.mojo tests/test_font_discovery.mojo tests/test_ttf.mojo tests/test_glyph_outline.mojo tests/test_color.mojo tests/test_buffer.mojo tests/test_bmp.mojo tests/test_deflate.mojo tests/test_png.mojo tests/test_geometry.mojo tests/test_gradient.mojo tests/test_primitives.mojo tests/test_path.mojo tests/test_resize.mojo tests/test_svg.mojo tests/test_bidi.mojo"
 
 # Regenerates docs/site/content (nothing docs-build itself produces is
 # committed -- not that, not docs/site/public further downstream, not
