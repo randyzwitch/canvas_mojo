@@ -1,0 +1,33 @@
+# Modo config -- generates docs/site/content (a Hugo site, built by
+# `hugo -s docs/site` into docs/site/public, then deployed straight to
+# GitHub Pages via Actions -- neither ever committed, see pixi.toml's
+# own `docs` task and .github/workflows/docs.yml) from canvas_mojo/'s
+# own docstrings (via `mojo doc`) plus the hand-written pages in
+# docs/src/. Hugo format specifically (not plain markdown) because
+# GitHub's Actions-based Pages deployment -- needed to avoid committing
+# generated output to git at all -- doesn't run Jekyll (or anything) on
+# what it's given, just serves it as-is: no free markdown-to-HTML
+# rendering the way classic branch-deploy Pages provided. Hugo also
+# understands Modo's own `_index.md` convention (a section's landing
+# page) natively -- it's where Modo borrowed the convention from.
+# See https://github.com/mlange-42/modo.
+#
+# Lives here (docs/modo.yaml), not the repo root, so every docs-only
+# file sits under one directory -- modo requires its own config file
+# to live inside whatever directory it's pointed at (`modo build docs
+# -c modo.yaml`, see pixi.toml's own docs-build task), which is also
+# what every path below is resolved relative to -- `src/`/`site/
+# content` here are `docs/src/`/`docs/site/content` from the repo
+# root (what the prose above, and every other file in this repo,
+# calls them).
+input:
+  - src/
+source-url:
+  canvas_mojo: https://github.com/randyzwitch/canvas_mojo/blob/main/canvas_mojo
+output: site/content
+tests: ""
+format: hugo
+exports: false
+short-links: true
+report-missing: false
+strict: false

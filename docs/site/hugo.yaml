@@ -1,0 +1,48 @@
+baseURL: https://randyzwitch.com/canvas_mojo/
+locale: en-US
+title: canvas_mojo
+disablePathToLower: true
+
+author:
+  name: Randy Zwitch
+  email: rzwitch@gmail.com
+
+markup:
+  highlight:
+    style: github-dark
+
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+menu:
+  main:
+    - name: Examples
+      weight: 1
+      url: "/examples/"
+    - name: API Reference
+      weight: 2
+      url: "/canvas_mojo/"
+    - name: Search
+      weight: 3
+      params:
+        type: search
+    - name: Wiki
+      weight: 4
+      url: "https://github.com/randyzwitch/canvas_mojo/wiki"
+    - name: GitHub
+      weight: 5
+      url: "https://github.com/randyzwitch/canvas_mojo"
+      params:
+        icon: github
+
+params:
+  search:
+    enable: true
+    type: flexsearch
+    flexsearch:
+      # index page by: content | summary | heading | title
+      index: content
+  navbar:
+    displayTitle: true
+    displayLogo: false
