@@ -7,10 +7,50 @@ version = "0.1.0"
 
 [dependencies]
 mojo = ">=1.0.0,<2"
+hugo = ">=0.164.0,<0.165"
+go = ">=1.26.6,<2"
 
 [tasks]
 example = "mojo run -I . examples/fill_rect_blend.mojo && mojo run -I . examples/rect_stroke.mojo && mojo run -I . examples/lines.mojo && mojo run -I . examples/circles.mojo && mojo run -I . examples/ellipse.mojo && mojo run -I . examples/arc.mojo && mojo run -I . examples/polyline.mojo && mojo run -I . examples/polygon.mojo && mojo run -I . examples/path.mojo && mojo run -I . examples/fill_rule.mojo && mojo run -I . examples/gradient.mojo && mojo run -I . examples/dashes.mojo && mojo run -I . examples/transform.mojo && mojo run -I . examples/clipping.mojo && mojo run -I . examples/png_output.mojo && mojo run -I . examples/text.mojo"
 test = "mojo run -I . tests/test_color.mojo && mojo run -I . tests/test_buffer.mojo && mojo run -I . tests/test_bmp.mojo && mojo run -I . tests/test_deflate.mojo && mojo run -I . tests/test_png.mojo && mojo run -I . tests/test_geometry.mojo && mojo run -I . tests/test_gradient.mojo && mojo run -I . tests/test_primitives.mojo && mojo run -I . tests/test_path.mojo && mojo run -I . tests/test_resize.mojo && mojo run -I . tests/test_svg.mojo && mojo run -I . tests/test_font_discovery.mojo && mojo run -I . tests/test_glyph_outline.mojo && mojo run -I . tests/test_ttf.mojo && mojo run -I . tests/test_bidi.mojo && mojo run -I . tests/test_text.mojo"
+
+# Regenerates docs/site/content (nothing docs-build itself produces is
+# committed -- not that, not docs/site/public further downstream, not
+# docs/src/examples/, scripts/gen_example_docs.mojo's own output +
+# copied images). Everything deployed by docs/docs-serve below is
+# deployed straight to GitHub Pages by .github/workflows/docs.yml's
+# own Actions-based deploy, regenerated fresh each time. Only
+# docs/src/_index.md (the hand-written landing page), docs/modo.yaml,
+# and docs/site/'s own Hugo project files (hugo.yaml, go.mod/go.sum)
+# are real, committed source -- see docs/modo.yaml's own comments for
+# the Hugo-over-plain-markdown reasoning, and gen_example_docs.mojo's
+# own docstring for how it turns examples/*.mojo into docs/src/
+# examples/ pages (a Mojo script, not Python -- this repo's own
+# tooling stays in the language it's showcasing). Assumes `pixi run
+# example` has already been run at least once (copies its output
+# images rather than re-rendering them itself, the same "separate,
+# independently-invoked task" split this file's own example/test
+# tasks already have). The trailing `sed` patches modo's own generated
+# canvas_mojo/_index.md front matter: modo always emits `weight: 400`
+# for a package's own root section, with no config flag to change it
+# (`modo build --help` has nothing for it, and there's no local modo
+# source to safely override via `--templates`), which sorted it
+# *after* Examples (weight: 200) in Hextra's left sidebar -- API
+# reference before Examples reads better, so this pins it to 150
+# post-build instead.
+docs-install = "bash scripts/install-modo.sh"
+docs-build = { cmd = "rm -rf docs/site/content docs/site/public docs/src/examples && mkdir -p docs/src/examples && mojo run -I . scripts/gen_example_docs.mojo && cp examples/out_*.bmp examples/out_*.png docs/src/examples/ && mojo doc -I . -o docs/src/canvas_mojo.json canvas_mojo && .tools/modo build docs -c modo.yaml && sed -i 's/^weight: 400$/weight: 150/' docs/site/content/canvas_mojo/_index.md", depends-on = [
+    "docs-install",
+] }
+# One-shot build into docs/site/public -- what docs-deploy.yml
+# actually deploys.
+docs = { cmd = "hugo -s docs/site", depends-on = ["docs-build"] }
+# Live-reloading local preview at http://localhost:1313/canvas_mojo/
+# -- edits under docs/site/content trigger an automatic rebuild, but
+# docs-build's own steps (mojo doc, gen_example_docs.mojo, modo build)
+# don't re-run on their own; re-run `pixi run docs-serve` after
+# changing canvas_mojo/'s own docstrings or examples/ itself.
+docs-serve = { cmd = "hugo server -s docs/site", depends-on = ["docs-build"] }
 
 # --- Package declaration -----------------------------------------------
 # `tests/`/`examples/` deliberately live here, as siblings of `canvas_mojo/`

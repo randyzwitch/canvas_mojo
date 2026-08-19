@@ -8,6 +8,31 @@ Scratching the itch of "What would it take to not use Cairo or other existing li
 
 Please note that this is heavily Claude-influenced, so I do not guarantee consistency, logic, mapping to Cairo concepts or anything else. If you know what you're doing and what to contribute, let's chat! 
 
+**[Docs & examples](https://randyzwitch.com/canvas_mojo/)** --
+every example's source next to its actual rendered output, plus the
+full `canvas_mojo` API reference (generated from this repo's own
+docstrings via [modo](https://github.com/mlange-42/modo), see
+`docs/modo.yaml`/`pixi run docs`).
+
+See the [wiki](https://github.com/randyzwitch/canvas_mojo/wiki) for
+exactly what's built ([Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog))
+vs. still open ([Backlog](https://github.com/randyzwitch/canvas_mojo/wiki/Backlog)).
+
+## Install
+
+```toml
+[workspace]
+preview = ["pixi-build"]  # git-source pixi dependencies are still a preview feature
+
+[dependencies]
+canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", branch = "main" }
+```
+
+`pixi install`/`pixi run` builds `canvas_mojo` from that git ref and
+installs the resulting precompiled package into your own workspace's
+pixi environment — Mojo's own toolchain finds it there automatically,
+no `-I` flag needed.
+
 ## Status
 
 Mojo-only, plus one small direct FFI dependency on a system
@@ -25,8 +50,17 @@ other third-party rendering/font engine anywhere in the pipeline.
 
 ```sh
 pixi run test      # tests/*.mojo
-pixi run example    # examples/*.mojo, writes examples/out_*.{bmp,png}
+pixi run example   # examples/*.mojo, writes examples/out_*.{bmp,png}
+pixi run docs      # regenerates docs/ (served via GitHub Pages) -- run `example` first
 ```
+
+`docs/` also rebuilds and deploys automatically
+(`.github/workflows/docs-deploy.yml`) on every push to `main` that
+touches `canvas_mojo/`, `examples/`, or `docs/` -- manual `pixi run
+docs`/`pixi run docs-serve` are for previewing locally before you
+push, not required to keep the site in sync. A pull request runs the
+same build (`.github/workflows/docs.yml`) as a status check, without
+deploying.
 
 ## License
 
