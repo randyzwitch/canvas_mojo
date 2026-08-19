@@ -8,12 +8,14 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.primitives import draw_rect
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
-    var c = Canvas(140, 140, Color(255, 255, 255))
+    var c = Canvas(420, 420, Color(255, 255, 255))
 
-    draw_rect(c, 20, 20, 100, 100, Color(40, 160, 60))
+    draw_rect(c, 60, 60, 300, 300, Color(40, 160, 60))
 
     write_bmp(c, "examples/out_rect_stroke.bmp")
-    print("wrote examples/out_rect_stroke.bmp")
+    write_png(c, "examples/out_rect_stroke.png")
+    print("wrote examples/out_rect_stroke.bmp and .png")

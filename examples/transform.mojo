@@ -27,6 +27,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point, Transform2D
 from canvas_mojo.primitives import draw_line, draw_polyline_aa, fill_circle_aa
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def _draw_panel(mut c: Canvas, t: Transform2D):
@@ -50,22 +51,23 @@ def _draw_panel(mut c: Canvas, t: Transform2D):
     draw_polyline_aa(c, pixel_points, Color(40, 100, 200))
     for i in range(len(pixel_points)):
         var p = pixel_points[i]
-        fill_circle_aa(c, p.x, p.y, 5, Color(40, 100, 200))
+        fill_circle_aa(c, p.x, p.y, 15, Color(40, 100, 200))
 
 
 def main() raises:
-    var c = Canvas(720, 320, Color(255, 255, 255))
+    var c = Canvas(2160, 960, Color(255, 255, 255))
 
-    # data x in [0, 10] -> pixel x in [40, 360] (left panel's own origin)
-    # data y in [0, 100] -> pixel y in [280, 40] (flipped)
-    var plain = Transform2D(32.0, -2.4, 40.0, 280.0)
+    # data x in [0, 10] -> pixel x in [120, 1080] (left panel's own origin)
+    # data y in [0, 100] -> pixel y in [840, 120] (flipped)
+    var plain = Transform2D(96.0, -7.2, 120.0, 840.0)
     _draw_panel(c, plain)
 
     # same scale/mapping, shifted into the right half of the canvas
     # and tilted 12 degrees -- everything the plain panel draws
     # (axes, line, markers) goes through this same tilted frame.
-    var rotated = Transform2D(32.0, -2.4, 400.0, 280.0, rotation=pi / 15.0)
+    var rotated = Transform2D(96.0, -7.2, 1200.0, 840.0, rotation=pi / 15.0)
     _draw_panel(c, rotated)
 
     write_bmp(c, "examples/out_transform.bmp")
-    print("wrote examples/out_transform.bmp")
+    write_png(c, "examples/out_transform.png")
+    print("wrote examples/out_transform.bmp and .png")

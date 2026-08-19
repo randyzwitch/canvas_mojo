@@ -1,6 +1,7 @@
 """The pixel raster buffer at the core of the canvas package."""
 
 from canvas_mojo.color import Color
+from canvas_mojo.gradient import LinearGradient
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.path import Path, fill_path_aa, stroke_path_aa
 from canvas_mojo.primitives import (
@@ -8,6 +9,7 @@ from canvas_mojo.primitives import (
     fill_arc_aa,
     fill_circle_aa,
     fill_rect,
+    fill_rect_gradient,
     fill_ring_sector_aa,
 )
 
@@ -166,6 +168,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
     def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color):
         fill_rect(self, x, y, width, height, color)
+
+    def fill_rect_gradient(
+        mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
+    ):
+        fill_rect_gradient(self, x, y, width, height, gradient)
 
     def draw_line_aa(
         mut self, x0: Int, y0: Int, x1: Int, y1: Int, color: Color, width: Float64 = 1.0

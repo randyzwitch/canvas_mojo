@@ -18,15 +18,17 @@ from canvas_mojo.primitives import (
     fill_ellipse_aa,
 )
 from canvas_mojo.io.bmp import write_bmp
+from canvas_mojo.io.png import write_png
 
 
 def main() raises:
-    var c = Canvas(680, 160, Color(255, 255, 255))
+    var c = Canvas(2040, 480, Color(255, 255, 255))
 
-    draw_ellipse(c, 100, 80, 70, 45, Color(150, 40, 180))
-    draw_ellipse_aa(c, 260, 80, 70, 45, Color(150, 40, 180))
-    fill_ellipse(c, 420, 80, 70, 45, Color(150, 40, 180))
-    fill_ellipse_aa(c, 580, 80, 70, 45, Color(150, 40, 180))
+    draw_ellipse(c, 300, 240, 210, 135, Color(150, 40, 180))
+    draw_ellipse_aa(c, 780, 240, 210, 135, Color(150, 40, 180))
+    fill_ellipse(c, 1260, 240, 210, 135, Color(150, 40, 180))
+    fill_ellipse_aa(c, 1740, 240, 210, 135, Color(150, 40, 180))
 
     write_bmp(c, "examples/out_ellipse.bmp")
-    print("wrote examples/out_ellipse.bmp")
+    write_png(c, "examples/out_ellipse.png")
+    print("wrote examples/out_ellipse.bmp and .png")

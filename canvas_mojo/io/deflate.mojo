@@ -1,8 +1,12 @@
-"""DEFLATE decompression (RFC 1951) -- a direct translation of zlib's
+"""DEFLATE (RFC 1951): decompression, a direct translation of zlib's
 own `puff.c` reference decoder (Mark Adler, zlib-licensed; "a simple
 inflate written to be an unambiguous way to specify the deflate
-format"), not independently re-derived from the RFC alone. Same
-reasoning `canvas_mojo/text/glyph_outline.mojo`'s own docstring gives for
+format"), not independently re-derived from the RFC alone; and
+compression, a from-scratch LZ77 + fixed-Huffman encoder (`deflate()`,
+below `inflate()` in this file) built directly against the RFC's own
+text once `inflate()` already existed to round-trip-verify it against
+(see that function's own docstring for how). Same reasoning
+`canvas_mojo/text/glyph_outline.mojo`'s own docstring gives for
 translating FreeType's `FT_Outline_Decompose` faithfully rather than
 re-deriving TrueType outline decoding from memory: DEFLATE is a
 closed, formally specified, decades-stable algorithm (unlike font
@@ -11,19 +15,32 @@ docstring explains are open-ended, system-dependent subsystems better
 left to a linked library) -- exactly the kind of thing this package
 already
 builds from spec elsewhere (Bresenham lines, midpoint circles, glyph
-outlines), so writing it natively here rather than linking zlib is
-consistent with that, not a special case.
+outlines), so writing it natively here rather than linking zlib (or
+any other compression tool) is consistent with that, not a special
+case.
 
-Deliberately the "SLOW" (readable, bit-at-a-time) `decode()` variant
-`puff.c` itself offers as an alternative to its faster table-driven
-one -- correctness and clarity over speed, matching this whole
-package's stance elsewhere (chart-sized images, not a video codec).
+`inflate()` is deliberately the "SLOW" (readable, bit-at-a-time)
+`decode()` variant `puff.c` itself offers as an alternative to its
+faster table-driven one -- correctness and clarity over speed,
+matching this whole package's stance elsewhere (chart-sized images,
+not a video codec). `deflate()` makes the identical trade on the
+encode side: a single fixed-Huffman block (RFC 1951 3.2.6, BTYPE=01 --
+no dynamic Huffman tree to build/transmit) over a straightforward
+hash-chain LZ77 match finder (bounded search depth, see `_MAX_CHAIN`)
+-- real compression, not maximal compression; canvas_mojo.io.png's own
+`write_png` is this package's own first real caller, see that module's
+own docstring for what "real enough" means for images this size.
 
 Verified against real zlib output, not just "translated carefully and
-hoped": every stage was checked by round-tripping actual
+hoped": `inflate()`'s every stage was checked by round-tripping actual
 `zlib.compress()` output (stored, fixed-Huffman, and dynamic-Huffman
-blocks all separately exercised) back to the exact original bytes --
-see tests/test_deflate.mojo.
+blocks all separately exercised) back to the exact original bytes.
+`deflate()` is checked the same way in reverse -- its own output fed
+back through `inflate()` (round-trip identity, the strongest check
+available once a verified decoder already exists) AND independently
+through Python's `zlib.decompress()` (a completely separate
+implementation, catching a bug the two if they happened to share one)
+-- see tests/test_deflate.mojo.
 """
 
 comptime _MAX_BITS = 15
@@ -78,6 +95,72 @@ struct _BitReader(Movable):
         var b = self.data[self.pos]
         self.pos += 1
         return b
+
+
+struct _BitWriter(Movable):
+    """Writes DEFLATE's own bit-packed stream -- the exact inverse of
+    _BitReader (see that struct's own docstring for the LSB-first
+    packing convention both share): each write_bits() call shifts the
+    new bits in above whatever's already pending in `bitbuf`'s low
+    bits, flushing a full byte out to `data` every time 8 or more bits
+    accumulate.
+    """
+
+    var data: List[UInt8]
+    var bitbuf: Int
+    var bitcnt: Int
+
+    def __init__(out self):
+        self.data = List[UInt8]()
+        self.bitbuf = 0
+        self.bitcnt = 0
+
+    def write_bits(mut self, value: Int, nbits: Int):
+        self.bitbuf |= (value & ((1 << nbits) - 1)) << self.bitcnt
+        self.bitcnt += nbits
+        while self.bitcnt >= 8:
+            self.data.append(UInt8(self.bitbuf & 0xFF))
+            self.bitbuf >>= 8
+            self.bitcnt -= 8
+
+    def write_code(mut self, code: Int, nbits: Int):
+        """Huffman codes are packed *most*-significant-bit first (RFC
+        1951 3.2.2) -- the one field in the whole format that isn't
+        packed LSB-first the way write_bits (and every other DEFLATE
+        field: BFINAL, BTYPE, length/distance extra bits) is. Writes
+        one bit at a time, `code`'s own top bit first, each individual
+        bit pushed through the ordinary LSB-oriented write_bits (no
+        ordering ambiguity for a single bit) -- confirmed against
+        _decode's own read order, not just asserted: _decode builds its
+        `code` by treating the *first* bit it reads as that value's
+        *most*-significant bit (`code |= read_bits(1)` before each
+        `code <<= 1`), so writing top-bit-first here is what makes an
+        encoded symbol actually round-trip back through the existing,
+        already-verified decoder.
+        """
+        for i in range(nbits - 1, -1, -1):
+            self.write_bits((code >> i) & 1, 1)
+
+    def finish(mut self) raises -> List[UInt8]:
+        """Flush any partial final byte -- DEFLATE's last byte is
+        zero-padded in its unused high bits, exactly what's already
+        sitting in `bitbuf` above `bitcnt`'s own valid bits. Returns a
+        copy of `self.data` rather than moving it out -- `mut self` is
+        a borrow, not ownership, so `self` has to stay in a valid
+        state after this returns; `List[UInt8]` isn't cheaply/
+        implicitly copyable (the same reason inflate()'s own docstring
+        gives for taking its input by ownership instead), so this
+        copies element-by-element rather than reaching for a `.copy()`
+        this list type doesn't have.
+        """
+        if self.bitcnt > 0:
+            self.data.append(UInt8(self.bitbuf & 0xFF))
+            self.bitbuf = 0
+            self.bitcnt = 0
+        var result = List[UInt8](capacity=len(self.data))
+        for b in self.data:
+            result.append(b)
+        return result^
 
 
 struct _Huffman(Movable):
@@ -407,3 +490,283 @@ def inflate(var compressed: List[UInt8]) raises -> List[UInt8]:
         if last == 1:
             break
     return out^
+
+
+comptime _MIN_MATCH = 3
+comptime _MAX_MATCH = 258
+comptime _WINDOW = 32768
+# How many candidate prior positions a match search checks (and how
+# many a hash bucket keeps on hand at all) -- a speed/ratio knob, not
+# a correctness one: fewer candidates just means settling for a
+# shorter or more distant match than an exhaustive search might find,
+# never an invalid one. 32 is a conservative, "good enough" choice
+# (real encoders often go much higher at their own top compression
+# levels) -- see this file's own module docstring for why "real
+# compression, not maximal" is the deliberate bar here.
+comptime _MAX_CHAIN = 32
+
+
+def _fixed_lit_lengths() -> List[Int]:
+    """The same per-symbol code lengths _fixed_tables() builds for
+    decoding (RFC 1951 3.2.6's own fixed assignment), rebuilt here in
+    the shape the *encoder* needs: a plain length-per-symbol list
+    (_build_codes' own input), not _construct's decode-oriented
+    counts/symbols table.
+    """
+    var lengths = List[Int](capacity=_FIX_L_CODES)
+    for _ in range(144):
+        lengths.append(8)
+    for _ in range(144, 256):
+        lengths.append(9)
+    for _ in range(256, 280):
+        lengths.append(7)
+    for _ in range(280, _FIX_L_CODES):
+        lengths.append(8)
+    return lengths^
+
+
+def _fixed_dist_lengths() -> List[Int]:
+    var lengths = List[Int](capacity=_MAX_D_CODES)
+    for _ in range(_MAX_D_CODES):
+        lengths.append(5)
+    return lengths^
+
+
+def _build_codes(lengths: List[Int]) -> List[Int]:
+    """RFC 1951 3.2.2's own canonical-Huffman code-generation
+    algorithm, transcribed directly from the spec's own pseudocode:
+    given a per-symbol length (0 = symbol unused), returns the actual
+    numeric code value assigned to each symbol, indexed by symbol (not
+    _construct's own sorted-by-length decode layout -- a different,
+    encode-oriented representation of the identical canonical
+    assignment, which is exactly why round-tripping through the
+    existing, independently-built decoder is a real correctness check
+    and not a circular one: the two are separate implementations of
+    the same spec, not two views of shared state).
+    """
+    var max_len = 0
+    for l in lengths:
+        if l > max_len:
+            max_len = l
+
+    var bl_count = List[Int](capacity=max_len + 1)
+    for _ in range(max_len + 1):
+        bl_count.append(0)
+    for l in lengths:
+        if l > 0:
+            bl_count[l] += 1
+
+    var code = 0
+    var next_code = List[Int](capacity=max_len + 1)
+    for _ in range(max_len + 1):
+        next_code.append(0)
+    for bits in range(1, max_len + 1):
+        code = (code + bl_count[bits - 1]) << 1
+        next_code[bits] = code
+
+    var codes = List[Int](capacity=len(lengths))
+    for _ in range(len(lengths)):
+        codes.append(0)
+    for n in range(len(lengths)):
+        var l = lengths[n]
+        if l != 0:
+            codes[n] = next_code[l]
+            next_code[l] += 1
+    return codes^
+
+
+def _length_symbol(length: Int, lens: List[Int]) -> Int:
+    """Which of the 29 length codes (RFC 1951 3.2.5, `lens`'s own
+    ascending base-length table -- the identical one `_codes` uses to
+    decode) covers a raw LZ77 match `length` -- the largest index whose
+    own base is <= `length`; every base above it, if any, covers a
+    strictly longer minimum. Linear scan over 29 entries, not a binary
+    search -- see this module's own docstring for why clarity beats
+    speed here throughout.
+    """
+    var idx = len(lens) - 1
+    while lens[idx] > length:
+        idx -= 1
+    return idx
+
+
+def _distance_symbol(distance: Int, dists: List[Int]) -> Int:
+    """The distance-code analog of _length_symbol, over `dists`'s own
+    30-entry base-distance table.
+    """
+    var idx = len(dists) - 1
+    while dists[idx] > distance:
+        idx -= 1
+    return idx
+
+
+def _hash3(data: List[UInt8], pos: Int) -> Int:
+    """The 3 raw bytes at `pos`, packed into one 24-bit integer -- used
+    directly as a Dict key, not hashed down into a smaller bucket
+    count with the collisions that would introduce: every entry a
+    lookup finds is *guaranteed* to already share the same 3-byte
+    prefix as the position being matched (no separate re-check needed
+    before extending a candidate further), the identical minimum LZ77
+    match length (_MIN_MATCH) DEFLATE itself requires anyway.
+    """
+    return (Int(data[pos]) << 16) | (Int(data[pos + 1]) << 8) | Int(data[pos + 2])
+
+
+def _insert_hash(mut chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int) raises:
+    """Records `pos` as a candidate match source for its own 3-byte
+    prefix, capped at _MAX_CHAIN entries per key (oldest dropped first)
+    -- bounds memory for a prefix that recurs constantly (a large flat-
+    color region's own background color, say, could otherwise recur
+    literally millions of times in one image) without changing which
+    candidates a search actually considers: _find_match already only
+    checks the _MAX_CHAIN *most recent* entries, the same ones kept.
+    """
+    var key = _hash3(data, pos)
+    if key in chains:
+        chains[key].append(pos)
+        if len(chains[key]) > _MAX_CHAIN:
+            _ = chains[key].pop(0)
+    else:
+        var bucket = List[Int]()
+        bucket.append(pos)
+        chains[key] = bucket^
+
+
+struct _Match(ImplicitlyCopyable, Movable):
+    var length: Int
+    var distance: Int
+
+    def __init__(out self, length: Int, distance: Int):
+        self.length = length
+        self.distance = distance
+
+
+def _find_match(chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int) raises -> _Match:
+    """The best (longest, and among equal lengths, nearest -- searched
+    most-recent-first) LZ77 match for the bytes starting at `pos`,
+    among whatever candidates `chains` already has on hand for that
+    same 3-byte prefix (see _insert_hash) -- a length of 0 means no
+    match at least _MIN_MATCH long was found, the caller's own signal
+    to emit a literal byte instead.
+
+    Match length is found by direct byte-by-byte comparison against
+    the *original* input array, not a partially-built output buffer --
+    safe (and correct, not just convenient) even when candidate and
+    current position overlap (distance < length, e.g. a solid-color
+    run's own distance=1 case): every byte compared already exists in
+    `data`, whether or not its own position is behind or past `pos`
+    itself, which is exactly the "legal and common" overlapping-copy
+    case inflate()'s own _codes docstring describes on the decode side.
+    """
+    var n = len(data)
+    if pos + _MIN_MATCH > n:
+        return _Match(0, 0)
+
+    var key = _hash3(data, pos)
+    if key not in chains:
+        return _Match(0, 0)
+
+    var best_length = 0
+    var best_distance = 0
+    var max_possible = min(_MAX_MATCH, n - pos)
+    ref chain = chains[key]
+    var j = len(chain) - 1
+    while j >= 0:
+        var candidate = chain[j]
+        var distance = pos - candidate
+        if distance > _WINDOW:
+            break  # older entries (smaller j) are only further still
+        var length = 0
+        while length < max_possible and data[candidate + length] == data[pos + length]:
+            length += 1
+        if length > best_length:
+            best_length = length
+            best_distance = distance
+        j -= 1
+
+    if best_length < _MIN_MATCH:
+        return _Match(0, 0)
+    return _Match(best_length, best_distance)
+
+
+def deflate(data: List[UInt8]) raises -> List[UInt8]:
+    """Compress `data` into a raw DEFLATE stream (RFC 1951) -- real
+    LZ77 + fixed-Huffman compression, this package's own from-scratch
+    encoder (see this module's own docstring for the deliberate "real,
+    not maximal" scope: one fixed-Huffman block, hash-chain match
+    search capped at _MAX_CHAIN candidates). Not a zlib stream (RFC
+    1950) -- callers that need one (canvas_mojo/io/png.mojo's own
+    write_png, for one) wrap this output in the 2-byte header/4-byte
+    Adler-32 trailer themselves, the exact inverse of what inflate()'s
+    own docstring says its callers strip first.
+
+    Always emits exactly one block (BFINAL=1 from the start) -- fine
+    for the chart-sized images this package renders (RFC 1951 puts no
+    upper bound on a single block's own length the way stored blocks'
+    own 65535-byte-per-block limit does, RFC 1951 3.2.4), not a scale
+    this ever needs to split across multiple blocks for.
+    """
+    var writer = _BitWriter()
+    writer.write_bits(1, 1)  # BFINAL = 1 -- the only block
+    writer.write_bits(1, 2)  # BTYPE = 01 (fixed Huffman)
+
+    var lit_lengths = _fixed_lit_lengths()
+    var lit_codes = _build_codes(lit_lengths)
+    var dist_lengths = _fixed_dist_lengths()
+    var dist_codes = _build_codes(dist_lengths)
+
+    # Same base-length/base-distance tables _codes() decodes against
+    # (RFC 1951 3.2.5) -- see that function's own docstring for why
+    # these are rebuilt per call rather than shared module-level
+    # constants (a real Mojo `comptime List[Int]` limitation, not a
+    # style choice).
+    var lens: List[Int] = [
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
+        35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
+    ]
+    var lext: List[Int] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
+        3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+    ]
+    var dists: List[Int] = [
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
+        257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
+        8193, 12289, 16385, 24577,
+    ]
+    var dext: List[Int] = [
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+        7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
+    ]
+
+    var chains = Dict[Int, List[Int]]()
+    var n = len(data)
+    var i = 0
+    while i < n:
+        var m = _find_match(chains, data, i)
+        if m.length >= _MIN_MATCH:
+            var lsym = _length_symbol(m.length, lens)
+            writer.write_code(lit_codes[257 + lsym], lit_lengths[257 + lsym])
+            writer.write_bits(m.length - lens[lsym], lext[lsym])
+
+            var dsym = _distance_symbol(m.distance, dists)
+            writer.write_code(dist_codes[dsym], dist_lengths[dsym])
+            writer.write_bits(m.distance - dists[dsym], dext[dsym])
+
+            # Only the match's own starting position is indexed for
+            # future searches, not every position it spans -- a real,
+            # deliberate compression-ratio trade (a match starting
+            # partway through this one won't be found), not a
+            # correctness gap: see this module's own docstring on
+            # "real compression, not maximal".
+            if i + _MIN_MATCH <= n:
+                _insert_hash(chains, data, i)
+            i += m.length
+        else:
+            var byte = Int(data[i])
+            writer.write_code(lit_codes[byte], lit_lengths[byte])
+            if i + _MIN_MATCH <= n:
+                _insert_hash(chains, data, i)
+            i += 1
+
+    writer.write_code(lit_codes[256], lit_lengths[256])  # end-of-block
+    return writer.finish()
