@@ -33,6 +33,44 @@ installs the resulting precompiled package into your own workspace's
 pixi environment — Mojo's own toolchain finds it there automatically,
 no `-I` flag needed.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Start(["canvas_mojo"]) --> Pick{"Pixels or markup?"}
+
+    Pick -->|"raster"| Canvas["Canvas(width, height, fill)"]
+    Pick -->|"vector"| Svg["SvgCanvas(width, height)"]
+
+    Canvas --> Draw
+    Svg --> Draw
+
+    subgraph Draw["Draw — same DrawTarget methods on either backend"]
+        direction TB
+        Prim["Shape primitives<br/>fill_circle_aa, fill_rect,<br/>fill_arc_aa, draw_line_aa …"]
+        PathAPI["Path<br/>move_to → line_to / curve_to / arc_to<br/>→ fill_path_aa / stroke_path_aa"]
+        Text["draw_text<br/>(fontconfig → native TTF parser<br/>→ fill_path_aa)"]
+        Grad["LinearGradient / RadialGradient<br/>(fill source for either above)"]
+
+        Text --> PathAPI
+        Grad -.->|"optional fill"| Prim
+        Grad -.->|"optional fill"| PathAPI
+    end
+
+    Canvas --> Png["write_png / write_bmp<br/>→ files on disk"]
+    Svg --> Str["to_string()<br/>→ SVG markup"]
+```
+
+Every `Canvas` drawing method is also a free function
+(`draw_line_aa(canvas, ...)` and `canvas.draw_line_aa(...)` are the
+same call) — reach for whichever reads better at the call site.
+`Canvas` (raster) and `SvgCanvas` (vector) both implement the same
+`DrawTarget` trait, so code written against that trait — a chart
+library's own rendering core, say — works against either without
+knowing which one it's drawing into. See the wiki's
+[Architecture](https://github.com/randyzwitch/canvas_mojo/wiki/Architecture)
+page for a walkthrough of each path with runnable examples.
+
 ## Status
 
 Mojo-only, plus one small direct FFI dependency on a system
