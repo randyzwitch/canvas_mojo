@@ -1589,16 +1589,40 @@ def _arc_bounds(
     plus whichever cardinal-angle points actually fall inside
     [start_angle, end_angle].
 
-    `include_center` covers the one difference between the two
-    callers: fill_arc_aa's wedge is bounded by two straight radii back
-    to (cx, cy), so the center itself can be the shape's own leftmost/
-    rightmost/etc. point (e.g. a thin slice near angle 0, whose two arc
-    endpoints are both near x = cx + radius, but whose straight edges
-    still reach back to x = cx). fill_ring_sector_aa's ring has no
-    center point in it at all (inner_radius > 0 there), and its inner
-    arc's own bounds are always a subset of the outer arc's (identical
-    angles, strictly smaller radius) -- so bounding via `radius` alone
-    (the outer one, from that caller) already covers the whole ring.
+    `include_center` covers fill_arc_aa's own difference from a plain
+    arc: its wedge is bounded by two straight radii back to (cx, cy),
+    so the center itself can be the shape's own leftmost/rightmost/etc.
+    point (e.g. a thin slice near angle 0, whose two arc endpoints are
+    both near x = cx + radius, but whose straight edges still reach
+    back to x = cx).
+
+    fill_ring_sector_aa has no center point in its shape at all
+    (inner_radius > 0 there) but does have two straight radial edges
+    of its own, from the outer endpoint at each of start_angle/
+    end_angle back to the inner endpoint at that same angle -- and
+    this function, called with `radius` = the outer radius alone,
+    knows nothing about where those inner endpoints are. A straight
+    line's own bounding box is exactly the bounds of its two
+    endpoints, so as long as *both* endpoints are already covered by
+    *some* bounds this function returns, the connecting edge is too --
+    which is why fill_ring_sector_aa below calls this twice (once per
+    radius, both with `include_center=False`) and unions the two
+    results, rather than calling it once with the outer radius alone.
+    That second part used to be a documented shortcut here ("the inner
+    arc's own bounds are always a subset of the outer arc's") --
+    false in general, not just an edge case: whenever [start_angle,
+    end_angle] doesn't reach a cardinal angle, the *inner* arc's own
+    extreme point (closest to the center, at whichever endpoint angle
+    is nearest a cardinal angle) sits *closer to (cx, cy)* than
+    anything on the outer arc reaches at that same extreme -- past the
+    outer arc's own bound in that direction, not inside it. Confirmed
+    both by direct counterexample (cx=270, cy=185, start_angle=-pi/2,
+    end_angle=-pi/6, outer_radius=148.5, inner_radius=74.25: the outer
+    arc's own y-range over that span is [36.5, 110.75], but the inner
+    endpoint at end_angle alone already sits at y=147.875, past that
+    range's own max) and by rendering a real ring sector with the old
+    single-radius bounds, which left exactly the rectangular notch
+    that counterexample predicts -- see this repo's issue #33.
     """
     var start_x = cx + radius * cos(start_angle)
     var start_y = cy + radius * sin(start_angle)
@@ -1623,6 +1647,19 @@ def _arc_bounds(
         _extend_bounds(min_x, min_y, max_x, max_y, cx, cy - radius)
 
     return (min_x, min_y, max_x, max_y)
+
+
+def _union_bounds(
+    a: Tuple[Float64, Float64, Float64, Float64], b: Tuple[Float64, Float64, Float64, Float64]
+) -> Tuple[Float64, Float64, Float64, Float64]:
+    """The smallest box containing both `a` and `b` (each an
+    (min_x, min_y, max_x, max_y) box, `_arc_bounds`'s own return
+    shape) -- fill_ring_sector_aa's own way of combining the outer and
+    inner arcs' individually-rigorous bounds into one rigorous bound
+    for the whole ring sector; see `_arc_bounds`'s own docstring for
+    why neither radius's bounds alone are enough.
+    """
+    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
 def _arc_points(cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64) -> List[Point]:
@@ -1840,10 +1877,12 @@ def fill_ring_sector_aa(
     precedent: a fixed-width ring rather than an angular wedge, but
     the same "two independent boundary tests, both must pass" shape).
 
-    Scans only `_arc_bounds`' own tight bounding box (via outer_radius,
-    no center point -- see that function's own docstring for why the
-    outer arc's bounds already cover the whole ring), the same
-    dominant fix fill_arc_aa's own docstring explains.
+    Scans the union of `_arc_bounds`' own tight bounding boxes for the
+    outer and inner radii (both with no center point -- see that
+    function's own docstring for exactly why *both* radii need their
+    own call, not just the outer one), the same dominant fix
+    fill_arc_aa's own docstring explains, just applied twice and
+    combined via `_union_bounds`.
     """
     if outer_radius <= 0.0 or inner_radius < 0.0 or inner_radius >= outer_radius:
         return
@@ -1854,7 +1893,9 @@ def fill_ring_sector_aa(
     var total_samples = n * n
     var step = 1.0 / Float64(n)
 
-    var bounds = _arc_bounds(cx, cy, outer_radius, start_angle, end_angle, False)
+    var outer_bounds = _arc_bounds(cx, cy, outer_radius, start_angle, end_angle, False)
+    var inner_bounds = _arc_bounds(cx, cy, inner_radius, start_angle, end_angle, False)
+    var bounds = _union_bounds(outer_bounds, inner_bounds)
     var min_px = _round_to_int(bounds[0]) - 1
     var max_px = _round_to_int(bounds[2]) + 1
     var min_py = _round_to_int(bounds[1]) - 1

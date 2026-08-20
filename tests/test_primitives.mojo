@@ -1156,6 +1156,44 @@ def test_fill_ring_sector_aa_respects_translucent_input_color() raises:
     assert_equal(p.b, 0)
 
 
+def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises:
+    """Regression test for canvas_mojo issue #33: a wedge whose
+    [start_angle, end_angle] span doesn't cross a cardinal angle (0,
+    pi/2, pi, 3*pi/2) has an inner-arc extreme that reaches *closer to
+    the center* than anything on the outer arc does over that same
+    span -- past the outer arc's own bounding box, not inside it (see
+    _arc_bounds's own docstring for the full reasoning). Before the
+    fix, `fill_ring_sector_aa` scanned only the outer arc's own
+    bounding box and never visited pixels beyond it, leaving a
+    rectangular notch cut into the ring instead of a clean angular gap.
+
+    cx=cy=100, outer_radius=100, inner_radius=50, start_angle=pi/6
+    (30deg), end_angle=pi/3 (60deg) -- deliberately round angles so the
+    geometry is exact, not approximated. Independently computed (not
+    just trusted from this file's own code, and not from
+    canvas_mojo's own `_arc_bounds`/`cos`/`sin` either) via Python's
+    `math` module:
+
+    - The outer arc's own y-range over that span is exactly
+      [150, 186.60...] (both endpoints; no cardinal angle falls in
+      [30deg, 60deg], so no crossing point adds to that range).
+    - The straight edge from the outer endpoint at 30deg,
+      (186.60..., 150), back to the inner endpoint at 30deg,
+      (143.30..., 125), passes through y=125 -- 25 below the outer
+      arc's own min_y=150, i.e. past its bounding box, not inside it.
+    - A point deep inside the ring sector, well clear of every edge
+      (angle=35deg, 5deg in from the 30deg boundary; radius=60, 10
+      units in from inner_radius=50 and 40 from outer_radius=100),
+      rounds to pixel (149, 134): y=134 is inside the *old* buggy
+      py-scan range (~[149, 188], i.e. never visited -- 134 < 149,
+      confirmed with the pre-fix code actually producing background
+      there) but well inside the *fixed* range (~[124, 188]).
+    """
+    var c = Canvas(200, 200, BG)
+    fill_ring_sector_aa(c, 100.0, 100.0, 50.0, 100.0, pi / 6.0, pi / 3.0, FG)
+    _assert_pixel(c, 149, 134, FG, "deep in the ring, past the outer arc's own bounding box")
+
+
 def test_spans_from_crossings_merges_touching_spans() raises:
     # Independently traced by hand before trusting the code: four
     # crossings at x=[10,15,15,20] with directions [+1,-1,+1,-1] (two
