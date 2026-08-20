@@ -21,6 +21,7 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point, _round_to_int
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
+from canvas_mojo.aa_crossing import _AACrossing, _sort_aa_crossings_by_x
 
 comptime _SQRT2 = 1.4142135623730951
 
@@ -785,24 +786,6 @@ def _point_in_polygon(points: List[Point], fx: Float64, fy: Float64, fill_rule: 
     return _is_inside(winding, fill_rule)
 
 
-struct _AACrossing(ImplicitlyCopyable, Movable):
-    """One sub-scanline crossing at a real-valued x -- _Crossing's own
-    fractional-y counterpart, for fill_polygon_aa's sweep below (same
-    struct shape, and same role, as path.mojo's own _AACrossing; kept
-    as a separate local definition rather than imported from there to
-    avoid a new primitives.mojo -> path.mojo dependency for one small
-    struct -- path.mojo already imports *from* primitives.mojo, so the
-    reverse edge would be a real cycle, not just an inconvenience).
-    """
-
-    var x: Float64
-    var direction: Int
-
-    def __init__(out self, x: Float64, direction: Int):
-        self.x = x
-        self.direction = direction
-
-
 def _polygon_row_crossings_aa(points: List[Point], fy: Float64) -> List[_AACrossing]:
     """_point_in_polygon's own per-sample ray-cast, factored out to run
     once per sub-scanline instead of once per sub-pixel sample -- see
@@ -827,20 +810,6 @@ def _polygon_row_crossings_aa(points: List[Point], fy: Float64) -> List[_AACross
             var direction = 1 if y1 > y0 else -1
             crossings.append(_AACrossing(x, direction))
     return crossings^
-
-
-def _sort_aa_crossings_by_x(mut crossings: List[_AACrossing]):
-    """Insertion sort -- one sub-scanline's own crossing count is
-    always small (a handful, not the polygon's full point count), the
-    same reasoning _spans_from_crossings' own identical insertion sort
-    already relies on."""
-    for i in range(1, len(crossings)):
-        var key = crossings[i]
-        var j = i - 1
-        while j >= 0 and crossings[j].x > key.x:
-            crossings[j + 1] = crossings[j]
-            j -= 1
-        crossings[j + 1] = key
 
 
 def fill_polygon_aa(
