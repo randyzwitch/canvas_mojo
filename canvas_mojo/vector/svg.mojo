@@ -27,6 +27,7 @@ from canvas_mojo.gradient import LinearGradient
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.geometry import _round_to_int
 from canvas_mojo.path import Path, _ARC_TO, _CLOSE, _CUBIC_TO, _LINE_TO, _MOVE_TO, _QUAD_TO
+from canvas_mojo.text.font_discovery import FontWeight
 from canvas_mojo.text.text_align import TextAlign
 
 comptime _HEX_DIGITS = "0123456789abcdef"
@@ -476,6 +477,7 @@ struct SvgCanvas(DrawTarget, Movable):
         align: TextAlign,
         family: String = "sans-serif",
         rotation: Float64 = 0.0,
+        weight: FontWeight = FontWeight.NORMAL,
     ):
         """Not part of `DrawTarget` (see that trait's own docstring
         for why text is excluded) -- meant to be called directly by a
@@ -529,6 +531,18 @@ struct SvgCanvas(DrawTarget, Movable):
         argued) by this method's own hand-derived rotation test, not
         assumed to carry over from the raster path unchanged just
         because the reasoning sounds right.
+
+        `weight` mirrors `canvas_mojo.text.draw_text`'s own `weight`
+        parameter -- same `FontWeight` type, same `NORMAL` default --
+        so a caller driving both backends from one call site (e.g.
+        dataviz_mojo's own Theme) can pass the same value to either.
+        Emitted as a literal `font-weight="bold"` attribute when
+        `weight == FontWeight.BOLD` (SVG/CSS's own two-value keyword;
+        `FontWeight` doesn't distinguish anything finer than that
+        today), omitted entirely at the default `NORMAL` -- matching
+        `rotation`'s own omit-at-default convention above -- so every
+        pre-existing `draw_text` call/output stays byte-for-byte
+        unchanged.
         """
         var escaped_family = _escape_xml_attr(family)
         var anchor = "start"
@@ -548,6 +562,9 @@ struct SvgCanvas(DrawTarget, Movable):
                 + String(y)
                 + ')"'
             )
+        var font_weight = ""
+        if weight == FontWeight.BOLD:
+            font_weight = ' font-weight="bold"'
         self._body += (
             '<text x="'
             + String(x)
@@ -557,7 +574,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _format_svg_float(size)
             + '" font-family="'
             + escaped_family
-            + '" fill="'
+            + '"'
+            + font_weight
+            + ' fill="'
             + _hex_color(color)
             + '" text-anchor="'
             + anchor
