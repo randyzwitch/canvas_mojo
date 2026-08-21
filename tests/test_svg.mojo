@@ -2,8 +2,11 @@
 draw_text() -- string-content assertions (the markup itself, hand-
 derived the same rigor pixel-color assertions get elsewhere in this
 workspace) rather than pixel colors, since there's no raster buffer
-here to sample. No cairo needed -- SvgCanvas never touches
-canvas_mojo.text (see its own docstring).
+here to sample. No cairo needed -- SvgCanvas only touches
+canvas_mojo.text for FontWeight (a small, cairo-free struct with no
+fontconfig/FFI calls of its own -- see font_discovery.mojo's own
+docstring), never canvas_mojo.text.render itself (see svg.mojo's own
+docstring).
 """
 
 from std.math import pi
@@ -13,6 +16,7 @@ from canvas_mojo.color import Color
 from canvas_mojo.gradient import LinearGradient
 from canvas_mojo.path import Path
 from canvas_mojo.vector.svg import SvgCanvas
+from canvas_mojo.text.font_discovery import FontWeight
 from canvas_mojo.text.text_align import TextAlign
 
 
@@ -344,6 +348,29 @@ def test_draw_text_family_containing_quotes_is_escaped() raises:
     assert_true(
         'font-family="&quot;Helvetica Neue&quot;, Arial"' in svg.to_string(),
         "embedded double quotes in family are escaped, not left to corrupt the attribute",
+    )
+
+
+def test_draw_text_default_weight_omits_font_weight_attribute() raises:
+    # weight's own default (FontWeight.NORMAL) must reproduce the
+    # exact pre-existing markup byte-for-byte, same guarantee
+    # rotation's default already gets above -- see draw_text's own
+    # docstring.
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    assert_true(
+        'font-weight' not in svg.to_string(),
+        "weight=FontWeight.NORMAL (the default) -- no font-weight attribute at all",
+    )
+
+
+def test_draw_text_bold_weight_emits_font_weight_attribute() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, weight=FontWeight.BOLD)
+    assert_true(
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" font-weight="bold" fill="#000000"'
+        in svg.to_string(),
+        "weight=FontWeight.BOLD emits a literal font-weight=\"bold\" attribute, positioned right after font-family",
     )
 
 
