@@ -98,6 +98,25 @@ def _escape_xml_text(text: String) -> String:
     return result
 
 
+def _escape_xml_attr(value: String) -> String:
+    """Escape a string headed into a *double-quoted attribute value*
+    -- draw_text's own `family` parameter (below) is the first caller-
+    supplied string this module ever puts there, so this is a new
+    need `_escape_xml_text` above was never asked to cover: a real CSS
+    font stack (e.g. `"Helvetica Neue", Arial, sans-serif`) routinely
+    contains literal `"` characters, which `_escape_xml_text` -- by
+    its own docstring's own admission -- doesn't escape, because
+    nothing needed it to before now. `&` first, same reason
+    `_escape_xml_text` orders it first: escaping `"`/`<` each
+    introduce a literal `&` of their own that a later `&`-pass would
+    re-mangle.
+    """
+    var result = value.replace("&", "&amp;")
+    result = result.replace('"', "&quot;")
+    result = result.replace("<", "&lt;")
+    return result
+
+
 def _hex_color(color: Color) -> String:
     return "#" + _hex_byte(color.r) + _hex_byte(color.g) + _hex_byte(color.b)
 
@@ -455,6 +474,7 @@ struct SvgCanvas(DrawTarget, Movable):
         color: Color,
         size: Float64,
         align: TextAlign,
+        family: String = "sans-serif",
         rotation: Float64 = 0.0,
     ):
         """Not part of `DrawTarget` (see that trait's own docstring
@@ -463,6 +483,30 @@ struct SvgCanvas(DrawTarget, Movable):
         holding an `SvgCanvas`, the same way `canvas_mojo.text.draw_text`
         would be called directly by a raster-rendering path once it
         knows it's holding a `Canvas`.
+
+        `family` becomes a literal `font-family` attribute on the
+        `<text>` element -- fixing a real gap, not adding an opt-in
+        feature: every `<text>` element emitted before this parameter
+        existed had *no* `font-family` at all, so an SVG viewer fell
+        back to its own undefined user-agent default (varies by
+        viewer -- some default to a serif face), which is why SVG
+        output could look visually inconsistent with this package's
+        own raster `draw_text`, which always resolves a real font via
+        fontconfig. Defaults to `"sans-serif"` (a generic CSS keyword
+        every SVG viewer supports, not a specific face) precisely so
+        every pre-existing call keeps emitting *a* font-family now,
+        not none.
+
+        Deliberately a different value shape than raster draw_text's
+        own `family` parameter, despite the same name and position in
+        the signature: raster's `family` is a fontconfig alias/family
+        name resolved to one concrete font *file* (e.g. "Sans" ->
+        DejaVu Sans's own .ttf); this `family` is a literal CSS
+        `font-family` value -- a generic keyword, a specific face
+        name, or a comma-separated fallback stack -- interpreted by
+        whatever later renders the SVG, not by this package. A caller
+        bridging the two (e.g. dataviz_mojo's own Theme) needs its own
+        mapping between them, not a shared string.
 
         `(x, y)` is the text baseline anchor, matching `canvas_mojo.text.
         draw_text`'s own convention exactly -- SVG `<text>` already
@@ -486,6 +530,7 @@ struct SvgCanvas(DrawTarget, Movable):
         assumed to carry over from the raster path unchanged just
         because the reasoning sounds right.
         """
+        var escaped_family = _escape_xml_attr(family)
         var anchor = "start"
         if align == TextAlign.CENTER:
             anchor = "middle"
@@ -510,6 +555,8 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(y)
             + '" font-size="'
             + _format_svg_float(size)
+            + '" font-family="'
+            + escaped_family
             + '" fill="'
             + _hex_color(color)
             + '" text-anchor="'
