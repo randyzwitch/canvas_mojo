@@ -251,7 +251,8 @@ def test_draw_text_left_align_maps_to_start_anchor() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(
-        '<text x="10" y="20" font-size="12.000" fill="#000000" text-anchor="start">hi</text>'
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" fill="#000000"'
+        ' text-anchor="start">hi</text>'
         in svg.to_string(),
         "TextAlign.LEFT -> text-anchor=start, SVG's own default anchor",
     )
@@ -286,7 +287,8 @@ def test_draw_text_default_rotation_omits_transform_attribute() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(
-        '<text x="10" y="20" font-size="12.000" fill="#000000" text-anchor="start">hi</text>'
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" fill="#000000"'
+        ' text-anchor="start">hi</text>'
         in svg.to_string(),
         "rotation=0.0 (the default) -- no transform attribute at all",
     )
@@ -301,9 +303,47 @@ def test_draw_text_rotation_emits_hand_derived_rotate_transform() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=pi / 2.0)
     assert_true(
-        '<text x="10" y="20" font-size="12.000" fill="#000000" text-anchor="start"'
-        ' transform="rotate(90.000 10 20)">hi</text>' in svg.to_string(),
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" fill="#000000"'
+        ' text-anchor="start" transform="rotate(90.000 10 20)">hi</text>' in svg.to_string(),
         "rotate(<degrees> <x> <y>), rotating around the text's own anchor point",
+    )
+
+
+def test_draw_text_default_family_is_sans_serif() raises:
+    # The actual bug fix: every pre-existing call (no `family` argument
+    # at all) must now emit a real font-family, not the historical
+    # "no attribute, viewer picks its own undefined default" gap --
+    # see draw_text's own docstring.
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    assert_true('font-family="sans-serif"' in svg.to_string(), "default family is sans-serif")
+
+
+def test_draw_text_custom_family_is_emitted_verbatim() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, family="Georgia, serif")
+    assert_true(
+        'font-family="Georgia, serif"' in svg.to_string(),
+        "a caller-supplied family value (a fallback stack here) is emitted as-is",
+    )
+
+
+def test_draw_text_family_containing_quotes_is_escaped() raises:
+    # A real CSS font stack quotes any family name containing a space
+    # (`"Helvetica Neue", Arial, sans-serif`) -- family is the first
+    # caller-supplied string this module ever puts inside a quoted
+    # attribute value (every other attribute is either internally
+    # generated -- text-anchor, the hex color -- or, for label text
+    # itself, goes through _escape_xml_text into element *content*,
+    # not an attribute). A literal `"` reaching the output unescaped
+    # would prematurely close the attribute and corrupt the markup;
+    # confirms _escape_xml_attr actually gets used here, not just that
+    # it exists.
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, family='"Helvetica Neue", Arial')
+    assert_true(
+        'font-family="&quot;Helvetica Neue&quot;, Arial"' in svg.to_string(),
+        "embedded double quotes in family are escaped, not left to corrupt the attribute",
     )
 
 
