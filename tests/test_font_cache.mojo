@@ -5,14 +5,25 @@ mojo's own docstring already documents -- not a new real-machine
 dependency this file introduces.
 
 What's tested: FontCache.resolve/resolve_for_char return the identical
-path a cache miss would (correctness first -- the cache must never
-change *what* gets resolved, only how many times fontconfig is asked),
-and the cache=-accepting overloads of measure_text/draw_text/
-measure_text_block produce output identical to their uncached
-counterparts. Not tested here: the actual subprocess-spawn/fontconfig-
-round-trip time this cache exists to avoid -- a wall-clock assertion
-would be flaky across machines/CI load, not a meaningful correctness
-check; canvas_mojo/text/font_cache.mojo's own docstring documents the
+path a cache miss would, and resolve_face/resolve_face_for_char (the
+parsed-TTFFace cache layered on top -- see font_cache.mojo's own
+docstring) render/measure identically to an uncached call too
+(correctness first -- the cache must never change *what* gets
+resolved or how it measures/renders, only how many times fontconfig
+is asked and how many times a font file gets parsed). Special
+attention to the one real failure mode a face cache invites that a
+path-only cache never could: `set_pixel_size` mutates a `TTFFace` in
+place, so a cache keyed on path alone (instead of path + pixel size)
+sharing one instance across two different sizes would silently
+corrupt whichever size lost the race -- see
+test_shared_cache_at_two_different_sizes_does_not_corrupt_either_size
+and its fallback-glyph counterpart below, both deliberately
+interleaving sizes (not just testing one size at a time, then a
+different size in isolation) to catch exactly that. Not tested here:
+the actual subprocess-spawn/fontconfig-round-trip or TTFFace-parse
+time this cache exists to avoid -- a wall-clock assertion would be
+flaky across machines/CI load, not a meaningful correctness check;
+canvas_mojo/text/font_cache.mojo's own docstring documents the
 measured, probe-confirmed cost directly instead.
 """
 
@@ -124,6 +135,51 @@ def test_shared_cache_serves_repeated_draw_text_calls_correctly() raises:
     draw_text(reference, 5, 20, "One", Color(0, 0, 0), 18.0)
     draw_text(reference, 5, 45, "Two", Color(0, 0, 0), 18.0)
     draw_text(reference, 5, 70, "Three", Color(0, 0, 0), 18.0)
+
+    for i in range(len(canvas.pixels)):
+        assert_equal(canvas.pixels[i], reference.pixels[i])
+
+
+def test_shared_cache_at_two_different_sizes_does_not_corrupt_either_size() raises:
+    # The real risk a face cache keyed on path alone (rather than path
+    # + pixel size) would have: set_pixel_size mutates a TTFFace in
+    # place, so sharing one cached instance across two different sizes
+    # would leave whichever size drew second (or both, depending on
+    # draw order) silently wrong -- e.g. a chart drawing an 11px axis
+    # label next to a 16px title through one shared FontCache.
+    # Interleaved on purpose (11, 16, 11 again), not tested as two
+    # separate single-size cases, so a bug here can't hide behind "the
+    # cache only ever saw one size at a time" during the test.
+    var canvas = Canvas(200, 100)
+    var cache = FontCache()
+    draw_text(canvas, 5, 20, "Axis", Color(0, 0, 0), 11.0, cache=cache)
+    draw_text(canvas, 5, 50, "Title", Color(0, 0, 0), 16.0, cache=cache)
+    draw_text(canvas, 5, 80, "Axis", Color(0, 0, 0), 11.0, cache=cache)
+
+    var reference = Canvas(200, 100)
+    draw_text(reference, 5, 20, "Axis", Color(0, 0, 0), 11.0)
+    draw_text(reference, 5, 50, "Title", Color(0, 0, 0), 16.0)
+    draw_text(reference, 5, 80, "Axis", Color(0, 0, 0), 11.0)
+
+    for i in range(len(canvas.pixels)):
+        assert_equal(canvas.pixels[i], reference.pixels[i])
+
+
+def test_shared_cache_serves_fallback_glyphs_at_two_different_sizes_correctly() raises:
+    # Same corruption risk as above, for resolve_face_for_char's own
+    # cache instead of resolve_face's: "Ubuntu" has no snowman glyph
+    # (U+2603, see test_text.mojo's own
+    # test_draw_text_falls_back_to_a_font_with_the_glyph), so this
+    # exercises the fallback-face cache specifically, at two
+    # interleaved sizes sharing one FontCache.
+    var canvas = Canvas(80, 120)
+    var cache = FontCache()
+    draw_text(canvas, 5, 40, "☃", Color(0, 0, 0), 20.0, family="Ubuntu", cache=cache)
+    draw_text(canvas, 5, 100, "☃", Color(0, 0, 0), 32.0, family="Ubuntu", cache=cache)
+
+    var reference = Canvas(80, 120)
+    draw_text(reference, 5, 40, "☃", Color(0, 0, 0), 20.0, family="Ubuntu")
+    draw_text(reference, 5, 100, "☃", Color(0, 0, 0), 32.0, family="Ubuntu")
 
     for i in range(len(canvas.pixels)):
         assert_equal(canvas.pixels[i], reference.pixels[i])
