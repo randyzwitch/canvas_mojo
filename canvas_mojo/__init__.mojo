@@ -3,27 +3,19 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point, Transform2D
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.primitives import (
+from canvas_mojo.shapes.lines import (
     draw_line,
     draw_line_aa,
     draw_polyline,
     draw_polygon,
     draw_polyline_aa,
     draw_polygon_aa,
-    fill_polygon,
-    fill_polygon_aa,
-    draw_rect,
-    fill_rect,
-    fill_rect_gradient,
-    fill_rect_radial_gradient,
-    draw_circle,
-    fill_circle,
-    fill_circle_aa,
-    draw_circle_aa,
-    draw_ellipse,
-    fill_ellipse,
-    fill_ellipse_aa,
-    draw_ellipse_aa,
+)
+from canvas_mojo.shapes.polygon_fill import fill_polygon, fill_polygon_aa
+from canvas_mojo.shapes.rects import draw_rect, fill_rect, fill_rect_gradient, fill_rect_radial_gradient
+from canvas_mojo.shapes.circles import draw_circle, fill_circle, fill_circle_aa, draw_circle_aa
+from canvas_mojo.shapes.ellipses import draw_ellipse, fill_ellipse, fill_ellipse_aa, draw_ellipse_aa
+from canvas_mojo.shapes.arcs import (
     draw_arc,
     draw_arc_aa,
     fill_arc,

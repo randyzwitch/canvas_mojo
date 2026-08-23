@@ -1,6 +1,6 @@
 """Tests for canvas_mojo/text/render.mojo.
 
-Unlike primitives.mojo's tests, these can't assert exact pixel sets --
+Unlike canvas_mojo.shapes' own tests, these can't assert exact pixel sets --
 real system-font rasterization (hinting, AA, glyph shapes) isn't
 something this repo can independently re-derive by hand the way
 Bresenham/midpoint-circle output can (see canvas_mojo/text/render.mojo's

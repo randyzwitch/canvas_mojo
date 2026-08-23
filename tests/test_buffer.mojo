@@ -131,7 +131,7 @@ def test_nested_push_clip_intersects_with_parent() raises:
 def test_fill_respects_the_active_clip() raises:
     # Canvas.fill() loops over the whole canvas calling set_pixel --
     # proves clipping composes with existing Canvas methods too, not
-    # just free functions in primitives.mojo.
+    # just free functions in canvas_mojo.shapes.
     var c = Canvas(6, 6, Color(0, 0, 0))
     c.push_clip(2, 2, 2, 2)  # x in [2,4), y in [2,4)
     c.fill(Color(255, 255, 255))

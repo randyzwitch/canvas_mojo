@@ -282,7 +282,7 @@ struct SvgCanvas(DrawTarget, Movable):
         mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
     ):
         """A real SVG `<linearGradient>` (`gradientUnits="userSpaceOnUse"`),
-        not a canvas_mojo.primitives.fill_rect_gradient-style per-pixel
+        not a canvas_mojo.shapes.rects.fill_rect_gradient-style per-pixel
         raster fill -- `LinearGradient`'s own (x0, y0)-(x1, y1) axis
         already lives in the identical absolute pixel-space coordinate
         system this document's own `<rect>` does (the same space
@@ -446,7 +446,7 @@ struct SvgCanvas(DrawTarget, Movable):
         *backward* (`sweep_flag=0`) back to the start angle, closing
         the ring boundary in one continuous loop -- the same "outer
         arc forward + inner arc backward, combined into one boundary"
-        shape `canvas_mojo.primitives.fill_ring_sector`'s own docstring
+        shape `canvas_mojo.shapes.arcs.fill_ring_sector`'s own docstring
         describes for the raster path, expressed as two SVG arc
         commands instead of two point-sampled polylines. Hand-derived
         (and cross-checked via python3) against a concrete 90-degree

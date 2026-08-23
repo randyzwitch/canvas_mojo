@@ -12,7 +12,8 @@ Run with:
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
-from canvas_mojo.primitives import draw_polygon, draw_polygon_aa, fill_polygon, fill_polygon_aa
+from canvas_mojo.shapes.lines import draw_polygon, draw_polygon_aa
+from canvas_mojo.shapes.polygon_fill import fill_polygon, fill_polygon_aa
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 

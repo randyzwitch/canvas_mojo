@@ -1,6 +1,6 @@
 """A general path type -- move/line/quadratic-curve/cubic-curve/
 arc-to/close, built up via chained calls, then flattened into
-straight-line segments and handed off to primitives.mojo's already-
+straight-line segments and handed off to canvas_mojo.shapes' already-
 tested polyline/polygon/fill machinery, rather than reimplementing
 fill or stroke logic here.
 
@@ -13,12 +13,13 @@ for the same reason, fonts/raster.mojo made for TrueType's quadratic
 curves before this package had its own general path type (see the
 wiki for that history): good enough at the sizes this exists for, and
 adaptive subdivision is real, deferrable complexity with no concrete
-need yet. arc_to is the one exception: it reuses primitives.mojo's own
-_arc_points helper (radius-proportional step count), the same exact
-circle-math sampling draw_arc/fill_arc/fill_ring_sector already use --
-a fixed step count doesn't generalize across a path-drawn arc's own
-much wider practical radius range the way it does for a Bezier
-control-point-driven curve, see _arc_points's own docstring.
+need yet. arc_to is the one exception: it reuses canvas_mojo.shapes.
+arcs' own _arc_points helper (radius-proportional step count), the
+same exact circle-math sampling draw_arc/fill_arc/fill_ring_sector
+already use -- a fixed step count doesn't generalize across a
+path-drawn arc's own much wider practical radius range the way it does
+for a Bezier control-point-driven curve, see _arc_points's own
+docstring.
 
 A path can hold multiple sub-paths (more than one move_to). fill_path
 combines every sub-path's scanline crossings together (even-odd),
@@ -39,16 +40,9 @@ from canvas_mojo.geometry import Point, _round_to_int
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
 from canvas_mojo.aa_crossing import _AACrossing, _sort_aa_crossings_by_x
-from canvas_mojo.primitives import (
-    draw_polyline,
-    draw_polygon,
-    draw_polyline_aa,
-    draw_polygon_aa,
-    _Crossing,
-    _spans_from_crossings,
-    _is_inside,
-    _arc_points,
-)
+from canvas_mojo.shapes.lines import draw_polyline, draw_polygon, draw_polyline_aa, draw_polygon_aa
+from canvas_mojo.shapes.polygon_fill import _Crossing, _spans_from_crossings, _is_inside
+from canvas_mojo.shapes.arcs import _arc_points
 
 comptime _MOVE_TO = 0
 comptime _LINE_TO = 1
@@ -177,8 +171,8 @@ struct Path(Movable):
     ) raises:
         """A circular arc segment, center (cx, cy), from `start_angle`
         to `end_angle` (radians, start_angle <= end_angle expected --
-        same convention as primitives.mojo's own draw_arc/fill_arc/
-        fill_ring_sector family, including which way increasing angle
+        same convention as canvas_mojo.shapes.arcs' own draw_arc/
+        fill_arc/fill_ring_sector family, including which way increasing angle
         sweeps on screen: see _arc_points's own docstring). Flattened
         via that same _arc_points helper at build time (not Path's own
         fixed-step quad/cubic subdivision, see this module's own
@@ -326,7 +320,7 @@ def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
     """Every sub-path's edges' crossings of row y, combined into one
     list -- shared by fill_path/fill_path_gradient. This is the
     multi-sub-path analog of the single-loop crossing collection
-    fill_polygon does inline (see primitives.mojo); combining across
+    fill_polygon does inline (see canvas_mojo.shapes.polygon_fill); combining across
     ALL sub-paths here (not resetting per sub-path) is what makes
     hole-punching and (with FillRule.NONZERO) union-filling work --
     the same multi-contour technique fonts/raster.mojo used for
@@ -359,7 +353,7 @@ def fill_path(
 ):
     """Fill a path's interior with the scanline algorithm, combining
     every sub-path's crossings per scanline into a signed winding
-    number (see primitives.mojo's _spans_from_crossings, shared with
+    number (see canvas_mojo.shapes.polygon_fill's _spans_from_crossings, shared with
     fill_polygon) -- see this module's own docstring for why combining
     across sub-paths matters (hole-punching), and fill_rule.mojo for
     what `fill_rule` (default EVEN_ODD, matching this function's
@@ -408,7 +402,7 @@ def _point_in_subpaths(
     """The continuous-point analog of _row_crossings + _is_inside,
     combining every sub-path's edges into one signed winding number at
     an arbitrary real-valued point -- the same relationship
-    primitives.mojo's _point_in_polygon has to fill_polygon's own
+    canvas_mojo.shapes.polygon_fill's _point_in_polygon has to fill_polygon's own
     integer-row crossing scan, generalized here to multiple sub-paths
     the identical way _row_crossings already generalizes the discrete
     version. This is what fill_path_aa's supersampling needs, and
@@ -478,7 +472,7 @@ def fill_path_aa(
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
     fill_polygon_aa is fill_polygon's (see that function's own
-    docstring in primitives.mojo, the model this originally followed):
+    docstring in canvas_mojo.shapes.polygon_fill, the model this originally followed):
     for every pixel near the path's flattened outline, samples an NxN
     sub-pixel grid and turns the coverage fraction into that pixel's
     alpha. Each output pixel is visited exactly once.
@@ -517,7 +511,7 @@ def fill_path_aa(
 
     Not fused with fill_path behind an `antialias: Bool` -- same
     reasoning as every other hard/AA split in this codebase (see
-    primitives.mojo's own module docstring): a real complexity-class
+    canvas_mojo.shapes.lines's own module docstring): a real complexity-class
     jump per pixel, not a free toggle.
     """
     var subpaths = _flatten(path)

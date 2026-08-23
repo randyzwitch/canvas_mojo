@@ -20,7 +20,9 @@ Run with:
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.primitives import fill_ellipse_aa, draw_circle_aa, draw_line_aa
+from canvas_mojo.shapes.ellipses import fill_ellipse_aa
+from canvas_mojo.shapes.circles import draw_circle_aa
+from canvas_mojo.shapes.lines import draw_line_aa
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import read_png, write_png
 

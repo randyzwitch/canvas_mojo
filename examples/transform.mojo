@@ -25,7 +25,8 @@ from std.math import pi
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point, Transform2D
-from canvas_mojo.primitives import draw_line, draw_polyline_aa, fill_circle_aa
+from canvas_mojo.shapes.lines import draw_line, draw_polyline_aa
+from canvas_mojo.shapes.circles import fill_circle_aa
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 

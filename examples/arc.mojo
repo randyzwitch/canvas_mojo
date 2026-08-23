@@ -1,7 +1,7 @@
 """Demo: the arc primitive family -- draw_arc(_aa) for a bare curved
 boundary, fill_arc(_aa) for a solid pie-slice wedge, fill_ring_sector
 (_aa) for a donut/ring segment. Exact circle math (cos/sin sampled
-directly), not a Bezier approximation -- see primitives.mojo's own
+directly), not a Bezier approximation -- see canvas_mojo.shapes.arcs's own
 _arc_points docstring.
 
 A 3-wedge pie chart and a 2-segment donut chart, the two concrete
@@ -17,7 +17,7 @@ from std.math import pi
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.primitives import draw_arc_aa, fill_arc_aa, fill_ring_sector_aa
+from canvas_mojo.shapes.arcs import draw_arc_aa, fill_arc_aa, fill_ring_sector_aa
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 

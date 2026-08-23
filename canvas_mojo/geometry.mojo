@@ -23,8 +23,8 @@ def _round_to_int(value: Float64) -> Int:
     so negative values need the opposite offset from positive ones to
     round correctly (e.g. -2.5 must become -3, not -2).
 
-    Reused (imported, not re-derived) by path.mojo and primitives.mojo
-    for the same rounding need -- a leading underscore here means
+    Reused (imported, not re-derived) by path.mojo and canvas_mojo.
+    shapes (arcs.mojo) for the same rounding need -- a leading underscore here means
     "not part of the public canvas API," not "private to this file";
     Mojo doesn't restrict cross-module imports by name the way
     Python's convention-only privacy might suggest.

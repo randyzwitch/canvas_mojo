@@ -1,0 +1,182 @@
+"""Tests for canvas_mojo/shapes/arcs.mojo: exact pixel sets for known
+inputs, verified against hand-traced runs of the same algorithms.
+Split out of the original monolithic test_primitives.mojo along with
+canvas_mojo/primitives.mojo's own split into canvas_mojo/shapes/ -- see
+that subpackage's own module docstrings for why.
+"""
+
+from std.testing import assert_equal, assert_true, TestSuite
+from std.math import pi
+
+from canvas_mojo.color import Color
+from canvas_mojo.buffer import Canvas
+from canvas_mojo.shapes.arcs import (
+    draw_arc,
+    fill_arc,
+    fill_arc_aa,
+    fill_ring_sector,
+    fill_ring_sector_aa,
+    _arc_points,
+    _angle_in_span,
+)
+
+comptime BG = Color(0, 0, 0)
+comptime FG = Color(255, 255, 255)
+
+
+def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+    var p = c.get_pixel(x, y)
+    assert_equal(p.r, expected.r, label + " (r)")
+    assert_equal(p.g, expected.g, label + " (g)")
+    assert_equal(p.b, expected.b, label + " (b)")
+
+
+def test_arc_points_matches_hand_derived_quarter_circle() raises:
+    # Independently computed by hand before trusting the code's own
+    # output: radius=10, angle 0 -> pi/2 gives steps=max(4,int(10*
+    # pi/2))=15 (16 points), start point exactly (10,0), end point
+    # (0,10) (cos(pi/2) is ~6e-16, not exactly 0, but rounds to 0).
+    var pts = _arc_points(0.0, 0.0, 10.0, 0.0, pi / 2.0)
+    assert_equal(len(pts), 16)
+    assert_equal(pts[0].x, 10)
+    assert_equal(pts[0].y, 0)
+    assert_equal(pts[15].x, 0)
+    assert_equal(pts[15].y, 10)
+
+
+def test_angle_in_span_matches_hand_traced_cases() raises:
+    assert_true(_angle_in_span(pi / 4.0, 0.0, pi / 2.0))
+    assert_true(not _angle_in_span(pi, 0.0, pi / 2.0))
+    # A span crossing the atan2 discontinuity at +/-pi: a raw sample
+    # angle of -3*pi/4 (atan2's own range) is equivalent to 5*pi/4,
+    # which IS inside [5*pi/4, 7*pi/4] -- this is exactly the
+    # wraparound case _angle_in_span exists to get right.
+    assert_true(_angle_in_span(-3.0 * pi / 4.0, 5.0 * pi / 4.0, 7.0 * pi / 4.0))
+    assert_true(not _angle_in_span(0.0, 5.0 * pi / 4.0, 7.0 * pi / 4.0))
+
+
+def test_draw_arc_degenerate_radius_plots_center() raises:
+    var c = Canvas(5, 5, BG)
+    draw_arc(c, 2.0, 2.0, 0.0, 0.0, pi, FG)
+    _assert_pixel(c, 2, 2, FG, "radius<=0 falls back to a single pixel")
+
+
+def test_fill_arc_degenerate_radius_is_a_noop() raises:
+    var c = Canvas(5, 5, BG)
+    fill_arc(c, 2.0, 2.0, 0.0, 0.0, pi, FG)
+    _assert_pixel(c, 2, 2, BG, "radius<=0 draws nothing (unlike draw_arc's single pixel)")
+
+
+def test_fill_arc_wedge_covers_only_its_own_angle_span() raises:
+    # A quarter-circle wedge from angle 0 to pi/2 (screen: right to
+    # down) -- a point along that span's own bisector (angle pi/4)
+    # must be filled; a point in the opposite direction (angle
+    # 5*pi/4, i.e. up-left) must stay background.
+    var c = Canvas(60, 60, BG)
+    fill_arc(c, 30.0, 30.0, 20.0, 0.0, pi / 2.0, FG)
+    _assert_pixel(c, 30 + 10, 30 + 10, FG, "inside the wedge's own bisector")
+    _assert_pixel(c, 30 - 10, 30 - 10, BG, "opposite direction, outside the wedge")
+    _assert_pixel(c, 30, 30, FG, "center is part of every wedge (the two radii meet there)")
+
+
+def test_fill_arc_three_wedges_tile_a_full_circle_without_gaps() raises:
+    # Three 120-degree wedges, same center/radius, covering a full
+    # circle between them -- every point strictly inside the radius
+    # must be covered by exactly one wedge's color, none left
+    # background (a gap) and none showing a blended double-cover
+    # (translucent color would reveal overlap; opaque colors can't
+    # distinguish overlap from coverage, so this checks "not
+    # background" everywhere inside, which a gap would fail).
+    var c = Canvas(80, 80, BG)
+    var cx = 40.0
+    var cy = 40.0
+    var r = 30.0
+    var third = 2.0 * pi / 3.0
+    fill_arc(c, cx, cy, r, 0.0, third, Color(255, 0, 0))
+    fill_arc(c, cx, cy, r, third, 2.0 * third, Color(0, 255, 0))
+    fill_arc(c, cx, cy, r, 2.0 * third, 3.0 * third, Color(0, 0, 255))
+
+    var gaps = 0
+    for dy in range(-20, 21):
+        for dx in range(-20, 21):
+            if dx * dx + dy * dy <= 15 * 15:  # comfortably inside the radius
+                var p = c.get_pixel(40 + dx, 40 + dy)
+                if p.r == BG.r and p.g == BG.g and p.b == BG.b:
+                    gaps += 1
+    assert_equal(gaps, 0)
+
+
+def test_fill_arc_aa_respects_translucent_input_color() raises:
+    var c = Canvas(60, 60, Color(0, 0, 0))
+    fill_arc_aa(c, 30.0, 30.0, 20.0, 0.0, pi / 2.0, Color(200, 0, 0, 128))
+    var p = c.get_pixel(40, 40)  # inside the wedge, well clear of any AA edge
+    assert_equal(p.r, 100)
+    assert_equal(p.g, 0)
+    assert_equal(p.b, 0)
+
+
+def test_fill_ring_sector_only_fills_between_the_two_radii() raises:
+    var c = Canvas(80, 80, BG)
+    fill_ring_sector(c, 40.0, 40.0, 15.0, 30.0, 0.0, 2.0 * pi, FG)
+    _assert_pixel(c, 40, 40, BG, "inner hole stays background")
+    _assert_pixel(c, 40 + 22, 40, FG, "the ring itself is filled")
+    _assert_pixel(c, 40 + 45, 40, BG, "well outside the outer radius stays background")
+
+
+def test_fill_ring_sector_degenerate_radii_is_a_noop() raises:
+    var c = Canvas(10, 10, BG)
+    fill_ring_sector(c, 5.0, 5.0, 3.0, 3.0, 0.0, 2.0 * pi, FG)  # inner == outer
+    fill_ring_sector(c, 5.0, 5.0, 5.0, 3.0, 0.0, 2.0 * pi, FG)  # inner > outer
+    fill_ring_sector(c, 5.0, 5.0, -1.0, 0.0, 0.0, 2.0 * pi, FG)  # outer <= 0
+    _assert_pixel(c, 5, 5, BG, "every degenerate radius combination draws nothing")
+
+
+def test_fill_ring_sector_aa_respects_translucent_input_color() raises:
+    var c = Canvas(80, 80, Color(0, 0, 0))
+    fill_ring_sector_aa(c, 40.0, 40.0, 15.0, 30.0, 0.0, 2.0 * pi, Color(200, 0, 0, 128))
+    var p = c.get_pixel(40 + 22, 40)  # deep in the ring, clear of any AA edge
+    assert_equal(p.r, 100)
+    assert_equal(p.g, 0)
+    assert_equal(p.b, 0)
+
+
+def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises:
+    """Regression test for canvas_mojo issue #33: a wedge whose
+    [start_angle, end_angle] span doesn't cross a cardinal angle (0,
+    pi/2, pi, 3*pi/2) has an inner-arc extreme that reaches *closer to
+    the center* than anything on the outer arc does over that same
+    span -- past the outer arc's own bounding box, not inside it (see
+    _arc_bounds's own docstring for the full reasoning). Before the
+    fix, `fill_ring_sector_aa` scanned only the outer arc's own
+    bounding box and never visited pixels beyond it, leaving a
+    rectangular notch cut into the ring instead of a clean angular gap.
+
+    cx=cy=100, outer_radius=100, inner_radius=50, start_angle=pi/6
+    (30deg), end_angle=pi/3 (60deg) -- deliberately round angles so the
+    geometry is exact, not approximated. Independently computed (not
+    just trusted from this file's own code, and not from
+    canvas_mojo's own `_arc_bounds`/`cos`/`sin` either) via Python's
+    `math` module:
+
+    - The outer arc's own y-range over that span is exactly
+      [150, 186.60...] (both endpoints; no cardinal angle falls in
+      [30deg, 60deg], so no crossing point adds to that range).
+    - The straight edge from the outer endpoint at 30deg,
+      (186.60..., 150), back to the inner endpoint at 30deg,
+      (143.30..., 125), passes through y=125 -- 25 below the outer
+      arc's own min_y=150, i.e. past its bounding box, not inside it.
+    - A point deep inside the ring sector, well clear of every edge
+      (angle=35deg, 5deg in from the 30deg boundary; radius=60, 10
+      units in from inner_radius=50 and 40 from outer_radius=100),
+      rounds to pixel (149, 134): y=134 is inside the *old* buggy
+      py-scan range (~[149, 188], i.e. never visited -- 134 < 149,
+      confirmed with the pre-fix code actually producing background
+      there) but well inside the *fixed* range (~[124, 188]).
+    """
+    var c = Canvas(200, 200, BG)
+    fill_ring_sector_aa(c, 100.0, 100.0, 50.0, 100.0, pi / 6.0, pi / 3.0, FG)
+    _assert_pixel(c, 149, 134, FG, "deep in the ring, past the outer arc's own bounding box")
+
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()
