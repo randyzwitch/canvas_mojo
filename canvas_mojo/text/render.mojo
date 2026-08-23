@@ -73,9 +73,9 @@ the requested font's own generic empty-box placeholder -- confirmed directly via
 probe (a font missing a glyph falls back to one that has it; a font
 that already has the glyph is left alone; a character genuinely
 missing from every installed font degrades gracefully to fontconfig's
-own best-effort match, not an error). No caching of resolved fallback
-faces across calls -- see _resolve_glyph's own docstring for why
-that's a deliberate simplification, not an oversight.
+own best-effort match, not an error). Resolved fallback faces are
+cached across calls the same as the primary face is -- see
+_resolve_glyph's and font_cache.mojo's own docstrings.
 
 Public FontSlant/FontWeight (re-exported here from font_discovery.mojo)
 replace what used to be cairo_mojo's own identically-shaped types --
@@ -88,7 +88,8 @@ same re-export convenience TextAlign's own docstring already
 established for its move into text_align.mojo).
 """
 
-from std.math import ceil, cos, sin
+from std.math import cos, sin
+from std.memory import ArcPointer
 
 from canvas_mojo.text.bidi import detect_base_level, visual_order
 from canvas_mojo.buffer import Canvas
@@ -204,20 +205,19 @@ struct _BlockLayout(Movable):
 
 def _load_sized_face(
     family: String, slant: FontSlant, weight: FontWeight, size: Float64, mut cache: FontCache
-) raises -> TTFFace:
+) raises -> ArcPointer[TTFFace]:
     """font_discovery.resolve_font_file (fontconfig, via `cache` -- see
     font_cache.mojo's own docstring) -> ttf.TTFFace (native TrueType
     parsing), sized to `size` pixels -- the one place every measuring/
-    drawing entry point below goes to get a ready-to-use face. The
-    resolved *path* is cached (by `cache`, across every call sharing
-    it); the parsed face itself is still built fresh every call -- see
-    font_cache.mojo's own docstring for why that remaining, much
-    smaller cost isn't also cached.
+    drawing entry point below goes to get a ready-to-use face. Both the
+    resolved *path* and the parsed, sized face itself are cached (by
+    `cache`, across every call sharing it) -- see FontCache.resolve_face's
+    own docstring. Returns an `ArcPointer` rather than a `TTFFace`
+    directly so a cache hit is a refcount bump, not a copy of the
+    face's own multi-hundred-KB font-file buffer; every call site below
+    dereferences it with `[]` to get at the `TTFFace` itself.
     """
-    var font_path = cache.resolve(family, slant, weight)
-    var face = TTFFace(font_path)
-    face.set_pixel_size(Int(ceil(size)))
-    return face^
+    return cache.resolve_face(family, slant, weight, size)
 
 
 struct _LineMetrics(ImplicitlyCopyable, Movable):
@@ -297,16 +297,17 @@ def _resolve_glyph(
     mut cache: FontCache,
 ) raises -> _PositionedGlyph:
     """This one character's metrics and outline, from `primary` if it
-    actually has a glyph for `codepoint`, or from a freshly loaded
-    fallback font otherwise (`font_discovery.resolve_font_file_for_char`,
-    via `cache` -- see that function's and font_cache.mojo's own
+    actually has a glyph for `codepoint`, or from a fallback font
+    otherwise (`font_discovery.resolve_font_file_for_char`, via
+    `cache` -- see that function's and font_cache.mojo's own
     docstrings for how fontconfig's own charset-aware matching picks a
     font that actually contains the character, e.g. CJK text requested
-    under a Latin-only family). The resolved fallback *path* is cached
-    (by `cache`, across every call sharing it, so a string with several
-    fallback glyphs for the same missing codepoint only asks fontconfig
-    once) -- the fallback face itself is still parsed fresh each call;
-    see font_cache.mojo's own docstring for why.
+    under a Latin-only family). Both the resolved fallback *path* and
+    the parsed fallback *face* are cached (by `cache`, across every
+    call sharing it), so a string with several fallback glyphs for the
+    same missing codepoint only asks fontconfig, and only parses that
+    fallback font file, once -- see FontCache.resolve_face_for_char's
+    own docstring.
 
     Metrics and outline are resolved together, from the same face, in
     one call -- not two separate has_glyph-gated calls at each of this
@@ -317,10 +318,10 @@ def _resolve_glyph(
     if has_glyph(primary, codepoint):
         return _PositionedGlyph(glyph_metrics(primary, codepoint), glyph_path(primary, codepoint, pen_x, pen_y))
 
-    var fallback_path = cache.resolve_for_char(family, slant, weight, codepoint)
-    var fallback = TTFFace(fallback_path)
-    fallback.set_pixel_size(Int(ceil(size)))
-    return _PositionedGlyph(glyph_metrics(fallback, codepoint), glyph_path(fallback, codepoint, pen_x, pen_y))
+    var fallback = cache.resolve_face_for_char(family, slant, weight, codepoint, size)
+    return _PositionedGlyph(
+        glyph_metrics(fallback[], codepoint), glyph_path(fallback[], codepoint, pen_x, pen_y)
+    )
 
 
 def _measure_line(
@@ -400,13 +401,13 @@ def _layout_block(
     var raw_lines = text.split("\n")
 
     var face = _load_sized_face(family, slant, weight, size, cache)
-    var line_height = face_line_metrics(face).line_height
+    var line_height = face_line_metrics(face[]).line_height
 
     var lines = List[_LineLayout](capacity=len(raw_lines))
     var any_ink = False
     for i in range(len(raw_lines)):
         var line_text = String(raw_lines[i])
-        var measured = _measure_line(face, line_text, family, slant, weight, size, cache)
+        var measured = _measure_line(face[], line_text, family, slant, weight, size, cache)
         var baseline_y = Float64(i) * line_height
         var x_offset = 0.0
         if align == TextAlign.CENTER:
@@ -500,7 +501,7 @@ def measure_text(
     in the batch to actually get the reuse.
     """
     var face = _load_sized_face(family, slant, weight, size, cache)
-    var measured = _measure_line(face, text, family, slant, weight, size, cache)
+    var measured = _measure_line(face[], text, family, slant, weight, size, cache)
     return TextMetrics(measured.width, measured.height, measured.advance)
 
 
@@ -743,7 +744,7 @@ def draw_text(
             continue
         var pen_x = line.x
         for codepoint in _visual_codepoints(line.text):
-            var g = _resolve_glyph(face, family, slant, weight, size, codepoint, pen_x, line.y, cache)
+            var g = _resolve_glyph(face[], family, slant, weight, size, codepoint, pen_x, line.y, cache)
             if g.metrics.width > 0.0 and g.metrics.height > 0.0:
                 var placed = _place_glyph_path(g.path, c, s, anchor_x, anchor_y)
                 fill_path_aa(canvas, placed, color)

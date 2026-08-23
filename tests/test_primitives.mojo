@@ -44,7 +44,7 @@ from canvas_mojo.primitives import (
 )
 from canvas_mojo.fill_rule import FillRule
 
-from std.math import pi
+from std.math import pi, sqrt
 
 comptime BG = Color(0, 0, 0)
 comptime FG = Color(255, 255, 255)
@@ -1361,6 +1361,186 @@ def test_point_in_polygon_nonzero_fills_the_overlap_of_a_bridge_connected_double
     assert_true(_point_in_polygon(poly, 15.0, 15.0, FillRule.NONZERO))  # solid
     assert_true(not _point_in_polygon(poly, 35.0, 35.0, FillRule.EVEN_ODD))
     assert_true(not _point_in_polygon(poly, 35.0, 35.0, FillRule.NONZERO))
+
+
+def _brute_force_stroke_polyline_aa(
+    mut canvas: Canvas,
+    points: List[Point],
+    color: Color,
+    width: Float64,
+    supersample: Int,
+    closed: Bool,
+    dashes: List[Float64],
+    dash_offset: Float64,
+) raises:
+    """Deliberately naive reference for _draw_polyline_core_aa's own
+    column-bucket optimization (primitives.mojo's own docstring there)
+    -- for every pixel/sample, tests distance to EVERY segment
+    directly, no row-level or column-level pre-filtering of any kind.
+    Same underlying per-sample "minimum distance across every on-dash
+    candidate segment" math and the same coverage-to-alpha blend, just
+    without the bucket bookkeeping the real function uses to skip most
+    of that work -- a divergence here would mean the optimization
+    changed a real *result*, not merely how fast it's computed.
+    """
+    var count = len(points)
+    if count == 0:
+        return
+    if count == 1:
+        canvas.set_pixel(points[0].x, points[0].y, color)
+        return
+
+    var num_segments = count if closed else count - 1
+    var half_width = width / 2.0
+    var hw2 = half_width * half_width
+    var n = supersample
+    var total_samples = n * n
+    var step = 1.0 / Float64(n)
+    var pad = Int(half_width) + 2
+
+    var seg_start_distance = List[Float64](capacity=num_segments)
+    var seg_length = List[Float64](capacity=num_segments)
+    var running_distance = 0.0
+    for seg in range(num_segments):
+        var sa = points[seg]
+        var sb = points[(seg + 1) % count]
+        var sdx = Float64(sb.x - sa.x)
+        var sdy = Float64(sb.y - sa.y)
+        var slen = sqrt(sdx * sdx + sdy * sdy)
+        seg_start_distance.append(running_distance)
+        seg_length.append(slen)
+        running_distance += slen
+
+    var min_x = points[0].x
+    var max_x = points[0].x
+    var min_y = points[0].y
+    var max_y = points[0].y
+    for i in range(1, count):
+        if points[i].x < min_x:
+            min_x = points[i].x
+        if points[i].x > max_x:
+            max_x = points[i].x
+        if points[i].y < min_y:
+            min_y = points[i].y
+        if points[i].y > max_y:
+            max_y = points[i].y
+    min_x -= pad
+    max_x += pad
+    min_y -= pad
+    max_y += pad
+
+    for py in range(min_y, max_y + 1):
+        for px in range(min_x, max_x + 1):
+            var covered = 0
+            for sy in range(n):
+                var sample_y = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+                for sx in range(n):
+                    var sample_x = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    var min_dist2 = -1.0
+                    for seg in range(num_segments):
+                        var a = points[seg]
+                        var b = points[(seg + 1) % count]
+                        var fx0 = Float64(a.x)
+                        var fy0 = Float64(a.y)
+                        var fx1 = Float64(b.x)
+                        var fy1 = Float64(b.y)
+                        var ldx = fx1 - fx0
+                        var ldy = fy1 - fy0
+                        var len2 = ldx * ldx + ldy * ldy
+                        var t: Float64
+                        if len2 == 0.0:
+                            t = 0.0
+                        else:
+                            t = ((sample_x - fx0) * ldx + (sample_y - fy0) * ldy) / len2
+                            if t < 0.0:
+                                t = 0.0
+                            elif t > 1.0:
+                                t = 1.0
+                        var closest_x = fx0 + t * ldx
+                        var closest_y = fy0 + t * ldy
+                        var ddx = sample_x - closest_x
+                        var ddy = sample_y - closest_y
+                        var d2 = ddx * ddx + ddy * ddy
+                        if d2 <= hw2:
+                            var sample_distance = seg_start_distance[seg] + t * seg_length[seg]
+                            if _is_dash_on(sample_distance, dashes, dash_offset):
+                                if min_dist2 < 0.0 or d2 < min_dist2:
+                                    min_dist2 = d2
+                    if min_dist2 >= 0.0:
+                        covered += 1
+            if covered > 0:
+                var alpha = UInt8(
+                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                )
+                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+
+
+def _jagged_stress_points() -> List[Point]:
+    # Same adversarial shape dataviz_mojo's own canvas_mojo-reported
+    # benchmark used: consecutive points jump a large fraction of the
+    # whole y-range every step (i*37 mod 101 -- a period-101 pseudo-
+    # random-looking sequence, not actually random, so this test stays
+    # deterministic), which is exactly what made row_candidates span
+    # most of a row's own column range in the pre-optimization version
+    # -- see primitives.mojo's own docstring on col_candidates for why
+    # that shape specifically was the one worth stress-testing here,
+    # not a smooth/monotonic polyline a bucket-indexing bug could
+    # easily hide behind.
+    var points = List[Point](capacity=97)
+    for i in range(97):
+        var x = Int(Float64(i) / 96.0 * 90.0)
+        var y = 50 + Int(180.0 * ((Float64((i * 37) % 101) / 101.0) - 0.5))
+        points.append(Point(x, y))
+    return points^
+
+
+def test_draw_polyline_aa_matches_a_brute_force_reference_on_a_jagged_stress_path() raises:
+    var points = _jagged_stress_points()
+    var canvas = Canvas(100, 140, Color(255, 255, 255))
+    draw_polyline_aa(canvas, points, Color(0, 0, 0), width=2.0)
+
+    var reference = Canvas(100, 140, Color(255, 255, 255))
+    _brute_force_stroke_polyline_aa(
+        reference, points, Color(0, 0, 0), 2.0, 4, False, List[Float64](), 0.0
+    )
+
+    for i in range(len(canvas.pixels)):
+        assert_equal(canvas.pixels[i], reference.pixels[i])
+
+
+def test_draw_polygon_aa_matches_a_brute_force_reference_on_a_jagged_stress_path() raises:
+    # Same stress shape, closed this time -- exercises the wraparound
+    # `(seg + 1) % count` segment (points[96] -> points[0]) through both
+    # the bucket path and the reference identically.
+    var points = _jagged_stress_points()
+    var canvas = Canvas(100, 140, Color(255, 255, 255))
+    draw_polygon_aa(canvas, points, Color(0, 0, 0), width=2.0)
+
+    var reference = Canvas(100, 140, Color(255, 255, 255))
+    _brute_force_stroke_polyline_aa(
+        reference, points, Color(0, 0, 0), 2.0, 4, True, List[Float64](), 0.0
+    )
+
+    for i in range(len(canvas.pixels)):
+        assert_equal(canvas.pixels[i], reference.pixels[i])
+
+
+def test_draw_polyline_aa_dashed_matches_a_brute_force_reference_on_a_jagged_stress_path() raises:
+    # Same stress shape again, dashed -- confirms a bucketed segment's
+    # own dash state (evaluated per candidate, per sample, same as
+    # before -- see _draw_polyline_core_aa's own docstring) still
+    # agrees with the reference once most segments are being skipped
+    # via buckets instead of a full per-pixel scan.
+    var points = _jagged_stress_points()
+    var dashes: List[Float64] = [4.0, 3.0]
+    var canvas = Canvas(100, 140, Color(255, 255, 255))
+    draw_polyline_aa(canvas, points, Color(0, 0, 0), width=2.0, dashes=dashes)
+
+    var reference = Canvas(100, 140, Color(255, 255, 255))
+    _brute_force_stroke_polyline_aa(reference, points, Color(0, 0, 0), 2.0, 4, False, dashes, 0.0)
+
+    for i in range(len(canvas.pixels)):
+        assert_equal(canvas.pixels[i], reference.pixels[i])
 
 
 def main() raises:

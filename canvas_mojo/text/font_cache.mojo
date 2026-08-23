@@ -32,14 +32,27 @@ independently too, so a string with several fallback glyphs for the
 same missing codepoint benefits from being asked only once instead of
 once per glyph.
 
-Deliberately does *not* also cache the parsed TTFFace -- only the
-resolved path. TTFFace holds the entire font file's own raw bytes
-(`data: List[UInt8]`, Movable only, not ImplicitlyCopyable) and
-parsing one costs only a few ms; making TTFFace copyable just to
-avoid re-parsing would mean copying a multi-hundred-KB-to-multi-MB
-buffer out of the cache on every hit, and would widen TTFFace's own
-public trait surface for a small marginal win. Not worth it unless
-profiling says otherwise later.
+Also caches the parsed TTFFace itself now, not just the resolved
+path -- profiling *did* say otherwise (dataviz_mojo measured
+TTFFace's own parse + set_pixel_size at ~0.127ms each, against a
+cache hit at ~0.00015ms; draw_text's own two-pass measure/render
+split means every call paid that twice, ~0.255ms of it, even with
+the path-only cache above already in play). The objection this
+module's own docstring used to raise here -- TTFFace owns the whole
+font file's raw bytes (`data: List[UInt8]`, Movable only, not
+ImplicitlyCopyable), so caching it "for real" would mean copying a
+multi-hundred-KB buffer out of the Dict on every hit -- is sidestepped
+entirely by `ArcPointer[TTFFace]` rather than solved by widening
+TTFFace's own trait surface: the Dict holds one heap-allocated
+TTFFace per distinct (path, pixel size), and every `resolve_face`/
+`resolve_face_for_char` hit just bumps an atomic refcount and returns
+a copy of the pointer, not the payload. `set_pixel_size` (the one
+method that actually mutates a TTFFace) is called exactly once, at
+the point a face is first inserted -- every later hit returns that
+same already-sized instance, never calls it again -- so caching by
+`path + "@" + pixel_size` (not by path alone) is what keeps two
+callers asking for the same font at two different sizes from
+corrupting each other's scale state.
 
 Mojo has no mutable global/module-level state (confirmed directly:
 declaring one raises "global variables are not supported"; the same
@@ -55,12 +68,16 @@ per-call, uncached resolution -- unchanged, never slower, just not
 faster either.
 """
 
+from std.math import ceil
+from std.memory import ArcPointer
+
 from canvas_mojo.text.font_discovery import (
     FontSlant,
     FontWeight,
     resolve_font_file,
     resolve_font_file_for_char,
 )
+from canvas_mojo.text.ttf import TTFFace
 
 
 def _slant_key(slant: FontSlant) -> String:
@@ -95,10 +112,35 @@ struct FontCache(Movable):
 
     var _paths: Dict[String, String]
     var _paths_for_char: Dict[String, String]
+    var _faces: Dict[String, ArcPointer[TTFFace]]
 
     def __init__(out self):
         self._paths = Dict[String, String]()
         self._paths_for_char = Dict[String, String]()
+        self._faces = Dict[String, ArcPointer[TTFFace]]()
+
+    def _face_for_path(mut self, path: String, size: Float64) raises -> ArcPointer[TTFFace]:
+        """Shared by resolve_face/resolve_face_for_char below -- both
+        just need a parsed, sized TTFFace for a font *path* they've
+        already resolved (one via `resolve`, the other via
+        `resolve_for_char`); this is where that path turns into a
+        cached, shared face, regardless of which one asked.
+
+        Keyed on `path + "@" + pixel_size`, not `path` alone: two
+        callers requesting the same font at two different sizes must
+        land in two different cache entries, since `set_pixel_size`
+        (called once, right here, on insert) mutates the instance
+        they'd otherwise share.
+        """
+        var pixel_size = Int(ceil(size))
+        var key = path + "@" + String(pixel_size)
+        if key in self._faces:
+            return self._faces[key]
+        var face = TTFFace(path)
+        face.set_pixel_size(pixel_size)
+        var arc = ArcPointer(face^)
+        self._faces[key] = arc
+        return arc
 
     def resolve(mut self, family: String, slant: FontSlant, weight: FontWeight) raises -> String:
         """Cached resolve_font_file: fontconfig is only ever actually
@@ -129,3 +171,32 @@ struct FontCache(Movable):
         var path = resolve_font_file_for_char(family, slant, weight, codepoint)
         self._paths_for_char[key] = path
         return path
+
+    def resolve_face(
+        mut self, family: String, slant: FontSlant, weight: FontWeight, size: Float64
+    ) raises -> ArcPointer[TTFFace]:
+        """`resolve` (cached path) + parse-and-size (now also cached,
+        via `_face_for_path`) in one call -- the replacement for what
+        `render.mojo`'s own `_load_sized_face` used to do inline every
+        time it was called. render.mojo's own draw_text calls this
+        twice per invocation (once via `_layout_block`'s measuring
+        pass, once again for its own render pass) -- with a `cache`
+        shared between the two, the second call is a face-cache hit,
+        not a second parse of the same font file.
+        """
+        var path = self.resolve(family, slant, weight)
+        return self._face_for_path(path, size)
+
+    def resolve_face_for_char(
+        mut self, family: String, slant: FontSlant, weight: FontWeight, codepoint: Int, size: Float64
+    ) raises -> ArcPointer[TTFFace]:
+        """`resolve_for_char` (cached path) + parse-and-size (also
+        cached) in one call -- the fallback-glyph counterpart to
+        `resolve_face` above, for `render.mojo`'s own `_resolve_glyph`.
+        A string with several fallback glyphs for the same missing
+        codepoint already got its fontconfig resolution deduplicated
+        by `resolve_for_char`'s own cache; this also stops each one
+        from re-parsing that same fallback font file from scratch.
+        """
+        var path = self.resolve_for_char(family, slant, weight, codepoint)
+        return self._face_for_path(path, size)

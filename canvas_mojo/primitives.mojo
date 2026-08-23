@@ -14,7 +14,7 @@ at the call site. Apply the same split to future primitives (ellipse,
 AA polyline, ...) rather than reopening this per shape.
 """
 
-from std.math import atan2, cos, floor, sin, sqrt
+from std.math import atan2, ceil, cos, floor, sin, sqrt
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
@@ -447,8 +447,15 @@ def _draw_polyline_core_aa(
         seg_min_y.append(min(ay, by) - half_width - 1.0)
         seg_max_y.append(max(ay, by) + half_width + 1.0)
 
+    # Per-column candidate buckets, indexed by `px - min_x`, reused
+    # (cleared, never reallocated) across every row -- see below for
+    # why this replaced a naive "rescan row_candidates for every
+    # pixel" filter. One-time O(width) setup, outside the row loop.
+    var col_candidates = List[List[Int]](capacity=max_x - min_x + 1)
+    for _ in range(max_x - min_x + 1):
+        col_candidates.append(List[Int]())
+
     var row_candidates = List[Int](capacity=num_segments)
-    var candidates = List[Int](capacity=num_segments)
     for py in range(min_y, max_y + 1):
         var fpy = Float64(py)
 
@@ -467,13 +474,47 @@ def _draw_polyline_core_aa(
         if len(row_candidates) == 0:
             continue  # no segment reaches this row at all
 
-        for px in range(min_x, max_x + 1):
-            var fpx = Float64(px)
-            candidates.clear()
-            for ri in range(len(row_candidates)):
-                var seg = row_candidates[ri]
-                if fpx >= seg_min_x[seg] and fpx <= seg_max_x[seg]:
-                    candidates.append(seg)
+        # Bucket each row candidate into every column its own (already
+        # half-width-expanded) x-range actually covers -- not, as an
+        # earlier version of this function did, rescanning the entire
+        # row_candidates list for every pixel column in [min_x, max_x].
+        # That rescan made a wide, densely-populated row (many
+        # segments, each near-vertical relative to pixel width -- a
+        # real, not pathological, shape for a noisy line-chart series
+        # sampled far denser than the canvas is wide) cost O(row_width
+        # * row_candidates) instead of what it's doing here: O(row_
+        # candidates * each segment's own column footprint) to fill the
+        # buckets, plus a flat O(row_width) to sweep them -- a segment
+        # spanning under a pixel in x (the common case once a path has
+        # more points than the canvas has columns) lands in one or two
+        # buckets, not compared against every other column on its row.
+        # Confirmed against dataviz_mojo's own benchmark (canvas_mojo
+        # PR discussion): this is what took a 3200-segment stroke from
+        # ~844ms to a small fraction of that, not a hypothetical win.
+        var row_min_px = max_x + 1
+        var row_max_px = min_x - 1
+        for ri in range(len(row_candidates)):
+            var seg = row_candidates[ri]
+            var lo = Int(ceil(seg_min_x[seg]))
+            var hi = Int(floor(seg_max_x[seg]))
+            if lo < min_x:
+                lo = min_x
+            if hi > max_x:
+                hi = max_x
+            if lo > hi:
+                continue  # this segment's own x-range is entirely outside the canvas-visible columns
+            if lo < row_min_px:
+                row_min_px = lo
+            if hi > row_max_px:
+                row_max_px = hi
+            for px in range(lo, hi + 1):
+                col_candidates[px - min_x].append(seg)
+
+        if row_min_px > row_max_px:
+            continue  # every row candidate's own x-range clipped away entirely; nothing to sweep
+
+        for px in range(row_min_px, row_max_px + 1):
+            ref candidates = col_candidates[px - min_x]
             if len(candidates) == 0:
                 continue  # no segment comes anywhere near this pixel
 
@@ -528,6 +569,15 @@ def _draw_polyline_core_aa(
                     Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
                 )
                 canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+
+        # Empty every bucket this row actually touched, ready for the
+        # next row to reuse -- col_candidates itself (the outer List)
+        # is never reallocated across rows, only the small List[Int]s
+        # it holds get cleared, same "reuse, don't reallocate" pattern
+        # row_candidates/candidates (the old per-pixel buffer) already
+        # used above.
+        for px in range(row_min_px, row_max_px + 1):
+            col_candidates[px - min_x].clear()
 
 
 def draw_polyline_aa(
