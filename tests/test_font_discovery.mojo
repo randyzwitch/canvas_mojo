@@ -2,8 +2,7 @@
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- the same real-machine dependency tests/
-test_text.mojo's own docstring already documents for Cairo's identical
-underlying fontconfig lookup, not a new one this file introduces.
+test_text.mojo's own docstring documents.
 
 What's tested is what this module is actually responsible for --
 resolving a family/slant/weight request to *some* real, existing font
@@ -85,8 +84,7 @@ def test_an_unrecognized_family_still_resolves_via_fontconfig_fallback() raises:
     # FcDefaultSubstitute, FcFontMatch essentially always returns
     # *some* pattern (fontconfig's own default-substitution chain), so
     # an unknown family name is not expected to raise on a system with
-    # any fonts installed at all -- it silently falls back, the same
-    # way Cairo's own select_font_face does today.
+    # any fonts installed at all -- it silently falls back.
     var path = resolve_font_file("ThisFontDoesNotExistAnywhereReally12345")
     assert_true(_looks_like_a_font_file(path))
 

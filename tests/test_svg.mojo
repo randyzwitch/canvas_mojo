@@ -2,8 +2,8 @@
 draw_text() -- string-content assertions (the markup itself, hand-
 derived the same rigor pixel-color assertions get elsewhere in this
 workspace) rather than pixel colors, since there's no raster buffer
-here to sample. No cairo needed -- SvgCanvas only touches
-canvas_mojo.text for FontWeight (a small, cairo-free struct with no
+here to sample. No font machinery needed -- SvgCanvas only touches
+canvas_mojo.text for FontWeight (a small struct with no
 fontconfig/FFI calls of its own -- see font_discovery.mojo's own
 docstring), never canvas_mojo.text.render itself (see svg.mojo's own
 docstring).
@@ -86,13 +86,13 @@ def test_fill_rect_gradient_sorts_descending_stops_into_ascending_offset_order()
     # regardless), but the SVG spec clamps each <stop>'s own offset to
     # be no less than the previous sibling's -- so a gradient built
     # with descending offsets (their own continuous color legend flips
-    # each stop to 1.0 - offset) used to emit every stop after the
-    # first at the *first* stop's own offset, collapsing the gradient
-    # to one flat color in every real SVG viewer while the identical
-    # raster fill still rendered correctly. Exact repro from their own
-    # report: three stops added 1.0, 0.5, 0.0, each with a distinct
-    # color, so a wrong sort (or none at all) would be visible as a
-    # color landing at the wrong offset, not just an ordering assertion
+    # each stop to 1.0 - offset) collapses to one flat color in every
+    # real SVG viewer unless the stops are sorted into ascending offset
+    # order on emission, even though the identical raster fill renders
+    # correctly. Exact repro from their own report: three stops added
+    # 1.0, 0.5, 0.0, each with a distinct color, so a wrong sort (or
+    # none at all) would be visible as a color landing at the wrong
+    # offset, not just an ordering assertion
     # that could pass by accident.
     var svg = SvgCanvas(100, 100)
     var g = LinearGradient(0.0, 0.0, 0.0, 100.0)
@@ -353,9 +353,9 @@ def test_draw_text_default_rotation_omits_transform_attribute() raises:
 def test_draw_text_rotation_emits_hand_derived_rotate_transform() raises:
     # pi/2 radians -> exactly 90.0 degrees (90.000 through
     # _format_svg_float's own 3-decimal formatting) -- no sign flip
-    # from canvas_mojo.text.draw_text's own Cairo-rotation convention,
-    # since both Cairo's user space and SVG's viewport space put y
-    # pointing down (see draw_text's own docstring).
+    # relative to canvas_mojo.text.draw_text, since both this package's
+    # raster space and SVG's viewport space put y pointing down (see
+    # draw_text's own docstring).
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=pi / 2.0)
     assert_true(
@@ -366,10 +366,10 @@ def test_draw_text_rotation_emits_hand_derived_rotate_transform() raises:
 
 
 def test_draw_text_default_family_is_sans_serif() raises:
-    # The actual bug fix: every pre-existing call (no `family` argument
-    # at all) must now emit a real font-family, not the historical
-    # "no attribute, viewer picks its own undefined default" gap --
-    # see draw_text's own docstring.
+    # A call with no `family` argument at all still emits a real
+    # font-family, rather than leaving the attribute off and letting
+    # the viewer pick its own undefined default -- see draw_text's own
+    # docstring.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true('font-family="sans-serif"' in svg.to_string(), "default family is sans-serif")
@@ -404,10 +404,9 @@ def test_draw_text_family_containing_quotes_is_escaped() raises:
 
 
 def test_draw_text_default_weight_omits_font_weight_attribute() raises:
-    # weight's own default (FontWeight.NORMAL) must reproduce the
-    # exact pre-existing markup byte-for-byte, same guarantee
-    # rotation's default already gets above -- see draw_text's own
-    # docstring.
+    # weight's own default (FontWeight.NORMAL) emits no font-weight
+    # attribute at all, the same omit-at-default guarantee rotation
+    # gets above -- see draw_text's own docstring.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(

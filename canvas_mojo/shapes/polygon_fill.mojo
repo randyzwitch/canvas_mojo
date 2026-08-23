@@ -164,8 +164,7 @@ def fill_polygon(
     inclusive; only the Y-extent per edge is half-open. Verified
     exactly against fill_rect with those corners.)
 
-    A self-intersecting polygon is fully supported now (this
-    function's own docstring used to warn it wasn't) -- under either
+    A self-intersecting polygon is fully supported -- under either
     fill rule, every pixel gets exactly one set_pixel call per row,
     never two, including right at a self-intersection: see
     _spans_from_crossings' own docstring for the specific case (two
@@ -285,12 +284,12 @@ def fill_polygon_aa(
     visited exactly once, so there's no double-blend hazard the way a
     naive per-edge fill would have.
 
-    Closes the one inconsistency left once every other filled
-    primitive (circle/ellipse/arc/ring) already had an AA companion:
-    an arbitrary filled shape -- the general case an area chart's
-    region or a custom marker boundary actually is -- could only ever
-    render hard-edged. `draw_polygon_aa` already existed, but only as
-    an AA *outline*; this is the fill fill_polygon itself never had.
+    The AA companion to `fill_polygon` itself, the way every other
+    filled primitive here (circle/ellipse/arc/ring) has one -- an
+    arbitrary filled shape, the general case an area chart's region or
+    a custom marker boundary actually is, renders with smooth edges
+    rather than only hard-edged. Distinct from `draw_polygon_aa`,
+    which is an AA *outline*, not a fill.
 
     Same pixel-centered-AT-its-integer-coordinate convention every
     other AA primitive here uses (not a unit square with the pixel at

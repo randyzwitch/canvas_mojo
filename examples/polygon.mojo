@@ -1,9 +1,9 @@
 """Demo: draw_polygon (hard-edged outline) vs. draw_polygon_aa
 (anti-aliased outline) vs. fill_polygon (solid, hard-edged interior)
 vs. fill_polygon_aa (solid, anti-aliased interior), same pentagon,
-side by side -- the fourth is fill_polygon's own AA companion, closing
-the one inconsistency every other filled primitive (circle/ellipse/
-arc) had already closed.
+side by side -- the fourth is fill_polygon's own AA companion, the
+same pairing every other filled primitive here (circle/ellipse/arc)
+has.
 
 Run with:
     pixi run example

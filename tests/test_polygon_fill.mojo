@@ -143,11 +143,9 @@ def test_fill_polygon_self_intersecting_bowtie_matches_hand_derived_spans() rais
     # A "bowtie": (0,0),(20,0),(0,20),(20,20) in this vertex order
     # crosses itself at (10,10) -- independently traced by hand:
     # both y=5 (upper triangle) and y=15 (lower triangle, symmetric)
-    # fill x=[5,15]. This is the case fill_polygon's own docstring
-    # used to warn wasn't supported; it's just a self-intersecting
-    # simple case (a genuine pinch, not an overlap) where EVEN_ODD and
-    # NONZERO happen to agree -- see the fill_path tests for a case
-    # where they don't.
+    # fill x=[5,15]. A genuine pinch rather than an overlap, so
+    # EVEN_ODD and NONZERO agree here -- see the fill_path tests for a
+    # case where they don't.
     var pts: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20), Point(20, 20)]
     var c = Canvas(21, 21, BG)
     fill_polygon(c, pts, FG)

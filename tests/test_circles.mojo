@@ -31,7 +31,8 @@ def test_draw_circle_radius_zero_plots_center() raises:
 
 def test_draw_circle_radius_three_matches_traced_points() raises:
     # Hand-traced midpoint-circle run for radius=3, centered at (5,5)
-    # on an 11x11 canvas -- see the derivation in the PR/commit notes.
+    # on an 11x11 canvas -- the 16 plotted points below are that
+    # trace's own output, not values read back from this function.
     var c = Canvas(11, 11, BG)
     draw_circle(c, 5, 5, 3, FG)
 
@@ -54,14 +55,13 @@ def test_draw_circle_radius_three_matches_traced_points() raises:
 
 
 def test_draw_circle_does_not_double_blend_degenerate_symmetry_points() raises:
-    # Regression test for a real bug caught while designing
-    # draw_ellipse: at y==0 (loop start) and x==y (wherever the loop
-    # crosses the diagonal), several of the 8 symmetric expressions
-    # collapse onto the same pixel. Plotting all 8 unconditionally
-    # blends a translucent color multiple times at exactly those 8
-    # points (4 axis, 4 diagonal) on a radius=4 circle. Confirmed via
-    # probe: the bug produced 150 (blending 200,0,0,alpha=128 TWICE
-    # over black) instead of the correct single-blend value 100.
+    # At y==0 (loop start) and x==y (wherever the loop crosses the
+    # diagonal), several of the 8 symmetric expressions collapse onto
+    # the same pixel. Plotting all 8 unconditionally would blend a
+    # translucent color multiple times at exactly those 8 points (4
+    # axis, 4 diagonal) on a radius=4 circle -- 150 (blending
+    # 200,0,0,alpha=128 twice over black) instead of the correct
+    # single-blend value 100.
     var c = Canvas(11, 11, Color(0, 0, 0))
     draw_circle(c, 5, 5, 4, Color(200, 0, 0, 128))
 
@@ -163,12 +163,10 @@ def test_fill_circle_aa_partial_coverage_matches_hand_computed_values() raises:
 
 
 def test_fill_circle_aa_agrees_with_hard_edged_on_interior_pixels() raises:
-    # Regression test for a real bug caught during development: the
-    # AA sampling originally treated pixel (px,py) as a unit square
-    # with (px,py) at its TOP-LEFT CORNER, not centered AT (px,py) --
-    # so fill_circle_aa(c, cx, cy, r, ...) drew a circle shifted half
-    # a pixel from fill_circle(c, cx, cy, r, ...) given the exact same
-    # arguments.
+    # AA sampling treats pixel (px,py) as centered AT (px,py), not as
+    # a unit square with (px,py) at its top-left corner: the corner
+    # convention would draw a circle shifted half a pixel from
+    # fill_circle(c, cx, cy, r, ...) given the exact same arguments.
     #
     # This checks only pixels deep in the interior, not the hard
     # disk's extreme boundary points (like (3,1), the exact top of
@@ -187,12 +185,11 @@ def test_fill_circle_aa_agrees_with_hard_edged_on_interior_pixels() raises:
 
 
 def test_fill_circle_aa_respects_translucent_input_color() raises:
-    # Regression test for a real bug caught during development: the
-    # coverage-to-alpha formula used a hardcoded 255 instead of the
-    # caller's color.a, so a fully-covered pixel with e.g. alpha=128
-    # rendered fully OPAQUE (raw color.r, no blending) instead of the
-    # requested translucency. Invisible in every prior test because
-    # they all used opaque colors, where coverage*255 == coverage*a.
+    # The coverage-to-alpha formula has to scale by the caller's
+    # color.a, not a hardcoded 255: with alpha=128 a fully-covered
+    # pixel must blend, not render as the raw opaque color. An
+    # opaque-color test can't catch this -- coverage*255 ==
+    # coverage*color.a there.
     var c = Canvas(7, 7, Color(0, 0, 0))
     fill_circle_aa(c, 3, 3, 2, Color(200, 0, 0, 128))
     var center = c.get_pixel(3, 3)  # fully covered
@@ -225,9 +222,9 @@ def test_draw_circle_aa_partial_coverage_matches_hand_computed_value() raises:
 
 
 def test_draw_circle_aa_respects_translucent_input_color() raises:
-    # Same regression category as fill_circle_aa's: a fully-covered
-    # ring pixel with a translucent input color must show the
-    # single-blend value, not the raw (unblended) color.
+    # Same property as fill_circle_aa's: a fully-covered ring pixel
+    # with a translucent input color must show the single-blend value,
+    # not the raw (unblended) color.
     var c = Canvas(9, 9, Color(0, 0, 0))
     draw_circle_aa(c, 4, 4, 3, Color(200, 0, 0, 128))
     var p = c.get_pixel(4, 1)  # fully inside the ring

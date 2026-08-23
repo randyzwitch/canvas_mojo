@@ -1,10 +1,9 @@
 """Native TrueType (`sfnt`/`glyf`) font file parser -- reads a font
 file's own binary tables directly (table directory, `head`, `maxp`,
-`hhea`, `hmtx`, `cmap`, `glyf`, `loca`) rather than linking against
-FreeType. Same "translate the real spec faithfully" methodology this
-package already used for FreeType's own `FT_Outline_Decompose`
-(`glyph_outline.mojo`) and zlib's own `puff.c` (`io/deflate.mojo`):
-every field offset and decode algorithm below was transcribed directly
+`hhea`, `hmtx`, `cmap`, `glyf`, `loca`) rather than linking against a
+font library. Same "translate the real spec faithfully" methodology
+this package uses for zlib's own `puff.c` (`io/deflate.mojo`): every
+field offset and decode algorithm below was transcribed directly
 from Microsoft's OpenType 1.9.1 specification (learn.microsoft.com/
 typography/opentype/spec/{otff,head,maxp,hhea,hmtx,cmap,loca,glyf}),
 not guessed at or reconstructed from memory -- and cross-checked
@@ -46,13 +45,10 @@ pattern (see `io/png.mojo`'s own docstring for the precedent):
   common xy-offset mode.
 
 Real, non-hypothetical fact this module's own test file locks in, not
-just asserted: parsing DejaVu Sans natively gives `unitsPerEm=2048`,
-`numGlyphs=6253`, `ascender=1901`, `descender=-483` -- the exact same
-values already independently verified against FreeType itself
-elsewhere in this codebase (`glyph_outline.mojo`'s own module
-docstring), not a coincidence: both are reading the same real font
-file's own real data, just through two completely different
-implementations.
+just asserted: parsing DejaVu Sans gives `unitsPerEm=2048`,
+`numGlyphs=6253`, `ascender=1901`, `descender=-483` -- the same values
+a Python oracle reads out of that same file's own bytes
+independently.
 """
 
 from canvas_mojo.path import Path
@@ -143,8 +139,8 @@ struct RawGlyphOutline(Movable):
         for simple glyphs, but scanning the (already fully assembled,
         post-transform) point list works uniformly for composite glyphs
         too, with no extra table reads or format-specific cases needed.
-        A glyph with no points (whitespace) returns all zeros, matching
-        FreeType's own convention for an empty outline's metrics.
+        A glyph with no points (whitespace) returns all zeros, the
+        conventional metrics for an empty outline.
         """
         if len(self.points_x) == 0:
             return (0, 0, 0, 0)
@@ -187,12 +183,10 @@ struct TTFFace(Movable):
     var _hmtx_offset: Int
     var _pixel_size: Int
     """-1 until `set_pixel_size` is called -- deliberately not a valid
-    size by default, the same "no unset-size default to silently trust"
-    stance this codebase's now-removed FreeType FFI binding needed for
-    the same reason (confirmed via probe there that an unset size
-    doesn't crash on its own, it just silently returns a small,
-    wrong-looking size instead -- the same trap worth guarding against
-    here, not a new concern this module introduces).
+    size by default. A rasterizer that defaults an unset size doesn't
+    fail loudly; it silently measures and draws at a small,
+    wrong-looking one, so every read of this goes through `scale()`,
+    which raises instead.
     """
 
     def __init__(out self, path: String) raises:
@@ -271,9 +265,8 @@ struct TTFFace(Movable):
     def scale(self) raises -> Float64:
         """Raw font-design-units -> pixels conversion factor at this
         face's own active pixel size (`pixel_size / units_per_em`) --
-        raises if `set_pixel_size` was never called, the same "don't
-        silently trust an unset size" stance this codebase's
-        now-removed FreeType FFI binding took for the same reason.
+        raises if `set_pixel_size` was never called, rather than
+        silently trusting an unset size (see `_pixel_size`).
         """
         if self._pixel_size < 0:
             raise Error(
@@ -576,15 +569,15 @@ def _native_py(pen_y: Float64, raw: Int, scale: Float64) -> Float64:
 def _decompose_contour_native(
     outline: RawGlyphOutline, first: Int, last: Int, mut path: Path, pen_x: Float64, pen_y: Float64, scale: Float64
 ) raises:
-    """Same algorithm this codebase's now-removed FreeType FFI binding
-    used (itself a direct translation of FreeType's own
-    `FT_Outline_Decompose`), adapted to this module's plain-`List`-based
-    `RawGlyphOutline` instead of FreeType's pointer-based `FT_Outline`
-    -- and simplified accordingly: `glyf` outlines are always quadratic
-    (on-curve/off-curve only), never cubic, so the CUBIC branch that
-    algorithm needs (FreeType's outline API is format-agnostic; it can
-    hand back cubic control points for CFF-outline fonts) simply never
-    applies to native TrueType parsing and is omitted, not forgotten.
+    """A direct translation of FreeType's own `FT_Outline_Decompose`
+    algorithm, against this module's plain-`List`-based
+    `RawGlyphOutline` rather than a pointer-based `FT_Outline` -- and
+    simplified accordingly: `glyf` outlines are always quadratic
+    (on-curve/off-curve only), never cubic, so that algorithm's CUBIC
+    branch (needed only because FreeType's outline API is
+    format-agnostic and can hand back cubic control points for
+    CFF-outline fonts) never applies here and is omitted, not
+    forgotten.
     """
     if last < first:
         return

@@ -1,48 +1,39 @@
 """Glyph outlines and metrics, backed by the native TrueType parser
-(`ttf.mojo`) -- job 2 of the original 4-job breakdown (font discovery /
-glyph resolution & metrics / hinting / rasterization) for removing
-`canvas_mojo/text/render.mojo`'s Cairo dependency, later extended to
-remove the FreeType dependency that same breakdown originally replaced
-Cairo with. `font_discovery.mojo` (job 1) resolves a family/slant/
-weight to a file; `ttf.mojo` parses that file's own binary tables
-directly. This module is the thin adapter between the two: it exposes
-the same `LineMetrics`/`GlyphMetrics`/`face_line_metrics`/`has_glyph`/
-`glyph_metrics`/`glyph_path` surface `render.mojo` already calls,
-implemented against `ttf.mojo`'s own `TTFFace` instead of FreeType's
-`FT_Face` -- no FFI, no C struct layouts, no linked library at all in
-this module anymore.
+(`ttf.mojo`) -- job 2 of the three text-rendering jobs (font discovery
+/ glyph resolution & metrics / rasterization). `font_discovery.mojo`
+resolves a family/slant/weight to a file; `ttf.mojo` parses that
+file's own binary tables directly. This module is the thin adapter
+between the two: it exposes the `LineMetrics`/`GlyphMetrics`/
+`face_line_metrics`/`has_glyph`/`glyph_metrics`/`glyph_path` surface
+`render.mojo` calls, implemented against `ttf.mojo`'s own `TTFFace` --
+no FFI, no C struct layouts, no linked library in this module at all.
 
-No hinting (job 3) here either, by construction: `ttf.mojo` never
-implements FreeType's own hinting bytecode interpreter (a large,
-separate subsystem -- see that module's own docstring for why this is
-a deliberate scope decision, not an oversight). Every glyph still
-renders through this package's own `fill_path_aa`'s supersampled
-coverage AA regardless (job 4, already built), which is what makes
-unhinted outlines look correct at the sizes a chart actually uses --
-confirmed directly against real values, not assumed (see this module's
-own verification paragraph below).
+No hinting, by construction: `ttf.mojo` does not implement a hinting
+bytecode interpreter (a large, separate subsystem -- see that module's
+own docstring for why this is a deliberate scope decision, not an
+oversight). Every glyph renders through this package's own
+`fill_path_aa`'s supersampled coverage AA regardless, which is what
+makes unhinted outlines look correct at the sizes a chart actually
+uses -- confirmed directly against real values, not assumed.
 
-Verified against the exact same real values already locked in for the
-FreeType-backed version of this module before this file replaced it:
-loading DejaVu Sans and reading `units_per_EM`/`num_glyphs`/`ascender`/
-`descender` gives 2048/6253/1901/-483, and capital "I" decomposes to
-exactly 1 contour, 4 points, all on-curve -- both facts independently
-re-confirmed via `ttf.mojo`'s own from-scratch Python-oracle
-cross-check (see that module's own docstring), not just carried over
-on faith. Glyph metrics (advance/bearing/width/height) do differ
-slightly from FreeType's own hinted values for the same glyph at the
-same size -- a real, understood, expected difference (FreeType applies
-its own default hinting/rounding even without an explicit "no hinting"
-flag; this module deliberately never does), not a regression -- see
-tests/test_glyph_outline.mojo's own docstring for the exact numbers
-and how each was re-measured (not guessed) before being locked in.
+Verified against real font values: loading DejaVu Sans and reading
+`units_per_EM`/`num_glyphs`/`ascender`/`descender` gives
+2048/6253/1901/-483, and capital "I" decomposes to exactly 1 contour,
+4 points, all on-curve -- both facts confirmed via `ttf.mojo`'s own
+from-scratch Python-oracle cross-check (see that module's own
+docstring). Glyph metrics (advance/bearing/width/height) differ
+slightly from the values a hinting rasterizer such as FreeType
+produces for the same glyph at the same size -- a real, understood,
+expected difference (FreeType applies its own default hinting/rounding
+even without an explicit "no hinting" flag; this module deliberately
+never does) -- see tests/test_glyph_outline.mojo's own docstring for
+the exact numbers and how each was measured before being locked in.
 
-FreeType's own outline coordinate space has y increasing upward (the
+TrueType's own outline coordinate space has y increasing upward (the
 same PDF/PostScript/font-design convention geometry.mojo's own
-docstring already describes for data space generally); `ttf.mojo`'s
-`outline_to_path` already applies the same y-flip converting to this
-package's own y-down raster convention, so this module doesn't need to
-repeat that logic.
+docstring describes for data space generally); `ttf.mojo`'s
+`outline_to_path` applies the y-flip converting to this package's own
+y-down raster convention, so this module doesn't repeat that logic.
 """
 
 from canvas_mojo.path import Path
@@ -51,11 +42,10 @@ from canvas_mojo.text.ttf import TTFFace, outline_to_path
 
 
 struct LineMetrics(ImplicitlyCopyable, Movable):
-    """This face's own current-size line metrics, in pixels -- the
-    native equivalent of Cairo's `font_extents().height`. `ascender`/
-    `descender` are signed (descender negative, matching FreeType's
-    own convention, itself matching `hhea`'s own convention); `line_height`
-    is the recommended baseline-to-baseline distance for stacked lines.
+    """This face's own current-size line metrics, in pixels.
+    `ascender`/`descender` are signed (descender negative, matching
+    `hhea`'s own convention); `line_height` is the recommended
+    baseline-to-baseline distance for stacked lines.
     """
 
     var ascender: Float64
@@ -83,8 +73,7 @@ def face_line_metrics(face: TTFFace) raises -> LineMetrics:
 
 struct GlyphMetrics(ImplicitlyCopyable, Movable):
     """One glyph's own layout-relevant measurements, in pixels, at
-    whatever size was last set -- the native equivalent of a single
-    character's contribution to Cairo's `text_extents()`.
+    whatever size was last set.
     """
 
     var advance: Float64
@@ -130,10 +119,10 @@ def glyph_metrics(mut face: TTFFace, codepoint: Int) raises -> GlyphMetrics:
     var x_max = bbox[2]
     var y_max = bbox[3]
 
-    # bearing_x/bearing_y/width/height follow FT_Glyph_Metrics' own
-    # convention exactly (the one this module's own callers, and its
-    # own pre-existing tests, are already written against): bearing_x
-    # is the ink bounding box's own left edge, bearing_y its top edge
+    # bearing_x/bearing_y/width/height follow FreeType's own
+    # FT_Glyph_Metrics convention exactly, which is what this module's
+    # own callers and tests are written against: bearing_x is the ink
+    # bounding box's own left edge, bearing_y its top edge
     # (relative to the baseline, y-up font-design-space sign), width/
     # height the bounding box's own extent -- all computed directly
     # from the decoded outline's real points (see `RawGlyphOutline.

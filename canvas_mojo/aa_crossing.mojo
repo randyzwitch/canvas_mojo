@@ -13,10 +13,7 @@ to import it from the other: `path.mojo` already imports *from*
 `canvas_mojo.shapes.polygon_fill` (real drawing primitives, not just
 this), so `canvas_mojo.shapes.polygon_fill` importing `_AACrossing`
 back from `path.mojo` would be a genuine cycle (path -> polygon_fill
--> path), not just an inconvenience -- which is why this struct and
-its sort used to be duplicated verbatim in both files instead
-(byte-identical logic, only the surrounding docstrings differed)
-rather than shared. This module has no import of its own from either,
+-> path), not just an inconvenience. This module imports from neither,
 so both can depend on it with no cycle at all: polygon_fill ->
 aa_crossing, path -> aa_crossing, path -> polygon_fill, a clean DAG.
 
@@ -24,11 +21,10 @@ Insertion sort, not a general-purpose one: one sub-scanline's own
 crossing count is always small (a handful, not the whole polygon's/
 path's point count) -- the same reasoning
 `canvas_mojo.shapes.polygon_fill`'s own `_spans_from_crossings` (a
-third, still-separate copy of this same insertion sort, over
-`_Crossing`/`Int` rather than `_AACrossing`/`Float64` -- not folded in
-here, since unifying all three into one generic sort is a bigger,
-separate change from just resolving this file's own two-copy
-duplication) already relies on for its own identical choice.
+separate copy of this same insertion sort, over `_Crossing`/`Int`
+rather than `_AACrossing`/`Float64`) relies on for its own identical
+choice. Unifying the two into one generic sort would be a larger
+change than sharing this struct was.
 """
 
 

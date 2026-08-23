@@ -7,13 +7,10 @@ fill or stroke logic here.
 Coordinates are Float64 (FPoint), not Point's integer pixels: a curve
 control point off by a fraction of a pixel changes the flattened
 curve's visible shape, unlike a straight line's endpoints, which only
-ever needed whole pixels. Quad/cubic curve flattening uses a fixed
-step count per segment, not adaptive subdivision -- the same choice,
-for the same reason, fonts/raster.mojo made for TrueType's quadratic
-curves before this package had its own general path type (see the
-wiki for that history): good enough at the sizes this exists for, and
-adaptive subdivision is real, deferrable complexity with no concrete
-need yet. arc_to is the one exception: it reuses canvas_mojo.shapes.
+need whole pixels. Quad/cubic curve flattening uses a fixed step count
+per segment, not adaptive subdivision: good enough at the sizes this
+exists for, and adaptive subdivision is real, deferrable complexity
+with no concrete need yet. arc_to is the one exception: it reuses canvas_mojo.shapes.
 arcs' own _arc_points helper (radius-proportional step count), the
 same exact circle-math sampling draw_arc/fill_arc/fill_ring_sector
 already use -- a fixed step count doesn't generalize across a
@@ -22,9 +19,9 @@ for a Bezier control-point-driven curve, see _arc_points's own
 docstring.
 
 A path can hold multiple sub-paths (more than one move_to). fill_path
-combines every sub-path's scanline crossings together (even-odd),
-exactly the multi-contour technique fonts/raster.mojo used for
-TrueType glyphs' counters -- so an outer shape plus an inner "hole"
+combines every sub-path's scanline crossings together (even-odd), the
+same multi-contour technique TrueType glyphs' own counters need -- so
+an outer shape plus an inner "hole"
 sub-path correctly punches a hole, the same way 'o' or 'A' need their
 inner contour to combine with the outer one. stroke_path/stroke_path_aa
 instead draw each sub-path independently, closed (draw_polygon) or
@@ -323,9 +320,8 @@ def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
     fill_polygon does inline (see canvas_mojo.shapes.polygon_fill); combining across
     ALL sub-paths here (not resetting per sub-path) is what makes
     hole-punching and (with FillRule.NONZERO) union-filling work --
-    the same multi-contour technique fonts/raster.mojo used for
-    TrueType glyphs' counters, before this package had its own general
-    path type (see the wiki for that history).
+    the same multi-contour technique TrueType glyphs' own counters
+    need.
     """
     var crossings = List[_Crossing]()
     for sp_idx in range(len(subpaths)):
@@ -472,10 +468,10 @@ def fill_path_aa(
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
     fill_polygon_aa is fill_polygon's (see that function's own
-    docstring in canvas_mojo.shapes.polygon_fill, the model this originally followed):
-    for every pixel near the path's flattened outline, samples an NxN
-    sub-pixel grid and turns the coverage fraction into that pixel's
-    alpha. Each output pixel is visited exactly once.
+    docstring in canvas_mojo.shapes.polygon_fill): for every pixel
+    near the path's flattened outline, samples an NxN sub-pixel grid
+    and turns the coverage fraction into that pixel's alpha. Each
+    output pixel is visited exactly once.
 
     Same multi-sub-path hole-punching (and, with FillRule.NONZERO,
     union-filling) fill_path itself has -- every sub-path's winding

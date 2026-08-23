@@ -1,35 +1,24 @@
-"""Text rendering -- once the one place `canvas` reached outside the
-stdlib, now fully native: font matching (fontconfig, `font_discovery.
-mojo`) is this module's only remaining direct FFI dependency; glyph
-outlines/metrics (this package's own TrueType parser, `ttf.mojo`, via
-`glyph_outline.mojo`) and rasterization (this package's own
-`fill_path_aa`, `path.mojo`) are both direct, hand-verified code, not
-wrapped third-party libraries. `third_party/cairo_mojo` is no longer a
-dependency of this module -- see the wiki's `text.mojo` entry for the
-earlier from-scratch TrueType exploration this supersedes a second
-time, and font_discovery.mojo's own docstring for the three jobs (font
-discovery / glyph resolution & metrics / rasterization) this
-completes. This native path is unhinted -- see ttf.mojo's own module
-docstring for what that means for exact glyph metrics relative to the
-FreeType-hinted values this module used to produce -- and rasterization
-was already built for other shapes before text needed it.
+"""Text rendering, natively implemented: font matching (fontconfig,
+`font_discovery.mojo`) is this module's only direct FFI dependency;
+glyph outlines/metrics come from this package's own TrueType parser
+(`ttf.mojo`, via `glyph_outline.mojo`) and rasterization from this
+package's own `fill_path_aa` (`path.mojo`). See font_discovery.mojo's
+own docstring for the three jobs (font discovery / glyph resolution &
+metrics / rasterization) this completes. The glyph path is unhinted --
+see ttf.mojo's own module docstring for what that means for exact
+glyph metrics.
 
-Removing Cairo also removes a whole category of workaround code that
-used to live here: no scratch ARGB32 surface, no premultiply/
-unpremultiply dance, no `unsafe_data_ptr()` boundary-garbage bug to
-route around, no `as_c_string_slice()` String-marshaling bug to route
-around either. Glyphs fill directly onto the target `Canvas` through
-the same `fill_path_aa` every other filled shape in this package uses,
-via the same `set_pixel()` blending path -- translucent text composites
-correctly for the same reason translucent fills always have here, not
-a text-specific mechanism.
+Glyphs fill directly onto the target `Canvas` through the same
+`fill_path_aa` every other filled shape in this package uses, via the
+same `set_pixel()` blending path -- translucent text composites
+correctly for the same reason translucent fills do, not a
+text-specific mechanism.
 
 `draw_text`'s (x, y) is the text baseline's left end for LEFT
 alignment -- matching every mainstream text API's own convention for
-"where text goes," kept as the anchor's meaning rather than inventing
-a top-left-corner convention like fill_rect's. CENTER/RIGHT shift each
-line's own horizontal position relative to that same anchor -- see
-TextAlign.
+"where text goes," rather than a top-left-corner convention like
+fill_rect's. CENTER/RIGHT shift each line's own horizontal position
+relative to that same anchor -- see TextAlign.
 
 Rotation and multi-line share one code path with the plain single-
 line case, not three: `_layout_block` (measurement) and draw_text's
@@ -37,12 +26,11 @@ own render pass both walk each line's glyphs from a shared, anchor-
 relative local layout; every glyph's own local pen position (and its
 outline, via `glyph_outline.glyph_path`) gets rotated by the same
 angle around the shared `(x, y)` anchor and translated into place in
-one pass (`_place_glyph_path`), rather than Cairo's own approach of
-setting a context-wide transform before drawing. With one line and
-rotation=0.0, cos=1/sin=0 leaves every point unchanged, so this
-reduces exactly to what a simpler single-purpose implementation would
-have done -- confirmed by direct comparison, not just argued (see
-tests/test_text.mojo).
+one pass (`_place_glyph_path`), rather than setting a context-wide
+transform before drawing. With one line and rotation=0.0, cos=1/sin=0
+leaves every point unchanged, so this reduces exactly to what a
+simpler single-purpose implementation would do -- confirmed by direct
+comparison, not just argued (see tests/test_text.mojo).
 
 Each line's own codepoints go through `bidi.visual_order` before
 either measurement or drawing ever sees them (`_visual_codepoints`,
@@ -61,31 +49,28 @@ Every glyph also goes through font *fallback*, not just the single
 family the caller requested (`_resolve_glyph`): if the requested
 family's face has no real glyph for a codepoint (`glyph_outline.
 has_glyph` -- distinguishing an actual glyph from the font's own
-".notdef" placeholder, TrueType glyph index 0), a different font is resolved for that one
-character via `font_discovery.resolve_font_file_for_char`, which
-constrains fontconfig's own match to a font that actually contains
-it -- the same real fallback mechanism system text stacks already
-rely on, not a hand-rolled substitute. This matters concretely for a
-package with no bundled fonts of its own: a CJK/Cyrillic/symbol
-character requested under a Latin-only family renders via whatever
-font on the system actually has it, if one is installed, instead of
-the requested font's own generic empty-box placeholder -- confirmed directly via
-probe (a font missing a glyph falls back to one that has it; a font
-that already has the glyph is left alone; a character genuinely
-missing from every installed font degrades gracefully to fontconfig's
-own best-effort match, not an error). Resolved fallback faces are
-cached across calls the same as the primary face is -- see
-_resolve_glyph's and font_cache.mojo's own docstrings.
+".notdef" placeholder, TrueType glyph index 0), a different font is
+resolved for that one character via `font_discovery.
+resolve_font_file_for_char`, which constrains fontconfig's own match
+to a font that actually contains it -- the same real fallback
+mechanism system text stacks rely on, not a hand-rolled substitute.
+This matters concretely for a package with no bundled fonts of its
+own: a CJK/Cyrillic/symbol character requested under a Latin-only
+family renders via whatever font on the system actually has it, if one
+is installed, instead of the requested font's own generic empty-box
+placeholder -- confirmed directly via probe (a font missing a glyph
+falls back to one that has it; a font that already has the glyph is
+left alone; a character genuinely missing from every installed font
+degrades gracefully to fontconfig's own best-effort match, not an
+error). Resolved fallback faces are cached across calls the same as
+the primary face is -- see _resolve_glyph's and font_cache.mojo's own
+docstrings.
 
-Public FontSlant/FontWeight (re-exported here from font_discovery.mojo)
-replace what used to be cairo_mojo's own identically-shaped types --
-same NORMAL/ITALIC/OBLIQUE and NORMAL/BOLD values, just no longer
-imported from a third-party binding. Any existing call site that did
-`from cairo_mojo import FontSlant, FontWeight` needs to switch to
-`from canvas_mojo.text.font_discovery import FontSlant, FontWeight` (or
-`from canvas_mojo.text.render import FontSlant, FontWeight` -- both work, the
-same re-export convenience TextAlign's own docstring already
-established for its move into text_align.mojo).
+FontSlant/FontWeight are defined in font_discovery.mojo and
+re-exported here, so both `from canvas_mojo.text.font_discovery import
+FontSlant, FontWeight` and `from canvas_mojo.text.render import
+FontSlant, FontWeight` work -- the same re-export convenience
+TextAlign has for its home in text_align.mojo.
 """
 
 from std.math import cos, sin
@@ -222,9 +207,7 @@ def _load_sized_face(
 
 struct _LineMetrics(ImplicitlyCopyable, Movable):
     """One line's full measurement -- ink bearing/width/height plus
-    total cursor advance, the native equivalent of Cairo's own
-    `TextExtents` (x_bearing/y_bearing/width/height/x_advance).
-    `advance`, not `width`, is what TextAlign's CENTER/RIGHT actually
+    total cursor advance. `advance`, not `width`, is what TextAlign's CENTER/RIGHT actually
     center/right-align against (see TextMetrics' own docstring) --
     kept as its own field here rather than folded into _LineLayout,
     since _LineLayout itself never needs to remember it past the
@@ -334,9 +317,8 @@ def _measure_line(
     mut cache: FontCache,
 ) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
-    all zero for a blank/whitespace-only line) and total advance,
-    native equivalent of Cairo's own `text_extents()` -- walks every
-    Unicode codepoint (in bidi visual order -- see _visual_codepoints),
+    all zero for a blank/whitespace-only line) and total advance --
+    walks every Unicode codepoint (in bidi visual order -- see _visual_codepoints),
     accumulating each glyph's own advance and combining every glyph
     that actually has ink into one tight bbox. `family`/`slant`/
     `weight`/`size`/`cache` are only needed for _resolve_glyph's own
@@ -608,9 +590,8 @@ def _place_glyph_path(local_path: Path, c: Float64, s: Float64, anchor_x: Float6
     anchor-relative, unrotated space via glyph_outline.glyph_path) by
     the block's own rotation and translate by draw_text's `(x, y)`
     anchor -- composes the whole text block's rotation with its anchor
-    position in one pass, the native equivalent of Cairo's own
-    translate-then-rotate context transform (see this module's own
-    docstring). Path has no public "map every point" API and this is
+    position in one pass (see this module's own docstring). Path has
+    no public "map every point" API and this is
     the only place that needs one -- reaches into Path.commands
     directly instead, the same established pattern svg.mojo's own SVG-
     emission code already uses for the identical reason.
@@ -685,7 +666,7 @@ def draw_text(
     space (glyph_outline.glyph_path) and placed into canvas space in
     one rotate-plus-translate pass (_place_glyph_path) before filling
     directly onto `canvas` via fill_path_aa -- no intermediate scratch
-    surface, unlike the Cairo-backed version this replaced.
+    surface.
 
     Resolves its own font fresh, twice (once for each of the two
     passes above) -- see measure_text's own docstring on the `cache=`

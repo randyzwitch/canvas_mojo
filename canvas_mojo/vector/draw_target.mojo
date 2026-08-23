@@ -42,19 +42,13 @@ top of this trait would instead collect text as a `List` of plain data
 inline through this trait, then have each backend draw that list its
 own way, outside the generic path.
 
-`canvas_mojo.text` used to depend on `cairo_mojo`, which was a second,
-compile-time reason this exclusion mattered (importing it required an
-extra `-I` search path, and forced that dependency onto every `Canvas`
-user transitively, confirmed directly: a `Canvas` method that called
-`canvas_mojo.text.draw_text` broke compilation for any file merely
-importing `Canvas`, text or no text, since Mojo resolves a struct's
-entire method surface eagerly, not lazily per call). `canvas_mojo.text`
-is fully native now (a single fontconfig FFI call for font discovery,
-no Cairo, no FreeType, no extra `-I` path -- see its own module
-docstring) and no longer forces anything
-onto callers who don't use it, so that second reason is gone; the
-raster-vs-markup mechanism difference above is reason enough to keep
-this exclusion on its own.
+Excluding text also keeps `canvas_mojo.text`'s own imports off every
+`Canvas` user: Mojo resolves a struct's entire method surface eagerly,
+not lazily per call, so a `Canvas` method calling
+`canvas_mojo.text.draw_text` would pull that module's dependency chain
+into any file merely importing `Canvas`, text or no text (confirmed
+directly). That's a secondary consideration -- the raster-vs-markup
+mechanism difference above is reason enough on its own.
 
 Conformance is nominal, not structural (Mojo's own trait rule, not a
 choice made here) -- `Canvas` (`canvas_mojo/buffer.mojo`) and `SvgCanvas`

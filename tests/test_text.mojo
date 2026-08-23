@@ -25,22 +25,14 @@ being locked in here:
     between calls -- each one resolves and loads its own font face
     fresh)
 
-Confirmed by direct comparison, not assumed: this entire suite passed
-unchanged (structural checks, ink-bbox cross-checks, no-op edge cases,
-the lot) across two real rewrites -- first from wrapping Cairo to a
-native fontconfig+FreeType+fill_path_aa pipeline, later from that to
-fully native TrueType parsing (`ttf.mojo`, no FreeType either). The
-one exception both times was `test_measure_text_matches_known_glyph_
-extents`'s own hand-locked exact pixel values, which *did* need
-updating on the FreeType-removal rewrite specifically: FreeType's
-default hinting rounds thin stems (like "I"'s own single vertical
-stroke) to whole pixels for on-screen crispness, and `ttf.mojo`
-deliberately never hints (see that module's own docstring for why) --
-a real, understood, expected difference in the *exact* number, not a
-regression in what the pipeline actually does. Every other test here
-being insensitive to that same difference is exactly what "properties
-this module is responsible for, not exact rasterizer output" (see
-above) is supposed to buy.
+Only `test_measure_text_matches_known_glyph_extents` asserts exact
+hand-locked pixel values; those depend on `ttf.mojo`'s unhinted
+metrics specifically (a hinting rasterizer rounds thin stems like
+"I"'s own single vertical stroke to whole pixels, and `ttf.mojo`
+deliberately never hints -- see that module's own docstring for why).
+Everything else here tests properties rather than exact rasterizer
+output, which is what keeps the suite meaningful without pinning it to
+one rasterizer's rounding.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- true of most Linux/macOS systems, but not guaranteed
@@ -121,10 +113,9 @@ def test_empty_string_is_noop() raises:
 
 
 def test_whitespace_only_is_noop() raises:
-    # Confirmed via probe: Cairo's own text_extents(" ") reports
-    # width=0, height=0 -- no ink, just an advance -- so this hits the
-    # same early-return path as the empty string, not a 1-pixel-wide
-    # sliver.
+    # Confirmed via probe: measuring " " reports width=0, height=0 --
+    # no ink, just an advance -- so this hits the same early-return
+    # path as the empty string, not a 1-pixel-wide sliver.
     var c = Canvas(40, 40, BG)
     draw_text(c, 5, 20, "   ", FG, 24.0)
     _assert_canvas_untouched(c, BG, "whitespace-only drew something")
@@ -138,8 +129,9 @@ def test_alpha_zero_is_noop() raises:
 
 def test_opaque_glyph_has_an_exact_full_coverage_pixel() raises:
     # A large enough solid vertical stroke has interior pixels far
-    # enough from any edge that Cairo's AA gives them full coverage
-    # (alpha == 255), which set_pixel writes through unblended -- so
+    # enough from any edge that fill_path_aa's coverage sampling gives
+    # them full coverage (alpha == 255), which set_pixel writes through
+    # unblended -- so
     # at least one pixel must equal FG exactly, not just "close to".
     var c = Canvas(120, 120, BG)
     draw_text(c, 10, 90, "I", FG, 60.0)
@@ -224,8 +216,8 @@ def test_draw_text_is_deterministic() raises:
 
 def test_measure_text_matches_known_glyph_extents() raises:
     # Locked-in values confirmed by probe against the native, unhinted
-    # ttf.mojo path specifically (see this file's own module docstring
-    # for why these differ from the old FreeType-hinted 3.0/18.0/~7.0):
+    # ttf.mojo path (see this file's own module docstring for why
+    # these differ from a hinting rasterizer's values):
     # "I" in Sans at size 24 has ink width=2.3671875, height=
     # 17.49609375, advance=7.078125 -- all exact (raw font-design-unit
     # counts times a power-of-two-denominator fraction, the same
@@ -239,16 +231,12 @@ def test_measure_text_matches_known_glyph_extents() raises:
 
 
 def test_measure_text_long_string_is_not_empty() raises:
-    # Regression test for a real, confirmed bug (see text.mojo's own
-    # docstring): cairo_mojo's Context.text_extents(text: String)
-    # silently reports width=height=0 once a String crosses ~20 bytes
-    # -- but *only* for a runtime-constructed String, not a literal;
-    # a bare string literal passed directly (even a long one) never
-    # triggered it, which is exactly what made this bug so easy to
-    # miss originally. Building this one via concatenation, not typing
-    # it as one literal, is what actually exercises the bug -- a
-    # version of this test using a literal here would silently test
-    # nothing, the same mistake made (and caught) once already.
+    # A long, runtime-constructed String (built by concatenation, not
+    # typed as one literal) must measure nonzero. The two are not
+    # interchangeable at the String-marshaling level -- a literal can
+    # take a different path than a runtime-built value of the same
+    # contents -- so a version of this test using a literal here would
+    # silently exercise less than it looks like it does.
     var built = String("jumps over") + String(" the lazy dog")
     var m = measure_text(built, 22.0)
     assert_true(m.width > 0.0)
@@ -257,11 +245,11 @@ def test_measure_text_long_string_is_not_empty() raises:
 
 
 def test_draw_text_long_single_line_renders_ink() raises:
-    # Same regression category as the measure_text one above, but for
-    # the draw_text/_show_text path specifically -- draw_text's own
+    # The same long-runtime-String property as the measure_text test
+    # above, but for the draw_text path specifically -- draw_text's own
     # internal sizing pass uses exactly this length of string in its
-    # "any_ink" check, so a regression here would make the whole call
-    # silently no-op, not just mismeasure.
+    # "any_ink" check, so a failure here silently no-ops the whole
+    # call rather than just mismeasuring.
     var c = Canvas(320, 60, BG)
     draw_text(c, 10, 40, "jumps over the lazy dog", FG, 22.0)
     var bbox = _ink_bbox(c, BG)
@@ -406,7 +394,7 @@ def test_measure_text_block_matches_rendered_ink_unrotated() raises:
     # x=[65,72], y=[55,99]; measure_text_block predicts an
     # anchor-relative box landing at the same position, off by at most
     # a pixel or two from floor-rounding + AA fringe (the same slop
-    # draw_text's own pixel placement has relative to Cairo's ink
+    # draw_text's own pixel placement has relative to measured ink
     # extents), not because the shared layout math itself is
     # approximate.
     var anchor_x = 60

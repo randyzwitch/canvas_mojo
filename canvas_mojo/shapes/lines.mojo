@@ -440,10 +440,10 @@ def _draw_polyline_core_aa(
             continue  # no segment reaches this row at all
 
         # Bucket each row candidate into every column its own (already
-        # half-width-expanded) x-range actually covers -- not, as an
-        # earlier version of this function did, rescanning the entire
-        # row_candidates list for every pixel column in [min_x, max_x].
-        # That rescan made a wide, densely-populated row (many
+        # half-width-expanded) x-range actually covers, rather than
+        # rescanning the entire row_candidates list for every pixel
+        # column in [min_x, max_x]. Such a rescan would make a wide,
+        # densely-populated row (many
         # segments, each near-vertical relative to pixel width -- a
         # real, not pathological, shape for a noisy line-chart series
         # sampled far denser than the canvas is wide) cost O(row_width
@@ -516,12 +516,11 @@ def _draw_polyline_core_aa(
                         var d2 = ddx * ddx + ddy * ddy
                         # A segment only becomes a candidate once it's
                         # both close enough AND on-dash at this exact
-                        # projected point -- equivalent to the old
-                        # unconditional-min-then-compare-to-hw2 when
-                        # dashes is empty (every segment is always
-                        # on-dash then), since a global min <= hw2 can
-                        # only come from a segment that itself has
-                        # d2 <= hw2.
+                        # projected point -- with no dash pattern every
+                        # segment is always on-dash, so this reduces to
+                        # a plain nearest-segment-within-hw2 test,
+                        # since a global min <= hw2 can only come from
+                        # a segment that itself has d2 <= hw2.
                         if d2 <= hw2:
                             var sample_distance = seg_start_distance[seg] + t * seg_length[seg]
                             if _is_dash_on(sample_distance, dashes, dash_offset):
@@ -538,9 +537,8 @@ def _draw_polyline_core_aa(
         # Empty every bucket this row actually touched, ready for the
         # next row to reuse -- col_candidates itself (the outer List)
         # is never reallocated across rows, only the small List[Int]s
-        # it holds get cleared, same "reuse, don't reallocate" pattern
-        # row_candidates/candidates (the old per-pixel buffer) already
-        # used above.
+        # it holds get cleared, the same "reuse, don't reallocate"
+        # pattern row_candidates uses above.
         for px in range(row_min_px, row_max_px + 1):
             col_candidates[px - min_x].clear()
 

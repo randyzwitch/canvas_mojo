@@ -60,10 +60,10 @@ def test_draw_ellipse_matches_hand_traced_points() raises:
 
 
 def test_draw_ellipse_does_not_double_blend_degenerate_points() raises:
-    # Regression test for the same category of bug just fixed in
-    # draw_circle: draw_ellipse's region 1 starts at x==0 and region 2
-    # ends at y==0, both real (not just theoretical) cases here, where
-    # two of the 4 symmetric points collapse onto the same pixel.
+    # The same degenerate-symmetry property draw_circle's own test
+    # covers: draw_ellipse's region 1 starts at x==0 and region 2 ends
+    # at y==0, both real (not just theoretical) cases here, where two
+    # of the 4 symmetric points collapse onto the same pixel.
     # Hand-verified via probe: all 4 axis extremes give the
     # single-blend value 100, not a double-blended 150.
     var c = Canvas(21, 15, Color(0, 0, 0))
@@ -164,7 +164,7 @@ def test_fill_ellipse_aa_partial_coverage_matches_hand_computed_values() raises:
 
 
 def test_fill_ellipse_aa_agrees_with_hard_edged_on_interior_pixels() raises:
-    # Same regression category as fill_circle_aa's: confirms the
+    # Same property as fill_circle_aa's: confirms the
     # pixel-centered-at-(px,py) sampling convention (not a unit square
     # with (px,py) at its corner) by checking deep-interior pixels
     # agree exactly with the hard-edged fill_ellipse given identical

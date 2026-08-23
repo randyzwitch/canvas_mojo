@@ -128,13 +128,10 @@ def test_draw_line_aa_agrees_with_hard_edged_on_interior_pixels() raises:
 
 
 def test_draw_line_aa_respects_translucent_input_color() raises:
-    # Regression test for a real bug caught during development: the
-    # coverage-to-alpha formula used a hardcoded 255 instead of the
-    # caller's color.a, so a fully-covered pixel with e.g. alpha=128
-    # rendered fully OPAQUE (raw color.r, no blending at all) instead
-    # of respecting the requested translucency. Invisible in every
-    # prior test because they all happened to use opaque colors,
-    # where coverage*255 == coverage*color.a by coincidence.
+    # A fully-covered pixel must scale coverage by the caller's
+    # color.a, not by a hardcoded 255: with alpha=128 it has to blend,
+    # not render as the raw opaque color. Opaque-color tests can't
+    # catch this at all -- coverage*255 == coverage*color.a there.
     var c = Canvas(9, 3, Color(0, 0, 0))
     draw_line_aa(c, 1, 1, 7, 1, Color(200, 0, 0, 128))
     # deep interior, fully covered -> single-blend value, not raw 200
@@ -240,10 +237,9 @@ def test_draw_polyline_aa_joint_has_no_double_blend_hazard() raises:
     # An L-shape, same shape as the hard-edged joint test but through
     # the AA multi-segment coverage path. Two properties at once:
     #   1. Deep-interior, fully-covered points must show the
-    #      single-blend value (100) -- this is also the regression
-    #      check for the alpha bug: before the fix, a fully-covered
-    #      pixel used a hardcoded 255 instead of color.a and rendered
-    #      as raw, unblended 200.
+    #      single-blend value (100) -- also the check that coverage is
+    #      scaled by color.a rather than a hardcoded 255, which would
+    #      show up here as raw, unblended 200.
     #   2. The joint pixel (2,5), hand-verified via a 16-sample trace
     #      of the minimum-distance-to-either-segment test: 15/16
     #      covered -> alpha 120 -> single-blend value 94. A naive
@@ -308,9 +304,9 @@ def test_draw_line_dashed_matches_hand_traced_on_off_pixels() raises:
 
 
 def test_draw_line_no_dashes_is_unaffected() raises:
-    # The default (empty dashes) must draw a fully solid line, same
-    # as before this parameter existed -- a real regression risk given
-    # how much of _draw_line_core's internals changed to support this.
+    # The default (empty dashes) must draw a fully solid line -- the
+    # dash machinery inside _draw_line_core has to be a complete no-op
+    # when no pattern is passed.
     var c = Canvas(10, 1, BG)
     draw_line(c, 0, 0, 9, 0, FG)
     for x in range(10):

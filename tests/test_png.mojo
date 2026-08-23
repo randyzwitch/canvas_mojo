@@ -36,9 +36,9 @@ comptime TMP_PATH = "tests/_test_png_output.png"
 
 # Captured from this package's own write_png() output for a 2x1 canvas
 # with pixels (10,20,30) and (40,50,60), then independently verified
-# -- see this file's own module docstring for exactly how (this is not
-# hand-derived the way the old stored-block-era value was; real
-# LZ77+Huffman compression makes that impractical).
+# -- see this file's own module docstring for exactly how. Not
+# hand-derived byte by byte: real LZ77+Huffman compression makes that
+# impractical.
 comptime EXPECTED_HEX = "89504e470d0a1a0a0000000d49484452000000020000000108020000007b40e8dd0000000f49444154780163e01291d330b20100023700d3096df20d0000000049454e44ae426082"
 
 
@@ -115,9 +115,8 @@ def test_chunk_type_tags_appear_in_order() raises:
     # IDAT's own tag offset (37) doesn't depend on IDAT's own length --
     # only on IHDR's fixed 13-byte data size, which never changes --
     # so this stays the same regardless of how well IDAT's own payload
-    # compresses. IEND's offset does shift with IDAT's own length
-    # (real compression makes IDAT shorter than the old stored-block
-    # version was, see EXPECTED_HEX's own comment).
+    # compresses. IEND's offset does shift with IDAT's own length,
+    # which depends on how well the payload compresses.
     _assert_tag_at(buf, 37, "IDAT")
     _assert_tag_at(buf, 64, "IEND")
 

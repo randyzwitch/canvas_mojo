@@ -86,21 +86,21 @@ def _arc_bounds(
     which is why fill_ring_sector_aa below calls this twice (once per
     radius, both with `include_center=False`) and unions the two
     results, rather than calling it once with the outer radius alone.
-    That second part used to be a documented shortcut here ("the inner
-    arc's own bounds are always a subset of the outer arc's") --
-    false in general, not just an edge case: whenever [start_angle,
+    Taking the outer radius' bounds alone would be wrong: "the inner
+    arc's own bounds are always a subset of the outer arc's" is false
+    in general, not just in an edge case. Whenever [start_angle,
     end_angle] doesn't reach a cardinal angle, the *inner* arc's own
     extreme point (closest to the center, at whichever endpoint angle
     is nearest a cardinal angle) sits *closer to (cx, cy)* than
     anything on the outer arc reaches at that same extreme -- past the
-    outer arc's own bound in that direction, not inside it. Confirmed
-    both by direct counterexample (cx=270, cy=185, start_angle=-pi/2,
-    end_angle=-pi/6, outer_radius=148.5, inner_radius=74.25: the outer
-    arc's own y-range over that span is [36.5, 110.75], but the inner
-    endpoint at end_angle alone already sits at y=147.875, past that
-    range's own max) and by rendering a real ring sector with the old
-    single-radius bounds, which left exactly the rectangular notch
-    that counterexample predicts -- see this repo's issue #33.
+    outer arc's own bound in that direction, not inside it. Direct
+    counterexample: cx=270, cy=185, start_angle=-pi/2,
+    end_angle=-pi/6, outer_radius=148.5, inner_radius=74.25 -- the
+    outer arc's own y-range over that span is [36.5, 110.75], but the
+    inner endpoint at end_angle alone already sits at y=147.875, past
+    that range's own max, and single-radius bounds leave exactly the
+    rectangular notch that predicts when a real ring sector is
+    rendered.
     """
     var start_x = cx + radius * cos(start_angle)
     var start_y = cy + radius * sin(start_angle)

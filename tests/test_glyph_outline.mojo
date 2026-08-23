@@ -4,19 +4,18 @@ Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
 alias) to run -- same real-machine dependency tests/
 test_text.mojo and test_font_discovery.mojo already document.
 
-Locked-in values below are all re-measured against this machine's real
-DejaVu Sans through the native `ttf.mojo` path specifically, not
-carried over from the earlier FreeType-backed version of this module:
+Locked-in values below are all measured against this machine's real
+DejaVu Sans through the native `ttf.mojo` path:
 `num_glyphs`/`units_per_EM`/`ascender`/`descender` match this exact
 font's well-known real metrics (the same values `ttf.mojo`'s own
-from-scratch Python-oracle cross-check already confirmed). Glyph
-metrics ("I"'s width/height/advance at size 60) do *not* match the old
-FreeType-hinted values exactly anymore -- a real, understood,
-expected difference documented at each assertion below, not a
-regression: FreeType's default hinting rounds thin stems (like "I"'s
-own single vertical stroke) to whole pixels for on-screen crispness;
-this module's native path never hints, by design (see `ttf.mojo`'s
-own module docstring for why). Every "I"-at-size-60 value here is
+from-scratch Python-oracle cross-check confirms). Glyph metrics ("I"'s
+width/height/advance at size 60) are unhinted values and so differ
+slightly from what a hinting rasterizer such as FreeType reports for
+the same glyph -- a real, understood, expected difference documented
+at each assertion below: hinting rounds thin stems (like "I"'s own
+single vertical stroke) to whole pixels for on-screen crispness, and
+this module's path never hints, by design (see `ttf.mojo`'s own module
+docstring for why). Every "I"-at-size-60 value here is
 exact -- `raw_units * 60 / 2048` for `units_per_EM=2048` and any
 integer `raw_units` is exactly representable in `Float64` (2048 is a
 power of two), so these are provable exact arithmetic, not values
@@ -60,9 +59,8 @@ def test_line_metrics_match_known_font_metrics() raises:
 def test_line_metrics_without_a_size_raises() raises:
     # Confirmed via probe, not assumed: without set_pixel_size, this
     # doesn't crash -- it raises explicitly (see ttf.mojo's own
-    # TTFFace.scale docstring), the same "don't silently trust an
-    # unset size" stance the FreeType-backed version of this module
-    # already took.
+    # TTFFace.scale docstring), rather than silently measuring at some
+    # defaulted size.
     var path = resolve_font_file("Sans")
     var face = TTFFace(path)
     var raised = False
@@ -75,11 +73,10 @@ def test_line_metrics_without_a_size_raises() raises:
 
 
 def test_glyph_metrics_i_at_size_60() raises:
-    # "I" at size 60 in Sans -- re-measured against the native,
-    # unhinted path specifically (see this file's own module
-    # docstring for why these differ from the old FreeType-hinted
-    # values, and why they're nonetheless exact rather than
-    # tolerance-based): width=5.91796875 (raw 202 units -- DejaVu
+    # "I" at size 60 in Sans -- measured against the native, unhinted
+    # path (see this file's own module docstring for why these differ
+    # from a hinting rasterizer's values, and why they're nonetheless
+    # exact rather than tolerance-based): width=5.91796875 (raw 202 units -- DejaVu
     # Sans's own "I" stem, unrounded), height=43.740234375 (raw 1492
     # units), advance=17.6953125 (raw 604 units, matching ttf.mojo's
     # own test_ttf.mojo... this is the same font/glyph, cross-checked
@@ -107,10 +104,9 @@ def test_i_glyph_outline_is_a_simple_rectangle() raises:
     # Confirmed via probe: exactly 1 contour, 4 points, all on-curve
     # (no curves in a capital I) -- decomposes to move_to + 3x line_to
     # + a closing line_to back to the start + close(), 6 commands
-    # total. Locked in here as a structural regression check -- the
-    # exact same fact ttf.mojo's own test_ttf.mojo independently
-    # confirms at the raw-outline level (this test confirms it survives
-    # the full path-decomposition step too).
+    # total -- the same fact ttf.mojo's own test_ttf.mojo confirms at
+    # the raw-outline level, checked here after the full
+    # path-decomposition step.
     var face = _sans_face(60)
     var p = glyph_path(face, 73, 0.0, 0.0)  # 'I'
     assert_equal(len(p.commands), 6)
@@ -120,8 +116,8 @@ def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
     # The real end-to-end check: decompose a genuinely curved,
     # multi-contour glyph ('O' has an outer and inner contour) and
     # rasterize it through this package's own fill_path_aa -- no
-    # FreeType, no Cairo, no linked font-rendering library anywhere in
-    # this call chain. A correct render has ink (the ring itself), a
+    # linked font-rendering library anywhere in this call chain. A
+    # correct render has ink (the ring itself), a
     # real hole at the visual center (the inner contour correctly
     # punched via fill_path_aa's default EVEN_ODD rule), and covers a
     # plausible fraction of its own bounding box (a ring covers

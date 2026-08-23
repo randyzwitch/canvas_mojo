@@ -8,15 +8,15 @@ document) to run.
 Every locked-in value below was cross-checked against an independent
 source before being trusted, not just accepted because the code
 produced it: `units_per_em`/`num_glyphs`/`ascender`/`descender` match
-both this exact font's already-FreeType-verified values elsewhere in
-this codebase (`glyph_outline.mojo`'s own docstring) *and* a from-
-scratch Python oracle (plain `struct.unpack`, no font libraries)
-written independently while developing this module. The composite
-glyph point data was diffed byte-for-byte against that same oracle's
-own decode of the identical glyph before being copied into a test
-here. See `ttf.mojo`'s own module docstring for the full verification
-story and this module's deliberate v1 scope (TrueType/`glyf` outlines
-only, no hinting, no CFF).
+both this exact font's well-known real metrics (also documented in
+`glyph_outline.mojo`'s own docstring) *and* a from-scratch Python
+oracle (plain `struct.unpack`, no font libraries) written
+independently against the same file. The composite glyph point data
+was diffed byte-for-byte against that same oracle's own decode of the
+identical glyph before being copied into a test here. See `ttf.mojo`'s
+own module docstring for the full verification story and this
+module's deliberate v1 scope (TrueType/`glyf` outlines only, no
+hinting, no CFF).
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -37,14 +37,11 @@ def _sans_face() raises -> TTFFace:
 
 
 def test_head_maxp_hhea_match_known_font_metrics() raises:
-    # DejaVu Sans's real, well-known metrics -- the exact same values
-    # already independently verified against FreeType itself elsewhere
-    # in this codebase (glyph_outline.mojo's own module docstring: "loading
-    # DejaVu Sans and reading units_per_EM/num_glyphs/ascender/descender
-    # gave 2048/6253/1901/-483"). Getting the identical numbers here,
-    # through a completely independent binary parser reading the same
-    # file's raw bytes directly, is real cross-validation, not a
-    # coincidence -- both are reading the same font's own real data.
+    # DejaVu Sans's real, well-known metrics -- units_per_EM/
+    # num_glyphs/ascender/descender of 2048/6253/1901/-483, the same
+    # values glyph_outline.mojo's own module docstring records and a
+    # Python oracle reads independently out of the same file's raw
+    # bytes.
     var face = _sans_face()
     assert_equal(face.units_per_em, 2048)
     assert_equal(face.num_glyphs, 6253)
@@ -78,10 +75,10 @@ def test_missing_codepoint_maps_to_notdef() raises:
 
 
 def test_i_glyph_is_a_simple_rectangle() raises:
-    # Capital "I" -- the same real, hand-verifiable fact already locked
-    # in for the old, since-replaced FreeType path (glyph_outline.mojo's
-    # own module docstring): exactly 1 contour, 4 points, all on-curve (a glyph
-    # that's just a rectangle, no curves at all).
+    # Capital "I" -- a real, hand-verifiable fact (also recorded in
+    # glyph_outline.mojo's own module docstring): exactly 1 contour, 4
+    # points, all on-curve, a glyph that's just a rectangle with no
+    # curves at all.
     var face = _sans_face()
     var gid = face.glyph_index_for_codepoint(0x49)
     var outline = face.glyph_outline(gid)
@@ -94,7 +91,7 @@ def test_i_glyph_is_a_simple_rectangle() raises:
 def test_o_glyph_has_off_curve_points_and_two_contours() raises:
     # "O" -- a genuinely curved, multi-contour glyph (outer ring +
     # inner hole), the same structural fact glyph_outline.mojo's own
-    # tests confirm for the old, since-replaced FreeType path.
+    # tests confirm one level up.
     var face = _sans_face()
     var gid = face.glyph_index_for_codepoint(0x4F)
     var outline = face.glyph_outline(gid)
@@ -108,8 +105,8 @@ def test_o_glyph_has_off_curve_points_and_two_contours() raises:
 
 def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
     # The real end-to-end check, mirroring glyph_outline.mojo's own
-    # identically-named test for the old, since-replaced FreeType path: decompose a
-    # genuinely curved, multi-contour glyph and rasterize it through
+    # identically-named test one level up: decompose a genuinely
+    # curved, multi-contour glyph and rasterize it through
     # this package's own fill_path_aa. A correct render has ink (the
     # ring itself) and a real hole at the visual center (the inner
     # contour correctly punched via fill_path_aa's default EVEN_ODD

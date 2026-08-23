@@ -15,9 +15,9 @@ general groups/transforms, no clipping); grow it if and when something
 concrete needs more of SVG's own surface, the same restraint every
 other part of this project has held to. `draw_text`'s own `rotation`
 parameter is the one narrow exception -- a per-`<text>`-element
-`transform="rotate(...)"`, not a general transform stack -- added when
-a real caller (a chart's rotated y-axis title) needed it; see that
-method's own docstring.
+`transform="rotate(...)"`, not a general transform stack -- there
+because a real caller (a chart's rotated y-axis title) needs it; see
+that method's own docstring.
 """
 
 from std.math import cos, pi, sin
@@ -41,10 +41,9 @@ comptime _SVG_DECIMALS = 3
 def _hex_byte(value: UInt8) -> String:
     var v = Int(value)
     # `_HEX_DIGITS` is a fixed, pure-ASCII literal, so a raw UTF-8 byte
-    # index (`[byte=...]`) is exactly the character it looks like --
-    # plain positional `s[i]` indexing was removed for Mojo `String` in
-    # favor of `[byte=]`/`[codepoint=]`/`[grapheme=]` (see the wiki's
-    # entry on the Mojo 1.0.0 upgrade this fixed).
+    # index (`[byte=...]`) is exactly the character it looks like.
+    # Mojo `String` has no plain positional `s[i]` indexing -- it
+    # indexes by `[byte=]`/`[codepoint=]`/`[grapheme=]`.
     return String(_HEX_DIGITS[byte=v // 16]) + String(_HEX_DIGITS[byte=v % 16])
 
 
@@ -530,17 +529,13 @@ struct SvgCanvas(DrawTarget, Movable):
         knows it's holding a `Canvas`.
 
         `family` becomes a literal `font-family` attribute on the
-        `<text>` element -- fixing a real gap, not adding an opt-in
-        feature: every `<text>` element emitted before this parameter
-        existed had *no* `font-family` at all, so an SVG viewer fell
-        back to its own undefined user-agent default (varies by
-        viewer -- some default to a serif face), which is why SVG
-        output could look visually inconsistent with this package's
-        own raster `draw_text`, which always resolves a real font via
-        fontconfig. Defaults to `"sans-serif"` (a generic CSS keyword
-        every SVG viewer supports, not a specific face) precisely so
-        every pre-existing call keeps emitting *a* font-family now,
-        not none.
+        `<text>` element, always emitted: a `<text>` element with no
+        `font-family` leaves an SVG viewer to its own undefined
+        user-agent default (varies by viewer -- some default to a
+        serif face), which reads as visually inconsistent with this
+        package's own raster `draw_text`, which always resolves a real
+        font via fontconfig. Defaults to `"sans-serif"` -- a generic
+        CSS keyword every SVG viewer supports, not a specific face.
 
         Deliberately a different value shape than raster draw_text's
         own `family` parameter, despite the same name and position in
@@ -565,15 +560,13 @@ struct SvgCanvas(DrawTarget, Movable):
         convention exactly -- not degrees) rotates the whole `<text>`
         element around its own `(x, y)` anchor, via SVG's `transform=
         "rotate(<degrees> <x> <y>)"` -- omitted entirely when `rotation
-        == 0.0` (the overwhelming common case), so every pre-existing
-        `draw_text` call/output stays byte-for-byte unchanged. No sign
-        flip needed converting from `canvas_mojo.text.draw_text`'s own
-        Cairo-rotation convention: both Cairo's user space and SVG's
-        viewport space put y pointing *down*, so a positive angle reads
-        as clockwise-on-screen in both -- confirmed directly (not just
-        argued) by this method's own hand-derived rotation test, not
-        assumed to carry over from the raster path unchanged just
-        because the reasoning sounds right.
+        == 0.0` (the overwhelming common case), so unrotated output
+        carries no transform attribute at all. No sign flip is needed
+        relative to the raster `draw_text`: both this package's own
+        raster space and SVG's viewport space put y pointing *down*,
+        so a positive angle reads as clockwise-on-screen in both --
+        confirmed directly (not just argued) by this method's own
+        hand-derived rotation test.
 
         `weight` mirrors `canvas_mojo.text.draw_text`'s own `weight`
         parameter -- same `FontWeight` type, same `NORMAL` default --
@@ -583,9 +576,9 @@ struct SvgCanvas(DrawTarget, Movable):
         `weight == FontWeight.BOLD` (SVG/CSS's own two-value keyword;
         `FontWeight` doesn't distinguish anything finer than that
         today), omitted entirely at the default `NORMAL` -- matching
-        `rotation`'s own omit-at-default convention above -- so every
-        pre-existing `draw_text` call/output stays byte-for-byte
-        unchanged.
+        `rotation`'s own omit-at-default convention above, so
+        default-weight output carries no `font-weight` attribute at
+        all.
         """
         var escaped_family = _escape_xml_attr(family)
         var anchor = "start"

@@ -141,15 +141,15 @@ def test_fill_ring_sector_aa_respects_translucent_input_color() raises:
 
 
 def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises:
-    """Regression test for canvas_mojo issue #33: a wedge whose
+    """Regression test for canvas_mojo issue #33 -- a wedge whose
     [start_angle, end_angle] span doesn't cross a cardinal angle (0,
     pi/2, pi, 3*pi/2) has an inner-arc extreme that reaches *closer to
     the center* than anything on the outer arc does over that same
     span -- past the outer arc's own bounding box, not inside it (see
-    _arc_bounds's own docstring for the full reasoning). Before the
-    fix, `fill_ring_sector_aa` scanned only the outer arc's own
-    bounding box and never visited pixels beyond it, leaving a
-    rectangular notch cut into the ring instead of a clean angular gap.
+    _arc_bounds's own docstring for the full reasoning). Scanning only
+    the outer arc's own bounding box never visits those pixels,
+    leaving a rectangular notch cut into the ring instead of a clean
+    angular gap.
 
     cx=cy=100, outer_radius=100, inner_radius=50, start_angle=pi/6
     (30deg), end_angle=pi/3 (60deg) -- deliberately round angles so the

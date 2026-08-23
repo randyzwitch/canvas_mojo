@@ -2,8 +2,7 @@
 multi-sub-path shape count as "inside" for fill_polygon/fill_path (and
 their gradient variants).
 
-EVEN_ODD (the default, matching every fill_* function's original,
-still-unchanged behavior when this parameter isn't passed) counts
+EVEN_ODD (the default, used whenever this parameter isn't passed) counts
 crossings to a point's left and calls it inside when that count is
 odd -- simple, and the right answer for the overwhelming majority of
 shapes (anything simple/non-self-intersecting, where the two rules
@@ -17,10 +16,8 @@ NONZERO instead tracks a signed running count (each edge contributes
 and calls a point inside whenever that signed count is nonzero. For a
 self-overlapping shape built from same-direction loops, this fills the
 union solid -- no hole in the overlap, and critically, that overlap
-region gets exactly one set_pixel call, not two: this is the actual
-fix for the double-blending fill_polygon's own docstring used to warn
-about for self-intersecting input, not a workaround bolted on
-separately.
+region gets exactly one set_pixel call, not two, so a translucent fill
+doesn't double-blend where the shape crosses itself.
 """
 
 

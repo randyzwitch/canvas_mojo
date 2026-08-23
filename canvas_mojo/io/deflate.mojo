@@ -5,15 +5,13 @@ format"), not independently re-derived from the RFC alone; and
 compression, a from-scratch LZ77 + fixed-Huffman encoder (`deflate()`,
 below `inflate()` in this file) built directly against the RFC's own
 text once `inflate()` already existed to round-trip-verify it against
-(see that function's own docstring for how). Same reasoning
-`canvas_mojo/text/glyph_outline.mojo`'s own docstring gives for
-translating FreeType's `FT_Outline_Decompose` faithfully rather than
-re-deriving TrueType outline decoding from memory: DEFLATE is a
+(see that function's own docstring for how). Translating a reference
+implementation faithfully is the same discipline
+`canvas_mojo/text/ttf.mojo` applies to the OpenType spec: DEFLATE is a
 closed, formally specified, decades-stable algorithm (unlike font
 discovery/shaping, which `canvas_mojo/text/font_discovery.mojo`'s own
 docstring explains are open-ended, system-dependent subsystems better
 left to a linked library) -- exactly the kind of thing this package
-already
 builds from spec elsewhere (Bresenham lines, midpoint circles, glyph
 outlines), so writing it natively here rather than linking zlib (or
 any other compression tool) is consistent with that, not a special
@@ -150,11 +148,10 @@ struct _BitWriter(Movable):
         state after this returns; `List[UInt8]` isn't *implicitly*
         copyable (the same reason inflate()'s own docstring gives for
         taking its input by ownership instead), but it does offer an
-        explicit `.copy()` -- one bulk copy instead of the manual
-        element-by-element loop this used to reach for instead
-        (mattering most here since `self.data` is the *entire*
-        DEFLATE-compressed output, easily tens to hundreds of KB for a
-        real image).
+        explicit `.copy()` -- one bulk copy rather than an
+        element-by-element loop, which matters here since `self.data`
+        is the *entire* DEFLATE-compressed output, easily tens to
+        hundreds of KB for a real image.
         """
         if self.bitcnt > 0:
             self.data.append(UInt8(self.bitbuf & 0xFF))
@@ -193,13 +190,10 @@ def _construct(lengths: List[Int], n: Int, mut left_out: Int) raises -> _Huffman
     one -- puff.c's own `construct()` return value). An out-parameter
     rather than a two-field return struct: extracting one field out of
     a local multi-field struct value hits a real Mojo ownership
-    limitation ("field ... destroyed out of the middle of a value"),
-    the same one `canvas_mojo/vector/draw_target.mojo`'s own history
-    documents for a move-in/move-out wrapper struct -- confirmed here
-    directly (this
-    function originally returned `_ConstructResult(table, left)`,
-    and every call site's `result.table^` failed to compile with
-    exactly that error) before switching to this shape instead.
+    limitation ("field ... destroyed out of the middle of a value") --
+    confirmed here directly: returning a `_ConstructResult(table,
+    left)` struct instead makes every call site's `result.table^` fail
+    to compile with exactly that error.
     """
     var counts = List[Int](capacity=_MAX_BITS + 1)
     for _ in range(_MAX_BITS + 1):

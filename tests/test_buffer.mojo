@@ -94,7 +94,7 @@ def test_pop_clip_restores_full_canvas() raises:
     c.push_clip(3, 3, 4, 4)
     c.pop_clip()
 
-    c.set_pixel(1, 1, Color(255, 255, 255))  # was outside the old clip
+    c.set_pixel(1, 1, Color(255, 255, 255))  # outside the popped clip
     _assert_pixel_eq(c, 1, 1, 255)
 
 

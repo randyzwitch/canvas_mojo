@@ -1,26 +1,20 @@
 """Read and write PNG files -- stdlib-only, no zlib/libpng dependency,
-matching this whole workspace's approach to binary formats elsewhere
-(BMP here, TrueType/sfnt in the deleted `fonts/` package's history).
+matching this package's approach to every binary format it handles
+(BMP here, TrueType/sfnt in `canvas_mojo/text/ttf.mojo`).
 
 PNG's image data is always wrapped in a zlib stream (RFC 1950), which
 in turn wraps a DEFLATE stream (RFC 1951) -- LZ77 + Huffman coding,
-real compression. `write_png` used to sidestep implementing DEFLATE's
-compression side at all, via RFC 1951 3.2.4's "stored" block type
-(BTYPE=00, a fully valid but uncompressed DEFLATE encoding) -- the
-same trade BMP still makes ("viewable, lossless, trivial to verify
-byte-by-byte" over small files). `write_png` no longer needs to make
-that trade: `canvas_mojo/io/deflate.mojo` now has a real LZ77 + fixed-
-Huffman `deflate()` alongside its own decoder (`inflate`, which
-`read_png` already depended on, since a *reader* has to handle
-whatever real-world encoder actually produced the file, stored blocks
-or genuine compression alike) -- see that module's own docstring for
-how each side is built and verified. PNG earns its place alongside BMP
-for the same reason it always did (decent viewers preview it well,
-it's the format someone downstream would expect to receive or hand
-you), now with the small-file half of that bargain actually delivered
-too, natively -- no external compression tool, matching the "own the
-whole pipeline in Mojo" stance behind every other binary format this
-package reads or writes.
+real compression. Both directions go through
+`canvas_mojo/io/deflate.mojo`: `write_png` compresses via its LZ77 +
+fixed-Huffman `deflate()`, and `read_png` decompresses via `inflate()`
+(a reader has to handle whatever real-world encoder actually produced
+the file, stored blocks or genuine compression alike) -- see that
+module's own docstring for how each side is built and verified. PNG
+earns its place alongside BMP because decent viewers preview it well
+and it's the format someone downstream would expect to receive, and it
+gets there with real compression and no external compression tool,
+matching the "own the whole pipeline in Mojo" stance behind every
+other binary format this package reads or writes.
 
 Two checksum algorithms, hand-rolled per their public specs
 (PNG spec Appendix D for CRC-32; RFC 1950 section 9 for Adler-32),
@@ -305,8 +299,8 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
         pos += row_bytes
         # A copy, not a move -- cur_row is also what becomes prev_row
         # for the next iteration right below, so out still needs its
-        # own independent bytes. One bulk .copy() instead of the
-        # manual per-byte loop this used to be.
+        # own independent bytes -- one bulk .copy(), not a per-byte
+        # append loop.
         out.extend(cur_row.copy())
         prev_row = cur_row^
 

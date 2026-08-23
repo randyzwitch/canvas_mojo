@@ -63,8 +63,8 @@ struct Transform2D(ImplicitlyCopyable, Movable):
     translate-before-rotate-translate-back step would with a general
     matrix; this type doesn't take a separate pivot parameter, since
     nothing built on it has needed one yet. Defaults to 0.0 (no
-    rotation), so every existing call site with 4 positional args
-    keeps meaning exactly what it did before this field existed.
+    rotation), so a call site passing only the 4 translate/scale
+    arguments gets an unrotated mapping.
 
     This is a different feature from rotating a single rendered
     primitive (e.g. an angled axis-tick label) around its own anchor
