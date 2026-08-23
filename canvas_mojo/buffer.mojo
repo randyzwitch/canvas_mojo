@@ -4,14 +4,10 @@ from canvas_mojo.color import Color
 from canvas_mojo.gradient import LinearGradient
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.path import Path, fill_path_aa, stroke_path_aa
-from canvas_mojo.primitives import (
-    draw_line_aa,
-    fill_arc_aa,
-    fill_circle_aa,
-    fill_rect,
-    fill_rect_gradient,
-    fill_ring_sector_aa,
-)
+from canvas_mojo.shapes.lines import draw_line_aa
+from canvas_mojo.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
+from canvas_mojo.shapes.circles import fill_circle_aa
+from canvas_mojo.shapes.rects import fill_rect, fill_rect_gradient
 
 
 struct _ClipRect(ImplicitlyCopyable, Movable):
@@ -56,7 +52,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
     Conforms to `DrawTarget` (see that trait's own docstring) via the
     six methods just below `fill` -- each a thin delegation to the
-    matching free function in `canvas_mojo.primitives`/`canvas_mojo.path` (the
+    matching free function in `canvas_mojo.shapes`/`canvas_mojo.path` (the
     exact functions every existing call site already calls directly,
     e.g. `draw_line_aa(canvas, ...)`, unchanged) so a caller can render
     generically through a `Canvas` the same way it can through an

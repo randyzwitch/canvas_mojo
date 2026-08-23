@@ -6,7 +6,7 @@ Run with:
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.primitives import draw_rect
+from canvas_mojo.shapes.rects import draw_rect
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 

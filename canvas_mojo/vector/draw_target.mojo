@@ -10,7 +10,7 @@ rendered through it).
 Deliberately narrow: exactly the *shape* primitives a chart-rendering
 core actually needs (`fill_rect`, `draw_line_aa`, `fill_circle_aa`,
 `fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa`,
-`fill_path_aa`, `fill_rect_gradient`), not `canvas_mojo.primitives`'s
+`fill_path_aa`, `fill_rect_gradient`), not `canvas_mojo.shapes`'s
 full surface -- no `draw_ellipse`, no `fill_polygon`, no dashes, no
 clipping, no radial gradients, no path-shaped gradients here; add them
 if and when something concrete needs them through this interface,
@@ -23,7 +23,7 @@ project's own plot.mojo, `_draw_continuous_color_legend`); nothing
 else in `canvas_mojo.gradient`'s own surface (`RadialGradient`,
 `fill_path_gradient`, `fill_path_radial_gradient`) has a concrete
 caller yet. Every method's own parameters mirror the
-`canvas_mojo.primitives`/`canvas.path` function of the same name,
+`canvas_mojo.shapes`/`canvas.path` function of the same name,
 trimmed to just the arguments a generic chart-rendering caller would
 pass explicitly (no `supersample`, `dashes`, `fill_rule` -- a raster
 `DrawTarget` implementation still gets to choose its own supersample

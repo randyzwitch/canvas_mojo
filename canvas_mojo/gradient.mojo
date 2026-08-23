@@ -1,8 +1,8 @@
 """Color gradients -- the minimal fill-source abstractions that justify
 existing: fill_rect_gradient/fill_path_gradient (LinearGradient) and
 fill_rect_radial_gradient/fill_path_radial_gradient (RadialGradient)
-are the only gradient-aware fill entry points (see primitives.mojo/
-path.mojo), not every fill_* primitive retrofitted with a gradient
+are the only gradient-aware fill entry points (see canvas_mojo.shapes.
+rects/path.mojo), not every fill_* primitive retrofitted with a gradient
 variant. Narrower than that on purpose: these cover the concrete
 chart use cases (bar/area fills, and radial ones like bubble/donut
 centers or a radial legend swatch) this exists for; circle/ellipse/
@@ -73,7 +73,7 @@ def _color_at_t(
     their own add_stop instead of this function re-scanning the whole
     list on every single call, which color_at made once per pixel of
     every gradient fill (fill_rect_gradient/fill_path_gradient and
-    their radial counterparts, canvas_mojo/primitives.mojo and
+    their radial counterparts, canvas_mojo/shapes/rects.mojo and
     canvas_mojo/path.mojo) -- a hot enough path that an O(stops) scan
     repeated per pixel was pure waste for a value that's the same
     every time.

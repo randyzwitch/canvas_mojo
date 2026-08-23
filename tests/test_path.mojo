@@ -10,7 +10,8 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.primitives import fill_arc, fill_polygon, fill_polygon_aa
+from canvas_mojo.shapes.arcs import fill_arc
+from canvas_mojo.shapes.polygon_fill import fill_polygon, fill_polygon_aa
 from canvas_mojo.path import (
     Path,
     FPoint,
@@ -135,7 +136,7 @@ def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
     # quarter circle from (10, 0) to (0, 10) -- both endpoints exact,
     # independently hand-derived (r*cos(0)=10, r*sin(0)=0; r*cos(pi/2)
     # ~= 0, r*sin(pi/2) ~= 10, both rounding cleanly). arc_to's own
-    # flattening reuses primitives.mojo's _arc_points, so the arc's own
+    # flattening reuses canvas_mojo.shapes.arcs' _arc_points, so the arc's own
     # start point (already present via move_to) must NOT be duplicated
     # -- see arc_to's own docstring.
     var p = Path()

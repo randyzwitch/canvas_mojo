@@ -10,7 +10,7 @@ Run with:
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
-from canvas_mojo.primitives import draw_polyline, draw_polyline_aa
+from canvas_mojo.shapes.lines import draw_polyline, draw_polyline_aa
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 

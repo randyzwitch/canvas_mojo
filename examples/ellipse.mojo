@@ -11,7 +11,7 @@ Run with:
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.primitives import (
+from canvas_mojo.shapes.ellipses import (
     draw_ellipse,
     draw_ellipse_aa,
     fill_ellipse,
