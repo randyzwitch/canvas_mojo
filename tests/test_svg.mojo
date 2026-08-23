@@ -79,6 +79,58 @@ def test_fill_rect_gradient_mints_a_fresh_id_per_call() raises:
     assert_true('fill="url(#grad2)"' in s, "second rect references its own gradient, not the first one's")
 
 
+def test_fill_rect_gradient_sorts_descending_stops_into_ascending_offset_order() raises:
+    # Real bug, reported by dataviz_mojo: LinearGradient.add_stop's own
+    # docstring guarantees stops don't need to be added in offset
+    # order (the raster color_at scans for the bracketing pair
+    # regardless), but the SVG spec clamps each <stop>'s own offset to
+    # be no less than the previous sibling's -- so a gradient built
+    # with descending offsets (their own continuous color legend flips
+    # each stop to 1.0 - offset) used to emit every stop after the
+    # first at the *first* stop's own offset, collapsing the gradient
+    # to one flat color in every real SVG viewer while the identical
+    # raster fill still rendered correctly. Exact repro from their own
+    # report: three stops added 1.0, 0.5, 0.0, each with a distinct
+    # color, so a wrong sort (or none at all) would be visible as a
+    # color landing at the wrong offset, not just an ordering assertion
+    # that could pass by accident.
+    var svg = SvgCanvas(100, 100)
+    var g = LinearGradient(0.0, 0.0, 0.0, 100.0)
+    g.add_stop(1.0, Color(60, 110, 200))
+    g.add_stop(0.5, Color(235, 235, 235))
+    g.add_stop(0.0, Color(220, 90, 40))
+    svg.fill_rect_gradient(0, 0, 10, 100, g)
+    assert_true(
+        '<stop offset="0.000" stop-color="#dc5a28" stop-opacity="1.000"/>'
+        '<stop offset="0.500" stop-color="#ebebeb" stop-opacity="1.000"/>'
+        '<stop offset="1.000" stop-color="#3c6ec8" stop-opacity="1.000"/>' in svg.to_string(),
+        "stops added in descending offset order are emitted ascending, each still carrying its own original color",
+    )
+
+
+def test_fill_rect_gradient_preserves_relative_order_of_stops_at_an_equal_offset() raises:
+    # A hard color transition (two stops at the identical offset -- no
+    # SVG-spec violation, since offsets are non-decreasing across
+    # them) depends on which of the two tied stops SVG treats as
+    # "before" vs "after" the seam: whichever was added first must
+    # stay emitted first. Confirms _stops_sorted_by_offset's own
+    # insertion sort is stable, not merely offset-correct -- an
+    # unstable sort could pass every ascending-order assertion while
+    # still silently swapping which color owns which side of the seam.
+    var svg = SvgCanvas(100, 100)
+    var g = LinearGradient(0.0, 0.0, 0.0, 100.0)
+    g.add_stop(0.0, Color(255, 0, 0))
+    g.add_stop(0.5, Color(0, 255, 0))  # added first at this offset
+    g.add_stop(0.5, Color(0, 0, 255))  # added second at this offset
+    g.add_stop(1.0, Color(0, 0, 0))
+    svg.fill_rect_gradient(0, 0, 10, 100, g)
+    assert_true(
+        '<stop offset="0.500" stop-color="#00ff00" stop-opacity="1.000"/>'
+        '<stop offset="0.500" stop-color="#0000ff" stop-opacity="1.000"/>' in svg.to_string(),
+        "the two offset=0.5 stops keep their own original relative order (green before blue)",
+    )
+
+
 def test_draw_line_aa_emits_expected_line_element_with_default_width() raises:
     var svg = SvgCanvas(100, 80)
     svg.draw_line_aa(0, 0, 10, 10, Color(0, 0, 0))
