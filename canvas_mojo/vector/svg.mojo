@@ -23,7 +23,7 @@ method's own docstring.
 from std.math import cos, pi, sin
 
 from canvas_mojo.color import Color
-from canvas_mojo.gradient import LinearGradient
+from canvas_mojo.gradient import LinearGradient, _GradientStop
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.geometry import _round_to_int
 from canvas_mojo.path import Path, _ARC_TO, _CLOSE, _CUBIC_TO, _LINE_TO, _MOVE_TO, _QUAD_TO
@@ -120,6 +120,43 @@ def _escape_xml_attr(value: String) -> String:
 
 def _hex_color(color: Color) -> String:
     return "#" + _hex_byte(color.r) + _hex_byte(color.g) + _hex_byte(color.b)
+
+
+def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
+    """`LinearGradient.stops`, in ascending-offset order -- a real
+    correctness fix for `fill_rect_gradient` below, not a cosmetic
+    one: `LinearGradient.add_stop`'s own docstring guarantees "stops
+    don't need to be added in offset order" (color_at's raster lookup
+    scans for the bracketing pair regardless of insertion order, per
+    _color_at_t's own docstring), but SVG's `<stop>` element doesn't
+    honor that guarantee -- the spec clamps each stop's own offset to
+    be no less than the previous `<stop>` sibling's, so a gradient
+    built with descending offsets (e.g. a legend that flips a bar's
+    value axis) emitted every stop after the first at the *first*
+    stop's own offset, collapsing the whole gradient to one flat color
+    in every SVG viewer while the identical raster call still rendered
+    correctly (reported by dataviz_mojo, whose continuous color legend
+    hit exactly this). Sorting here, once, right before emitting --
+    not changing add_stop's own contract, or LinearGradient's own
+    storage -- is what makes fill_rect_gradient honor the same
+    "insertion order doesn't matter" guarantee raster already does.
+
+    A plain insertion sort, not the stdlib `sort()`: `stops` is
+    typically 2-4 entries for a real chart fill (LinearGradient's own
+    docstring), so O(n^2) here is not a real cost, and insertion sort
+    is trivially stable -- two stops at the identical offset (a
+    deliberate hard color transition, valid in both SVG and this
+    module's own raster interpolation) keep their original relative
+    order rather than risking a sort that's merely offset-correct but
+    silently swaps which color owns which side of the hard edge.
+    """
+    var sorted_stops = List[_GradientStop](capacity=len(stops))
+    for stop in stops:
+        var insert_at = len(sorted_stops)
+        while insert_at > 0 and sorted_stops[insert_at - 1].offset > stop.offset:
+            insert_at -= 1
+        sorted_stops.insert(insert_at, stop)
+    return sorted_stops^
 
 
 def _path_d(path: Path) -> String:
@@ -264,6 +301,12 @@ struct SvgCanvas(DrawTarget, Movable):
         this codebase's own charting use case draws a given gradient
         exactly once per legend/bar anyway (see dataviz_mojo's own
         continuous color legend, the concrete caller this exists for).
+
+        `<stop>` elements are emitted in ascending-offset order,
+        regardless of `gradient.stops`'s own insertion order -- see
+        _stops_sorted_by_offset's own docstring for why that's a real
+        SVG-spec requirement this raster-backed `LinearGradient` never
+        had to honor before now.
         """
         self._gradient_count += 1
         var gid = "grad" + String(self._gradient_count)
@@ -280,7 +323,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + _format_svg_float(gradient.y1)
             + '">'
         )
-        for stop in gradient.stops:
+        for stop in _stops_sorted_by_offset(gradient.stops):
             defs += (
                 '<stop offset="'
                 + _format_svg_float(stop.offset)
