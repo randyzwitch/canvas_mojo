@@ -27,7 +27,12 @@ test -- see .github/workflows/ci.yml's `fonts-ubuntu` install step.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.text.font_discovery import FontSlant, FontWeight, resolve_font_file, resolve_font_file_for_char
+from canvas_mojo.text.font_discovery import (
+    FontSlant,
+    FontWeight,
+    resolve_font_file,
+    resolve_font_file_for_char,
+)
 
 
 def _looks_like_a_font_file(path: String) -> Bool:
@@ -99,7 +104,9 @@ def test_char_constrained_resolution_falls_back_to_a_font_that_has_the_glyph() r
     # "Ubuntu" the font has no snowman glyph (U+2603) and "DejaVu Sans"
     # does, so requesting Ubuntu constrained to that character must
     # fall back rather than return Ubuntu's file regardless.
-    var fallback_path = resolve_font_file_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603)
+    var fallback_path = resolve_font_file_for_char(
+        "Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603
+    )
     var plain_ubuntu_path = resolve_font_file("Ubuntu")
     assert_true(not (fallback_path == plain_ubuntu_path))
     assert_true(_looks_like_a_font_file(fallback_path))
@@ -108,7 +115,9 @@ def test_char_constrained_resolution_falls_back_to_a_font_that_has_the_glyph() r
 def test_char_constrained_resolution_is_a_noop_when_the_family_already_has_it() raises:
     # 'A' -- the Ubuntu font has it, so the charset constraint changes
     # nothing.
-    var constrained_path = resolve_font_file_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x41)
+    var constrained_path = resolve_font_file_for_char(
+        "Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x41
+    )
     var plain_path = resolve_font_file("Ubuntu")
     assert_equal(constrained_path, plain_path)
 
@@ -117,7 +126,9 @@ def test_char_constrained_resolution_degrades_gracefully_with_no_real_match() ra
     # With no CJK font installed, fontconfig's default substitution
     # still returns a real font file as its best guess, so this must
     # not raise just because nothing installed has the character.
-    var path = resolve_font_file_for_char("Sans", FontSlant.NORMAL, FontWeight.NORMAL, 0x4E2D)
+    var path = resolve_font_file_for_char(
+        "Sans", FontSlant.NORMAL, FontWeight.NORMAL, 0x4E2D
+    )
     assert_true(_looks_like_a_font_file(path))
 
 

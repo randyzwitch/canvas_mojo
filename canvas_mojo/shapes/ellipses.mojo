@@ -10,7 +10,9 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 
 
-def _plot_ellipse_points(mut canvas: Canvas, cx: Int, cy: Int, x: Int, y: Int, color: Color):
+def _plot_ellipse_points(
+    mut canvas: Canvas, cx: Int, cy: Int, x: Int, y: Int, color: Color
+):
     """Plot draw_ellipse's 4-way symmetric points at offset (x, y),
     guarding the two cases where mirrored points collapse onto one
     pixel: x==0, where the left and right mirrors coincide, and y==0,
@@ -34,7 +36,9 @@ def _plot_ellipse_points(mut canvas: Canvas, cx: Int, cy: Int, x: Int, y: Int, c
         canvas.set_pixel(cx - x, cy - y, color)
 
 
-def draw_ellipse(mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: Color):
+def draw_ellipse(
+    mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
+):
     """The midpoint ellipse algorithm -- draw_circle's generalization
     to independent x/y radii.
 
@@ -91,7 +95,9 @@ def draw_ellipse(mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: 
             q2 += 8 * ry2 * x - 8 * rx2 * y + 4 * rx2
 
 
-def fill_ellipse(mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: Color):
+def fill_ellipse(
+    mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
+):
     """Fill a solid ellipse: fill_circle generalized to independent x/y
     radii, same span-per-row technique, each pixel set exactly once.
     The half-width per row shrinks monotonically as |dy| grows from 0
@@ -179,9 +185,16 @@ def fill_ellipse_aa(
                         covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )
 
 
 def draw_ellipse_aa(
@@ -269,6 +282,13 @@ def draw_ellipse_aa(
                         covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )

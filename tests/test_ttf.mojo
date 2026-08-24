@@ -49,8 +49,12 @@ def test_cmap_format4_and_format12_agree_on_known_codepoints() raises:
     # one. Two separately-decoded subtables agreeing on a glyph index
     # cross-checks both decoders rather than one against itself.
     var face = _sans_face()
-    var gid_format12 = face.glyph_index_for_codepoint(0x41)  # 'A', prefers format 12
-    var abs_offset_format4 = face._cmap_offset + 44  # confirmed via probe: format-4 subtable's own offset
+    var gid_format12 = face.glyph_index_for_codepoint(
+        0x41
+    )  # 'A', prefers format 12
+    var abs_offset_format4 = (
+        face._cmap_offset + 44
+    )  # confirmed via probe: format-4 subtable's own offset
     var gid_format4 = face._lookup_cmap_format4(abs_offset_format4, 0x41)
     assert_equal(gid_format12, gid_format4)
     assert_true(gid_format12 != 0)

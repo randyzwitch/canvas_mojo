@@ -36,8 +36,12 @@ def _draw_panel(mut c: Canvas, t: Transform2D):
     var axis_x0 = t.to_pixel(0.0, 0.0)
     var axis_x1 = t.to_pixel(10.0, 0.0)
     var axis_y1 = t.to_pixel(0.0, 100.0)
-    draw_line(c, axis_x0.x, axis_x0.y, axis_x1.x, axis_x1.y, Color(180, 180, 180))
-    draw_line(c, axis_x0.x, axis_x0.y, axis_y1.x, axis_y1.y, Color(180, 180, 180))
+    draw_line(
+        c, axis_x0.x, axis_x0.y, axis_x1.x, axis_x1.y, Color(180, 180, 180)
+    )
+    draw_line(
+        c, axis_x0.x, axis_x0.y, axis_y1.x, axis_y1.y, Color(180, 180, 180)
+    )
 
     var data_x: List[Float64] = [1.0, 3.0, 5.0, 7.0, 9.0]
     var data_y: List[Float64] = [20.0, 45.0, 30.0, 70.0, 55.0]

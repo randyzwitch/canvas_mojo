@@ -45,17 +45,34 @@ from canvas_mojo.gradient import LinearGradient
 
 
 trait DrawTarget:
-    def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color): ...
+    def fill_rect(
+        mut self, x: Int, y: Int, width: Int, height: Int, color: Color
+    ):
+        ...
 
     def fill_rect_gradient(
-        mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
-    ): ...
+        mut self,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        gradient: LinearGradient,
+    ):
+        ...
 
     def draw_line_aa(
-        mut self, x0: Int, y0: Int, x1: Int, y1: Int, color: Color, width: Float64 = 1.0
-    ): ...
+        mut self,
+        x0: Int,
+        y0: Int,
+        x1: Int,
+        y1: Int,
+        color: Color,
+        width: Float64 = 1.0,
+    ):
+        ...
 
-    def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color): ...
+    def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
+        ...
 
     def fill_arc_aa(
         mut self,
@@ -65,7 +82,8 @@ trait DrawTarget:
         start_angle: Float64,
         end_angle: Float64,
         color: Color,
-    ): ...
+    ):
+        ...
 
     def fill_ring_sector_aa(
         mut self,
@@ -76,8 +94,13 @@ trait DrawTarget:
         start_angle: Float64,
         end_angle: Float64,
         color: Color,
-    ): ...
+    ):
+        ...
 
-    def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0): ...
+    def stroke_path_aa(
+        mut self, path: Path, color: Color, width: Float64 = 1.0
+    ):
+        ...
 
-    def fill_path_aa(mut self, path: Path, color: Color): ...
+    def fill_path_aa(mut self, path: Path, color: Color):
+        ...

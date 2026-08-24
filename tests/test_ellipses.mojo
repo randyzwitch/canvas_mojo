@@ -7,13 +7,20 @@ from std.testing import assert_equal, TestSuite
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.ellipses import draw_ellipse, fill_ellipse, fill_ellipse_aa, draw_ellipse_aa
+from canvas_mojo.shapes.ellipses import (
+    draw_ellipse,
+    fill_ellipse,
+    fill_ellipse_aa,
+    draw_ellipse_aa,
+)
 
 comptime BG = Color(0, 0, 0)
 comptime FG = Color(255, 255, 255)
 
 
-def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+def _assert_pixel(
+    c: Canvas, x: Int, y: Int, expected: Color, label: String
+) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected.r, label + " (r)")
     assert_equal(p.g, expected.g, label + " (g)")

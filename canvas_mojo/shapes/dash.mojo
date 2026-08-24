@@ -9,7 +9,9 @@ hard-edged vs. `_aa` naming convention every file here follows.
 from std.math import floor
 
 
-def _is_dash_on(distance: Float64, dashes: List[Float64], offset: Float64) -> Bool:
+def _is_dash_on(
+    distance: Float64, dashes: List[Float64], offset: Float64
+) -> Bool:
     """Is `distance` (measured along a path from wherever its dash
     phase starts) inside an "on" (drawn) segment of `dashes`, an
     alternating on/off/on/off/... list of lengths (index 0 is "on"),

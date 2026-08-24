@@ -21,7 +21,8 @@ def test_fill_rect_emits_expected_rect_element() raises:
     var svg = SvgCanvas(100, 80)
     svg.fill_rect(10, 20, 30, 40, Color(18, 52, 86))
     assert_true(
-        '<rect x="10" y="20" width="30" height="40" fill="#123456"/>' in svg.to_string(),
+        '<rect x="10" y="20" width="30" height="40" fill="#123456"/>'
+        in svg.to_string(),
         "fill_rect's own rect element, exact attributes",
     )
 
@@ -42,12 +43,19 @@ def test_fill_rect_gradient_emits_expected_lineargradient_and_rect() raises:
         ' x1="10.000" y1="0.000" x2="60.000" y2="0.000">'
         '<stop offset="0.000" stop-color="#ff0000" stop-opacity="1.000"/>'
         '<stop offset="1.000" stop-color="#0000ff" stop-opacity="0.502"/>'
-        "</linearGradient></defs>" in s,
-        "fill_rect_gradient: hand-derived <defs><linearGradient> markup, both stops, alpha as a 0-1 fraction",
+        "</linearGradient></defs>"
+        in s,
+        (
+            "fill_rect_gradient: hand-derived <defs><linearGradient> markup,"
+            " both stops, alpha as a 0-1 fraction"
+        ),
     )
     assert_true(
         '<rect x="10" y="20" width="50" height="30" fill="url(#grad1)"/>' in s,
-        "fill_rect_gradient: the filled <rect> itself references the gradient's own id via url(#...)",
+        (
+            "fill_rect_gradient: the filled <rect> itself references the"
+            " gradient's own id via url(#...)"
+        ),
     )
 
 
@@ -68,9 +76,17 @@ def test_fill_rect_gradient_mints_a_fresh_id_per_call() raises:
 
     var s = svg.to_string()
     assert_true('id="grad1"' in s, "first gradient keeps id grad1")
-    assert_true('id="grad2"' in s, "second gradient gets its own id, grad2, not a repeat of grad1")
-    assert_true('fill="url(#grad1)"' in s, "first rect references its own gradient")
-    assert_true('fill="url(#grad2)"' in s, "second rect references its own gradient, not the first one's")
+    assert_true(
+        'id="grad2"' in s,
+        "second gradient gets its own id, grad2, not a repeat of grad1",
+    )
+    assert_true(
+        'fill="url(#grad1)"' in s, "first rect references its own gradient"
+    )
+    assert_true(
+        'fill="url(#grad2)"' in s,
+        "second rect references its own gradient, not the first one's",
+    )
 
 
 def test_fill_rect_gradient_sorts_descending_stops_into_ascending_offset_order() raises:
@@ -93,8 +109,12 @@ def test_fill_rect_gradient_sorts_descending_stops_into_ascending_offset_order()
     assert_true(
         '<stop offset="0.000" stop-color="#dc5a28" stop-opacity="1.000"/>'
         '<stop offset="0.500" stop-color="#ebebeb" stop-opacity="1.000"/>'
-        '<stop offset="1.000" stop-color="#3c6ec8" stop-opacity="1.000"/>' in svg.to_string(),
-        "stops added in descending offset order are emitted ascending, each still carrying its own original color",
+        '<stop offset="1.000" stop-color="#3c6ec8" stop-opacity="1.000"/>'
+        in svg.to_string(),
+        (
+            "stops added in descending offset order are emitted ascending, each"
+            " still carrying its own original color"
+        ),
     )
 
 
@@ -115,8 +135,12 @@ def test_fill_rect_gradient_preserves_relative_order_of_stops_at_an_equal_offset
     svg.fill_rect_gradient(0, 0, 10, 100, g)
     assert_true(
         '<stop offset="0.500" stop-color="#00ff00" stop-opacity="1.000"/>'
-        '<stop offset="0.500" stop-color="#0000ff" stop-opacity="1.000"/>' in svg.to_string(),
-        "the two offset=0.5 stops keep their own original relative order (green before blue)",
+        '<stop offset="0.500" stop-color="#0000ff" stop-opacity="1.000"/>'
+        in svg.to_string(),
+        (
+            "the two offset=0.5 stops keep their own original relative order"
+            " (green before blue)"
+        ),
     )
 
 
@@ -124,9 +148,13 @@ def test_draw_line_aa_emits_expected_line_element_with_default_width() raises:
     var svg = SvgCanvas(100, 80)
     svg.draw_line_aa(0, 0, 10, 10, Color(0, 0, 0))
     assert_true(
-        '<line x1="0" y1="0" x2="10" y2="10" stroke="#000000" stroke-width="1.000"'
-        ' stroke-linecap="round"/>' in svg.to_string(),
-        "draw_line_aa's default width (1.0), matching draw_line_aa's own raster default",
+        '<line x1="0" y1="0" x2="10" y2="10" stroke="#000000"'
+        ' stroke-width="1.000" stroke-linecap="round"/>'
+        in svg.to_string(),
+        (
+            "draw_line_aa's default width (1.0), matching draw_line_aa's own"
+            " raster default"
+        ),
     )
 
 
@@ -134,7 +162,8 @@ def test_draw_line_aa_respects_custom_width() raises:
     var svg = SvgCanvas(100, 80)
     svg.draw_line_aa(0, 0, 10, 10, Color(255, 255, 255), width=3.5)
     assert_true(
-        'stroke-width="3.500"' in svg.to_string(), "custom width threaded through to stroke-width"
+        'stroke-width="3.500"' in svg.to_string(),
+        "custom width threaded through to stroke-width",
     )
 
 
@@ -155,8 +184,9 @@ def test_fill_arc_aa_small_wedge_matches_hand_derived_endpoints() raises:
     var svg = SvgCanvas(100, 100)
     svg.fill_arc_aa(50.0, 60.0, 20.0, 0.0, 1.5707963267948966, Color(0, 255, 0))
     assert_true(
-        '<path d="M50.000,60.000 L70.000,60.000 A20.000,20.000 0 0,1 50.000,80.000'
-        ' Z" fill="#00ff00"/>' in svg.to_string(),
+        '<path d="M50.000,60.000 L70.000,60.000 A20.000,20.000 0 0,1'
+        ' 50.000,80.000 Z" fill="#00ff00"/>'
+        in svg.to_string(),
         "small wedge (< pi span): hand-derived M/L/A/Z, large-arc-flag 0",
     )
 
@@ -169,8 +199,9 @@ def test_fill_arc_aa_wide_wedge_sets_large_arc_flag() raises:
     var svg = SvgCanvas(100, 100)
     svg.fill_arc_aa(50.0, 60.0, 20.0, 0.0, 4.0, Color(0, 0, 255))
     assert_true(
-        '<path d="M50.000,60.000 L70.000,60.000 A20.000,20.000 0 1,1 36.927,44.864'
-        ' Z" fill="#0000ff"/>' in svg.to_string(),
+        '<path d="M50.000,60.000 L70.000,60.000 A20.000,20.000 0 1,1'
+        ' 36.927,44.864 Z" fill="#0000ff"/>'
+        in svg.to_string(),
         "wide wedge (> pi span): hand-derived endpoint, large-arc-flag 1",
     )
 
@@ -182,10 +213,14 @@ def test_fill_ring_sector_aa_quarter_wedge_matches_hand_derived_endpoints() rais
     # (125.0, 100.0). Span < pi, so large-arc-flag is 0 for both arcs;
     # the outer sweeps forward (1), the inner backward (0).
     var svg = SvgCanvas(200, 200)
-    svg.fill_ring_sector_aa(100.0, 100.0, 25.0, 50.0, 0.0, 1.5707963267948966, Color(255, 128, 0))
+    svg.fill_ring_sector_aa(
+        100.0, 100.0, 25.0, 50.0, 0.0, 1.5707963267948966, Color(255, 128, 0)
+    )
     assert_true(
-        '<path d="M150.000,100.000 A50.000,50.000 0 0,1 100.000,150.000 L100.000,125.000'
-        ' A25.000,25.000 0 0,0 125.000,100.000 Z" fill="#ff8000"/>' in svg.to_string(),
+        '<path d="M150.000,100.000 A50.000,50.000 0 0,1 100.000,150.000'
+        ' L100.000,125.000 A25.000,25.000 0 0,0 125.000,100.000 Z"'
+        ' fill="#ff8000"/>'
+        in svg.to_string(),
         "quarter donut wedge: hand-derived M/A/L/A/Z, both large-arc-flags 0",
     )
 
@@ -196,12 +231,18 @@ def test_fill_ring_sector_aa_wide_wedge_sets_large_arc_flag() raises:
     # rounded to _format_svg_float's 3 decimals as the fill_arc_aa
     # wide-wedge test's endpoints are.
     var svg = SvgCanvas(200, 200)
-    svg.fill_ring_sector_aa(50.0, 60.0, 15.0, 25.0, 0.0, 4.0, Color(0, 200, 100))
+    svg.fill_ring_sector_aa(
+        50.0, 60.0, 15.0, 25.0, 0.0, 4.0, Color(0, 200, 100)
+    )
     assert_true(
         '<path d="M75.000,60.000 A25.000,25.000 0 1,1 33.659,41.080'
-        ' L40.195,48.648 A15.000,15.000 0 1,0 65.000,60.000'
-        ' Z" fill="#00c864"/>' in svg.to_string(),
-        "wide donut wedge: both endpoints hand-derived and cross-checked, large-arc-flag 1 on both arcs",
+        " L40.195,48.648 A15.000,15.000 0 1,0 65.000,60.000"
+        ' Z" fill="#00c864"/>'
+        in svg.to_string(),
+        (
+            "wide donut wedge: both endpoints hand-derived and cross-checked,"
+            " large-arc-flag 1 on both arcs"
+        ),
     )
 
 
@@ -212,8 +253,9 @@ def test_stroke_path_aa_emits_open_path_with_no_fill() raises:
     var svg = SvgCanvas(100, 100)
     svg.stroke_path_aa(path, Color(10, 20, 30), width=2.0)
     assert_true(
-        '<path d="M1.000,2.000 L3.000,4.000" fill="none" stroke="#0a141e" stroke-width="2.000"'
-        ' stroke-linecap="round" stroke-linejoin="round"/>' in svg.to_string(),
+        '<path d="M1.000,2.000 L3.000,4.000" fill="none" stroke="#0a141e"'
+        ' stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>'
+        in svg.to_string(),
         "stroke_path_aa: open path, fill=none, exact d string",
     )
 
@@ -227,7 +269,8 @@ def test_fill_path_aa_emits_closed_path_with_fill_color() raises:
     var svg = SvgCanvas(100, 100)
     svg.fill_path_aa(path, Color(200, 100, 0))
     assert_true(
-        '<path d="M0.000,0.000 L10.000,0.000 L10.000,10.000 Z" fill="#c86400"/>' in svg.to_string(),
+        '<path d="M0.000,0.000 L10.000,0.000 L10.000,10.000 Z" fill="#c86400"/>'
+        in svg.to_string(),
         "fill_path_aa: exact d string including the Z from Path.close()",
     )
 
@@ -245,7 +288,8 @@ def test_fill_path_aa_handles_arc_to_command() raises:
     svg.fill_path_aa(path, Color(0, 255, 0))
     assert_true(
         '<path d="M70.000,60.000 A20.000,20.000 0 0,1 50.000,80.000"'
-        ' fill="#00ff00"/>' in svg.to_string(),
+        ' fill="#00ff00"/>'
+        in svg.to_string(),
         "arc_to: bare A command, hand-derived endpoint, large-arc-flag 0",
     )
 
@@ -260,8 +304,12 @@ def test_fill_path_aa_arc_to_wide_span_sets_large_arc_flag() raises:
     svg.fill_path_aa(path, Color(0, 0, 255))
     assert_true(
         '<path d="M70.000,60.000 A20.000,20.000 0 1,1 36.927,44.864"'
-        ' fill="#0000ff"/>' in svg.to_string(),
-        "arc_to: wide span (> pi) sets large-arc-flag 1, same hand-derived endpoint as fill_arc_aa's own",
+        ' fill="#0000ff"/>'
+        in svg.to_string(),
+        (
+            "arc_to: wide span (> pi) sets large-arc-flag 1, same hand-derived"
+            " endpoint as fill_arc_aa's own"
+        ),
     )
 
 
@@ -273,9 +321,13 @@ def test_fill_path_aa_handles_quad_and_cubic_commands() raises:
     var svg = SvgCanvas(100, 100)
     svg.fill_path_aa(path, Color(0, 0, 0))
     assert_true(
-        '<path d="M0.000,0.000 Q5.000,10.000 10.000,0.000 C12.000,5.000 14.000,5.000 16.000,0.000"'
-        ' fill="#000000"/>' in svg.to_string(),
-        "Q (quad) and C (cubic) commands map directly, same control-point order Path stores",
+        '<path d="M0.000,0.000 Q5.000,10.000 10.000,0.000 C12.000,5.000'
+        ' 14.000,5.000 16.000,0.000" fill="#000000"/>'
+        in svg.to_string(),
+        (
+            "Q (quad) and C (cubic) commands map directly, same control-point"
+            " order Path stores"
+        ),
     )
 
 
@@ -283,8 +335,8 @@ def test_draw_text_left_align_maps_to_start_anchor() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(
-        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" fill="#000000"'
-        ' text-anchor="start">hi</text>'
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif"'
+        ' fill="#000000" text-anchor="start">hi</text>'
         in svg.to_string(),
         "TextAlign.LEFT -> text-anchor=start, SVG's own default anchor",
     )
@@ -293,13 +345,19 @@ def test_draw_text_left_align_maps_to_start_anchor() raises:
 def test_draw_text_center_align_maps_to_middle_anchor() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.CENTER)
-    assert_true('text-anchor="middle"' in svg.to_string(), "TextAlign.CENTER -> text-anchor=middle")
+    assert_true(
+        'text-anchor="middle"' in svg.to_string(),
+        "TextAlign.CENTER -> text-anchor=middle",
+    )
 
 
 def test_draw_text_right_align_maps_to_end_anchor() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.RIGHT)
-    assert_true('text-anchor="end"' in svg.to_string(), "TextAlign.RIGHT -> text-anchor=end")
+    assert_true(
+        'text-anchor="end"' in svg.to_string(),
+        "TextAlign.RIGHT -> text-anchor=end",
+    )
 
 
 def test_draw_text_escapes_xml_special_characters() raises:
@@ -307,7 +365,10 @@ def test_draw_text_escapes_xml_special_characters() raises:
     svg.draw_text(0, 0, "5 < 10 & 10 > 5", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(
         ">5 &lt; 10 &amp; 10 &gt; 5<" in svg.to_string(),
-        "<, &, > all escaped -- & escaped first so the other two don't get double-escaped",
+        (
+            "<, &, > all escaped -- & escaped first so the other two don't get"
+            " double-escaped"
+        ),
     )
 
 
@@ -316,8 +377,8 @@ def test_draw_text_default_rotation_omits_transform_attribute() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(
-        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" fill="#000000"'
-        ' text-anchor="start">hi</text>'
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif"'
+        ' fill="#000000" text-anchor="start">hi</text>'
         in svg.to_string(),
         "rotation=0.0 (the default) -- no transform attribute at all",
     )
@@ -328,11 +389,18 @@ def test_draw_text_rotation_emits_hand_derived_rotate_transform() raises:
     # _format_svg_float. No sign flip relative to raster draw_text,
     # since raster space and SVG's viewport space both put y down.
     var svg = SvgCanvas(100, 100)
-    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=pi / 2.0)
+    svg.draw_text(
+        10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=pi / 2.0
+    )
     assert_true(
-        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" fill="#000000"'
-        ' text-anchor="start" transform="rotate(90.000 10 20)">hi</text>' in svg.to_string(),
-        "rotate(<degrees> <x> <y>), rotating around the text's own anchor point",
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif"'
+        ' fill="#000000" text-anchor="start" transform="rotate(90.000 10'
+        ' 20)">hi</text>'
+        in svg.to_string(),
+        (
+            "rotate(<degrees> <x> <y>), rotating around the text's own anchor"
+            " point"
+        ),
     )
 
 
@@ -341,15 +409,29 @@ def test_draw_text_default_family_is_sans_serif() raises:
     # rather than leaving the viewer to its own undefined default.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
-    assert_true('font-family="sans-serif"' in svg.to_string(), "default family is sans-serif")
+    assert_true(
+        'font-family="sans-serif"' in svg.to_string(),
+        "default family is sans-serif",
+    )
 
 
 def test_draw_text_custom_family_is_emitted_verbatim() raises:
     var svg = SvgCanvas(100, 100)
-    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, family="Georgia, serif")
+    svg.draw_text(
+        10,
+        20,
+        "hi",
+        Color(0, 0, 0),
+        12.0,
+        TextAlign.LEFT,
+        family="Georgia, serif",
+    )
     assert_true(
         'font-family="Georgia, serif"' in svg.to_string(),
-        "a caller-supplied family value (a fallback stack here) is emitted as-is",
+        (
+            "a caller-supplied family value (a fallback stack here) is emitted"
+            " as-is"
+        ),
     )
 
 
@@ -362,10 +444,21 @@ def test_draw_text_family_containing_quotes_is_escaped() raises:
     # would close the attribute early and corrupt the markup, so this
     # checks _escape_xml_attr is actually wired in.
     var svg = SvgCanvas(100, 100)
-    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, family='"Helvetica Neue", Arial')
+    svg.draw_text(
+        10,
+        20,
+        "hi",
+        Color(0, 0, 0),
+        12.0,
+        TextAlign.LEFT,
+        family='"Helvetica Neue", Arial',
+    )
     assert_true(
         'font-family="&quot;Helvetica Neue&quot;, Arial"' in svg.to_string(),
-        "embedded double quotes in family are escaped, not left to corrupt the attribute",
+        (
+            "embedded double quotes in family are escaped, not left to corrupt"
+            " the attribute"
+        ),
     )
 
 
@@ -375,18 +468,33 @@ def test_draw_text_default_weight_omits_font_weight_attribute() raises:
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(
-        'font-weight' not in svg.to_string(),
-        "weight=FontWeight.NORMAL (the default) -- no font-weight attribute at all",
+        "font-weight" not in svg.to_string(),
+        (
+            "weight=FontWeight.NORMAL (the default) -- no font-weight attribute"
+            " at all"
+        ),
     )
 
 
 def test_draw_text_bold_weight_emits_font_weight_attribute() raises:
     var svg = SvgCanvas(100, 100)
-    svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, weight=FontWeight.BOLD)
+    svg.draw_text(
+        10,
+        20,
+        "hi",
+        Color(0, 0, 0),
+        12.0,
+        TextAlign.LEFT,
+        weight=FontWeight.BOLD,
+    )
     assert_true(
-        '<text x="10" y="20" font-size="12.000" font-family="sans-serif" font-weight="bold" fill="#000000"'
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif"'
+        ' font-weight="bold" fill="#000000"'
         in svg.to_string(),
-        "weight=FontWeight.BOLD emits a literal font-weight=\"bold\" attribute, positioned right after font-family",
+        (
+            'weight=FontWeight.BOLD emits a literal font-weight="bold"'
+            " attribute, positioned right after font-family"
+        ),
     )
 
 
@@ -395,7 +503,8 @@ def test_to_string_wraps_body_in_svg_root_with_correct_dimensions() raises:
     var s = svg.to_string()
     assert_true(
         '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"'
-        ' viewBox="0 0 320 240">' in s,
+        ' viewBox="0 0 320 240">'
+        in s,
         "root <svg> element carries the exact constructor dimensions",
     )
     assert_true(s.strip().endswith("</svg>"), "document is properly closed")

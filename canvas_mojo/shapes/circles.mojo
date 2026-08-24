@@ -9,7 +9,9 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 
 
-def draw_circle(mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color):
+def draw_circle(
+    mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color
+):
     """The midpoint circle algorithm: integer-only, plotting via 8-way
     symmetry around the center.
 
@@ -56,7 +58,9 @@ def draw_circle(mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color)
             err += 2 * (y - x) + 1
 
 
-def fill_circle(mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color):
+def fill_circle(
+    mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color
+):
     """Fill a solid disk, one horizontal span per row, so each pixel is
     set exactly once and a translucent color never double-blends --
     unlike reusing draw_circle's 8-way symmetry across rows, which
@@ -146,9 +150,16 @@ def fill_circle_aa(
                         covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )
 
 
 def draw_circle_aa(
@@ -211,6 +222,13 @@ def draw_circle_aa(
                         covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )

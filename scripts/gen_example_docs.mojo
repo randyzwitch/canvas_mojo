@@ -52,7 +52,9 @@ struct Category(Copyable, Movable):
     var blurb: String
     var names: List[String]
 
-    def __init__(out self, title: String, blurb: String, var names: List[String]):
+    def __init__(
+        out self, title: String, blurb: String, var names: List[String]
+    ):
         self.title = title
         self.blurb = blurb
         self.names = names^
@@ -60,29 +62,62 @@ struct Category(Copyable, Movable):
 
 def _categories() -> List[Category]:
     var cats = List[Category]()
-    cats.append(Category(
-        "Shapes & lines",
-        "The discrete shape primitives -- hard-edged and anti-aliased variants side by side.",
-        ["lines", "rect_stroke", "fill_rect_blend", "circles", "ellipse", "arc", "polyline", "polygon"],
-    ))
-    cats.append(Category(
-        "Paths & fills",
-        "The general Path API -- Bezier curves, multi-sub-path fill rules, and gradient fills.",
-        ["path", "fill_rule", "gradient"],
-    ))
-    cats.append(Category(
-        "Styling & transforms",
-        "Dash patterns, the Transform2D coordinate pipeline, and clip regions.",
-        ["dashes", "transform", "clipping"],
-    ))
-    cats.append(Category(
-        "Text", "Real system-font text rendering -- fontconfig matching, native TrueType parsing, bidi.",
-        ["text"],
-    ))
-    cats.append(Category(
-        "Image I/O", "Writing (and reading back) the pixel buffer as a real image file.",
-        ["png_output"],
-    ))
+    cats.append(
+        Category(
+            "Shapes & lines",
+            (
+                "The discrete shape primitives -- hard-edged and anti-aliased"
+                " variants side by side."
+            ),
+            [
+                "lines",
+                "rect_stroke",
+                "fill_rect_blend",
+                "circles",
+                "ellipse",
+                "arc",
+                "polyline",
+                "polygon",
+            ],
+        )
+    )
+    cats.append(
+        Category(
+            "Paths & fills",
+            (
+                "The general Path API -- Bezier curves, multi-sub-path fill"
+                " rules, and gradient fills."
+            ),
+            ["path", "fill_rule", "gradient"],
+        )
+    )
+    cats.append(
+        Category(
+            "Styling & transforms",
+            (
+                "Dash patterns, the Transform2D coordinate pipeline, and clip"
+                " regions."
+            ),
+            ["dashes", "transform", "clipping"],
+        )
+    )
+    cats.append(
+        Category(
+            "Text",
+            (
+                "Real system-font text rendering -- fontconfig matching, native"
+                " TrueType parsing, bidi."
+            ),
+            ["text"],
+        )
+    )
+    cats.append(
+        Category(
+            "Image I/O",
+            "Writing (and reading back) the pixel buffer as a real image file.",
+            ["png_output"],
+        )
+    )
     return cats^
 
 
@@ -117,7 +152,9 @@ def _first_sentence(docstring: String) -> String:
     # line, then cut at the first " -- " if present, else keep the
     # whole first sentence.
     var para_end = docstring.find("\n\n")
-    var first_para = String(docstring[byte=0:para_end]) if para_end != -1 else docstring
+    var first_para = (
+        String(docstring[byte=0:para_end]) if para_end != -1 else docstring
+    )
 
     var words = List[String]()
     for line in first_para.split("\n"):
@@ -135,7 +172,9 @@ def _first_sentence(docstring: String) -> String:
     var trimmed = String(sentence.strip())
     sentence = trimmed
     if sentence.endswith("."):
-        var without_dot = String(sentence[byte=0 : sentence.byte_length() - 1])
+        var without_dot = String(
+            sentence[byte = 0 : sentence.byte_length() - 1]
+        )
         sentence = without_dot
     sentence = sentence + "."
 
@@ -193,7 +232,9 @@ def main() raises:
     var all_names = List[String]()
     for entry in listdir(_EXAMPLES_DIR):
         if entry.endswith(".mojo"):
-            all_names.append(String(entry[byte=0 : entry.byte_length() - 5]))  # 5 == len(".mojo")
+            all_names.append(
+                String(entry[byte = 0 : entry.byte_length() - 5])
+            )  # 5 == len(".mojo")
     sort(all_names)
 
     var categorized = List[String]()

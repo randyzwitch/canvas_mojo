@@ -27,7 +27,9 @@ from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 
 
-def _square(mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Float64) raises:
+def _square(
+    mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Float64
+) raises:
     p.move_to(x0, y0)
     p.line_to(x1, y0)
     p.line_to(x1, y1)

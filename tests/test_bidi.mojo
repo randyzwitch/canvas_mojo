@@ -51,21 +51,37 @@ def test_digit_run_inside_hebrew_stays_in_reading_order() raises:
     # Hebrew words individually reversed and run-order-swapped, with
     # "123" staying "123" (not reversed to "321") in between.
     var cps: List[Int] = [
-        0x05E9, 0x05DC, 0x05D5, 0x05DD,
+        0x05E9,
+        0x05DC,
+        0x05D5,
+        0x05DD,
         0x0020,
-        0x0031, 0x0032, 0x0033,
+        0x0031,
+        0x0032,
+        0x0033,
         0x0020,
-        0x05E2, 0x05D5, 0x05DC, 0x05DD,
+        0x05E2,
+        0x05D5,
+        0x05DC,
+        0x05DD,
     ]
     var base = detect_base_level(cps)
     assert_equal(base, 1)
     var out = visual_order(cps, base)
     var expected: List[Int] = [
-        0x05DD, 0x05DC, 0x05D5, 0x05E2,
+        0x05DD,
+        0x05DC,
+        0x05D5,
+        0x05E2,
         0x0020,
-        0x0031, 0x0032, 0x0033,
+        0x0031,
+        0x0032,
+        0x0033,
         0x0020,
-        0x05DD, 0x05D5, 0x05DC, 0x05E9,
+        0x05DD,
+        0x05D5,
+        0x05DC,
+        0x05E9,
     ]
     assert_equal(len(out), len(expected))
     for i in range(len(expected)):

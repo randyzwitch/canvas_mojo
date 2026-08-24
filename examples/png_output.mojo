@@ -44,6 +44,18 @@ def main() raises:
         for x in range(c.width):
             var original = c.get_pixel(x, y)
             var round_tripped = decoded.get_pixel(x, y)
-            if original.r != round_tripped.r or original.g != round_tripped.g or original.b != round_tripped.b:
+            if (
+                original.r != round_tripped.r
+                or original.g != round_tripped.g
+                or original.b != round_tripped.b
+            ):
                 mismatches += 1
-    print("read back out_png_output.png:", decoded.width, "x", decoded.height, "--", mismatches, "pixel mismatches")
+    print(
+        "read back out_png_output.png:",
+        decoded.width,
+        "x",
+        decoded.height,
+        "--",
+        mismatches,
+        "pixel mismatches",
+    )

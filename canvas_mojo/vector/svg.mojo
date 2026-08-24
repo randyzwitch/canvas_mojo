@@ -19,7 +19,15 @@ from canvas_mojo.color import Color
 from canvas_mojo.gradient import LinearGradient, _GradientStop
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.geometry import _round_to_int
-from canvas_mojo.path import Path, _ARC_TO, _CLOSE, _CUBIC_TO, _LINE_TO, _MOVE_TO, _QUAD_TO
+from canvas_mojo.path import (
+    Path,
+    _ARC_TO,
+    _CLOSE,
+    _CUBIC_TO,
+    _LINE_TO,
+    _MOVE_TO,
+    _QUAD_TO,
+)
 from canvas_mojo.text.font_discovery import FontWeight
 from canvas_mojo.text.text_align import TextAlign
 
@@ -110,7 +118,9 @@ def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
     var sorted_stops = List[_GradientStop](capacity=len(stops))
     for stop in stops:
         var insert_at = len(sorted_stops)
-        while insert_at > 0 and sorted_stops[insert_at - 1].offset > stop.offset:
+        while (
+            insert_at > 0 and sorted_stops[insert_at - 1].offset > stop.offset
+        ):
             insert_at -= 1
         sorted_stops.insert(insert_at, stop)
     return sorted_stops^
@@ -131,9 +141,19 @@ def _path_d(path: Path) -> String:
             d += " "
         is_first = False
         if cmd.kind == _MOVE_TO:
-            d += "M" + _format_svg_float(cmd.p1.x) + "," + _format_svg_float(cmd.p1.y)
+            d += (
+                "M"
+                + _format_svg_float(cmd.p1.x)
+                + ","
+                + _format_svg_float(cmd.p1.y)
+            )
         elif cmd.kind == _LINE_TO:
-            d += "L" + _format_svg_float(cmd.p1.x) + "," + _format_svg_float(cmd.p1.y)
+            d += (
+                "L"
+                + _format_svg_float(cmd.p1.x)
+                + ","
+                + _format_svg_float(cmd.p1.y)
+            )
         elif cmd.kind == _QUAD_TO:
             d += (
                 "Q"
@@ -174,7 +194,9 @@ def _path_d(path: Path) -> String:
             var end_angle = cmd.p3.x
             var x1 = cx + radius * cos(end_angle)
             var y1 = cy + radius * sin(end_angle)
-            var large_arc_flag = 1 if (end_angle - cmd.p2.y) > 3.14159265358979 else 0
+            var large_arc_flag = (
+                1 if (end_angle - cmd.p2.y) > 3.14159265358979 else 0
+            )
             d += (
                 "A"
                 + _format_svg_float(radius)
@@ -211,7 +233,9 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body = ""
         self._gradient_count = 0
 
-    def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color):
+    def fill_rect(
+        mut self, x: Int, y: Int, width: Int, height: Int, color: Color
+    ):
         self._body += (
             '<rect x="'
             + String(x)
@@ -227,7 +251,12 @@ struct SvgCanvas(DrawTarget, Movable):
         )
 
     def fill_rect_gradient(
-        mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
+        mut self,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        gradient: LinearGradient,
     ):
         """A real SVG `<linearGradient>` with
         `gradientUnits="userSpaceOnUse"`, not a per-pixel raster fill.
@@ -287,7 +316,13 @@ struct SvgCanvas(DrawTarget, Movable):
         )
 
     def draw_line_aa(
-        mut self, x0: Int, y0: Int, x1: Int, y1: Int, color: Color, width: Float64 = 1.0
+        mut self,
+        x0: Int,
+        y0: Int,
+        x1: Int,
+        y1: Int,
+        color: Color,
+        width: Float64 = 1.0,
     ):
         self._body += (
             '<line x1="'
@@ -338,7 +373,9 @@ struct SvgCanvas(DrawTarget, Movable):
         var y0 = cy + radius * sin(start_angle)
         var x1 = cx + radius * cos(end_angle)
         var y1 = cy + radius * sin(end_angle)
-        var large_arc_flag = 1 if (end_angle - start_angle) > 3.14159265358979 else 0
+        var large_arc_flag = (
+            1 if (end_angle - start_angle) > 3.14159265358979 else 0
+        )
         self._body += (
             '<path d="M'
             + _format_svg_float(cx)
@@ -389,7 +426,9 @@ struct SvgCanvas(DrawTarget, Movable):
         var inner_y1 = cy + inner_radius * sin(end_angle)
         var inner_x0 = cx + inner_radius * cos(start_angle)
         var inner_y0 = cy + inner_radius * sin(start_angle)
-        var large_arc_flag = 1 if (end_angle - start_angle) > 3.14159265358979 else 0
+        var large_arc_flag = (
+            1 if (end_angle - start_angle) > 3.14159265358979 else 0
+        )
         self._body += (
             '<path d="M'
             + _format_svg_float(outer_x0)
@@ -424,7 +463,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"/>\n'
         )
 
-    def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0):
+    def stroke_path_aa(
+        mut self, path: Path, color: Color, width: Float64 = 1.0
+    ):
         self._body += (
             '<path d="'
             + _path_d(path)
@@ -436,7 +477,13 @@ struct SvgCanvas(DrawTarget, Movable):
         )
 
     def fill_path_aa(mut self, path: Path, color: Color):
-        self._body += '<path d="' + _path_d(path) + '" fill="' + _hex_color(color) + '"/>\n'
+        self._body += (
+            '<path d="'
+            + _path_d(path)
+            + '" fill="'
+            + _hex_color(color)
+            + '"/>\n'
+        )
 
     def draw_text(
         mut self,

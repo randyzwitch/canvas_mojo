@@ -78,7 +78,9 @@ struct FontCache(Movable):
         self._paths_for_char = Dict[String, String]()
         self._faces = Dict[String, ArcPointer[TTFFace]]()
 
-    def _face_for_path(mut self, path: String, size: Float64) raises -> ArcPointer[TTFFace]:
+    def _face_for_path(
+        mut self, path: String, size: Float64
+    ) raises -> ArcPointer[TTFFace]:
         """Turns an already-resolved font *path* into a cached, shared
         face; resolve_face and resolve_face_for_char both land here.
 
@@ -97,7 +99,9 @@ struct FontCache(Movable):
         self._faces[key] = arc
         return arc
 
-    def resolve(mut self, family: String, slant: FontSlant, weight: FontWeight) raises -> String:
+    def resolve(
+        mut self, family: String, slant: FontSlant, weight: FontWeight
+    ) raises -> String:
         """Cached resolve_font_file: fontconfig is asked once per
         distinct (family, slant, weight), and every later call for that
         combination reads the path from the Dict.
@@ -110,7 +114,11 @@ struct FontCache(Movable):
         return path
 
     def resolve_for_char(
-        mut self, family: String, slant: FontSlant, weight: FontWeight, codepoint: Int
+        mut self,
+        family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        codepoint: Int,
     ) raises -> String:
         """Cached resolve_font_file_for_char, keyed additionally on
         `codepoint`, since a charset-constrained match can return a
@@ -125,7 +133,11 @@ struct FontCache(Movable):
         return path
 
     def resolve_face(
-        mut self, family: String, slant: FontSlant, weight: FontWeight, size: Float64
+        mut self,
+        family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        size: Float64,
     ) raises -> ArcPointer[TTFFace]:
         """`resolve` plus `_face_for_path` in one call, which
         `render.mojo`'s `_load_sized_face` wraps. draw_text calls it
@@ -137,7 +149,12 @@ struct FontCache(Movable):
         return self._face_for_path(path, size)
 
     def resolve_face_for_char(
-        mut self, family: String, slant: FontSlant, weight: FontWeight, codepoint: Int, size: Float64
+        mut self,
+        family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        codepoint: Int,
+        size: Float64,
     ) raises -> ArcPointer[TTFFace]:
         """resolve_face's fallback-glyph counterpart, for
         `render.mojo`'s `_resolve_glyph`. `resolve_for_char` already

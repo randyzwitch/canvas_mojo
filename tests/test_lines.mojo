@@ -22,7 +22,9 @@ comptime BG = Color(0, 0, 0)
 comptime FG = Color(255, 255, 255)
 
 
-def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+def _assert_pixel(
+    c: Canvas, x: Int, y: Int, expected: Color, label: String
+) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected.r, label + " (r)")
     assert_equal(p.g, expected.g, label + " (g)")
@@ -120,8 +122,14 @@ def test_draw_line_aa_agrees_with_hard_edged_on_interior_pixels() raises:
     draw_line_aa(aa, 1, 1, 7, 1, FG)
     for x in range(2, 7):
         var hard_pixel = hard.get_pixel(x, 1)
-        if hard_pixel.r == FG.r and hard_pixel.g == FG.g and hard_pixel.b == FG.b:
-            _assert_pixel(aa, x, 1, FG, "hard-edged interior pixel must match in AA")
+        if (
+            hard_pixel.r == FG.r
+            and hard_pixel.g == FG.g
+            and hard_pixel.b == FG.b
+        ):
+            _assert_pixel(
+                aa, x, 1, FG, "hard-edged interior pixel must match in AA"
+            )
 
 
 def test_draw_line_aa_respects_translucent_input_color() raises:
@@ -320,7 +328,9 @@ def test_draw_polyline_dash_phase_carries_across_the_joint() raises:
     draw_polyline(c, points, FG, dashes)
 
     _assert_pixel(c, 4, 3, FG, "on if phase carried, off if reset per segment")
-    _assert_pixel(c, 4, 4, BG, "distance 8 -> off, confirms the carry continues correctly")
+    _assert_pixel(
+        c, 4, 4, BG, "distance 8 -> off, confirms the carry continues correctly"
+    )
 
 
 def test_draw_line_aa_dashed_has_background_gaps() raises:
@@ -416,7 +426,9 @@ def _brute_force_stroke_polyline_aa(
             for sy in range(n):
                 var sample_y = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
                 for sx in range(n):
-                    var sample_x = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    var sample_x = (
+                        Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    )
                     var min_dist2 = -1.0
                     for seg in range(num_segments):
                         var a = points[seg]
@@ -432,7 +444,9 @@ def _brute_force_stroke_polyline_aa(
                         if len2 == 0.0:
                             t = 0.0
                         else:
-                            t = ((sample_x - fx0) * ldx + (sample_y - fy0) * ldy) / len2
+                            t = (
+                                (sample_x - fx0) * ldx + (sample_y - fy0) * ldy
+                            ) / len2
                             if t < 0.0:
                                 t = 0.0
                             elif t > 1.0:
@@ -443,17 +457,28 @@ def _brute_force_stroke_polyline_aa(
                         var ddy = sample_y - closest_y
                         var d2 = ddx * ddx + ddy * ddy
                         if d2 <= hw2:
-                            var sample_distance = seg_start_distance[seg] + t * seg_length[seg]
-                            if _is_dash_on(sample_distance, dashes, dash_offset):
+                            var sample_distance = (
+                                seg_start_distance[seg] + t * seg_length[seg]
+                            )
+                            if _is_dash_on(
+                                sample_distance, dashes, dash_offset
+                            ):
                                 if min_dist2 < 0.0 or d2 < min_dist2:
                                     min_dist2 = d2
                     if min_dist2 >= 0.0:
                         covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )
 
 
 def _jagged_stress_points() -> List[Point]:
@@ -511,7 +536,9 @@ def test_draw_polyline_aa_dashed_matches_a_brute_force_reference_on_a_jagged_str
     draw_polyline_aa(canvas, points, Color(0, 0, 0), width=2.0, dashes=dashes)
 
     var reference = Canvas(100, 140, Color(255, 255, 255))
-    _brute_force_stroke_polyline_aa(reference, points, Color(0, 0, 0), 2.0, 4, False, dashes, 0.0)
+    _brute_force_stroke_polyline_aa(
+        reference, points, Color(0, 0, 0), 2.0, 4, False, dashes, 0.0
+    )
 
     for i in range(len(canvas.pixels)):
         assert_equal(canvas.pixels[i], reference.pixels[i])

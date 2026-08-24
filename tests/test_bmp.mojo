@@ -77,7 +77,18 @@ def test_row0_is_bottom_canvas_row_bgr_with_padding() raises:
     # white, white, (40,50,60) as BGR, then 3 padding bytes.
     var buf = _write_sample()
     var expected: List[UInt8] = [
-        255, 255, 255, 255, 255, 255, 60, 50, 40, 0, 0, 0
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        60,
+        50,
+        40,
+        0,
+        0,
+        0,
     ]
     for i in range(12):
         assert_equal(buf[54 + i], expected[i])
@@ -88,7 +99,18 @@ def test_row1_is_top_canvas_row_bgr_with_padding() raises:
     # white, then 3 padding bytes.
     var buf = _write_sample()
     var expected: List[UInt8] = [
-        30, 20, 10, 255, 255, 255, 255, 255, 255, 0, 0, 0
+        30,
+        20,
+        10,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        0,
+        0,
+        0,
     ]
     for i in range(12):
         assert_equal(buf[66 + i], expected[i])

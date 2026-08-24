@@ -35,7 +35,13 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.text.render import draw_text, measure_text, measure_text_block, TextAlign, _visual_codepoints
+from canvas_mojo.text.render import (
+    draw_text,
+    measure_text,
+    measure_text_block,
+    TextAlign,
+    _visual_codepoints,
+)
 
 comptime BG = Color(255, 255, 255)
 comptime FG = Color(200, 20, 20, 255)
@@ -61,7 +67,14 @@ struct _InkBBox(ImplicitlyCopyable, Movable):
     var max_y: Int
     var found_any: Bool
 
-    def __init__(out self, min_x: Int, max_x: Int, min_y: Int, max_y: Int, found_any: Bool):
+    def __init__(
+        out self,
+        min_x: Int,
+        max_x: Int,
+        min_y: Int,
+        max_y: Int,
+        found_any: Bool,
+    ):
         self.min_x = min_x
         self.max_x = max_x
         self.min_y = min_y
@@ -369,10 +382,22 @@ def test_measure_text_block_matches_rendered_ink_unrotated() raises:
     var pred_min_y = Float64(anchor_y) + predicted.y
     var pred_max_y = Float64(anchor_y) + predicted.y + predicted.height
 
-    assert_true(pred_min_x > Float64(actual.min_x) - 2.0 and pred_min_x < Float64(actual.min_x) + 2.0)
-    assert_true(pred_max_x > Float64(actual.max_x) - 2.0 and pred_max_x < Float64(actual.max_x) + 2.0)
-    assert_true(pred_min_y > Float64(actual.min_y) - 2.0 and pred_min_y < Float64(actual.min_y) + 2.0)
-    assert_true(pred_max_y > Float64(actual.max_y) - 2.0 and pred_max_y < Float64(actual.max_y) + 2.0)
+    assert_true(
+        pred_min_x > Float64(actual.min_x) - 2.0
+        and pred_min_x < Float64(actual.min_x) + 2.0
+    )
+    assert_true(
+        pred_max_x > Float64(actual.max_x) - 2.0
+        and pred_max_x < Float64(actual.max_x) + 2.0
+    )
+    assert_true(
+        pred_min_y > Float64(actual.min_y) - 2.0
+        and pred_min_y < Float64(actual.min_y) + 2.0
+    )
+    assert_true(
+        pred_max_y > Float64(actual.max_y) - 2.0
+        and pred_max_y < Float64(actual.max_y) + 2.0
+    )
 
 
 def test_measure_text_block_matches_rendered_ink_rotated() raises:
@@ -392,10 +417,22 @@ def test_measure_text_block_matches_rendered_ink_rotated() raises:
     var pred_min_y = Float64(anchor_y) + predicted.y
     var pred_max_y = Float64(anchor_y) + predicted.y + predicted.height
 
-    assert_true(pred_min_x > Float64(actual.min_x) - 2.0 and pred_min_x < Float64(actual.min_x) + 2.0)
-    assert_true(pred_max_x > Float64(actual.max_x) - 2.0 and pred_max_x < Float64(actual.max_x) + 2.0)
-    assert_true(pred_min_y > Float64(actual.min_y) - 2.0 and pred_min_y < Float64(actual.min_y) + 2.0)
-    assert_true(pred_max_y > Float64(actual.max_y) - 2.0 and pred_max_y < Float64(actual.max_y) + 2.0)
+    assert_true(
+        pred_min_x > Float64(actual.min_x) - 2.0
+        and pred_min_x < Float64(actual.min_x) + 2.0
+    )
+    assert_true(
+        pred_max_x > Float64(actual.max_x) - 2.0
+        and pred_max_x < Float64(actual.max_x) + 2.0
+    )
+    assert_true(
+        pred_min_y > Float64(actual.min_y) - 2.0
+        and pred_min_y < Float64(actual.min_y) + 2.0
+    )
+    assert_true(
+        pred_max_y > Float64(actual.max_y) - 2.0
+        and pred_max_y < Float64(actual.max_y) + 2.0
+    )
 
     # The tall/narrow-vs-wide/short flip
     # test_rotation_90_degrees_swaps_ink_bbox_dimensions confirms on
@@ -413,7 +450,10 @@ def test_measure_text_block_right_align_matches_rendered_ink() raises:
 
     var predicted = measure_text_block("Hi", 30.0, align=TextAlign.RIGHT)
     var pred_max_x = Float64(anchor_x) + predicted.x + predicted.width
-    assert_true(pred_max_x > Float64(actual.max_x) - 2.0 and pred_max_x < Float64(actual.max_x) + 2.0)
+    assert_true(
+        pred_max_x > Float64(actual.max_x) - 2.0
+        and pred_max_x < Float64(actual.max_x) + 2.0
+    )
 
 
 def test_measure_text_block_empty_string_is_a_zero_box() raises:

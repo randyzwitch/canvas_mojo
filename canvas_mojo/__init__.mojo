@@ -12,9 +12,24 @@ from canvas_mojo.shapes.lines import (
     draw_polygon_aa,
 )
 from canvas_mojo.shapes.polygon_fill import fill_polygon, fill_polygon_aa
-from canvas_mojo.shapes.rects import draw_rect, fill_rect, fill_rect_gradient, fill_rect_radial_gradient
-from canvas_mojo.shapes.circles import draw_circle, fill_circle, fill_circle_aa, draw_circle_aa
-from canvas_mojo.shapes.ellipses import draw_ellipse, fill_ellipse, fill_ellipse_aa, draw_ellipse_aa
+from canvas_mojo.shapes.rects import (
+    draw_rect,
+    fill_rect,
+    fill_rect_gradient,
+    fill_rect_radial_gradient,
+)
+from canvas_mojo.shapes.circles import (
+    draw_circle,
+    fill_circle,
+    fill_circle_aa,
+    draw_circle_aa,
+)
+from canvas_mojo.shapes.ellipses import (
+    draw_ellipse,
+    fill_ellipse,
+    fill_ellipse_aa,
+    draw_ellipse_aa,
+)
 from canvas_mojo.shapes.arcs import (
     draw_arc,
     draw_arc_aa,
@@ -23,7 +38,14 @@ from canvas_mojo.shapes.arcs import (
     fill_ring_sector,
     fill_ring_sector_aa,
 )
-from canvas_mojo.text.render import draw_text, measure_text, measure_text_block, TextAlign, TextMetrics, TextBlockBounds
+from canvas_mojo.text.render import (
+    draw_text,
+    measure_text,
+    measure_text_block,
+    TextAlign,
+    TextMetrics,
+    TextBlockBounds,
+)
 from canvas_mojo.path import (
     Path,
     FPoint,

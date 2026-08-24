@@ -32,13 +32,20 @@ from canvas_mojo.text.font_discovery import (
     resolve_font_file,
     resolve_font_file_for_char,
 )
-from canvas_mojo.text.render import draw_text, measure_text, measure_text_block, TextAlign
+from canvas_mojo.text.render import (
+    draw_text,
+    measure_text,
+    measure_text_block,
+    TextAlign,
+)
 
 
 def test_resolve_matches_an_uncached_lookup() raises:
     var cache = FontCache()
     var cached_path = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
-    var direct_path = resolve_font_file("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
+    var direct_path = resolve_font_file(
+        "Sans", FontSlant.NORMAL, FontWeight.NORMAL
+    )
     assert_equal(cached_path, direct_path)
 
 
@@ -61,8 +68,12 @@ def test_resolve_distinguishes_different_slant_weight_combinations() raises:
     var cache = FontCache()
     var normal = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
     var bold = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.BOLD)
-    var direct_normal = resolve_font_file("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
-    var direct_bold = resolve_font_file("Sans", FontSlant.NORMAL, FontWeight.BOLD)
+    var direct_normal = resolve_font_file(
+        "Sans", FontSlant.NORMAL, FontWeight.NORMAL
+    )
+    var direct_bold = resolve_font_file(
+        "Sans", FontSlant.NORMAL, FontWeight.BOLD
+    )
     assert_equal(normal, direct_normal)
     assert_equal(bold, direct_bold)
 
@@ -71,8 +82,12 @@ def test_resolve_for_char_matches_the_fallback_path_a_cache_miss_would_find() ra
     # The "Ubuntu" family / snowman (U+2603) environment fact
     # test_font_discovery.mojo's char-constrained tests rely on.
     var cache = FontCache()
-    var cached_path = cache.resolve_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603)
-    var direct_path = resolve_font_file_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603)
+    var cached_path = cache.resolve_for_char(
+        "Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603
+    )
+    var direct_path = resolve_font_file_for_char(
+        "Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603
+    )
     assert_equal(cached_path, direct_path)
 
 
@@ -90,7 +105,9 @@ def test_measure_text_block_cache_overload_matches_the_uncached_result() raises:
     var cached = measure_text_block(
         "Hello\nWorld", 24.0, rotation=0.5, align=TextAlign.CENTER, cache=cache
     )
-    var uncached = measure_text_block("Hello\nWorld", 24.0, rotation=0.5, align=TextAlign.CENTER)
+    var uncached = measure_text_block(
+        "Hello\nWorld", 24.0, rotation=0.5, align=TextAlign.CENTER
+    )
     assert_equal(cached.x, uncached.x)
     assert_equal(cached.y, uncached.y)
     assert_equal(cached.width, uncached.width)
@@ -157,8 +174,12 @@ def test_shared_cache_serves_fallback_glyphs_at_two_different_sizes_correctly() 
     # fallback-face cache at two interleaved sizes.
     var canvas = Canvas(80, 120)
     var cache = FontCache()
-    draw_text(canvas, 5, 40, "☃", Color(0, 0, 0), 20.0, family="Ubuntu", cache=cache)
-    draw_text(canvas, 5, 100, "☃", Color(0, 0, 0), 32.0, family="Ubuntu", cache=cache)
+    draw_text(
+        canvas, 5, 40, "☃", Color(0, 0, 0), 20.0, family="Ubuntu", cache=cache
+    )
+    draw_text(
+        canvas, 5, 100, "☃", Color(0, 0, 0), 32.0, family="Ubuntu", cache=cache
+    )
 
     var reference = Canvas(80, 120)
     draw_text(reference, 5, 40, "☃", Color(0, 0, 0), 20.0, family="Ubuntu")

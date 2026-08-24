@@ -122,7 +122,9 @@ def test_nested_push_clip_intersects_with_parent() raises:
     _assert_pixel_eq(c, 3, 3, 0)
 
     c.pop_clip()  # back to just the parent clip
-    c.set_pixel(3, 3, Color(255, 255, 255))  # now inside the active (parent) clip
+    c.set_pixel(
+        3, 3, Color(255, 255, 255)
+    )  # now inside the active (parent) clip
     _assert_pixel_eq(c, 3, 3, 255)
 
 
