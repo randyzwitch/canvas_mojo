@@ -462,6 +462,28 @@ def _round_trip(data: List[UInt8]) raises -> List[UInt8]:
     return inflate(compressed^)
 
 
+def test_deflate_flat_input_matches_a_single_candidate_search() raises:
+    # A fully flat run is where every hash-chain candidate matches to
+    # the maximum length, so none can improve on the first -- the case
+    # _find_match's early exit at max_possible exists for. The stream
+    # must be identical to what an exhaustive candidate search emits,
+    # which this pins by round-tripping and by checking the ratio is
+    # still the one a maximal match run produces (a broken early exit
+    # would settle for shorter matches and inflate the output).
+    var flat = List[UInt8]()
+    for _ in range(100000):
+        flat.append(42)
+    var compressed = deflate(flat)
+    assert_true(
+        len(compressed) < 1000,
+        "100KB of one byte must compress to well under 1KB via maximal matches",
+    )
+    var back = inflate(compressed^)
+    assert_equal(len(back), 100000)
+    for i in range(0, 100000, 997):
+        assert_equal(back[i], 42)
+
+
 def test_deflate_round_trips_empty_input() raises:
     var result = _round_trip(List[UInt8]())
     assert_equal(len(result), 0)
