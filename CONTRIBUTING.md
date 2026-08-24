@@ -36,7 +36,7 @@ installs.
 ## The DrawTarget trait, and why the package works
 
 `DrawTarget` (`canvas_mojo/vector/draw_target.mojo`) is the load-bearing
-idea in this package. It declares nine drawing primitives:
+idea in this package. It declares ten drawing primitives:
 
 ```mojo
 trait DrawTarget:
@@ -45,6 +45,7 @@ trait DrawTarget:
     def draw_line_aa(mut self, ..., width: Float64 = 1.0): ...
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color): ...
     def fill_ellipse_aa(mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color): ...
+    def draw_ellipse_aa(mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color): ...
     def fill_arc_aa(mut self, ...): ...
     def fill_ring_sector_aa(mut self, ...): ...
     def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0): ...
@@ -83,13 +84,14 @@ Two further consequences worth knowing before you propose an addition:
   concrete caller *through the trait*. Add to the trait when something
   concrete needs it, not before — every addition is a method both
   backends must implement forever.
-- **`fill_ellipse_aa` is the exception that shows the rule.** Every
-  other shape left off the trait is left off because `fill_path_aa`
-  already covers it. An ellipse is the one case where that fails:
-  `Path.arc_to` takes a single `radius`, so it builds circular arcs
-  only, and an ellipse can only be *approximated* through `Path`, with
-  cubics. "Use `fill_path_aa`" is the right answer for a triangle or a
-  star; it is not for an ellipse.
+- **The ellipse methods are the exception that shows the rule.** Every
+  other shape left off the trait is left off because `fill_path_aa` or
+  `stroke_path_aa` covers it. An ellipse is the one case where that
+  fails: `Path.arc_to` takes a single `radius`, so it builds circular
+  arcs only, and an ellipse can only be *approximated* through `Path`,
+  with cubics. "Use `fill_path_aa`" is the right answer for a triangle
+  or a star; it is not for an ellipse. That's also why the ellipse is
+  the only shape here carrying both a fill and an outline.
 - **Trait parameters are trimmed.** No `supersample`, `dashes`, or
   `fill_rule`. A raster implementation picks its own supersample factor
   internally; a vector one has no equivalent knob to expose.

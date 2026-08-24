@@ -27,7 +27,7 @@ go = ">=1.26.6,<2"
 # first" scheduling heuristic real parallel build systems use. Matters
 # far less locally (this machine's own core count comfortably exceeds
 # 16), but costs nothing to get right for CI too.
-example = "bash scripts/run_parallel.sh examples/fill_rect_blend.mojo examples/rect_stroke.mojo examples/lines.mojo examples/circles.mojo examples/ellipse.mojo examples/arc.mojo examples/polyline.mojo examples/polygon.mojo examples/path.mojo examples/fill_rule.mojo examples/gradient.mojo examples/dashes.mojo examples/transform.mojo examples/clipping.mojo examples/png_output.mojo examples/text.mojo"
+example = "bash scripts/run_parallel.sh examples/fill_rect_blend.mojo examples/rect_stroke.mojo examples/lines.mojo examples/circles.mojo examples/ellipse.mojo examples/arc.mojo examples/polyline.mojo examples/polygon.mojo examples/path.mojo examples/fill_rule.mojo examples/gradient.mojo examples/dashes.mojo examples/transform.mojo examples/clipping.mojo examples/png_output.mojo examples/text.mojo examples/vector.mojo"
 test = "bash scripts/run_parallel.sh tests/test_text.mojo tests/test_font_discovery.mojo tests/test_font_cache.mojo tests/test_ttf.mojo tests/test_glyph_outline.mojo tests/test_color.mojo tests/test_buffer.mojo tests/test_bmp.mojo tests/test_deflate.mojo tests/test_png.mojo tests/test_geometry.mojo tests/test_gradient.mojo tests/test_dash.mojo tests/test_lines.mojo tests/test_polygon_fill.mojo tests/test_rects.mojo tests/test_circles.mojo tests/test_ellipses.mojo tests/test_arcs.mojo tests/test_path.mojo tests/test_resize.mojo tests/test_svg.mojo tests/test_bidi.mojo"
 
 # Formats every .mojo file in the repo at `mojo format`'s own default

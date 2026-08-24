@@ -9,6 +9,7 @@
 # generated example output
 examples/*.bmp
 examples/*.png
+examples/*.svg
 
 # generated test artifacts
 tests/_test_*.bmp
