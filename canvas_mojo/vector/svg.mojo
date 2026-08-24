@@ -100,6 +100,34 @@ def _hex_color(color: Color) -> String:
     return "#" + _hex_byte(color.r) + _hex_byte(color.g) + _hex_byte(color.b)
 
 
+def _opacity_attr(name: String, color: Color) -> String:
+    """A ` fill-opacity="..."` / ` stroke-opacity="..."` attribute for
+    `color`'s alpha, or `""` when it is fully opaque.
+
+    SVG carries alpha in a separate attribute rather than in the color,
+    since `#rrggbb` has nowhere to put it -- so without this a
+    translucent color renders fully opaque here while the raster
+    backend blends it, and the same `DrawTarget` call produces two
+    different pictures.
+
+    Omitted entirely at `a == 255`, matching the omit-at-default
+    convention `rotation` and `weight` already follow in `draw_text`, so
+    opaque output carries no opacity attribute at all. Alpha is
+    expressed as SVG wants it, a 0-1 fraction at `_format_svg_float`'s
+    3 decimals, which is the same shape `fill_rect_gradient` already
+    emits for `stop-opacity`.
+    """
+    if color.a == 255:
+        return ""
+    return (
+        " "
+        + name
+        + '-opacity="'
+        + _format_svg_float(Float64(color.a) / 255.0)
+        + '"'
+    )
+
+
 def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
     """`LinearGradient.stops` in ascending-offset order. `add_stop`
     guarantees insertion order doesn't matter, and the raster lookup
@@ -247,7 +275,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(height)
             + '" fill="'
             + _hex_color(color)
-            + '"/>\n'
+            + '"'
+            + _opacity_attr("fill", color)
+            + "/>\n"
         )
 
     def fill_rect_gradient(
@@ -335,7 +365,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(y1)
             + '" stroke="'
             + _hex_color(color)
-            + '" stroke-width="'
+            + '"'
+            + _opacity_attr("stroke", color)
+            + ' stroke-width="'
             + _format_svg_float(width)
             + '" stroke-linecap="round"/>\n'
         )
@@ -350,7 +382,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(radius)
             + '" fill="'
             + _hex_color(color)
-            + '"/>\n'
+            + '"'
+            + _opacity_attr("fill", color)
+            + "/>\n"
         )
 
     def fill_ellipse_aa(
@@ -367,7 +401,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(ry)
             + '" fill="'
             + _hex_color(color)
-            + '"/>\n'
+            + '"'
+            + _opacity_attr("fill", color)
+            + "/>\n"
         )
 
     def fill_arc_aa(
@@ -414,7 +450,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _format_svg_float(y1)
             + ' Z" fill="'
             + _hex_color(color)
-            + '"/>\n'
+            + '"'
+            + _opacity_attr("fill", color)
+            + "/>\n"
         )
 
     def fill_ring_sector_aa(
@@ -477,7 +515,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _format_svg_float(inner_y0)
             + ' Z" fill="'
             + _hex_color(color)
-            + '"/>\n'
+            + '"'
+            + _opacity_attr("fill", color)
+            + "/>\n"
         )
 
     def stroke_path_aa(
@@ -488,7 +528,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _path_d(path)
             + '" fill="none" stroke="'
             + _hex_color(color)
-            + '" stroke-width="'
+            + '"'
+            + _opacity_attr("stroke", color)
+            + ' stroke-width="'
             + _format_svg_float(width)
             + '" stroke-linecap="round" stroke-linejoin="round"/>\n'
         )
@@ -499,7 +541,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _path_d(path)
             + '" fill="'
             + _hex_color(color)
-            + '"/>\n'
+            + '"'
+            + _opacity_attr("fill", color)
+            + "/>\n"
         )
 
     def draw_text(
@@ -585,7 +629,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + font_weight
             + ' fill="'
             + _hex_color(color)
-            + '" text-anchor="'
+            + '"'
+            + _opacity_attr("fill", color)
+            + ' text-anchor="'
             + anchor
             + '"'
             + transform
