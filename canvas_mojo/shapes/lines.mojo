@@ -29,6 +29,13 @@ from canvas_mojo.shapes.dash import _is_dash_on
 
 comptime _SQRT2 = 1.4142135623730951
 
+# Sub-samples evaluated per SIMD step in the anti-aliased polyline
+# core. 4 rather than the widest available vector: the default
+# supersample is 4, so one chunk covers a whole row of sub-samples with
+# no masked-off lanes, and a wider vector would spend most of its width
+# idle at the size this is actually called with.
+comptime _AA_LANES = 4
+
 
 def _draw_line_core(
     mut canvas: Canvas,
@@ -374,17 +381,35 @@ def _draw_polyline_core_aa(
     # before it) and length, precomputed so dash phase carries across
     # joints. draw_polyline keeps the same running total, but this
     # loop iterates samples rather than segments in path order.
+    #
+    # The same pass also keeps each segment's endpoint, direction and
+    # 1/|d|^2, which the per-sample distance test below needs. Those
+    # are fixed per segment, so computing them here rather than inside
+    # the sample loops is the difference between once per segment and
+    # once per (pixel, sample, segment) -- supersample^2 times more
+    # often, for a value that cannot change.
     var seg_start_distance = List[Float64](capacity=num_segments)
     var seg_length = List[Float64](capacity=num_segments)
+    var seg_x0 = List[Float64](capacity=num_segments)
+    var seg_y0 = List[Float64](capacity=num_segments)
+    var seg_dx = List[Float64](capacity=num_segments)
+    var seg_dy = List[Float64](capacity=num_segments)
+    var seg_len2 = List[Float64](capacity=num_segments)
     var running_distance = 0.0
     for seg in range(num_segments):
         var sa = points[seg]
         var sb = points[(seg + 1) % count]
         var sdx = Float64(sb.x - sa.x)
         var sdy = Float64(sb.y - sa.y)
-        var slen = sqrt(sdx * sdx + sdy * sdy)
+        var slen2 = sdx * sdx + sdy * sdy
+        var slen = sqrt(slen2)
         seg_start_distance.append(running_distance)
         seg_length.append(slen)
+        seg_x0.append(Float64(sa.x))
+        seg_y0.append(Float64(sa.y))
+        seg_dx.append(sdx)
+        seg_dy.append(sdy)
+        seg_len2.append(slen2)
         running_distance += slen
 
     var min_x = points[0].x
@@ -491,58 +516,118 @@ def _draw_polyline_core_aa(
                 continue  # no segment comes anywhere near this pixel
 
             var covered = 0
-            for sy in range(n):
-                var sample_y = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-                for sx in range(n):
-                    var sample_x = (
-                        Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+            if len(dashes) == 0:
+                # No dash pattern means every candidate is always
+                # on-dash, so coverage is a pure nearest-segment test
+                # and the whole candidate loop vectorizes: the
+                # projection and distance math is identical arithmetic
+                # on `_AA_LANES` sub-samples at once. Only the final
+                # "is the nearest segment within half-width" count stays
+                # scalar, and that is `_AA_LANES` comparisons per chunk
+                # rather than the per-candidate work.
+                #
+                # Dashed strokes keep the scalar path below: the dash
+                # test needs each sample's own distance along the path
+                # through `_is_dash_on`, which is a loop over the
+                # pattern and does not vectorize usefully.
+                for sy in range(n):
+                    var sample_y = (
+                        Float64(py) + (Float64(sy) + 0.5) * step - 0.5
                     )
-                    var min_dist2 = -1.0
-                    for ci in range(len(candidates)):
-                        var seg = candidates[ci]
-                        var a = points[seg]
-                        var b = points[(seg + 1) % count]
-                        var fx0 = Float64(a.x)
-                        var fy0 = Float64(a.y)
-                        var fx1 = Float64(b.x)
-                        var fy1 = Float64(b.y)
-                        var ldx = fx1 - fx0
-                        var ldy = fy1 - fy0
-                        var len2 = ldx * ldx + ldy * ldy
-                        var t: Float64
-                        if len2 == 0.0:
-                            t = 0.0
-                        else:
-                            t = (
-                                (sample_x - fx0) * ldx + (sample_y - fy0) * ldy
-                            ) / len2
-                            if t < 0.0:
-                                t = 0.0
-                            elif t > 1.0:
-                                t = 1.0
-                        var closest_x = fx0 + t * ldx
-                        var closest_y = fy0 + t * ldy
-                        var ddx = sample_x - closest_x
-                        var ddy = sample_y - closest_y
-                        var d2 = ddx * ddx + ddy * ddy
-                        # A segment only becomes a candidate once it's
-                        # both close enough AND on-dash at this exact
-                        # projected point -- with no dash pattern every
-                        # segment is always on-dash, so this reduces to
-                        # a plain nearest-segment-within-hw2 test,
-                        # since a global min <= hw2 can only come from
-                        # a segment that itself has d2 <= hw2.
-                        if d2 <= hw2:
-                            var sample_distance = (
-                                seg_start_distance[seg] + t * seg_length[seg]
+                    var syv = SIMD[DType.float64, _AA_LANES](sample_y)
+                    var sx0 = 0
+                    while sx0 < n:
+                        var lanes = n - sx0
+                        if lanes > _AA_LANES:
+                            lanes = _AA_LANES
+                        var sxv = SIMD[DType.float64, _AA_LANES](0.0)
+                        for l in range(lanes):
+                            sxv[l] = (
+                                Float64(px)
+                                + (Float64(sx0 + l) + 0.5) * step
+                                - 0.5
                             )
-                            if _is_dash_on(
-                                sample_distance, dashes, dash_offset
-                            ):
-                                if min_dist2 < 0.0 or d2 < min_dist2:
-                                    min_dist2 = d2
-                    if min_dist2 >= 0.0:
-                        covered += 1
+                        var minv = SIMD[DType.float64, _AA_LANES](1.0e30)
+                        for ci in range(len(candidates)):
+                            var seg = candidates[ci]
+                            var fx0 = seg_x0[seg]
+                            var fy0 = seg_y0[seg]
+                            var ldx = seg_dx[seg]
+                            var ldy = seg_dy[seg]
+                            # A zero-length segment has inv_len2 == 0,
+                            # so t falls out as 0 and the closest point
+                            # is the segment's own endpoint -- the same
+                            # answer the scalar path's explicit
+                            # zero-length branch gives.
+                            var len2 = seg_len2[seg]
+                            var tv = SIMD[DType.float64, _AA_LANES](0.0)
+                            if len2 != 0.0:
+                                tv = (
+                                    (sxv - fx0) * ldx + (syv - fy0) * ldy
+                                ) / len2
+                            tv = tv.clamp(0.0, 1.0)
+                            var ddx = sxv - (fx0 + tv * ldx)
+                            var ddy = syv - (fy0 + tv * ldy)
+                            minv = min(minv, ddx * ddx + ddy * ddy)
+                        # Lanes past `lanes` hold whatever the zeroed
+                        # vector produced and are simply not read.
+                        for l in range(lanes):
+                            if minv[l] <= hw2:
+                                covered += 1
+                        sx0 += _AA_LANES
+            else:
+                for sy in range(n):
+                    var sample_y = (
+                        Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+                    )
+                    for sx in range(n):
+                        var sample_x = (
+                            Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                        )
+                        var min_dist2 = -1.0
+                        for ci in range(len(candidates)):
+                            var seg = candidates[ci]
+                            var fx0 = seg_x0[seg]
+                            var fy0 = seg_y0[seg]
+                            var ldx = seg_dx[seg]
+                            var ldy = seg_dy[seg]
+                            var len2 = seg_len2[seg]
+                            var t: Float64
+                            if len2 == 0.0:
+                                t = 0.0
+                            else:
+                                t = (
+                                    (sample_x - fx0) * ldx
+                                    + (sample_y - fy0) * ldy
+                                ) / len2
+                                if t < 0.0:
+                                    t = 0.0
+                                elif t > 1.0:
+                                    t = 1.0
+                            var closest_x = fx0 + t * ldx
+                            var closest_y = fy0 + t * ldy
+                            var ddx = sample_x - closest_x
+                            var ddy = sample_y - closest_y
+                            var d2 = ddx * ddx + ddy * ddy
+                            # A segment only becomes a candidate once it's
+                            # both close enough AND on-dash at this exact
+                            # projected point -- with no dash pattern every
+                            # segment is always on-dash, so this reduces to
+                            # a plain nearest-segment-within-hw2 test,
+                            # since a global min <= hw2 can only come from
+                            # a segment that itself has d2 <= hw2.
+                            if d2 <= hw2:
+                                var sample_distance = (
+                                    seg_start_distance[seg]
+                                    + t * seg_length[seg]
+                                )
+                                if _is_dash_on(
+                                    sample_distance, dashes, dash_offset
+                                ):
+                                    if min_dist2 < 0.0 or d2 < min_dist2:
+                                        min_dist2 = d2
+                        if min_dist2 >= 0.0:
+                            covered += 1
             if covered > 0:
                 var alpha = UInt8(
                     Int(
