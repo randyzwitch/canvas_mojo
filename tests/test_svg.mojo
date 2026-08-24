@@ -273,6 +273,19 @@ def test_every_color_taking_method_carries_alpha() raises:
     assert_equal(opacity_attrs, 10)
 
 
+def test_draw_ellipse_aa_emits_a_stroked_ellipse() raises:
+    # The outline half: fill="none" with the color on stroke, and
+    # stroke-width 1 to match the raster primitive's fixed ~1px.
+    var svg = SvgCanvas(100, 80)
+    svg.draw_ellipse_aa(50, 40, 20, 12, Color(0, 128, 255))
+    assert_true(
+        '<ellipse cx="50" cy="40" rx="20" ry="12" fill="none"'
+        ' stroke="#0080ff" stroke-width="1"/>'
+        in svg.to_string(),
+        "draw_ellipse_aa's stroked ellipse element, exact attributes",
+    )
+
+
 def test_fill_arc_aa_small_wedge_matches_hand_derived_endpoints() raises:
     # cx=50, cy=60, radius=20, start=0, end=pi/2. Endpoints derived
     # via python3 (cx + r*cos(theta), cy + r*sin(theta)): start ->

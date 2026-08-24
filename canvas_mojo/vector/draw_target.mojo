@@ -11,14 +11,25 @@ Narrow by design: the shape primitives a chart-rendering core needs
 surface -- no `fill_polygon`, dashes, clipping, radial gradients, or
 path-shaped gradients.
 
-`fill_ellipse_aa` is here for a reason worth stating, since every other
-shape absent from this trait is absent because `fill_path_aa` already
-covers it: an ellipse is the one case where that escape hatch fails.
-`Path.arc_to` takes a single `radius`, so it builds circular arcs only,
-and an ellipse can therefore only be *approximated* through `Path`,
-with cubics. Without this method a trait-targeting caller cannot draw
-one exactly -- which error ellipses and confidence regions on a scatter
-plot need. `fill_rect_gradient` (linear only) is here
+The two ellipse methods are here for a reason worth stating, since
+every other shape absent from this trait is absent because
+`fill_path_aa`/`stroke_path_aa` already cover it: an ellipse is the one
+case where that escape hatch fails. `Path.arc_to` takes a single
+`radius`, so it builds circular arcs only, and an ellipse can therefore
+only be *approximated* through `Path`, with cubics. Without these a
+trait-targeting caller cannot draw one exactly -- which error ellipses
+and confidence regions on a scatter plot need.
+
+`draw_ellipse_aa` is consequently the one shape carrying both a fill
+and an outline here, where circles and arcs carry only a fill. That
+asymmetry is the point rather than an oversight: a circle outline is
+`stroke_path_aa` over a `Path` with one `arc_to`, and an ellipse
+outline has no such equivalent.
+
+It also takes no `width`, unlike `draw_line_aa` and `stroke_path_aa`:
+the raster primitive behind it draws a fixed ~1px outline, and a width
+parameter the raster backend could only ignore would be worse than
+none. `fill_rect_gradient` (linear only) is here
 because a continuous color legend needs a real gradient bar rather
 than a discrete color-strip approximation; the rest of
 `canvas_mojo.gradient` has no caller through this interface.
@@ -84,6 +95,11 @@ trait DrawTarget:
         ...
 
     def fill_ellipse_aa(
+        mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
+    ):
+        ...
+
+    def draw_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
         ...

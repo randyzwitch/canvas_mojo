@@ -198,6 +198,23 @@ def test_canvas_method_matches_the_free_function() raises:
             assert_equal(a.b, b.b)
 
 
+def test_canvas_outline_method_matches_the_free_function() raises:
+    # Same delegation check as the fill above, for the outline half.
+    var via_method = Canvas(31, 21, BG)
+    via_method.draw_ellipse_aa(15, 10, 12, 7, FG)
+
+    var via_function = Canvas(31, 21, BG)
+    draw_ellipse_aa(via_function, 15, 10, 12, 7, FG)
+
+    for y in range(21):
+        for x in range(31):
+            var a = via_method.get_pixel(x, y)
+            var b = via_function.get_pixel(x, y)
+            assert_equal(a.r, b.r)
+            assert_equal(a.g, b.g)
+            assert_equal(a.b, b.b)
+
+
 def test_fill_ellipse_aa_respects_translucent_input_color() raises:
     var c = Canvas(11, 7, Color(0, 0, 0))
     fill_ellipse_aa(c, 5, 3, 4, 2, Color(200, 0, 0, 128))

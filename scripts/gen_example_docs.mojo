@@ -44,6 +44,7 @@ def _titles() -> Dict[String, String]:
     d["clipping"] = "Clipping"
     d["png_output"] = "PNG I/O"
     d["text"] = "Text"
+    d["vector"] = "Vector Output"
     return d^
 
 
@@ -116,6 +117,16 @@ def _categories() -> List[Category]:
             "Image I/O",
             "Writing (and reading back) the pixel buffer as a real image file.",
             ["png_output"],
+        )
+    )
+    cats.append(
+        Category(
+            "Vector output",
+            (
+                "One drawing routine written against the DrawTarget trait,"
+                " rendered through both the raster and vector backends."
+            ),
+            ["vector"],
         )
     )
     return cats^

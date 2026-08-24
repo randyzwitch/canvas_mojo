@@ -7,7 +7,7 @@ from canvas_mojo.path import Path, fill_path_aa, stroke_path_aa
 from canvas_mojo.shapes.lines import draw_line_aa
 from canvas_mojo.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas_mojo.shapes.circles import fill_circle_aa
-from canvas_mojo.shapes.ellipses import fill_ellipse_aa
+from canvas_mojo.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
 from canvas_mojo.shapes.rects import fill_rect, fill_rect_gradient
 
 
@@ -48,7 +48,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     Alpha is used for blending on write but is not stored per-pixel; the
     backing buffer holds the composited RGB result.
 
-    Conforms to `DrawTarget` through the nine methods below `fill`,
+    Conforms to `DrawTarget` through the ten methods below `fill`,
     each a thin delegation to the matching free function in
     `canvas_mojo.shapes`/`canvas_mojo.path`, so a caller can render
     generically through a `Canvas` as through an `SvgCanvas`. Calling
@@ -264,6 +264,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
         fill_ellipse_aa(self, cx, cy, rx, ry, color)
+
+    def draw_ellipse_aa(
+        mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
+    ):
+        draw_ellipse_aa(self, cx, cy, rx, ry, color)
 
     def fill_arc_aa(
         mut self,
