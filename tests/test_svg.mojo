@@ -201,6 +201,78 @@ def test_fill_ellipse_aa_with_equal_radii_is_not_emitted_as_a_circle() raises:
     assert_true("<circle" not in s, "not silently collapsed to a circle")
 
 
+def test_translucent_fill_emits_fill_opacity() raises:
+    # The vector backend has to carry alpha in a separate attribute:
+    # #rrggbb has nowhere to put it. Without this the same DrawTarget
+    # call renders translucent on Canvas and fully opaque here.
+    # 128/255 = 0.50196..., which _format_svg_float rounds to 0.502.
+    var svg = SvgCanvas(20, 20)
+    svg.fill_rect(0, 0, 10, 10, Color(255, 0, 0, 128))
+    assert_true(
+        '<rect x="0" y="0" width="10" height="10" fill="#ff0000"'
+        ' fill-opacity="0.502"/>'
+        in svg.to_string(),
+        "translucent fill carries fill-opacity as a 0-1 fraction",
+    )
+
+
+def test_translucent_stroke_emits_stroke_opacity() raises:
+    # Strokes need stroke-opacity, not fill-opacity -- a stroked
+    # element's fill is "none", so putting alpha on the wrong attribute
+    # would silently do nothing.
+    var svg = SvgCanvas(20, 20)
+    svg.draw_line_aa(0, 0, 10, 10, Color(0, 0, 255, 64), 2.0)
+    var s = svg.to_string()
+    assert_true(
+        'stroke-opacity="0.251"' in s, "64/255 = 0.251, on stroke-opacity"
+    )
+    assert_true(
+        "fill-opacity" not in s, "not fill-opacity, which a stroke ignores"
+    )
+
+
+def test_opaque_color_emits_no_opacity_attribute() raises:
+    # Omitted entirely at a == 255, the same omit-at-default convention
+    # rotation and weight follow: opaque output is byte-identical to
+    # what it was before alpha was carried at all.
+    var svg = SvgCanvas(20, 20)
+    svg.fill_rect(0, 0, 10, 10, Color(255, 0, 0))
+    svg.draw_line_aa(0, 0, 10, 10, Color(0, 0, 255), 2.0)
+    var s = svg.to_string()
+    assert_true(
+        "opacity" not in s, "no opacity attribute of any kind at full alpha"
+    )
+
+
+def test_every_color_taking_method_carries_alpha() raises:
+    # One translucent call per Color-taking method on the trait, so a
+    # method added later without an opacity attribute fails here rather
+    # than silently rendering opaque. Counts occurrences instead of
+    # asserting exact markup: the point is that none is missing.
+    var c = Color(10, 20, 30, 128)
+    var svg = SvgCanvas(200, 200)
+    svg.fill_rect(0, 0, 10, 10, c)
+    svg.draw_line_aa(0, 0, 10, 10, c, 2.0)
+    svg.fill_circle_aa(50, 50, 10, c)
+    svg.fill_ellipse_aa(50, 50, 12, 8, c)
+    svg.fill_arc_aa(50.0, 50.0, 20.0, 0.0, 1.0, c)
+    svg.fill_ring_sector_aa(50.0, 50.0, 10.0, 20.0, 0.0, 1.0, c)
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.line_to(10.0, 10.0)
+    svg.stroke_path_aa(p, c, 2.0)
+    svg.fill_path_aa(p, c)
+    svg.draw_text(10, 10, "hi", c, 12.0, TextAlign.LEFT)
+
+    var s = svg.to_string()
+    var opacity_attrs = 0
+    for part in s.split("-opacity="):
+        opacity_attrs += 1
+    # 9 calls -> 9 attributes -> 10 pieces after splitting on the
+    # attribute name.
+    assert_equal(opacity_attrs, 10)
+
+
 def test_fill_arc_aa_small_wedge_matches_hand_derived_endpoints() raises:
     # cx=50, cy=60, radius=20, start=0, end=pi/2. Endpoints derived
     # via python3 (cx + r*cos(theta), cy + r*sin(theta)): start ->
