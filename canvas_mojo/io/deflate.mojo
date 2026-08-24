@@ -774,6 +774,20 @@ def _find_match(
         if length > best_length:
             best_length = length
             best_distance = distance
+            if best_length >= max_possible:
+                # Nothing later in the chain can beat a match already
+                # at the cap, so stop rather than compare the rest.
+                # This is the difference between O(_MAX_CHAIN *
+                # _MAX_MATCH) and O(_MAX_MATCH) per position on flat
+                # input, where every candidate matches to the full
+                # length and none can improve on the first: a large
+                # flat-color region is exactly that, and it is what
+                # this package's own images are mostly made of.
+                # Searching most-recent-first means the first candidate
+                # to reach the cap is also the nearest one, so the
+                # "nearest among equal lengths" tie-break is unchanged
+                # and so is the emitted stream, byte for byte.
+                break
         j -= 1
 
     if best_length < _MIN_MATCH:
