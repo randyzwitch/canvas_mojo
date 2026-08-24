@@ -177,6 +177,27 @@ def test_fill_ellipse_aa_agrees_with_hard_edged_on_interior_pixels() raises:
     _assert_pixel(c, 7, 3, FG, "interior, right of center")
 
 
+def test_canvas_method_matches_the_free_function() raises:
+    # Canvas.fill_ellipse_aa is the DrawTarget method; fill_ellipse_aa
+    # is the free function it delegates to. They must put down
+    # byte-identical pixels, including antialiased edges -- a caller
+    # rendering generically through the trait gets exactly what a
+    # caller reaching for the free function does.
+    var via_method = Canvas(31, 21, BG)
+    via_method.fill_ellipse_aa(15, 10, 12, 7, FG)
+
+    var via_function = Canvas(31, 21, BG)
+    fill_ellipse_aa(via_function, 15, 10, 12, 7, FG)
+
+    for y in range(21):
+        for x in range(31):
+            var a = via_method.get_pixel(x, y)
+            var b = via_function.get_pixel(x, y)
+            assert_equal(a.r, b.r)
+            assert_equal(a.g, b.g)
+            assert_equal(a.b, b.b)
+
+
 def test_fill_ellipse_aa_respects_translucent_input_color() raises:
     var c = Canvas(11, 7, Color(0, 0, 0))
     fill_ellipse_aa(c, 5, 3, 4, 2, Color(200, 0, 0, 128))

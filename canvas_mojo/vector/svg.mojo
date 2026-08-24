@@ -6,7 +6,7 @@ displays at. Content drawn through this has no fixed pixel size to get
 wrong the way a raster target, which must pick a resolution up front,
 can when scaled after the fact.
 
-Minimal, matching `DrawTarget`'s eight methods one for one. Not a
+Minimal, matching `DrawTarget`'s nine methods one for one. Not a
 general-purpose SVG builder: no gradients, no general groups or
 transforms, no clipping. `draw_text`'s `rotation` is the one exception,
 a per-`<text>` `transform="rotate(...)"` rather than a transform stack,
@@ -348,6 +348,23 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(cy)
             + '" r="'
             + String(radius)
+            + '" fill="'
+            + _hex_color(color)
+            + '"/>\n'
+        )
+
+    def fill_ellipse_aa(
+        mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
+    ):
+        self._body += (
+            '<ellipse cx="'
+            + String(cx)
+            + '" cy="'
+            + String(cy)
+            + '" rx="'
+            + String(rx)
+            + '" ry="'
+            + String(ry)
             + '" fill="'
             + _hex_color(color)
             + '"/>\n'

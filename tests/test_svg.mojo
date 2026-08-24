@@ -176,6 +176,31 @@ def test_fill_circle_aa_emits_expected_circle_element() raises:
     )
 
 
+def test_fill_ellipse_aa_emits_expected_ellipse_element() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.fill_ellipse_aa(50, 40, 20, 12, Color(0, 128, 255))
+    assert_true(
+        '<ellipse cx="50" cy="40" rx="20" ry="12" fill="#0080ff"/>'
+        in svg.to_string(),
+        "fill_ellipse_aa's ellipse element, exact attributes",
+    )
+
+
+def test_fill_ellipse_aa_with_equal_radii_is_not_emitted_as_a_circle() raises:
+    # rx == ry is geometrically a circle, but the two methods stay
+    # distinct on both backends: a caller that asked for an ellipse gets
+    # <ellipse>, so round-tripping markup back to the call that made it
+    # stays unambiguous.
+    var svg = SvgCanvas(100, 80)
+    svg.fill_ellipse_aa(50, 40, 15, 15, Color(0, 0, 0))
+    var s = svg.to_string()
+    assert_true(
+        '<ellipse cx="50" cy="40" rx="15" ry="15"' in s,
+        "stays an ellipse element",
+    )
+    assert_true("<circle" not in s, "not silently collapsed to a circle")
+
+
 def test_fill_arc_aa_small_wedge_matches_hand_derived_endpoints() raises:
     # cx=50, cy=60, radius=20, start=0, end=pi/2. Endpoints derived
     # via python3 (cx + r*cos(theta), cy + r*sin(theta)): start ->
