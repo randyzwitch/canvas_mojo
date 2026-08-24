@@ -48,7 +48,13 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
 from canvas_mojo.text.font_cache import FontCache
 from canvas_mojo.text.font_discovery import FontSlant, FontWeight
-from canvas_mojo.text.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph, GlyphMetrics
+from canvas_mojo.text.glyph_outline import (
+    face_line_metrics,
+    glyph_metrics,
+    glyph_path,
+    has_glyph,
+    GlyphMetrics,
+)
 from canvas_mojo.text.ttf import TTFFace
 from canvas_mojo.path import (
     fill_path_aa,
@@ -149,7 +155,11 @@ struct _BlockLayout(Movable):
 
 
 def _load_sized_face(
-    family: String, slant: FontSlant, weight: FontWeight, size: Float64, mut cache: FontCache
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    size: Float64,
+    mut cache: FontCache,
 ) raises -> ArcPointer[TTFFace]:
     """resolve_font_file -> TTFFace, sized to `size` pixels: the one
     place every entry point below gets a ready-to-use face. Both the
@@ -174,7 +184,12 @@ struct _LineMetrics(ImplicitlyCopyable, Movable):
     var advance: Float64
 
     def __init__(
-        out self, x_bearing: Float64, y_bearing: Float64, width: Float64, height: Float64, advance: Float64
+        out self,
+        x_bearing: Float64,
+        y_bearing: Float64,
+        width: Float64,
+        height: Float64,
+        advance: Float64,
     ):
         self.x_bearing = x_bearing
         self.y_bearing = y_bearing
@@ -238,11 +253,17 @@ def _resolve_glyph(
     can't disagree about which face's data they used.
     """
     if has_glyph(primary, codepoint):
-        return _PositionedGlyph(glyph_metrics(primary, codepoint), glyph_path(primary, codepoint, pen_x, pen_y))
+        return _PositionedGlyph(
+            glyph_metrics(primary, codepoint),
+            glyph_path(primary, codepoint, pen_x, pen_y),
+        )
 
-    var fallback = cache.resolve_face_for_char(family, slant, weight, codepoint, size)
+    var fallback = cache.resolve_face_for_char(
+        family, slant, weight, codepoint, size
+    )
     return _PositionedGlyph(
-        glyph_metrics(fallback[], codepoint), glyph_path(fallback[], codepoint, pen_x, pen_y)
+        glyph_metrics(fallback[], codepoint),
+        glyph_path(fallback[], codepoint, pen_x, pen_y),
     )
 
 
@@ -269,7 +290,9 @@ def _measure_line(
     var max_y = -1.0e18
     var any_ink = False
     for cp in _visual_codepoints(line_text):
-        var gm = _resolve_glyph(face, family, slant, weight, size, Int(cp), pen_x, 0.0, cache).metrics
+        var gm = _resolve_glyph(
+            face, family, slant, weight, size, Int(cp), pen_x, 0.0, cache
+        ).metrics
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
             var right = left + gm.width
@@ -320,7 +343,9 @@ def _layout_block(
     var any_ink = False
     for i in range(len(raw_lines)):
         var line_text = String(raw_lines[i])
-        var measured = _measure_line(face[], line_text, family, slant, weight, size, cache)
+        var measured = _measure_line(
+            face[], line_text, family, slant, weight, size, cache
+        )
         var baseline_y = Float64(i) * line_height
         var x_offset = 0.0
         if align == TextAlign.CENTER:
@@ -351,8 +376,18 @@ def _layout_block(
             continue
         var bx = line.x + line.x_bearing
         var by = line.y + line.y_bearing
-        var corners_u: List[Float64] = [bx, bx + line.width, bx, bx + line.width]
-        var corners_v: List[Float64] = [by, by, by + line.height, by + line.height]
+        var corners_u: List[Float64] = [
+            bx,
+            bx + line.width,
+            bx,
+            bx + line.width,
+        ]
+        var corners_v: List[Float64] = [
+            by,
+            by,
+            by + line.height,
+            by + line.height,
+        ]
         for k in range(4):
             var u = corners_u[k]
             var v = corners_v[k]
@@ -367,7 +402,9 @@ def _layout_block(
             if rv > rot_max_y:
                 rot_max_y = rv
 
-    return _BlockLayout(lines^, any_ink, rot_min_x, rot_max_x, rot_min_y, rot_max_y)
+    return _BlockLayout(
+        lines^, any_ink, rot_min_x, rot_max_x, rot_min_y, rot_max_y
+    )
 
 
 def measure_text(
@@ -406,7 +443,9 @@ def measure_text(
     to every call in the batch.
     """
     var face = _load_sized_face(family, slant, weight, size, cache)
-    var measured = _measure_line(face[], text, family, slant, weight, size, cache)
+    var measured = _measure_line(
+        face[], text, family, slant, weight, size, cache
+    )
     return TextMetrics(measured.width, measured.height, measured.advance)
 
 
@@ -428,7 +467,9 @@ struct TextBlockBounds(ImplicitlyCopyable, Movable):
     var width: Float64
     var height: Float64
 
-    def __init__(out self, x: Float64, y: Float64, width: Float64, height: Float64):
+    def __init__(
+        out self, x: Float64, y: Float64, width: Float64, height: Float64
+    ):
         self.x = x
         self.y = y
         self.width = width
@@ -456,7 +497,9 @@ def measure_text_block(
     below.
     """
     var cache = FontCache()
-    return measure_text_block(text, size, family, slant, weight, rotation, align, cache=cache)
+    return measure_text_block(
+        text, size, family, slant, weight, rotation, align, cache=cache
+    )
 
 
 def measure_text_block(
@@ -475,7 +518,9 @@ def measure_text_block(
     """
     if text == "":
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
-    var block = _layout_block(text, size, family, slant, weight, rotation, align, cache)
+    var block = _layout_block(
+        text, size, family, slant, weight, rotation, align, cache
+    )
     if not block.any_ink:
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
     return TextBlockBounds(
@@ -486,15 +531,25 @@ def measure_text_block(
     )
 
 
-def _rotate_translate_x(x: Float64, y: Float64, c: Float64, s: Float64, tx: Float64) -> Float64:
+def _rotate_translate_x(
+    x: Float64, y: Float64, c: Float64, s: Float64, tx: Float64
+) -> Float64:
     return tx + x * c - y * s
 
 
-def _rotate_translate_y(x: Float64, y: Float64, c: Float64, s: Float64, ty: Float64) -> Float64:
+def _rotate_translate_y(
+    x: Float64, y: Float64, c: Float64, s: Float64, ty: Float64
+) -> Float64:
     return ty + x * s + y * c
 
 
-def _place_glyph_path(local_path: Path, c: Float64, s: Float64, anchor_x: Float64, anchor_y: Float64) raises -> Path:
+def _place_glyph_path(
+    local_path: Path,
+    c: Float64,
+    s: Float64,
+    anchor_x: Float64,
+    anchor_y: Float64,
+) raises -> Path:
     """Rotate every point of `local_path` (glyph-local, anchor-relative,
     unrotated) by the block's rotation and translate by draw_text's
     `(x, y)` anchor, in one pass. Path exposes no "map every point"
@@ -569,7 +624,20 @@ def draw_text(
     `cache=` overload below collapses that to one.
     """
     var cache = FontCache()
-    draw_text(canvas, x, y, text, color, size, family, slant, weight, rotation, align, cache=cache)
+    draw_text(
+        canvas,
+        x,
+        y,
+        text,
+        color,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        cache=cache,
+    )
 
 
 def draw_text(
@@ -599,7 +667,9 @@ def draw_text(
     # With one line and rotation=0.0, cos=1/sin=0 leaves every corner
     # unchanged inside _layout_block, reducing to that line's
     # unrotated ink box.
-    var block = _layout_block(text, size, family, slant, weight, rotation, align, cache)
+    var block = _layout_block(
+        text, size, family, slant, weight, rotation, align, cache
+    )
     if not block.any_ink:
         # Every line whitespace-only/empty -- nothing to draw.
         return
@@ -615,7 +685,17 @@ def draw_text(
             continue
         var pen_x = line.x
         for codepoint in _visual_codepoints(line.text):
-            var g = _resolve_glyph(face[], family, slant, weight, size, codepoint, pen_x, line.y, cache)
+            var g = _resolve_glyph(
+                face[],
+                family,
+                slant,
+                weight,
+                size,
+                codepoint,
+                pen_x,
+                line.y,
+                cache,
+            )
             if g.metrics.width > 0.0 and g.metrics.height > 0.0:
                 var placed = _place_glyph_path(g.path, c, s, anchor_x, anchor_y)
                 fill_path_aa(canvas, placed, color)

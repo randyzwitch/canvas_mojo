@@ -62,7 +62,9 @@ def test_is_dash_on_odd_length_pattern_is_doubled() raises:
     assert_true(_is_dash_on(7.5, dashes, 0.0))  # the short second "on"
     assert_true(not _is_dash_on(10.0, dashes, 0.0))  # second "off"
     assert_true(_is_dash_on(14.0, dashes, 0.0))  # third "on" (doubled half)
-    assert_true(not _is_dash_on(15.5, dashes, 0.0))  # third "off", wraps next at 16
+    assert_true(
+        not _is_dash_on(15.5, dashes, 0.0)
+    )  # third "off", wraps next at 16
 
 
 def main() raises:

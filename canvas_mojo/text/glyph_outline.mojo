@@ -44,7 +44,9 @@ struct LineMetrics(ImplicitlyCopyable, Movable):
     var descender: Float64
     var line_height: Float64
 
-    def __init__(out self, ascender: Float64, descender: Float64, line_height: Float64):
+    def __init__(
+        out self, ascender: Float64, descender: Float64, line_height: Float64
+    ):
         self.ascender = ascender
         self.descender = descender
         self.line_height = line_height
@@ -58,7 +60,9 @@ def face_line_metrics(face: TTFFace) raises -> LineMetrics:
     var scale = face.scale()
     var ascender = Float64(face.ascender) * scale
     var descender = Float64(face.descender) * scale
-    var line_height = Float64(face.ascender - face.descender + face.line_gap) * scale
+    var line_height = (
+        Float64(face.ascender - face.descender + face.line_gap) * scale
+    )
     return LineMetrics(ascender, descender, line_height)
 
 
@@ -74,7 +78,12 @@ struct GlyphMetrics(ImplicitlyCopyable, Movable):
     var height: Float64
 
     def __init__(
-        out self, advance: Float64, bearing_x: Float64, bearing_y: Float64, width: Float64, height: Float64
+        out self,
+        advance: Float64,
+        bearing_x: Float64,
+        bearing_y: Float64,
+        width: Float64,
+        height: Float64,
     ):
         self.advance = advance
         self.bearing_x = bearing_x
@@ -123,7 +132,9 @@ def glyph_metrics(mut face: TTFFace, codepoint: Int) raises -> GlyphMetrics:
     )
 
 
-def glyph_path(mut face: TTFFace, codepoint: Int, pen_x: Float64, pen_y: Float64) raises -> Path:
+def glyph_path(
+    mut face: TTFFace, codepoint: Int, pen_x: Float64, pen_y: Float64
+) raises -> Path:
     """One character's outline as a `Path`, positioned so its local
     (0, 0) -- the glyph origin -- lands at (pen_x, pen_y) in pixel
     space. The caller advances the pen by

@@ -53,7 +53,9 @@ def _is_inside(winding: Int, fill_rule: FillRule) -> Bool:
     return w % 2 == 1
 
 
-def _spans_from_crossings(mut crossings: List[_Crossing], fill_rule: FillRule) -> List[_Span]:
+def _spans_from_crossings(
+    mut crossings: List[_Crossing], fill_rule: FillRule
+) -> List[_Span]:
     """Given one row's crossings (unsorted, x position + direction),
     sort by x and scan left to right accumulating a signed winding
     number, returning the resulting filled spans under `fill_rule`.
@@ -111,7 +113,10 @@ def _spans_from_crossings(mut crossings: List[_Crossing], fill_rule: FillRule) -
 
 
 def fill_polygon(
-    mut canvas: Canvas, points: List[Point], color: Color, fill_rule: FillRule = FillRule.EVEN_ODD
+    mut canvas: Canvas,
+    points: List[Point],
+    color: Color,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
 ):
     """Fill a polygon's interior with the scanline algorithm.
 
@@ -179,7 +184,9 @@ def fill_polygon(
                 canvas.set_pixel(x, y, color)
 
 
-def _point_in_polygon(points: List[Point], fx: Float64, fy: Float64, fill_rule: FillRule) -> Bool:
+def _point_in_polygon(
+    points: List[Point], fx: Float64, fy: Float64, fill_rule: FillRule
+) -> Bool:
     """fill_polygon's winding-number membership test generalized from
     an integer scanline to one arbitrary real-valued point, which is
     what fill_polygon_aa's supersampling needs.
@@ -211,7 +218,9 @@ def _point_in_polygon(points: List[Point], fx: Float64, fy: Float64, fill_rule: 
     return _is_inside(winding, fill_rule)
 
 
-def _polygon_row_crossings_aa(points: List[Point], fy: Float64) -> List[_AACrossing]:
+def _polygon_row_crossings_aa(
+    points: List[Point], fy: Float64
+) -> List[_AACrossing]:
     """_point_in_polygon's per-sample ray-cast, hoisted to run once per
     sub-scanline -- the technique path.mojo's fill_path_aa uses, and
     what keeps fill_polygon_aa's sweep sub-quadratic.
@@ -319,6 +328,13 @@ def fill_polygon_aa(
             if covered > 0:
                 var px = row_first_px + pxi
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )

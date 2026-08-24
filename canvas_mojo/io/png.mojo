@@ -97,7 +97,12 @@ def _adler32(data: List[UInt8]) -> UInt32:
     return (s2 << 16) | s1
 
 
-def _write_chunk(mut buf: List[UInt8], table: List[UInt32], chunk_type: String, data: List[UInt8]):
+def _write_chunk(
+    mut buf: List[UInt8],
+    table: List[UInt32],
+    chunk_type: String,
+    data: List[UInt8],
+):
     """Append one PNG chunk: length(4, data only) + type(4 ASCII) +
     data + CRC-32(4, over type+data, NOT length) -- all big-endian.
 
@@ -176,7 +181,12 @@ def write_png(canvas: Canvas, path: String) raises:
 def _read_u32_be(data: List[UInt8], pos: Int) raises -> Int:
     if pos + 4 > len(data):
         raise Error("png: truncated file (expected a 4-byte big-endian value)")
-    return (Int(data[pos]) << 24) | (Int(data[pos + 1]) << 16) | (Int(data[pos + 2]) << 8) | Int(data[pos + 3])
+    return (
+        (Int(data[pos]) << 24)
+        | (Int(data[pos + 1]) << 16)
+        | (Int(data[pos + 2]) << 8)
+        | Int(data[pos + 3])
+    )
 
 
 def _paeth_predictor(a: Int, b: Int, c: Int) -> Int:
@@ -208,10 +218,18 @@ def _bytes_per_pixel(color_type: Int) raises -> Int:
         return 2  # grayscale + alpha
     if color_type == 6:
         return 4  # truecolor + alpha (RGBA)
-    raise Error(String("png: unsupported color type ", color_type, " (only 0/2/4/6 at 8-bit depth are supported)"))
+    raise Error(
+        String(
+            "png: unsupported color type ",
+            color_type,
+            " (only 0/2/4/6 at 8-bit depth are supported)",
+        )
+    )
 
 
-def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) raises -> List[UInt8]:
+def _unfilter_scanlines(
+    raw: List[UInt8], width: Int, height: Int, bpp: Int
+) raises -> List[UInt8]:
     """Reverses PNG's per-scanline filtering (spec section 9). `raw` is
     `inflate`'s output: a filter-type byte plus `width * bpp` filtered
     bytes, repeated `height` times. Each row reconstructs from the
@@ -231,7 +249,10 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
     var pos = 0
     for _ in range(height):
         if pos >= len(raw):
-            raise Error("png: truncated scanline data (fewer rows than IHDR's own height)")
+            raise Error(
+                "png: truncated scanline data (fewer rows than IHDR's own"
+                " height)"
+            )
         var filter_type = Int(raw[pos])
         pos += 1
         if pos + row_bytes > len(raw):
@@ -269,7 +290,9 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
     return out^
 
 
-def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, color_type: Int) raises -> Canvas:
+def _canvas_from_scanlines(
+    unfiltered: List[UInt8], width: Int, height: Int, color_type: Int
+) raises -> Canvas:
     """Converts already-unfiltered scanline bytes into a Canvas,
     compositing every pixel through `write_pixel`'s blend_over. An
     alpha channel is flattened here, for the reason this module's
@@ -292,12 +315,19 @@ def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, col
                 var gray = unfiltered[px]
                 color = Color(gray, gray, gray)
             elif color_type == 2:
-                color = Color(unfiltered[px], unfiltered[px + 1], unfiltered[px + 2])
+                color = Color(
+                    unfiltered[px], unfiltered[px + 1], unfiltered[px + 2]
+                )
             elif color_type == 4:
                 var gray = unfiltered[px]
                 color = Color(gray, gray, gray, unfiltered[px + 1])
             else:  # 6 -- _bytes_per_pixel already rejected anything else
-                color = Color(unfiltered[px], unfiltered[px + 1], unfiltered[px + 2], unfiltered[px + 3])
+                color = Color(
+                    unfiltered[px],
+                    unfiltered[px + 1],
+                    unfiltered[px + 2],
+                    unfiltered[px + 3],
+                )
             canvas.write_pixel(x, y, color)
     return canvas^
 
@@ -358,7 +388,13 @@ def read_png(path: String) raises -> Canvas:
         var expected_crc = _read_u32_be(data, pos + length)
         var actual_crc = Int(_crc32(type_and_data, crc_table))
         if actual_crc != expected_crc:
-            raise Error(String("png: CRC-32 mismatch in '", chunk_type, "' chunk -- corrupted file"))
+            raise Error(
+                String(
+                    "png: CRC-32 mismatch in '",
+                    chunk_type,
+                    "' chunk -- corrupted file",
+                )
+            )
 
         if chunk_type == "IHDR":
             if length != 13:
@@ -371,13 +407,25 @@ def read_png(path: String) raises -> Canvas:
             var filter_method = Int(data[pos + 11])
             var interlace_method = Int(data[pos + 12])
             if compression_method != 0:
-                raise Error("png: unsupported compression method (only method 0/deflate is supported)")
+                raise Error(
+                    "png: unsupported compression method (only method 0/deflate"
+                    " is supported)"
+                )
             if filter_method != 0:
-                raise Error("png: unsupported filter method (only method 0 is supported)")
+                raise Error(
+                    "png: unsupported filter method (only method 0 is"
+                    " supported)"
+                )
             if interlace_method != 0:
                 raise Error("png: Adam7 interlacing is not supported")
             if bit_depth != 8:
-                raise Error(String("png: unsupported bit depth ", bit_depth, " (only 8-bit depth is supported)"))
+                raise Error(
+                    String(
+                        "png: unsupported bit depth ",
+                        bit_depth,
+                        " (only 8-bit depth is supported)",
+                    )
+                )
             if width <= 0 or height <= 0:
                 raise Error("png: invalid image dimensions")
             have_ihdr = True
@@ -413,7 +461,9 @@ def read_png(path: String) raises -> Canvas:
 
     var actual_adler = Int(_adler32(raw))
     if actual_adler != expected_adler:
-        raise Error("png: Adler-32 mismatch after decompression -- corrupted file")
+        raise Error(
+            "png: Adler-32 mismatch after decompression -- corrupted file"
+        )
 
     var bpp = _bytes_per_pixel(color_type)
     var unfiltered = _unfilter_scanlines(raw, width, height, bpp)

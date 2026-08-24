@@ -72,7 +72,12 @@ def _i8(data: List[UInt8], pos: Int) raises -> Int:
 def _u32(data: List[UInt8], pos: Int) raises -> Int:
     if pos < 0 or pos + 4 > len(data):
         raise Error("ttf: read past end of file")
-    return (Int(data[pos]) << 24) | (Int(data[pos + 1]) << 16) | (Int(data[pos + 2]) << 8) | Int(data[pos + 3])
+    return (
+        (Int(data[pos]) << 24)
+        | (Int(data[pos + 1]) << 16)
+        | (Int(data[pos + 2]) << 8)
+        | Int(data[pos + 3])
+    )
 
 
 def _f2dot14(data: List[UInt8], pos: Int) raises -> Float64:
@@ -180,10 +185,16 @@ struct TTFFace(Movable):
         var sfnt_version = _u32(data, 0)
         if sfnt_version == _SFNT_VERSION_OTTO:
             raise Error(
-                "ttf: CFF/OpenType-CFF font ('OTTO') -- only TrueType 'glyf' outlines are supported"
+                "ttf: CFF/OpenType-CFF font ('OTTO') -- only TrueType 'glyf'"
+                " outlines are supported"
             )
-        if sfnt_version != _SFNT_VERSION_TRUETYPE and sfnt_version != _SFNT_VERSION_TRUETYPE_APPLE:
-            raise Error(String("ttf: unrecognized sfntVersion 0x", hex(sfnt_version)))
+        if (
+            sfnt_version != _SFNT_VERSION_TRUETYPE
+            and sfnt_version != _SFNT_VERSION_TRUETYPE_APPLE
+        ):
+            raise Error(
+                String("ttf: unrecognized sfntVersion 0x", hex(sfnt_version))
+            )
 
         var num_tables = _u16(data, 4)
 
@@ -215,10 +226,21 @@ struct TTFFace(Movable):
                 hmtx_off = offset
             pos += 16
 
-        if head_off == -1 or maxp_off == -1 or hhea_off == -1 or hmtx_off == -1 or cmap_off == -1:
-            raise Error("ttf: missing a required table (head/maxp/hhea/hmtx/cmap)")
+        if (
+            head_off == -1
+            or maxp_off == -1
+            or hhea_off == -1
+            or hmtx_off == -1
+            or cmap_off == -1
+        ):
+            raise Error(
+                "ttf: missing a required table (head/maxp/hhea/hmtx/cmap)"
+            )
         if glyf_off == -1 or loca_off == -1:
-            raise Error("ttf: no glyf/loca table -- likely a CFF/OpenType-CFF font, not supported")
+            raise Error(
+                "ttf: no glyf/loca table -- likely a CFF/OpenType-CFF font, not"
+                " supported"
+            )
 
         self.units_per_em = _u16(data, head_off + 18)
         self.index_to_loc_format = _i16(data, head_off + 50)
@@ -248,8 +270,8 @@ struct TTFFace(Movable):
         """
         if self._pixel_size < 0:
             raise Error(
-                "ttf: no active pixel size on this TTFFace -- call set_pixel_size()"
-                " before measuring or loading glyphs"
+                "ttf: no active pixel size on this TTFFace -- call"
+                " set_pixel_size() before measuring or loading glyphs"
             )
         return Float64(self._pixel_size) / Float64(self.units_per_em)
 
@@ -258,7 +280,10 @@ struct TTFFace(Movable):
         than glyphs, the last entry's advance width repeats for the
         rest -- the spec's optimization for monospace and large fonts.
         """
-        var index = glyph_index if glyph_index < self.num_h_metrics else self.num_h_metrics - 1
+        var index = (
+            glyph_index if glyph_index
+            < self.num_h_metrics else self.num_h_metrics - 1
+        )
         return _u16(self.data, self._hmtx_offset + index * 4)
 
     def glyph_index_for_codepoint(self, codepoint: Int) raises -> Int:
@@ -287,7 +312,9 @@ struct TTFFace(Movable):
             # both point at its one format-12 subtable, a superset of
             # what its format-4
             # subtable covers.
-            var is_unicode_platform = platform_id == 0 or (platform_id == 3 and (encoding_id == 1 or encoding_id == 10))
+            var is_unicode_platform = platform_id == 0 or (
+                platform_id == 3 and (encoding_id == 1 or encoding_id == 10)
+            )
             if is_unicode_platform:
                 if format == 12 and best_format != 12:
                     best_offset = absolute
@@ -303,13 +330,17 @@ struct TTFFace(Movable):
             return self._lookup_cmap_format12(best_offset, codepoint)
         return self._lookup_cmap_format4(best_offset, codepoint)
 
-    def _lookup_cmap_format4(self, subtable_offset: Int, codepoint: Int) raises -> Int:
+    def _lookup_cmap_format4(
+        self, subtable_offset: Int, codepoint: Int
+    ) raises -> Int:
         if codepoint > 0xFFFF:
             return 0  # format 4 is BMP-only by definition
         var seg_count_x2 = _u16(self.data, subtable_offset + 6)
         var seg_count = seg_count_x2 // 2
         var end_code_off = subtable_offset + 14
-        var start_code_off = end_code_off + seg_count * 2 + 2  # +2 skips reservedPad
+        var start_code_off = (
+            end_code_off + seg_count * 2 + 2
+        )  # +2 skips reservedPad
         var id_delta_off = start_code_off + seg_count * 2
         var id_range_offset_off = id_delta_off + seg_count * 2
 
@@ -330,7 +361,12 @@ struct TTFFace(Movable):
                     # the font file" -- the OpenType spec's words,
                     # translated directly: glyphId = *(idRangeOffset[i]/2
                     # + (c - startCode[i]) + &idRangeOffset[i]).
-                    var glyph_addr = id_range_offset_off + i * 2 + range_offset + (codepoint - start_code) * 2
+                    var glyph_addr = (
+                        id_range_offset_off
+                        + i * 2
+                        + range_offset
+                        + (codepoint - start_code) * 2
+                    )
                     var raw = _u16(self.data, glyph_addr)
                     if raw == 0:
                         return 0
@@ -343,7 +379,9 @@ struct TTFFace(Movable):
                 return glyph_id
         return 0
 
-    def _lookup_cmap_format12(self, subtable_offset: Int, codepoint: Int) raises -> Int:
+    def _lookup_cmap_format12(
+        self, subtable_offset: Int, codepoint: Int
+    ) raises -> Int:
         var num_groups = _u32(self.data, subtable_offset + 12)
         var groups_off = subtable_offset + 16
         # Linear scan. Groups are sorted per spec, so a binary search
@@ -361,7 +399,9 @@ struct TTFFace(Movable):
     def _loca_entry(self, glyph_index: Int) raises -> Tuple[Int, Int]:
         if self.index_to_loc_format == 0:
             var start = _u16(self.data, self._loca_offset + glyph_index * 2) * 2
-            var end = _u16(self.data, self._loca_offset + (glyph_index + 1) * 2) * 2
+            var end = (
+                _u16(self.data, self._loca_offset + (glyph_index + 1) * 2) * 2
+            )
             return (start, end)
         else:
             var start = _u32(self.data, self._loca_offset + glyph_index * 4)
@@ -371,11 +411,17 @@ struct TTFFace(Movable):
     def glyph_outline(self, glyph_index: Int) raises -> RawGlyphOutline:
         return self._glyph_outline_impl(glyph_index, 0)
 
-    def _glyph_outline_impl(self, glyph_index: Int, depth: Int) raises -> RawGlyphOutline:
+    def _glyph_outline_impl(
+        self, glyph_index: Int, depth: Int
+    ) raises -> RawGlyphOutline:
         if depth > 8:
-            raise Error("ttf: composite glyph nesting too deep (possible cycle)")
+            raise Error(
+                "ttf: composite glyph nesting too deep (possible cycle)"
+            )
         if glyph_index < 0 or glyph_index >= self.num_glyphs:
-            raise Error(String("ttf: glyph index ", glyph_index, " out of range"))
+            raise Error(
+                String("ttf: glyph index ", glyph_index, " out of range")
+            )
 
         var loca = self._loca_entry(glyph_index)
         var glyph_start = self._glyf_offset + loca[0]
@@ -393,7 +439,10 @@ struct TTFFace(Movable):
         return outline^
 
     def _parse_simple_glyph(
-        self, glyph_start: Int, number_of_contours: Int, mut outline: RawGlyphOutline
+        self,
+        glyph_start: Int,
+        number_of_contours: Int,
+        mut outline: RawGlyphOutline,
     ) raises:
         var pos = glyph_start + 10
 
@@ -407,7 +456,9 @@ struct TTFFace(Movable):
             num_points = contour_ends[number_of_contours - 1] + 1
 
         var instruction_length = _u16(self.data, pos)
-        pos += 2 + instruction_length  # skip instructions -- no hinting, see module docstring
+        pos += (
+            2 + instruction_length
+        )  # skip instructions -- no hinting, see module docstring
 
         # Flags are packed with a repeat-count byte (REPEAT_FLAG, mask
         # 0x08). Decode one flag byte per point before reading
@@ -434,7 +485,9 @@ struct TTFFace(Movable):
                 var dx = _u8(self.data, pos)
                 pos += 1
                 x += dx if (f & 0x10) else -dx
-            elif not (f & 0x10):  # not short, not "same as previous" -> signed 16-bit delta
+            elif not (
+                f & 0x10
+            ):  # not short, not "same as previous" -> signed 16-bit delta
                 var dx = _i16(self.data, pos)
                 pos += 2
                 x += dx
@@ -463,7 +516,9 @@ struct TTFFace(Movable):
         for i in range(number_of_contours):
             outline.contour_ends.append(contour_ends[i])
 
-    def _parse_composite_glyph(self, glyph_start: Int, depth: Int, mut outline: RawGlyphOutline) raises:
+    def _parse_composite_glyph(
+        self, glyph_start: Int, depth: Int, mut outline: RawGlyphOutline
+    ) raises:
         var pos = glyph_start + 10
         while True:
             var flags = _u16(self.data, pos)
@@ -471,7 +526,9 @@ struct TTFFace(Movable):
             pos += 4
 
             if not (flags & 0x0002):  # ARGS_ARE_XY_VALUES not set
-                raise Error("ttf: composite glyph point-matching mode is not supported")
+                raise Error(
+                    "ttf: composite glyph point-matching mode is not supported"
+                )
 
             var arg1: Int
             var arg2: Int
@@ -539,7 +596,13 @@ def _native_py(pen_y: Float64, raw: Int, scale: Float64) -> Float64:
 
 
 def _decompose_contour_native(
-    outline: RawGlyphOutline, first: Int, last: Int, mut path: Path, pen_x: Float64, pen_y: Float64, scale: Float64
+    outline: RawGlyphOutline,
+    first: Int,
+    last: Int,
+    mut path: Path,
+    pen_x: Float64,
+    pen_y: Float64,
+    scale: Float64,
 ) raises:
     """A direct translation of FreeType's `FT_Outline_Decompose`
     algorithm, against this module's plain-`List`-based
@@ -580,7 +643,9 @@ def _decompose_contour_native(
         v_start_x = v_start_raw_x
         v_start_y = v_start_raw_y
 
-    path.move_to(_native_px(pen_x, v_start_x, scale), _native_py(pen_y, v_start_y, scale))
+    path.move_to(
+        _native_px(pen_x, v_start_x, scale), _native_py(pen_y, v_start_y, scale)
+    )
 
     var closed = False
 
@@ -591,7 +656,9 @@ def _decompose_contour_native(
         var on = outline.on_curve[point_idx]
 
         if on:
-            path.line_to(_native_px(pen_x, px_, scale), _native_py(pen_y, py_, scale))
+            path.line_to(
+                _native_px(pen_x, px_, scale), _native_py(pen_y, py_, scale)
+            )
         else:
             var v_control_x = px_
             var v_control_y = py_
@@ -636,11 +703,16 @@ def _decompose_contour_native(
                 closed = True
 
     if not closed:
-        path.line_to(_native_px(pen_x, v_start_x, scale), _native_py(pen_y, v_start_y, scale))
+        path.line_to(
+            _native_px(pen_x, v_start_x, scale),
+            _native_py(pen_y, v_start_y, scale),
+        )
     path.close()
 
 
-def outline_to_path(outline: RawGlyphOutline, pen_x: Float64, pen_y: Float64, scale: Float64) raises -> Path:
+def outline_to_path(
+    outline: RawGlyphOutline, pen_x: Float64, pen_y: Float64, scale: Float64
+) raises -> Path:
     """One glyph's full outline (all contours) as a `Path`, positioned
     so its local (0, 0) lands at (pen_x, pen_y), the convention
     `glyph_outline.glyph_path` uses. `scale` converts font-design-units
@@ -652,5 +724,7 @@ def outline_to_path(outline: RawGlyphOutline, pen_x: Float64, pen_y: Float64, sc
     for n in range(len(outline.contour_ends)):
         var first = last + 1
         last = outline.contour_ends[n]
-        _decompose_contour_native(outline, first, last, path, pen_x, pen_y, scale)
+        _decompose_contour_native(
+            outline, first, last, path, pen_x, pen_y, scale
+        )
     return path^

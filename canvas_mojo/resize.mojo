@@ -24,7 +24,9 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     isn't involved: Canvas stores none per pixel.
     """
     if factor <= 0:
-        raise Error("downsample(): factor must be positive (got " + String(factor) + ")")
+        raise Error(
+            "downsample(): factor must be positive (got " + String(factor) + ")"
+        )
     if source.width % factor != 0 or source.height % factor != 0:
         raise Error(
             "downsample(): factor ("

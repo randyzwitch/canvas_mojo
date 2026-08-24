@@ -18,7 +18,9 @@ comptime BG = Color(0, 0, 0)
 comptime FG = Color(255, 255, 255)
 
 
-def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+def _assert_pixel(
+    c: Canvas, x: Int, y: Int, expected: Color, label: String
+) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected.r, label + " (r)")
     assert_equal(p.g, expected.g, label + " (g)")
@@ -87,7 +89,13 @@ def test_fill_rect_gradient_matches_gradient_color_at_per_pixel() raises:
     # -> t=0.99, not 1.0 -- 0 + 0.99*255 = 252.45, rounds to 252, not
     # the last stop's exact 255 (that's only reached at x=100, off
     # the rect entirely).
-    _assert_pixel(c, 99, 5, Color(252, 252, 252), "near right edge -> close to, not exactly, the last stop's color")
+    _assert_pixel(
+        c,
+        99,
+        5,
+        Color(252, 252, 252),
+        "near right edge -> close to, not exactly, the last stop's color",
+    )
 
 
 def test_fill_rect_gradient_zero_size_is_a_noop() raises:
@@ -112,7 +120,9 @@ def test_fill_rect_radial_gradient_matches_gradient_color_at_per_pixel() raises:
     fill_rect_radial_gradient(c, 0, 0, 11, 11, g)
 
     _assert_pixel(c, 0, 0, Color(0, 0, 0), "center -> first stop's color")
-    _assert_pixel(c, 6, 8, Color(255, 255, 255), "exact radius -> last stop's color")
+    _assert_pixel(
+        c, 6, 8, Color(255, 255, 255), "exact radius -> last stop's color"
+    )
 
 
 def test_fill_rect_radial_gradient_zero_size_is_a_noop() raises:

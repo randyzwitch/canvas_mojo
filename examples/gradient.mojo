@@ -14,7 +14,10 @@ from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.path import Path, fill_path_gradient, fill_path_radial_gradient
-from canvas_mojo.shapes.rects import fill_rect_gradient, fill_rect_radial_gradient
+from canvas_mojo.shapes.rects import (
+    fill_rect_gradient,
+    fill_rect_radial_gradient,
+)
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 
@@ -46,19 +49,35 @@ def main() raises:
     var r_outer = 270.0
     var ko = r_outer * k
     donut.move_to(cx + r_outer, cy)
-    donut.cubic_curve_to(cx + r_outer, cy + ko, cx + ko, cy + r_outer, cx, cy + r_outer)
-    donut.cubic_curve_to(cx - ko, cy + r_outer, cx - r_outer, cy + ko, cx - r_outer, cy)
-    donut.cubic_curve_to(cx - r_outer, cy - ko, cx - ko, cy - r_outer, cx, cy - r_outer)
-    donut.cubic_curve_to(cx + ko, cy - r_outer, cx + r_outer, cy - ko, cx + r_outer, cy)
+    donut.cubic_curve_to(
+        cx + r_outer, cy + ko, cx + ko, cy + r_outer, cx, cy + r_outer
+    )
+    donut.cubic_curve_to(
+        cx - ko, cy + r_outer, cx - r_outer, cy + ko, cx - r_outer, cy
+    )
+    donut.cubic_curve_to(
+        cx - r_outer, cy - ko, cx - ko, cy - r_outer, cx, cy - r_outer
+    )
+    donut.cubic_curve_to(
+        cx + ko, cy - r_outer, cx + r_outer, cy - ko, cx + r_outer, cy
+    )
     donut.close()
 
     var r_inner = 120.0
     var ki = r_inner * k
     donut.move_to(cx + r_inner, cy)
-    donut.cubic_curve_to(cx + r_inner, cy + ki, cx + ki, cy + r_inner, cx, cy + r_inner)
-    donut.cubic_curve_to(cx - ki, cy + r_inner, cx - r_inner, cy + ki, cx - r_inner, cy)
-    donut.cubic_curve_to(cx - r_inner, cy - ki, cx - ki, cy - r_inner, cx, cy - r_inner)
-    donut.cubic_curve_to(cx + ki, cy - r_inner, cx + r_inner, cy - ki, cx + r_inner, cy)
+    donut.cubic_curve_to(
+        cx + r_inner, cy + ki, cx + ki, cy + r_inner, cx, cy + r_inner
+    )
+    donut.cubic_curve_to(
+        cx - ki, cy + r_inner, cx - r_inner, cy + ki, cx - r_inner, cy
+    )
+    donut.cubic_curve_to(
+        cx - r_inner, cy - ki, cx - ki, cy - r_inner, cx, cy - r_inner
+    )
+    donut.cubic_curve_to(
+        cx + ki, cy - r_inner, cx + r_inner, cy - ki, cx + r_inner, cy
+    )
     donut.close()
 
     var donut_radial = RadialGradient(cx, cy, r_outer)

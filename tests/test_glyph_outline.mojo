@@ -22,7 +22,12 @@ from std.testing import assert_equal, assert_true, TestSuite
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
 from canvas_mojo.text.font_discovery import resolve_font_file
-from canvas_mojo.text.glyph_outline import face_line_metrics, glyph_metrics, glyph_path, has_glyph
+from canvas_mojo.text.glyph_outline import (
+    face_line_metrics,
+    glyph_metrics,
+    glyph_path,
+    has_glyph,
+)
 from canvas_mojo.text.ttf import TTFFace
 from canvas_mojo.path import fill_path_aa
 
@@ -125,7 +130,11 @@ def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
     var center_x = 5 + Int(gm.width / 2.0)
     var center_y = 45 - Int(gm.height / 2.0)
     var center_pixel = c.get_pixel(center_x, center_y)
-    assert_true(center_pixel.r == BG.r and center_pixel.g == BG.g and center_pixel.b == BG.b)
+    assert_true(
+        center_pixel.r == BG.r
+        and center_pixel.g == BG.g
+        and center_pixel.b == BG.b
+    )
 
     # A ring's ink is a real fraction of its bounding box: all of it
     # would mean the hole wasn't punched, almost none that barely

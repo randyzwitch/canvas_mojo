@@ -147,7 +147,9 @@ struct _Huffman(Movable):
         self.symbols = symbols^
 
 
-def _construct(lengths: List[Int], n: Int, mut left_out: Int) raises -> _Huffman:
+def _construct(
+    lengths: List[Int], n: Int, mut left_out: Int
+) raises -> _Huffman:
     """Direct translation of puff.c's `construct()`: given a length
     (0..MAX_BITS) per symbol for `n` symbols, builds the tables
     `_decode` needs. Raises on an over-subscribed code (more codes of
@@ -230,7 +232,12 @@ def _decode(mut reader: _BitReader, table: _Huffman) raises -> Int:
     raise Error("deflate: invalid Huffman code (ran out of bits)")
 
 
-def _codes(mut reader: _BitReader, mut out: List[UInt8], lencode: _Huffman, distcode: _Huffman) raises:
+def _codes(
+    mut reader: _BitReader,
+    mut out: List[UInt8],
+    lencode: _Huffman,
+    distcode: _Huffman,
+) raises:
     """Direct translation of puff.c's `codes()`: decode literal/length
     and distance symbols until the end-of-block symbol (256). The
     length/distance base+extra-bits tables are RFC 1951 3.2.5's,
@@ -243,21 +250,130 @@ def _codes(mut reader: _BitReader, mut out: List[UInt8], lencode: _Huffman, dist
     small lists per block is a cheap way to avoid it.
     """
     var lens: List[Int] = [
-        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
-        35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        15,
+        17,
+        19,
+        23,
+        27,
+        31,
+        35,
+        43,
+        51,
+        59,
+        67,
+        83,
+        99,
+        115,
+        131,
+        163,
+        195,
+        227,
+        258,
     ]
     var lext: List[Int] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
-        3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        4,
+        5,
+        5,
+        5,
+        5,
+        0,
     ]
     var dists: List[Int] = [
-        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
-        257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
-        8193, 12289, 16385, 24577,
+        1,
+        2,
+        3,
+        4,
+        5,
+        7,
+        9,
+        13,
+        17,
+        25,
+        33,
+        49,
+        65,
+        97,
+        129,
+        193,
+        257,
+        385,
+        513,
+        769,
+        1025,
+        1537,
+        2049,
+        3073,
+        4097,
+        6145,
+        8193,
+        12289,
+        16385,
+        24577,
     ]
     var dext: List[Int] = [
-        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
-        7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+        4,
+        4,
+        5,
+        5,
+        6,
+        6,
+        7,
+        7,
+        8,
+        8,
+        9,
+        9,
+        10,
+        10,
+        11,
+        11,
+        12,
+        12,
+        13,
+        13,
     ]
 
     while True:
@@ -353,7 +469,27 @@ def _dynamic_tables(mut reader: _BitReader) raises -> _CodeTables:
     keeps the common short list short. Direct translation of puff.c's
     `dynamic()`.
     """
-    var order: List[Int] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+    var order: List[Int] = [
+        16,
+        17,
+        18,
+        0,
+        8,
+        7,
+        9,
+        6,
+        10,
+        5,
+        11,
+        4,
+        12,
+        3,
+        13,
+        2,
+        14,
+        1,
+        15,
+    ]
 
     var nlen = reader.read_bits(5) + 257
     var ndist = reader.read_bits(5) + 1
@@ -560,10 +696,14 @@ def _hash3(data: List[UInt8], pos: Int) -> Int:
     candidate -- and 3 bytes is DEFLATE's minimum match length
     (_MIN_MATCH) anyway.
     """
-    return (Int(data[pos]) << 16) | (Int(data[pos + 1]) << 8) | Int(data[pos + 2])
+    return (
+        (Int(data[pos]) << 16) | (Int(data[pos + 1]) << 8) | Int(data[pos + 2])
+    )
 
 
-def _insert_hash(mut chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int) raises:
+def _insert_hash(
+    mut chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int
+) raises:
     """Records `pos` as a candidate match source for its 3-byte prefix,
     capped at _MAX_CHAIN entries per key, oldest dropped first. This
     bounds memory for a constantly recurring prefix -- a large
@@ -591,7 +731,9 @@ struct _Match(ImplicitlyCopyable, Movable):
         self.distance = distance
 
 
-def _find_match(chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int) raises -> _Match:
+def _find_match(
+    chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int
+) raises -> _Match:
     """The best LZ77 match for the bytes at `pos` -- longest, and
     nearest among equal lengths, since candidates are searched
     most-recent-first -- among whatever `chains` holds for that 3-byte
@@ -624,7 +766,10 @@ def _find_match(chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int) raise
         if distance > _WINDOW:
             break  # older entries (smaller j) are only further still
         var length = 0
-        while length < max_possible and data[candidate + length] == data[pos + length]:
+        while (
+            length < max_possible
+            and data[candidate + length] == data[pos + length]
+        ):
             length += 1
         if length > best_length:
             best_length = length
@@ -660,21 +805,130 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     # (RFC 1951 3.2.5), rebuilt per call for the `comptime List[Int]`
     # reason _codes documents.
     var lens: List[Int] = [
-        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
-        35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        15,
+        17,
+        19,
+        23,
+        27,
+        31,
+        35,
+        43,
+        51,
+        59,
+        67,
+        83,
+        99,
+        115,
+        131,
+        163,
+        195,
+        227,
+        258,
     ]
     var lext: List[Int] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
-        3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        4,
+        5,
+        5,
+        5,
+        5,
+        0,
     ]
     var dists: List[Int] = [
-        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
-        257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
-        8193, 12289, 16385, 24577,
+        1,
+        2,
+        3,
+        4,
+        5,
+        7,
+        9,
+        13,
+        17,
+        25,
+        33,
+        49,
+        65,
+        97,
+        129,
+        193,
+        257,
+        385,
+        513,
+        769,
+        1025,
+        1537,
+        2049,
+        3073,
+        4097,
+        6145,
+        8193,
+        12289,
+        16385,
+        24577,
     ]
     var dext: List[Int] = [
-        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
-        7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+        4,
+        4,
+        5,
+        5,
+        6,
+        6,
+        7,
+        7,
+        8,
+        8,
+        9,
+        9,
+        10,
+        10,
+        11,
+        11,
+        12,
+        12,
+        13,
+        13,
     ]
 
     var chains = Dict[Int, List[Int]]()

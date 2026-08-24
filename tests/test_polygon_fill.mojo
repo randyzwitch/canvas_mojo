@@ -21,7 +21,9 @@ comptime BG = Color(0, 0, 0)
 comptime FG = Color(255, 255, 255)
 
 
-def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+def _assert_pixel(
+    c: Canvas, x: Int, y: Int, expected: Color, label: String
+) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected.r, label + " (r)")
     assert_equal(p.g, expected.g, label + " (g)")
@@ -48,7 +50,9 @@ def test_fill_polygon_matches_fill_rect_with_asymmetric_corners() raises:
         for x in range(8):
             var h = hard.get_pixel(x, y)
             var p = poly.get_pixel(x, y)
-            assert_equal(p.r, h.r, "mismatch at (" + String(x) + "," + String(y) + ")")
+            assert_equal(
+                p.r, h.r, "mismatch at (" + String(x) + "," + String(y) + ")"
+            )
 
 
 def test_fill_polygon_triangle_matches_hand_traced_rows() raises:
@@ -134,7 +138,12 @@ def test_fill_polygon_self_intersecting_bowtie_matches_hand_derived_spans() rais
     # fill x=[5,15]. A genuine pinch rather than an overlap, so
     # EVEN_ODD and NONZERO agree here -- see the fill_path tests for a
     # case where they don't.
-    var pts: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20), Point(20, 20)]
+    var pts: List[Point] = [
+        Point(0, 0),
+        Point(20, 0),
+        Point(0, 20),
+        Point(20, 20),
+    ]
     var c = Canvas(21, 21, BG)
     fill_polygon(c, pts, FG)
 
@@ -169,9 +178,15 @@ def test_point_in_polygon_matches_hand_derived_membership() raises:
     # membership is exactly "x>=0 and y>=0 and x+y<20".
     var tri: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20)]
     assert_true(_point_in_polygon(tri, 5.0, 5.0, FillRule.EVEN_ODD))  # 10 < 20
-    assert_true(not _point_in_polygon(tri, 15.0, 15.0, FillRule.EVEN_ODD))  # 30 > 20
-    assert_true(_point_in_polygon(tri, 9.9, 9.9, FillRule.EVEN_ODD))  # 19.8 < 20
-    assert_true(not _point_in_polygon(tri, 10.1, 10.1, FillRule.EVEN_ODD))  # 20.2 > 20
+    assert_true(
+        not _point_in_polygon(tri, 15.0, 15.0, FillRule.EVEN_ODD)
+    )  # 30 > 20
+    assert_true(
+        _point_in_polygon(tri, 9.9, 9.9, FillRule.EVEN_ODD)
+    )  # 19.8 < 20
+    assert_true(
+        not _point_in_polygon(tri, 10.1, 10.1, FillRule.EVEN_ODD)
+    )  # 20.2 > 20
     assert_true(not _point_in_polygon(tri, -5.0, -5.0, FillRule.EVEN_ODD))
 
 
@@ -248,14 +263,24 @@ def test_point_in_polygon_nonzero_fills_the_overlap_of_a_bridge_connected_double
     # winding reach 2 (solid), and both agree on each square's
     # non-overlapping interior.
     var poly: List[Point] = [
-        Point(0, 0), Point(20, 0), Point(20, 20), Point(0, 20), Point(0, 0),
-        Point(10, 10), Point(30, 10), Point(30, 30), Point(10, 30), Point(10, 10),
+        Point(0, 0),
+        Point(20, 0),
+        Point(20, 20),
+        Point(0, 20),
+        Point(0, 0),
+        Point(10, 10),
+        Point(30, 10),
+        Point(30, 30),
+        Point(10, 30),
+        Point(10, 10),
     ]
     assert_true(_point_in_polygon(poly, 5.0, 5.0, FillRule.EVEN_ODD))
     assert_true(_point_in_polygon(poly, 5.0, 5.0, FillRule.NONZERO))
     assert_true(_point_in_polygon(poly, 25.0, 25.0, FillRule.EVEN_ODD))
     assert_true(_point_in_polygon(poly, 25.0, 25.0, FillRule.NONZERO))
-    assert_true(not _point_in_polygon(poly, 15.0, 15.0, FillRule.EVEN_ODD))  # hole
+    assert_true(
+        not _point_in_polygon(poly, 15.0, 15.0, FillRule.EVEN_ODD)
+    )  # hole
     assert_true(_point_in_polygon(poly, 15.0, 15.0, FillRule.NONZERO))  # solid
     assert_true(not _point_in_polygon(poly, 35.0, 35.0, FillRule.EVEN_ODD))
     assert_true(not _point_in_polygon(poly, 35.0, 35.0, FillRule.NONZERO))

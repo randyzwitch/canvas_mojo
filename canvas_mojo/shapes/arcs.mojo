@@ -27,7 +27,12 @@ comptime _THREE_HALF_PI = 4.71238898038469
 
 
 def _extend_bounds(
-    mut min_x: Float64, mut min_y: Float64, mut max_x: Float64, mut max_y: Float64, x: Float64, y: Float64
+    mut min_x: Float64,
+    mut min_y: Float64,
+    mut max_x: Float64,
+    mut max_y: Float64,
+    x: Float64,
+    y: Float64,
 ):
     if x < min_x:
         min_x = x
@@ -113,7 +118,8 @@ def _arc_bounds(
 
 
 def _union_bounds(
-    a: Tuple[Float64, Float64, Float64, Float64], b: Tuple[Float64, Float64, Float64, Float64]
+    a: Tuple[Float64, Float64, Float64, Float64],
+    b: Tuple[Float64, Float64, Float64, Float64],
 ) -> Tuple[Float64, Float64, Float64, Float64]:
     """The smallest box containing both `a` and `b`, each an
     (min_x, min_y, max_x, max_y) box from `_arc_bounds` -- how
@@ -122,7 +128,13 @@ def _union_bounds(
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
-def _arc_points(cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64) -> List[Point]:
+def _arc_points(
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+) -> List[Point]:
     """Sample points along a circular arc (radians, start_angle <=
     end_angle expected; pass end_angle = start_angle + 2*pi for a full
     circle) at roughly 1-pixel arc-length spacing. Step count scales
@@ -147,7 +159,9 @@ def _arc_points(cx: Float64, cy: Float64, radius: Float64, start_angle: Float64,
     return points^
 
 
-def _angle_in_span(angle: Float64, start_angle: Float64, end_angle: Float64) -> Bool:
+def _angle_in_span(
+    angle: Float64, start_angle: Float64, end_angle: Float64
+) -> Bool:
     """Is `angle` within [start_angle, end_angle] once normalized into
     the 2*pi-wide window starting at start_angle? atan2's range is
     (-pi, pi], which won't line up with an arbitrary start/end pair: a
@@ -162,7 +176,15 @@ def _angle_in_span(angle: Float64, start_angle: Float64, end_angle: Float64) -> 
     return a <= end_angle
 
 
-def draw_arc(mut canvas: Canvas, cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64, color: Color):
+def draw_arc(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+):
     """The arc's curved boundary only, no radii back to center:
     hard-edged, ~1px, via draw_polyline over _arc_points' samples. For
     a solid wedge see fill_arc; for a ring segment, fill_ring_sector.
@@ -193,7 +215,15 @@ def draw_arc_aa(
     draw_polyline_aa(canvas, points, color, width, supersample)
 
 
-def fill_arc(mut canvas: Canvas, cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64, color: Color):
+def fill_arc(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+):
     """A solid pie-slice wedge: the arc plus two straight radii back to
     the center, filled. Samples the arc (_arc_points), appends the
     center point to close the shape, and hands it to fill_polygon --
@@ -269,9 +299,16 @@ def fill_arc_aa(
                             covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )
 
 
 def fill_ring_sector(
@@ -290,7 +327,11 @@ def fill_ring_sector(
     points trace the ring's boundary as one continuous loop, then
     fill_polygon.
     """
-    if outer_radius <= 0.0 or inner_radius < 0.0 or inner_radius >= outer_radius:
+    if (
+        outer_radius <= 0.0
+        or inner_radius < 0.0
+        or inner_radius >= outer_radius
+    ):
         return
     var points = _arc_points(cx, cy, outer_radius, start_angle, end_angle)
     var inner_points = _arc_points(cx, cy, inner_radius, end_angle, start_angle)
@@ -318,7 +359,11 @@ def fill_ring_sector_aa(
     radii, both with no center point; see that function for why the
     outer radius alone isn't enough.
     """
-    if outer_radius <= 0.0 or inner_radius < 0.0 or inner_radius >= outer_radius:
+    if (
+        outer_radius <= 0.0
+        or inner_radius < 0.0
+        or inner_radius >= outer_radius
+    ):
         return
 
     var outer_r2 = outer_radius * outer_radius
@@ -327,8 +372,12 @@ def fill_ring_sector_aa(
     var total_samples = n * n
     var step = 1.0 / Float64(n)
 
-    var outer_bounds = _arc_bounds(cx, cy, outer_radius, start_angle, end_angle, False)
-    var inner_bounds = _arc_bounds(cx, cy, inner_radius, start_angle, end_angle, False)
+    var outer_bounds = _arc_bounds(
+        cx, cy, outer_radius, start_angle, end_angle, False
+    )
+    var inner_bounds = _arc_bounds(
+        cx, cy, inner_radius, start_angle, end_angle, False
+    )
     var bounds = _union_bounds(outer_bounds, inner_bounds)
     var min_px = _round_to_int(bounds[0]) - 1
     var max_px = _round_to_int(bounds[2]) + 1
@@ -364,6 +413,13 @@ def fill_ring_sector_aa(
                             covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )

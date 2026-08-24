@@ -10,7 +10,12 @@ Run with:
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.circles import draw_circle, draw_circle_aa, fill_circle, fill_circle_aa
+from canvas_mojo.shapes.circles import (
+    draw_circle,
+    draw_circle_aa,
+    fill_circle,
+    fill_circle_aa,
+)
 from canvas_mojo.io.bmp import write_bmp
 from canvas_mojo.io.png import write_png
 

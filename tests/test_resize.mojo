@@ -12,7 +12,9 @@ from canvas_mojo.resize import downsample
 comptime BG = Color(0, 0, 0)
 
 
-def _assert_color(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+def _assert_color(
+    c: Canvas, x: Int, y: Int, expected: Color, label: String
+) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected.r, label)
     assert_equal(p.g, expected.g, label)
@@ -59,9 +61,19 @@ def test_downsample_by_2_averages_each_2x2_block() raises:
     assert_equal(out.width, 2)
     assert_equal(out.height, 2)
     _assert_color(out, 0, 0, Color(100, 100, 100), "block (0,0): exact average")
-    _assert_color(out, 1, 0, Color(1, 1, 1), "block (1,0): 0.5 average rounds up")
-    _assert_color(out, 0, 1, Color(0, 0, 0), "block (0,1): 0.25 average rounds down")
-    _assert_color(out, 1, 1, Color(52, 62, 72), "block (1,1): four distinct colors, each channel independently rounded")
+    _assert_color(
+        out, 1, 0, Color(1, 1, 1), "block (1,0): 0.5 average rounds up"
+    )
+    _assert_color(
+        out, 0, 1, Color(0, 0, 0), "block (0,1): 0.25 average rounds down"
+    )
+    _assert_color(
+        out,
+        1,
+        1,
+        Color(52, 62, 72),
+        "block (1,1): four distinct colors, each channel independently rounded",
+    )
 
 
 def test_downsample_by_1_is_a_noop_copy() raises:
@@ -71,9 +83,15 @@ def test_downsample_by_1_is_a_noop_copy() raises:
     var out = downsample(c, 1)
     assert_equal(out.width, 3)
     assert_equal(out.height, 2)
-    _assert_color(out, 0, 0, Color(10, 20, 30), "factor=1 leaves this pixel unchanged")
-    _assert_color(out, 2, 1, Color(200, 150, 90), "factor=1 leaves this pixel unchanged")
-    _assert_color(out, 1, 0, BG, "factor=1 leaves untouched pixels at the fill color")
+    _assert_color(
+        out, 0, 0, Color(10, 20, 30), "factor=1 leaves this pixel unchanged"
+    )
+    _assert_color(
+        out, 2, 1, Color(200, 150, 90), "factor=1 leaves this pixel unchanged"
+    )
+    _assert_color(
+        out, 1, 0, BG, "factor=1 leaves untouched pixels at the fill color"
+    )
 
 
 def test_downsample_raises_on_non_positive_factor() raises:

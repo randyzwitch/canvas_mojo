@@ -64,7 +64,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
     var pixels: List[UInt8]
     var clip_stack: List[_ClipRect]
 
-    def __init__(out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)):
+    def __init__(
+        out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)
+    ):
         self.width = width
         self.height = height
         self.pixels = List[UInt8](capacity=width * height * 3)
@@ -75,7 +77,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # empty stack == no clip active == the clip region is the whole canvas
         self.clip_stack = List[_ClipRect]()
 
-    def __init__(out self, width: Int, height: Int, var pixels: List[UInt8]) raises:
+    def __init__(
+        out self, width: Int, height: Int, var pixels: List[UInt8]
+    ) raises:
         """Wrap an already-built RGB pixel buffer, skipping the
         solid-fill loop the (width, height, fill) constructor pays for.
         For a caller about to write every pixel itself -- downsample()
@@ -123,7 +127,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         var new_rect = _ClipRect(x, y, width, height)
         if len(self.clip_stack) > 0:
-            new_rect = _intersect_clip(self.clip_stack[len(self.clip_stack) - 1], new_rect)
+            new_rect = _intersect_clip(
+                self.clip_stack[len(self.clip_stack) - 1], new_rect
+            )
         self.clip_stack.append(new_rect)
 
     def pop_clip(mut self):
@@ -210,7 +216,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         if not self.in_bounds(x, y):
             return Color(0, 0, 0)
         var idx = (y * self.width + x) * 3
-        return Color(self.pixels[idx], self.pixels[idx + 1], self.pixels[idx + 2])
+        return Color(
+            self.pixels[idx], self.pixels[idx + 1], self.pixels[idx + 2]
+        )
 
     def fill(mut self, color: Color):
         var region = self.effective_fill_rect(0, 0, self.width, self.height)
@@ -222,16 +230,29 @@ struct Canvas(Copyable, DrawTarget, Movable):
             for x in range(rx, rx + rw):
                 self.write_pixel(x, y, color)
 
-    def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color):
+    def fill_rect(
+        mut self, x: Int, y: Int, width: Int, height: Int, color: Color
+    ):
         fill_rect(self, x, y, width, height, color)
 
     def fill_rect_gradient(
-        mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
+        mut self,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        gradient: LinearGradient,
     ):
         fill_rect_gradient(self, x, y, width, height, gradient)
 
     def draw_line_aa(
-        mut self, x0: Int, y0: Int, x1: Int, y1: Int, color: Color, width: Float64 = 1.0
+        mut self,
+        x0: Int,
+        y0: Int,
+        x1: Int,
+        y1: Int,
+        color: Color,
+        width: Float64 = 1.0,
     ):
         draw_line_aa(self, x0, y0, x1, y1, color, width=width)
 
@@ -259,9 +280,20 @@ struct Canvas(Copyable, DrawTarget, Movable):
         end_angle: Float64,
         color: Color,
     ):
-        fill_ring_sector_aa(self, cx, cy, inner_radius, outer_radius, start_angle, end_angle, color)
+        fill_ring_sector_aa(
+            self,
+            cx,
+            cy,
+            inner_radius,
+            outer_radius,
+            start_angle,
+            end_angle,
+            color,
+        )
 
-    def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0):
+    def stroke_path_aa(
+        mut self, path: Path, color: Color, width: Float64 = 1.0
+    ):
         stroke_path_aa(self, path, color, width=width)
 
     def fill_path_aa(mut self, path: Path, color: Color):

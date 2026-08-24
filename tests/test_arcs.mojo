@@ -21,7 +21,9 @@ comptime BG = Color(0, 0, 0)
 comptime FG = Color(255, 255, 255)
 
 
-def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+def _assert_pixel(
+    c: Canvas, x: Int, y: Int, expected: Color, label: String
+) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected.r, label + " (r)")
     assert_equal(p.g, expected.g, label + " (g)")
@@ -59,7 +61,9 @@ def test_draw_arc_degenerate_radius_plots_center() raises:
 def test_fill_arc_degenerate_radius_is_a_noop() raises:
     var c = Canvas(5, 5, BG)
     fill_arc(c, 2.0, 2.0, 0.0, 0.0, pi, FG)
-    _assert_pixel(c, 2, 2, BG, "radius<=0 draws nothing (unlike draw_arc's single pixel)")
+    _assert_pixel(
+        c, 2, 2, BG, "radius<=0 draws nothing (unlike draw_arc's single pixel)"
+    )
 
 
 def test_fill_arc_wedge_covers_only_its_own_angle_span() raises:
@@ -69,8 +73,16 @@ def test_fill_arc_wedge_covers_only_its_own_angle_span() raises:
     var c = Canvas(60, 60, BG)
     fill_arc(c, 30.0, 30.0, 20.0, 0.0, pi / 2.0, FG)
     _assert_pixel(c, 30 + 10, 30 + 10, FG, "inside the wedge's own bisector")
-    _assert_pixel(c, 30 - 10, 30 - 10, BG, "opposite direction, outside the wedge")
-    _assert_pixel(c, 30, 30, FG, "center is part of every wedge (the two radii meet there)")
+    _assert_pixel(
+        c, 30 - 10, 30 - 10, BG, "opposite direction, outside the wedge"
+    )
+    _assert_pixel(
+        c,
+        30,
+        30,
+        FG,
+        "center is part of every wedge (the two radii meet there)",
+    )
 
 
 def test_fill_arc_three_wedges_tile_a_full_circle_without_gaps() raises:
@@ -112,7 +124,9 @@ def test_fill_ring_sector_only_fills_between_the_two_radii() raises:
     fill_ring_sector(c, 40.0, 40.0, 15.0, 30.0, 0.0, 2.0 * pi, FG)
     _assert_pixel(c, 40, 40, BG, "inner hole stays background")
     _assert_pixel(c, 40 + 22, 40, FG, "the ring itself is filled")
-    _assert_pixel(c, 40 + 45, 40, BG, "well outside the outer radius stays background")
+    _assert_pixel(
+        c, 40 + 45, 40, BG, "well outside the outer radius stays background"
+    )
 
 
 def test_fill_ring_sector_degenerate_radii_is_a_noop() raises:
@@ -120,12 +134,16 @@ def test_fill_ring_sector_degenerate_radii_is_a_noop() raises:
     fill_ring_sector(c, 5.0, 5.0, 3.0, 3.0, 0.0, 2.0 * pi, FG)  # inner == outer
     fill_ring_sector(c, 5.0, 5.0, 5.0, 3.0, 0.0, 2.0 * pi, FG)  # inner > outer
     fill_ring_sector(c, 5.0, 5.0, -1.0, 0.0, 0.0, 2.0 * pi, FG)  # outer <= 0
-    _assert_pixel(c, 5, 5, BG, "every degenerate radius combination draws nothing")
+    _assert_pixel(
+        c, 5, 5, BG, "every degenerate radius combination draws nothing"
+    )
 
 
 def test_fill_ring_sector_aa_respects_translucent_input_color() raises:
     var c = Canvas(80, 80, Color(0, 0, 0))
-    fill_ring_sector_aa(c, 40.0, 40.0, 15.0, 30.0, 0.0, 2.0 * pi, Color(200, 0, 0, 128))
+    fill_ring_sector_aa(
+        c, 40.0, 40.0, 15.0, 30.0, 0.0, 2.0 * pi, Color(200, 0, 0, 128)
+    )
     var p = c.get_pixel(40 + 22, 40)  # deep in the ring, clear of any AA edge
     assert_equal(p.r, 100)
     assert_equal(p.g, 0)
@@ -162,7 +180,13 @@ def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises
     """
     var c = Canvas(200, 200, BG)
     fill_ring_sector_aa(c, 100.0, 100.0, 50.0, 100.0, pi / 6.0, pi / 3.0, FG)
-    _assert_pixel(c, 149, 134, FG, "deep in the ring, past the outer arc's own bounding box")
+    _assert_pixel(
+        c,
+        149,
+        134,
+        FG,
+        "deep in the ring, past the outer arc's own bounding box",
+    )
 
 
 def main() raises:

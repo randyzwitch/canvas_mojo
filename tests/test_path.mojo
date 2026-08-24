@@ -31,7 +31,9 @@ comptime BG = Color(0, 0, 0)
 comptime FG = Color(255, 255, 255)
 
 
-def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) raises:
+def _assert_pixel(
+    c: Canvas, x: Int, y: Int, expected: Color, label: String
+) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected.r, label)
     assert_equal(p.g, expected.g, label)
@@ -162,7 +164,10 @@ def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
     for i in range(1, len(pts) - 1):
         var p_i = pts[i]
         var dist = sqrt(Float64(p_i.x * p_i.x + p_i.y * p_i.y))
-        assert_true(abs(dist - 10.0) < 1.0, "intermediate arc sample stays on the circle")
+        assert_true(
+            abs(dist - 10.0) < 1.0,
+            "intermediate arc sample stays on the circle",
+        )
 
 
 def test_arc_to_updates_current_point_to_the_arc_end() raises:
@@ -241,15 +246,33 @@ def test_fill_path_aa_arc_to_wedge_has_a_real_antialiased_boundary() raises:
     var c = Canvas(60, 60, BG)
     fill_path_aa(c, p, FG)
 
-    _assert_pixel(c, Int(cx) + 5, Int(cy) + 5, FG, "deep inside the wedge -- full coverage")
-    _assert_pixel(c, Int(cx) - 10, Int(cy) - 10, BG, "opposite quadrant -- clearly outside, zero coverage")
+    _assert_pixel(
+        c,
+        Int(cx) + 5,
+        Int(cy) + 5,
+        FG,
+        "deep inside the wedge -- full coverage",
+    )
+    _assert_pixel(
+        c,
+        Int(cx) - 10,
+        Int(cy) - 10,
+        BG,
+        "opposite quadrant -- clearly outside, zero coverage",
+    )
 
     # (cx + r*cos(pi/4), cy + r*sin(pi/4)) sits exactly on the arc
     # boundary, by the same formula _arc_points uses.
     var edge_x = Int(cx + radius * cos(pi / 4.0))
     var edge_y = Int(cy + radius * sin(pi / 4.0))
     var edge = c.get_pixel(edge_x, edge_y)
-    assert_true(edge.r > 0 and edge.r < 255, "on the arc boundary -- real partial coverage, neither pure BG nor pure FG")
+    assert_true(
+        edge.r > 0 and edge.r < 255,
+        (
+            "on the arc boundary -- real partial coverage, neither pure BG nor"
+            " pure FG"
+        ),
+    )
 
 
 def test_stroke_path_aa_draws_along_an_open_arc_to_segment() raises:
@@ -272,8 +295,16 @@ def test_stroke_path_aa_draws_along_an_open_arc_to_segment() raises:
     var edge_x = Int(cx + radius * cos(pi / 4.0))
     var edge_y = Int(cy + radius * sin(pi / 4.0))
     var edge = c.get_pixel(edge_x, edge_y)
-    assert_true(edge.r > 0, "on the arc's own curve -- picks up real stroke coverage")
-    _assert_pixel(c, Int(cx), Int(cy), BG, "wedge center -- nowhere near the stroked curve, untouched")
+    assert_true(
+        edge.r > 0, "on the arc's own curve -- picks up real stroke coverage"
+    )
+    _assert_pixel(
+        c,
+        Int(cx),
+        Int(cy),
+        BG,
+        "wedge center -- nowhere near the stroked curve, untouched",
+    )
 
 
 def test_flatten_splits_on_each_move_to() raises:
@@ -413,8 +444,12 @@ def test_point_in_subpaths_nonzero_fills_the_overlap_of_same_direction_subpaths(
     assert_true(_point_in_subpaths(subpaths, 5.0, 5.0, FillRule.NONZERO))
     assert_true(_point_in_subpaths(subpaths, 25.0, 25.0, FillRule.EVEN_ODD))
     assert_true(_point_in_subpaths(subpaths, 25.0, 25.0, FillRule.NONZERO))
-    assert_true(not _point_in_subpaths(subpaths, 15.0, 15.0, FillRule.EVEN_ODD))  # hole
-    assert_true(_point_in_subpaths(subpaths, 15.0, 15.0, FillRule.NONZERO))  # solid
+    assert_true(
+        not _point_in_subpaths(subpaths, 15.0, 15.0, FillRule.EVEN_ODD)
+    )  # hole
+    assert_true(
+        _point_in_subpaths(subpaths, 15.0, 15.0, FillRule.NONZERO)
+    )  # solid
 
 
 def test_stroke_path_draws_open_subpath_as_polyline() raises:
@@ -501,10 +536,18 @@ def test_fill_path_radial_gradient_matches_gradient_color_at_per_pixel() raises:
     fill_path_radial_gradient(c, p, g)
 
     _assert_pixel(c, 0, 0, Color(0, 0, 0), "center -> first stop's color")
-    _assert_pixel(c, 3, 4, Color(255, 255, 255), "exact radius (3-4-5 triangle) -> last stop's color")
+    _assert_pixel(
+        c,
+        3,
+        4,
+        Color(255, 255, 255),
+        "exact radius (3-4-5 triangle) -> last stop's color",
+    )
 
 
-def _square_subpath(mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Float64) raises:
+def _square_subpath(
+    mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Float64
+) raises:
     p.move_to(x0, y0)
     p.line_to(x1, y0)
     p.line_to(x1, y1)
@@ -544,7 +587,9 @@ def test_fill_path_nonzero_fills_the_overlap_of_same_direction_subpaths_solid() 
 
     _assert_pixel(c, 5, 5, FG, "square A only")
     _assert_pixel(c, 25, 25, FG, "square B only")
-    _assert_pixel(c, 15, 15, FG, "overlap region -- solid under NONZERO, no hole")
+    _assert_pixel(
+        c, 15, 15, FG, "overlap region -- solid under NONZERO, no hole"
+    )
 
 
 def main() raises:

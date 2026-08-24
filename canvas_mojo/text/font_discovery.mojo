@@ -141,8 +141,12 @@ def _append_macos_homebrew_hints(mut candidates: List[String]):
     try:
         var prefix = String(run("brew --prefix fontconfig 2>/dev/null").strip())
         if prefix.byte_length() > 0:
-            _append_unique(candidates, String(prefix, "/lib/libfontconfig.1.dylib"))
-            _append_unique(candidates, String(prefix, "/lib/libfontconfig.dylib"))
+            _append_unique(
+                candidates, String(prefix, "/lib/libfontconfig.1.dylib")
+            )
+            _append_unique(
+                candidates, String(prefix, "/lib/libfontconfig.dylib")
+            )
     except:
         pass
 
@@ -158,11 +162,19 @@ def _append_pkg_config_hints(mut candidates: List[String], is_macos: Bool):
             if directory.byte_length() == 0:
                 continue
             if is_macos:
-                _append_unique(candidates, String(directory, "/libfontconfig.1.dylib"))
-                _append_unique(candidates, String(directory, "/libfontconfig.dylib"))
+                _append_unique(
+                    candidates, String(directory, "/libfontconfig.1.dylib")
+                )
+                _append_unique(
+                    candidates, String(directory, "/libfontconfig.dylib")
+                )
             else:
-                _append_unique(candidates, String(directory, "/libfontconfig.so.1"))
-                _append_unique(candidates, String(directory, "/libfontconfig.so"))
+                _append_unique(
+                    candidates, String(directory, "/libfontconfig.so.1")
+                )
+                _append_unique(
+                    candidates, String(directory, "/libfontconfig.so")
+                )
     except:
         pass
 
@@ -215,7 +227,9 @@ def _open_fontconfig_library() raises -> OwnedDLHandle:
 
     for candidate in _cheap_fontconfig_candidates():
         try:
-            return OwnedDLHandle(candidate, RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE)
+            return OwnedDLHandle(
+                candidate, RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
+            )
         except err:
             errors.append(String(candidate, " -> ", String(err)))
 
@@ -226,7 +240,9 @@ def _open_fontconfig_library() raises -> OwnedDLHandle:
     _expensive_fontconfig_hint_candidates(hints)
     for candidate in hints:
         try:
-            return OwnedDLHandle(candidate, RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE)
+            return OwnedDLHandle(
+                candidate, RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
+            )
         except err:
             errors.append(String(candidate, " -> ", String(err)))
 
@@ -275,8 +291,12 @@ def _string_from_c_string(ptr: Pointer[c_char, ImmUntrackedOrigin]) -> String:
     return out
 
 
-def _imm(ptr: Pointer[c_char, MutUntrackedOrigin]) -> Pointer[c_char, ImmUntrackedOrigin]:
-    return ptr.unsafe_mut_cast[target_mut=False]().unsafe_origin_cast[ImmUntrackedOrigin]()
+def _imm(
+    ptr: Pointer[c_char, MutUntrackedOrigin]
+) -> Pointer[c_char, ImmUntrackedOrigin]:
+    return ptr.unsafe_mut_cast[target_mut=False]().unsafe_origin_cast[
+        ImmUntrackedOrigin
+    ]()
 
 
 # --- Opaque fontconfig types -----------------------------------------------
@@ -355,9 +375,13 @@ def _resolve_font_file_impl(
     if Int(init_ok) == 0:
         raise Error("FcInit failed")
 
-    var config = handle.call["FcConfigGetCurrent", Pointer[_FcConfig, MutUntrackedOrigin]]()
+    var config = handle.call[
+        "FcConfigGetCurrent", Pointer[_FcConfig, MutUntrackedOrigin]
+    ]()
 
-    var pattern = handle.call["FcPatternCreate", Pointer[_FcPattern, MutUntrackedOrigin]]()
+    var pattern = handle.call[
+        "FcPatternCreate", Pointer[_FcPattern, MutUntrackedOrigin]
+    ]()
 
     var family_obj = _c_string("family")
     var family_val = _c_string(family)
@@ -396,10 +420,15 @@ def _resolve_font_file_impl(
     # null pointer, which isn't straightforward to construct for a
     # custom opaque struct type here.
     var have_charset = char_constraint != -1
-    var charset = handle.call["FcCharSetCreate", Pointer[_FcCharSet, MutUntrackedOrigin]]()
+    var charset = handle.call[
+        "FcCharSetCreate", Pointer[_FcCharSet, MutUntrackedOrigin]
+    ]()
     if have_charset:
         _ = handle.call[
-            "FcCharSetAddChar", c_int, Pointer[_FcCharSet, MutUntrackedOrigin], c_uint
+            "FcCharSetAddChar",
+            c_int,
+            Pointer[_FcCharSet, MutUntrackedOrigin],
+            c_uint,
         ](charset, c_uint(char_constraint))
         var charset_obj = _c_string("charset")
         _ = handle.call[
@@ -411,7 +440,9 @@ def _resolve_font_file_impl(
         ](pattern, _imm(charset_obj), charset)
         charset_obj.unsafe_free()
 
-    handle.call["FcDefaultSubstitute", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]](pattern)
+    handle.call[
+        "FcDefaultSubstitute", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]
+    ](pattern)
 
     _ = handle.call[
         "FcConfigSubstitute",
@@ -432,8 +463,12 @@ def _resolve_font_file_impl(
     var match_result = result_code[]
     result_code.unsafe_free()
 
-    handle.call["FcPatternDestroy", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]](pattern)
-    handle.call["FcCharSetDestroy", NoneType, Pointer[_FcCharSet, MutUntrackedOrigin]](charset)
+    handle.call[
+        "FcPatternDestroy", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]
+    ](pattern)
+    handle.call[
+        "FcCharSetDestroy", NoneType, Pointer[_FcCharSet, MutUntrackedOrigin]
+    ](charset)
 
     if Int(match_result) != Int(_FC_RESULT_MATCH):
         raise Error(
@@ -457,7 +492,9 @@ def _resolve_font_file_impl(
         resolved_path = _string_from_c_string(file_ptr_out[])
     file_ptr_out.unsafe_free()
 
-    handle.call["FcPatternDestroy", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]](matched)
+    handle.call[
+        "FcPatternDestroy", NoneType, Pointer[_FcPattern, MutUntrackedOrigin]
+    ](matched)
 
     if resolved_path == "":
         raise Error(

@@ -29,8 +29,17 @@ from canvas_mojo.geometry import Point, _round_to_int
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
 from canvas_mojo.aa_crossing import _AACrossing, _sort_aa_crossings_by_x
-from canvas_mojo.shapes.lines import draw_polyline, draw_polygon, draw_polyline_aa, draw_polygon_aa
-from canvas_mojo.shapes.polygon_fill import _Crossing, _spans_from_crossings, _is_inside
+from canvas_mojo.shapes.lines import (
+    draw_polyline,
+    draw_polygon,
+    draw_polyline_aa,
+    draw_polygon_aa,
+)
+from canvas_mojo.shapes.polygon_fill import (
+    _Crossing,
+    _spans_from_crossings,
+    _is_inside,
+)
 from canvas_mojo.shapes.arcs import _arc_points
 
 comptime _MOVE_TO = 0
@@ -112,7 +121,11 @@ struct Path(Movable):
         being built before (if any) without closing it -- call close()
         first if a closed shape was intended.
         """
-        self.commands.append(_PathCommand(_MOVE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)))
+        self.commands.append(
+            _PathCommand(
+                _MOVE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+            )
+        )
         self._current_x = x
         self._current_y = y
         self._subpath_start_x = x
@@ -122,35 +135,69 @@ struct Path(Movable):
     def line_to(mut self, x: Float64, y: Float64) raises:
         """A straight segment from the current point to (x, y)."""
         if not self._has_current_point:
-            raise Error("Path.line_to() called before any move_to() -- a path needs a starting point first")
-        self.commands.append(_PathCommand(_LINE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)))
+            raise Error(
+                "Path.line_to() called before any move_to() -- a path needs a"
+                " starting point first"
+            )
+        self.commands.append(
+            _PathCommand(
+                _LINE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+            )
+        )
         self._current_x = x
         self._current_y = y
 
-    def quad_curve_to(mut self, cx: Float64, cy: Float64, x: Float64, y: Float64) raises:
+    def quad_curve_to(
+        mut self, cx: Float64, cy: Float64, x: Float64, y: Float64
+    ) raises:
         """A quadratic Bezier from the current point to (x, y), pulled
         toward control point (cx, cy).
         """
         if not self._has_current_point:
-            raise Error("Path.quad_curve_to() called before any move_to() -- a path needs a starting point first")
-        self.commands.append(_PathCommand(_QUAD_TO, FPoint(cx, cy), FPoint(x, y), FPoint(0.0, 0.0)))
+            raise Error(
+                "Path.quad_curve_to() called before any move_to() -- a path"
+                " needs a starting point first"
+            )
+        self.commands.append(
+            _PathCommand(
+                _QUAD_TO, FPoint(cx, cy), FPoint(x, y), FPoint(0.0, 0.0)
+            )
+        )
         self._current_x = x
         self._current_y = y
 
     def cubic_curve_to(
-        mut self, c1x: Float64, c1y: Float64, c2x: Float64, c2y: Float64, x: Float64, y: Float64
+        mut self,
+        c1x: Float64,
+        c1y: Float64,
+        c2x: Float64,
+        c2y: Float64,
+        x: Float64,
+        y: Float64,
     ) raises:
         """A cubic Bezier from the current point to (x, y), pulled
         toward control points (c1x, c1y) and (c2x, c2y).
         """
         if not self._has_current_point:
-            raise Error("Path.cubic_curve_to() called before any move_to() -- a path needs a starting point first")
-        self.commands.append(_PathCommand(_CUBIC_TO, FPoint(c1x, c1y), FPoint(c2x, c2y), FPoint(x, y)))
+            raise Error(
+                "Path.cubic_curve_to() called before any move_to() -- a path"
+                " needs a starting point first"
+            )
+        self.commands.append(
+            _PathCommand(
+                _CUBIC_TO, FPoint(c1x, c1y), FPoint(c2x, c2y), FPoint(x, y)
+            )
+        )
         self._current_x = x
         self._current_y = y
 
     def arc_to(
-        mut self, cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        radius: Float64,
+        start_angle: Float64,
+        end_angle: Float64,
     ) raises:
         """A circular arc segment, center (cx, cy), from `start_angle`
         to `end_angle` (radians, start_angle <= end_angle) -- the same
@@ -166,9 +213,17 @@ struct Path(Movable):
         exactly there.
         """
         if not self._has_current_point:
-            raise Error("Path.arc_to() called before any move_to() -- a path needs a starting point first")
+            raise Error(
+                "Path.arc_to() called before any move_to() -- a path needs a"
+                " starting point first"
+            )
         self.commands.append(
-            _PathCommand(_ARC_TO, FPoint(cx, cy), FPoint(radius, start_angle), FPoint(end_angle, 0.0))
+            _PathCommand(
+                _ARC_TO,
+                FPoint(cx, cy),
+                FPoint(radius, start_angle),
+                FPoint(end_angle, 0.0),
+            )
         )
         self._current_x = cx + radius * cos(end_angle)
         self._current_y = cy + radius * sin(end_angle)
@@ -180,8 +235,15 @@ struct Path(Movable):
         which treats every sub-path as implicitly closed.
         """
         if not self._has_current_point:
-            raise Error("Path.close() called before any move_to() -- a path needs a starting point first")
-        self.commands.append(_PathCommand(_CLOSE, FPoint(0.0, 0.0), FPoint(0.0, 0.0), FPoint(0.0, 0.0)))
+            raise Error(
+                "Path.close() called before any move_to() -- a path needs a"
+                " starting point first"
+            )
+        self.commands.append(
+            _PathCommand(
+                _CLOSE, FPoint(0.0, 0.0), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+            )
+        )
         self._current_x = self._subpath_start_x
         self._current_y = self._subpath_start_y
 
@@ -191,10 +253,14 @@ def _quad_point(p0: FPoint, control: FPoint, p1: FPoint, t: Float64) -> FPoint:
     var a = mt * mt
     var b = 2.0 * mt * t
     var c = t * t
-    return FPoint(a * p0.x + b * control.x + c * p1.x, a * p0.y + b * control.y + c * p1.y)
+    return FPoint(
+        a * p0.x + b * control.x + c * p1.x, a * p0.y + b * control.y + c * p1.y
+    )
 
 
-def _cubic_point(p0: FPoint, c1: FPoint, c2: FPoint, p1: FPoint, t: Float64) -> FPoint:
+def _cubic_point(
+    p0: FPoint, c1: FPoint, c2: FPoint, p1: FPoint, t: Float64
+) -> FPoint:
     var mt = 1.0 - t
     var a = mt * mt * mt
     var b = 3.0 * mt * mt * t
@@ -207,8 +273,7 @@ def _cubic_point(p0: FPoint, c1: FPoint, c2: FPoint, p1: FPoint, t: Float64) -> 
 
 
 struct _Subpath(Movable):
-    """One flattened sub-path: its points, and whether it was close()d.
-    """
+    """One flattened sub-path: its points, and whether it was close()d."""
 
     var points: List[Point]
     var closed: Bool
@@ -268,7 +333,9 @@ def _flatten(path: Path) -> List[_Subpath]:
             # includes the arc's start point at index 0, which arc_to's
             # contract puts at (cur_x, cur_y) already, so it's skipped
             # the way the quad/cubic branches skip t=0.
-            var arc_points = _arc_points(cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x)
+            var arc_points = _arc_points(
+                cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x
+            )
             for i in range(1, len(arc_points)):
                 current.append(arc_points[i])
             cur_x = cmd.p1.x + cmd.p2.x * cos(cmd.p3.x)
@@ -313,7 +380,10 @@ def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
 
 
 def fill_path(
-    mut canvas: Canvas, path: Path, color: Color, fill_rule: FillRule = FillRule.EVEN_ODD
+    mut canvas: Canvas,
+    path: Path,
+    color: Color,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
 ):
     """Fill a path's interior with the scanline algorithm, combining
     every sub-path's crossings per scanline into a signed winding
@@ -386,7 +456,9 @@ def _point_in_subpaths(
     return _is_inside(winding, fill_rule)
 
 
-def _row_crossings_aa(subpaths: List[_Subpath], fy: Float64) -> List[_AACrossing]:
+def _row_crossings_aa(
+    subpaths: List[_Subpath], fy: Float64
+) -> List[_AACrossing]:
     """_point_in_subpaths's per-sample ray-cast, hoisted to run once
     per sub-scanline: every edge crossing y=fy, unordered (sorted by
     _sort_aa_crossings_by_x). See fill_path_aa for why this split is
@@ -476,7 +548,9 @@ def fill_path_aa(
     var total_samples = s * s
     var step = 1.0 / Float64(s)
     var row_first_px = min_x - 1
-    var row_width = (max_x + 2) - row_first_px  # px range length, see the loop below
+    var row_width = (
+        max_x + 2
+    ) - row_first_px  # px range length, see the loop below
 
     for py in range(min_y - 1, max_y + 2):
         var row_covered = List[Int](capacity=row_width)
@@ -518,9 +592,16 @@ def fill_path_aa(
             if covered > 0:
                 var px = row_first_px + pxi
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )
 
 
 def fill_path_gradient(
@@ -554,7 +635,9 @@ def fill_path_gradient(
         for span_idx in range(len(spans)):
             ref span = spans[span_idx]
             for x in range(span.start_x, span.end_x + 1):
-                canvas.set_pixel(x, y, gradient.color_at(Float64(x), Float64(y)))
+                canvas.set_pixel(
+                    x, y, gradient.color_at(Float64(x), Float64(y))
+                )
 
 
 def fill_path_radial_gradient(
@@ -563,8 +646,7 @@ def fill_path_radial_gradient(
     gradient: RadialGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
 ):
-    """fill_path_gradient's RadialGradient counterpart (gradient.mojo).
-    """
+    """fill_path_gradient's RadialGradient counterpart (gradient.mojo)."""
     var subpaths = _flatten(path)
     if len(subpaths) == 0:
         return
@@ -585,7 +667,9 @@ def fill_path_radial_gradient(
         for span_idx in range(len(spans)):
             ref span = spans[span_idx]
             for x in range(span.start_x, span.end_x + 1):
-                canvas.set_pixel(x, y, gradient.color_at(Float64(x), Float64(y)))
+                canvas.set_pixel(
+                    x, y, gradient.color_at(Float64(x), Float64(y))
+                )
 
 
 def stroke_path(
@@ -623,6 +707,22 @@ def stroke_path_aa(
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         if sp.closed:
-            draw_polygon_aa(canvas, sp.points, color, width, supersample, dashes, dash_offset)
+            draw_polygon_aa(
+                canvas,
+                sp.points,
+                color,
+                width,
+                supersample,
+                dashes,
+                dash_offset,
+            )
         else:
-            draw_polyline_aa(canvas, sp.points, color, width, supersample, dashes, dash_offset)
+            draw_polyline_aa(
+                canvas,
+                sp.points,
+                color,
+                width,
+                supersample,
+                dashes,
+                dash_offset,
+            )

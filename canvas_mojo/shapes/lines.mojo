@@ -110,7 +110,9 @@ def draw_line(
     accumulated-raster-step distance _draw_line_core describes, not an
     idealized straight-line one.
     """
-    _ = _draw_line_core(canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0)
+    _ = _draw_line_core(
+        canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0
+    )
 
 
 def draw_line_aa(
@@ -179,12 +181,16 @@ def draw_line_aa(
             for sy in range(n):
                 var sample_y = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
                 for sx in range(n):
-                    var sample_x = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    var sample_x = (
+                        Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    )
                     var t: Float64
                     if len2 == 0.0:
                         t = 0.0
                     else:
-                        t = ((sample_x - fx0) * ldx + (sample_y - fy0) * ldy) / len2
+                        t = (
+                            (sample_x - fx0) * ldx + (sample_y - fy0) * ldy
+                        ) / len2
                         if t < 0.0:
                             t = 0.0
                         elif t > 1.0:
@@ -198,9 +204,16 @@ def draw_line_aa(
                             covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )
 
 
 def draw_polyline(
@@ -232,7 +245,17 @@ def draw_polyline(
         var a = points[i]
         var b = points[i + 1]
         distance = _draw_line_core(
-            canvas, a.x, a.y, b.x, b.y, color, i > 0, False, dashes, dash_offset, distance
+            canvas,
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            color,
+            i > 0,
+            False,
+            dashes,
+            dash_offset,
+            distance,
         )
 
 
@@ -258,7 +281,16 @@ def draw_polygon(
         canvas.set_pixel(points[0].x, points[0].y, color)
         return
     if n == 2:
-        draw_line(canvas, points[0].x, points[0].y, points[1].x, points[1].y, color, dashes, dash_offset)
+        draw_line(
+            canvas,
+            points[0].x,
+            points[0].y,
+            points[1].x,
+            points[1].y,
+            color,
+            dashes,
+            dash_offset,
+        )
         return
 
     var distance = 0.0
@@ -266,13 +298,33 @@ def draw_polygon(
         var a = points[i]
         var b = points[i + 1]
         distance = _draw_line_core(
-            canvas, a.x, a.y, b.x, b.y, color, i > 0, False, dashes, dash_offset, distance
+            canvas,
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            color,
+            i > 0,
+            False,
+            dashes,
+            dash_offset,
+            distance,
         )
 
     var last = points[n - 1]
     var first = points[0]
     _ = _draw_line_core(
-        canvas, last.x, last.y, first.x, first.y, color, True, True, dashes, dash_offset, distance
+        canvas,
+        last.x,
+        last.y,
+        first.x,
+        first.y,
+        color,
+        True,
+        True,
+        dashes,
+        dash_offset,
+        distance,
     )
 
 
@@ -442,7 +494,9 @@ def _draw_polyline_core_aa(
             for sy in range(n):
                 var sample_y = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
                 for sx in range(n):
-                    var sample_x = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    var sample_x = (
+                        Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    )
                     var min_dist2 = -1.0
                     for ci in range(len(candidates)):
                         var seg = candidates[ci]
@@ -459,7 +513,9 @@ def _draw_polyline_core_aa(
                         if len2 == 0.0:
                             t = 0.0
                         else:
-                            t = ((sample_x - fx0) * ldx + (sample_y - fy0) * ldy) / len2
+                            t = (
+                                (sample_x - fx0) * ldx + (sample_y - fy0) * ldy
+                            ) / len2
                             if t < 0.0:
                                 t = 0.0
                             elif t > 1.0:
@@ -477,17 +533,28 @@ def _draw_polyline_core_aa(
                         # since a global min <= hw2 can only come from
                         # a segment that itself has d2 <= hw2.
                         if d2 <= hw2:
-                            var sample_distance = seg_start_distance[seg] + t * seg_length[seg]
-                            if _is_dash_on(sample_distance, dashes, dash_offset):
+                            var sample_distance = (
+                                seg_start_distance[seg] + t * seg_length[seg]
+                            )
+                            if _is_dash_on(
+                                sample_distance, dashes, dash_offset
+                            ):
                                 if min_dist2 < 0.0 or d2 < min_dist2:
                                     min_dist2 = d2
                     if min_dist2 >= 0.0:
                         covered += 1
             if covered > 0:
                 var alpha = UInt8(
-                    Int(Float64(covered) / Float64(total_samples) * Float64(color.a) + 0.5)
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
                 )
-                canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
+                )
 
         # Empty every bucket this row touched, ready for the next row:
         # the outer List is never reallocated, only the small
@@ -509,7 +576,9 @@ def draw_polyline_aa(
     version, and _draw_polyline_core_aa for how joints avoid
     double-blending and how dash phase carries across them.
     """
-    _draw_polyline_core_aa(canvas, points, color, width, supersample, False, dashes, dash_offset)
+    _draw_polyline_core_aa(
+        canvas, points, color, width, supersample, False, dashes, dash_offset
+    )
 
 
 def draw_polygon_aa(
@@ -527,4 +596,6 @@ def draw_polygon_aa(
     no special case (unlike draw_polygon's skip_first/skip_last), and
     dash phase carries across it too.
     """
-    _draw_polyline_core_aa(canvas, points, color, width, supersample, True, dashes, dash_offset)
+    _draw_polyline_core_aa(
+        canvas, points, color, width, supersample, True, dashes, dash_offset
+    )

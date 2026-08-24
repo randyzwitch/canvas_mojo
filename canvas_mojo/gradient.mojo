@@ -35,7 +35,10 @@ def _round_channel(value: Float64) -> UInt8:
 
 
 def _color_at_t(
-    stops: List[_GradientStop], lowest: _GradientStop, highest: _GradientStop, t_in: Float64
+    stops: List[_GradientStop],
+    lowest: _GradientStop,
+    highest: _GradientStop,
+    t_in: Float64,
 ) -> Color:
     """The "given a projected position, what color" half both
     LinearGradient.color_at and RadialGradient.color_at share. `t_in`
@@ -151,7 +154,9 @@ struct LinearGradient(Movable):
         """
         var t = 0.0
         if self._len2 != 0.0:
-            t = ((x - self.x0) * self._axis_x + (y - self.y0) * self._axis_y) / self._len2
+            t = (
+                (x - self.x0) * self._axis_x + (y - self.y0) * self._axis_y
+            ) / self._len2
         return _color_at_t(self.stops, self._lowest, self._highest, t)
 
 
