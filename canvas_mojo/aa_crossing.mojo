@@ -37,3 +37,19 @@ def _sort_aa_crossings_by_x(mut crossings: List[_AACrossing]):
             crossings[j + 1] = crossings[j]
             j -= 1
         crossings[j + 1] = key
+
+
+def _sample_x(x0: Float64, g: Int, s: Int) -> Float64:
+    """The x of sub-sample `g`, counting across a whole row rather than
+    per pixel: `x0` is the row's left edge and samples sit at the
+    centers of `s` equal slices of each pixel. Identical to the
+    per-pixel `px + (sx + 0.5)/s - 0.5`, re-indexed so a run of samples
+    is a contiguous integer range -- which is what lets `fill_path_aa`
+    and `fill_polygon_aa` count an inside run instead of testing each
+    position in it.
+
+    Here rather than in either caller for the same reason `_AACrossing`
+    is: `path.mojo` already imports from `polygon_fill`, so anything
+    they share has to live somewhere neither imports.
+    """
+    return x0 + (Float64(g) + 0.5) / Float64(s)

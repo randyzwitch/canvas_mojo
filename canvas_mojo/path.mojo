@@ -21,14 +21,18 @@ closed (draw_polygon) or open (draw_polyline) depending on whether
 close() was called.
 """
 
-from std.math import cos, sin
+from std.math import ceil, cos, sin
 
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.color import Color
 from canvas_mojo.geometry import Point, _round_to_int
 from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.aa_crossing import _AACrossing, _sort_aa_crossings_by_x
+from canvas_mojo.aa_crossing import (
+    _AACrossing,
+    _sample_x,
+    _sort_aa_crossings_by_x,
+)
 from canvas_mojo.shapes.lines import (
     draw_polyline,
     draw_polygon,
@@ -573,19 +577,65 @@ def fill_path_aa(
             for i in range(k - 1, -1, -1):
                 suffix[i] = suffix[i + 1] + crossings[i].direction
 
-            # fx increases strictly across the sweep: px ascends, and
-            # each px's sub-samples span less than the gap to the next
-            # px. So `idx` only moves forward -- amortized O(1) per
-            # sample, not an O(k) rescan.
-            var idx = 0
-            for pxi in range(row_width):
-                var px = row_first_px + pxi
-                for sx in range(s):
-                    var fx = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
-                    while idx < k and crossings[idx].x <= fx:
-                        idx += 1
-                    if _is_inside(suffix[idx], fill_rule):
-                        row_covered[pxi] += 1
+            # Inside/outside is constant between consecutive
+            # crossings, and the sub-sample x positions are uniformly
+            # spaced -- fx(g) = x0 + (g + 0.5)/s for a sample index g
+            # running across the whole row. So each inside run maps to
+            # a contiguous range of g, and the samples in it can be
+            # counted rather than tested one at a time: a pixel wholly
+            # inside a run takes `+= s` in one step, and a pixel in no
+            # run is never touched at all.
+            #
+            # Exactly the same counts as testing each position -- the
+            # positions themselves are unchanged, only the way they're
+            # counted is -- so every hand-derived coverage value in the
+            # tests still holds. That is the check that this stayed
+            # exact rather than merely close.
+            var total_g = row_width * s
+            var x0 = Float64(row_first_px) - 0.5
+            for i in range(k + 1):
+                if not _is_inside(suffix[i], fill_rule):
+                    continue
+
+                # First sample at or after this run's left edge.
+                var g_start = 0
+                if i > 0:
+                    var lo = crossings[i - 1].x
+                    g_start = Int(ceil((lo - x0) * Float64(s) - 0.5))
+                    # `ceil` on a float expression can land a step off
+                    # at a boundary; nudge to the exact first sample
+                    # rather than trust it.
+                    while g_start > 0 and _sample_x(x0, g_start - 1, s) >= lo:
+                        g_start -= 1
+                    while g_start < total_g and _sample_x(x0, g_start, s) < lo:
+                        g_start += 1
+                    if g_start < 0:
+                        g_start = 0
+
+                # Last sample strictly before this run's right edge.
+                var g_end = total_g - 1
+                if i < k:
+                    var hi = crossings[i].x
+                    g_end = Int(ceil((hi - x0) * Float64(s) - 0.5)) - 1
+                    while g_end >= 0 and _sample_x(x0, g_end, s) >= hi:
+                        g_end -= 1
+                    while (
+                        g_end + 1 < total_g and _sample_x(x0, g_end + 1, s) < hi
+                    ):
+                        g_end += 1
+                    if g_end > total_g - 1:
+                        g_end = total_g - 1
+
+                # Walk the run a pixel at a time, taking every sample
+                # that pixel contributes in one add.
+                var g = g_start
+                while g <= g_end:
+                    var pxi = g // s
+                    var upper = (pxi + 1) * s - 1
+                    if g_end < upper:
+                        upper = g_end
+                    row_covered[pxi] += upper - g + 1
+                    g = upper + 1
 
         for pxi in range(row_width):
             var covered = row_covered[pxi]

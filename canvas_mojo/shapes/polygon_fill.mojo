@@ -12,11 +12,17 @@ fill_path/fill_path_aa: the two fills differ in how they collect a
 row's crossings, not in how those crossings become spans.
 """
 
+from std.math import ceil
+
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point
 from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.aa_crossing import _AACrossing, _sort_aa_crossings_by_x
+from canvas_mojo.aa_crossing import (
+    _AACrossing,
+    _sample_x,
+    _sort_aa_crossings_by_x,
+)
 
 
 struct _Crossing(ImplicitlyCopyable, Movable):
@@ -313,15 +319,47 @@ def fill_polygon_aa(
             for i in range(k - 1, -1, -1):
                 suffix[i] = suffix[i + 1] + crossings[i].direction
 
-            var idx = 0
-            for pxi in range(row_width):
-                var px = row_first_px + pxi
-                for sx in range(s):
-                    var fx = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
-                    while idx < k and crossings[idx].x <= fx:
-                        idx += 1
-                    if _is_inside(suffix[idx], fill_rule):
-                        row_covered[pxi] += 1
+            # Counted by interval rather than tested per sample --
+            # see fill_path_aa (path.mojo), which this mirrors, for
+            # why the counts are identical either way.
+            var total_g = row_width * s
+            var x0 = Float64(row_first_px) - 0.5
+            for i in range(k + 1):
+                if not _is_inside(suffix[i], fill_rule):
+                    continue
+
+                var g_start = 0
+                if i > 0:
+                    var lo = crossings[i - 1].x
+                    g_start = Int(ceil((lo - x0) * Float64(s) - 0.5))
+                    while g_start > 0 and _sample_x(x0, g_start - 1, s) >= lo:
+                        g_start -= 1
+                    while g_start < total_g and _sample_x(x0, g_start, s) < lo:
+                        g_start += 1
+                    if g_start < 0:
+                        g_start = 0
+
+                var g_end = total_g - 1
+                if i < k:
+                    var hi = crossings[i].x
+                    g_end = Int(ceil((hi - x0) * Float64(s) - 0.5)) - 1
+                    while g_end >= 0 and _sample_x(x0, g_end, s) >= hi:
+                        g_end -= 1
+                    while (
+                        g_end + 1 < total_g and _sample_x(x0, g_end + 1, s) < hi
+                    ):
+                        g_end += 1
+                    if g_end > total_g - 1:
+                        g_end = total_g - 1
+
+                var g = g_start
+                while g <= g_end:
+                    var pxi = g // s
+                    var upper = (pxi + 1) * s - 1
+                    if g_end < upper:
+                        upper = g_end
+                    row_covered[pxi] += upper - g + 1
+                    g = upper + 1
 
         for pxi in range(row_width):
             var covered = row_covered[pxi]
