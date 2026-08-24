@@ -1,8 +1,5 @@
 """Tests for canvas_mojo/shapes/rects.mojo: exact pixel sets for known
 inputs, verified against hand-traced runs of the same algorithms.
-Split out of the original monolithic test_primitives.mojo along with
-canvas_mojo/primitives.mojo's own split into canvas_mojo/shapes/ -- see
-that subpackage's own module docstrings for why.
 """
 
 from std.testing import assert_equal, TestSuite
@@ -73,11 +70,10 @@ def test_fill_rect_fills_solid_block() raises:
 
 
 def test_fill_rect_gradient_matches_gradient_color_at_per_pixel() raises:
-    # Same gradient and hand-derived midpoint value as
-    # test_gradient.mojo's own test_color_at_midpoint_interpolates_
-    # linearly -- confirms fill_rect_gradient actually queries
-    # color_at per pixel rather than, say, using one averaged color
-    # for the whole rect.
+    # The gradient and midpoint value from test_gradient.mojo's
+    # test_color_at_midpoint_interpolates_linearly, so fill_rect_gradient
+    # queries color_at per pixel rather than averaging one color for
+    # the whole rect.
     var g = LinearGradient(0.0, 0.0, 100.0, 0.0)
     g.add_stop(0.0, Color(0, 0, 0, 255))
     g.add_stop(1.0, Color(255, 255, 255, 255))
@@ -104,11 +100,10 @@ def test_fill_rect_gradient_zero_size_is_a_noop() raises:
 
 
 def test_fill_rect_radial_gradient_matches_gradient_color_at_per_pixel() raises:
-    # center (0,0), radius 10 -- (6,8) is exactly distance 10 (a
-    # 6-8-10 right triangle, the 3-4-5 triple scaled by 2), so its
-    # color must land exactly on the last stop, not merely close to
-    # it. Confirms fill_rect_radial_gradient queries color_at per
-    # pixel, same as fill_rect_gradient's own equivalent test.
+    # center (0,0), radius 10: (6,8) is exactly distance 10 (a 6-8-10
+    # triangle, 3-4-5 doubled), so its color lands exactly on the last
+    # stop rather than near it -- fill_rect_radial_gradient queries
+    # color_at per pixel.
     var g = RadialGradient(0.0, 0.0, 10.0)
     g.add_stop(0.0, Color(0, 0, 0, 255))
     g.add_stop(1.0, Color(255, 255, 255, 255))

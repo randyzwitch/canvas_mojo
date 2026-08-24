@@ -1,8 +1,5 @@
 """Tests for canvas_mojo/shapes/arcs.mojo: exact pixel sets for known
 inputs, verified against hand-traced runs of the same algorithms.
-Split out of the original monolithic test_primitives.mojo along with
-canvas_mojo/primitives.mojo's own split into canvas_mojo/shapes/ -- see
-that subpackage's own module docstrings for why.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -32,10 +29,9 @@ def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) rai
 
 
 def test_arc_points_matches_hand_derived_quarter_circle() raises:
-    # Independently computed by hand before trusting the code's own
-    # output: radius=10, angle 0 -> pi/2 gives steps=max(4,int(10*
-    # pi/2))=15 (16 points), start point exactly (10,0), end point
-    # (0,10) (cos(pi/2) is ~6e-16, not exactly 0, but rounds to 0).
+    # Computed by hand: radius=10, angle 0 -> pi/2 gives
+    # steps=max(4,int(10*pi/2))=15, so 16 points, start exactly (10,0)
+    # and end (0,10) -- cos(pi/2) is ~6e-16, which rounds to 0.
     var pts = _arc_points(0.0, 0.0, 10.0, 0.0, pi / 2.0)
     assert_equal(len(pts), 16)
     assert_equal(pts[0].x, 10)
@@ -48,9 +44,8 @@ def test_angle_in_span_matches_hand_traced_cases() raises:
     assert_true(_angle_in_span(pi / 4.0, 0.0, pi / 2.0))
     assert_true(not _angle_in_span(pi, 0.0, pi / 2.0))
     # A span crossing the atan2 discontinuity at +/-pi: a raw sample
-    # angle of -3*pi/4 (atan2's own range) is equivalent to 5*pi/4,
-    # which IS inside [5*pi/4, 7*pi/4] -- this is exactly the
-    # wraparound case _angle_in_span exists to get right.
+    # angle of -3*pi/4 is equivalent to 5*pi/4, inside
+    # [5*pi/4, 7*pi/4] -- the wraparound _angle_in_span exists for.
     assert_true(_angle_in_span(-3.0 * pi / 4.0, 5.0 * pi / 4.0, 7.0 * pi / 4.0))
     assert_true(not _angle_in_span(0.0, 5.0 * pi / 4.0, 7.0 * pi / 4.0))
 
@@ -68,10 +63,9 @@ def test_fill_arc_degenerate_radius_is_a_noop() raises:
 
 
 def test_fill_arc_wedge_covers_only_its_own_angle_span() raises:
-    # A quarter-circle wedge from angle 0 to pi/2 (screen: right to
-    # down) -- a point along that span's own bisector (angle pi/4)
-    # must be filled; a point in the opposite direction (angle
-    # 5*pi/4, i.e. up-left) must stay background.
+    # A quarter-circle wedge from angle 0 to pi/2, right to down on
+    # screen: a point on the bisector (pi/4) must be filled, one in the
+    # opposite direction (5*pi/4, up-left) must stay background.
     var c = Canvas(60, 60, BG)
     fill_arc(c, 30.0, 30.0, 20.0, 0.0, pi / 2.0, FG)
     _assert_pixel(c, 30 + 10, 30 + 10, FG, "inside the wedge's own bisector")
@@ -80,13 +74,11 @@ def test_fill_arc_wedge_covers_only_its_own_angle_span() raises:
 
 
 def test_fill_arc_three_wedges_tile_a_full_circle_without_gaps() raises:
-    # Three 120-degree wedges, same center/radius, covering a full
-    # circle between them -- every point strictly inside the radius
-    # must be covered by exactly one wedge's color, none left
-    # background (a gap) and none showing a blended double-cover
-    # (translucent color would reveal overlap; opaque colors can't
-    # distinguish overlap from coverage, so this checks "not
-    # background" everywhere inside, which a gap would fail).
+    # Three 120-degree wedges at one center/radius covering the full
+    # circle: every point strictly inside the radius must carry some
+    # wedge's color, with no gaps. Opaque colors can't distinguish
+    # overlap from coverage, so this checks "not background"
+    # everywhere inside, which a gap would fail.
     var c = Canvas(80, 80, BG)
     var cx = 40.0
     var cy = 40.0
@@ -145,33 +137,28 @@ def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises
     [start_angle, end_angle] span doesn't cross a cardinal angle (0,
     pi/2, pi, 3*pi/2) has an inner-arc extreme that reaches *closer to
     the center* than anything on the outer arc does over that same
-    span -- past the outer arc's own bounding box, not inside it (see
-    _arc_bounds's own docstring for the full reasoning). Scanning only
-    the outer arc's own bounding box never visits those pixels,
-    leaving a rectangular notch cut into the ring instead of a clean
+    span, past the outer arc's bounding box rather than inside it (see
+    _arc_bounds). Scanning only that box never visits those pixels,
+    cutting a rectangular notch into the ring instead of a clean
     angular gap.
 
     cx=cy=100, outer_radius=100, inner_radius=50, start_angle=pi/6
     (30deg), end_angle=pi/3 (60deg) -- deliberately round angles so the
-    geometry is exact, not approximated. Independently computed (not
-    just trusted from this file's own code, and not from
-    canvas_mojo's own `_arc_bounds`/`cos`/`sin` either) via Python's
-    `math` module:
+    geometry is exact. Computed via Python's `math` module, not taken
+    from this package's `_arc_bounds`/`cos`/`sin`:
 
-    - The outer arc's own y-range over that span is exactly
-      [150, 186.60...] (both endpoints; no cardinal angle falls in
-      [30deg, 60deg], so no crossing point adds to that range).
+    - The outer arc's y-range over that span is exactly
+      [150, 186.60...], just the two endpoints, since no cardinal
+      angle falls in [30deg, 60deg].
     - The straight edge from the outer endpoint at 30deg,
       (186.60..., 150), back to the inner endpoint at 30deg,
       (143.30..., 125), passes through y=125 -- 25 below the outer
-      arc's own min_y=150, i.e. past its bounding box, not inside it.
-    - A point deep inside the ring sector, well clear of every edge
-      (angle=35deg, 5deg in from the 30deg boundary; radius=60, 10
-      units in from inner_radius=50 and 40 from outer_radius=100),
-      rounds to pixel (149, 134): y=134 is inside the *old* buggy
-      py-scan range (~[149, 188], i.e. never visited -- 134 < 149,
-      confirmed with the pre-fix code actually producing background
-      there) but well inside the *fixed* range (~[124, 188]).
+      arc's min_y of 150, so past its bounding box.
+    - A point deep inside the sector and clear of every edge
+      (angle=35deg, radius=60, 10 units in from inner_radius=50 and 40
+      from outer_radius=100) rounds to pixel (149, 134). y=134 falls
+      outside an outer-bounds-only scan range of ~[149, 188] and well
+      inside the correct ~[124, 188].
     """
     var c = Canvas(200, 200, BG)
     fill_ring_sector_aa(c, 100.0, 100.0, 50.0, 100.0, pi / 6.0, pi / 3.0, FG)

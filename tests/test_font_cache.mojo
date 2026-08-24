@@ -1,30 +1,24 @@
 """Tests for canvas_mojo/text/font_cache.mojo.
 
-Needs the same "Sans"-resolvable system font tests/test_font_discovery.
-mojo's own docstring already documents -- not a new real-machine
-dependency this file introduces.
+Needs the same "Sans"-resolvable system font
+tests/test_font_discovery.mojo documents.
 
-What's tested: FontCache.resolve/resolve_for_char return the identical
-path a cache miss would, and resolve_face/resolve_face_for_char (the
-parsed-TTFFace cache layered on top -- see font_cache.mojo's own
-docstring) render/measure identically to an uncached call too
-(correctness first -- the cache must never change *what* gets
-resolved or how it measures/renders, only how many times fontconfig
-is asked and how many times a font file gets parsed). Special
-attention to the one real failure mode a face cache invites that a
-path-only cache never could: `set_pixel_size` mutates a `TTFFace` in
-place, so a cache keyed on path alone (instead of path + pixel size)
-sharing one instance across two different sizes would silently
-corrupt whichever size lost the race -- see
-test_shared_cache_at_two_different_sizes_does_not_corrupt_either_size
-and its fallback-glyph counterpart below, both deliberately
-interleaving sizes (not just testing one size at a time, then a
-different size in isolation) to catch exactly that. Not tested here:
-the actual subprocess-spawn/fontconfig-round-trip or TTFFace-parse
-time this cache exists to avoid -- a wall-clock assertion would be
-flaky across machines/CI load, not a meaningful correctness check;
-canvas_mojo/text/font_cache.mojo's own docstring documents the
-measured, probe-confirmed cost directly instead.
+What's tested: FontCache.resolve/resolve_for_char return the path a
+cache miss would, and resolve_face/resolve_face_for_char render and
+measure identically to an uncached call. The cache must never change
+*what* gets resolved, only how often fontconfig is asked and how often
+a file is parsed.
+
+Special attention to the failure mode a face cache invites that a
+path-only cache can't: `set_pixel_size` mutates a `TTFFace` in place,
+so a cache keyed on path alone would share one instance across two
+sizes and silently corrupt whichever lost the race. The two
+interleaved-size tests below exist for that, deliberately alternating
+sizes rather than testing each in isolation.
+
+Not tested: the fontconfig round-trip and TTFFace-parse time this cache
+exists to avoid. A wall-clock assertion would be flaky across machines
+and CI load; font_cache.mojo documents the measured cost instead.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -49,10 +43,9 @@ def test_resolve_matches_an_uncached_lookup() raises:
 
 
 def test_resolve_is_stable_across_repeated_calls_on_the_same_cache() raises:
-    # The actual point of the cache -- a second call for the identical
-    # (family, slant, weight) must return the exact same path a fresh
-    # resolution would, not something stale or subtly different, once
-    # it's served from the Dict instead of fontconfig itself.
+    # The point of the cache: a second call for the same (family,
+    # slant, weight) must return exactly what a fresh resolution
+    # would, once it comes from the Dict rather than fontconfig.
     var cache = FontCache()
     var first = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
     var second = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
@@ -60,12 +53,11 @@ def test_resolve_is_stable_across_repeated_calls_on_the_same_cache() raises:
 
 
 def test_resolve_distinguishes_different_slant_weight_combinations() raises:
-    # A cache keyed too loosely (e.g. by family alone) would wrongly
-    # collapse these to the same entry -- confirms BOLD/NORMAL are
-    # tracked as separate cache keys, matching the machine-specific
-    # "BOLD differs from NORMAL" fact test_font_discovery.mojo's own
-    # test_bold_weight_resolves_to_a_different_file_than_normal already
-    # establishes directly against fontconfig.
+    # A cache keyed by family alone would collapse these into one
+    # entry, so BOLD and NORMAL must be separate keys -- resting on the
+    # machine-specific fact
+    # test_bold_weight_resolves_to_a_different_file_than_normal
+    # establishes against fontconfig directly.
     var cache = FontCache()
     var normal = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
     var bold = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.BOLD)
@@ -76,10 +68,8 @@ def test_resolve_distinguishes_different_slant_weight_combinations() raises:
 
 
 def test_resolve_for_char_matches_the_fallback_path_a_cache_miss_would_find() raises:
-    # Same "Ubuntu" family / snowman (U+2603) machine-specific fact
-    # test_font_discovery.mojo's own char-constrained tests rely on --
-    # see that file's own docstring for why this is a real, probe-
-    # confirmed environment fact, not an assumption.
+    # The "Ubuntu" family / snowman (U+2603) environment fact
+    # test_font_discovery.mojo's char-constrained tests rely on.
     var cache = FontCache()
     var cached_path = cache.resolve_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603)
     var direct_path = resolve_font_file_for_char("Ubuntu", FontSlant.NORMAL, FontWeight.NORMAL, 0x2603)
@@ -121,10 +111,9 @@ def test_draw_text_cache_overload_renders_identically_to_the_uncached_call() rai
 
 
 def test_shared_cache_serves_repeated_draw_text_calls_correctly() raises:
-    # The actual intended usage: one FontCache reused across several
-    # draw_text calls (e.g. every tick label on one chart axis) --
-    # confirms reuse doesn't corrupt anything from one call to the
-    # next, not just that a single isolated call still works.
+    # The intended usage: one FontCache across several draw_text calls,
+    # as every tick label on an axis would share -- so reuse can't
+    # corrupt anything between calls.
     var canvas = Canvas(200, 80)
     var cache = FontCache()
     draw_text(canvas, 5, 20, "One", Color(0, 0, 0), 18.0, cache=cache)
@@ -141,15 +130,12 @@ def test_shared_cache_serves_repeated_draw_text_calls_correctly() raises:
 
 
 def test_shared_cache_at_two_different_sizes_does_not_corrupt_either_size() raises:
-    # The real risk a face cache keyed on path alone (rather than path
-    # + pixel size) would have: set_pixel_size mutates a TTFFace in
-    # place, so sharing one cached instance across two different sizes
-    # would leave whichever size drew second (or both, depending on
-    # draw order) silently wrong -- e.g. a chart drawing an 11px axis
-    # label next to a 16px title through one shared FontCache.
-    # Interleaved on purpose (11, 16, 11 again), not tested as two
-    # separate single-size cases, so a bug here can't hide behind "the
-    # cache only ever saw one size at a time" during the test.
+    # The risk in keying a face cache on path alone: set_pixel_size
+    # mutates a TTFFace in place, so one shared instance across two
+    # sizes leaves whichever drew second silently wrong -- an 11px axis
+    # label beside a 16px title through one FontCache. Interleaved on
+    # purpose (11, 16, 11), so a bug can't hide behind the cache having
+    # seen one size at a time.
     var canvas = Canvas(200, 100)
     var cache = FontCache()
     draw_text(canvas, 5, 20, "Axis", Color(0, 0, 0), 11.0, cache=cache)
@@ -166,12 +152,9 @@ def test_shared_cache_at_two_different_sizes_does_not_corrupt_either_size() rais
 
 
 def test_shared_cache_serves_fallback_glyphs_at_two_different_sizes_correctly() raises:
-    # Same corruption risk as above, for resolve_face_for_char's own
-    # cache instead of resolve_face's: "Ubuntu" has no snowman glyph
-    # (U+2603, see test_text.mojo's own
-    # test_draw_text_falls_back_to_a_font_with_the_glyph), so this
-    # exercises the fallback-face cache specifically, at two
-    # interleaved sizes sharing one FontCache.
+    # The same corruption risk for resolve_face_for_char's cache:
+    # "Ubuntu" has no snowman glyph (U+2603), so this drives the
+    # fallback-face cache at two interleaved sizes.
     var canvas = Canvas(80, 120)
     var cache = FontCache()
     draw_text(canvas, 5, 40, "☃", Color(0, 0, 0), 20.0, family="Ubuntu", cache=cache)

@@ -1,6 +1,5 @@
 """Tests for gradient.mojo: LinearGradient.color_at and
-RadialGradient.color_at, independently hand-computed (and cross-
-checked in a probe) before being trusted.
+RadialGradient.color_at, with every expected value hand-computed.
 """
 
 from std.testing import assert_equal, TestSuite
@@ -26,9 +25,9 @@ def test_color_at_midpoint_interpolates_linearly() raises:
 
 
 def test_color_at_clamps_before_and_after_the_axis() raises:
-    # "Pad" extend behavior (see gradient.mojo's own docstring): a
-    # point projecting before offset 0.0 or after 1.0 gets that
-    # endpoint's exact color, not extrapolated or wrapped.
+    # "Pad" extend: a point projecting before offset 0.0 or after 1.0
+    # takes that endpoint's exact color, not an extrapolated or wrapped
+    # one.
     var g = LinearGradient(0.0, 0.0, 100.0, 0.0)
     g.add_stop(0.0, Color(0, 0, 0, 255))
     g.add_stop(1.0, Color(255, 255, 255, 255))
@@ -62,9 +61,9 @@ def test_color_at_finds_the_bracketing_pair_among_three_stops() raises:
 
 
 def test_color_at_stops_need_not_be_added_in_order() raises:
-    # Same 3-stop gradient as above, added blue-green-red instead of
-    # red-green-blue -- color_at scans for the bracketing pair by
-    # value, not by insertion order, so the result must be identical.
+    # The same 3-stop gradient added blue-green-red instead of
+    # red-green-blue: color_at brackets by value, not insertion order,
+    # so the result must be identical.
     var g = LinearGradient(0.0, 0.0, 100.0, 0.0)
     g.add_stop(1.0, Color(0, 0, 255))
     g.add_stop(0.5, Color(0, 255, 0))
@@ -97,11 +96,9 @@ def test_color_at_no_stops_is_fully_transparent() raises:
 
 
 def test_color_at_projects_onto_a_diagonal_axis() raises:
-    # Axis (0,0)-(10,10): a point exactly on the axis at its own
-    # midpoint (5,5) must land at t=0.5, same interpolation math as
-    # the horizontal-axis test above, confirming the projection math
-    # (not just the interpolation math) handles a non-axis-aligned
-    # gradient correctly.
+    # Axis (0,0)-(10,10): a point on the axis at its midpoint (5,5)
+    # lands at t=0.5, so the projection math -- not just the
+    # interpolation -- handles a non-axis-aligned gradient.
     var g = LinearGradient(0.0, 0.0, 10.0, 10.0)
     g.add_stop(0.0, Color(0, 0, 0))
     g.add_stop(1.0, Color(200, 200, 200))
@@ -114,9 +111,8 @@ def test_color_at_projects_onto_a_diagonal_axis() raises:
 
 def test_radial_color_at_exact_distance_via_pythagorean_triple() raises:
     # center (0,0), radius 5, point (3,4): dist = sqrt(3^2+4^2) = 5.0
-    # *exactly* (a 3-4-5 right triangle) -- no floating-point rounding
-    # in the distance itself, so t lands on exactly 1.0 -> the last
-    # stop's color, not "close to it".
+    # exactly, a 3-4-5 triangle with no rounding in the distance, so t
+    # lands on exactly 1.0 and the last stop's color.
     var g = RadialGradient(0.0, 0.0, 5.0)
     g.add_stop(0.0, Color(0, 0, 0, 255))
     g.add_stop(1.0, Color(255, 255, 255, 255))
@@ -139,8 +135,8 @@ def test_radial_color_at_center_is_the_first_stop() raises:
 
 
 def test_radial_color_at_beyond_radius_clamps_to_the_last_stop() raises:
-    # "Pad" extend, same as LinearGradient -- a point outside the
-    # radius gets the outermost stop's exact color, not extrapolated.
+    # "Pad" extend, as in LinearGradient: a point outside the radius
+    # takes the outermost stop's exact color.
     var g = RadialGradient(0.0, 0.0, 5.0)
     g.add_stop(0.0, Color(0, 0, 0))
     g.add_stop(1.0, Color(255, 255, 255))
@@ -152,14 +148,11 @@ def test_radial_color_at_beyond_radius_clamps_to_the_last_stop() raises:
 
 
 def test_radial_color_at_half_radius_interpolates_regardless_of_direction() raises:
-    # center (50,50), radius 50 -- (75,50) and (50,75) are both
-    # exactly distance 25 from the center (half the radius), in two
-    # different directions. Both must land on the identical
-    # interpolated color: t=0.5 -> 0 + 0.5*(255-0) = 127.5 -> 128,
-    # same round-to-nearest rule LinearGradient's own midpoint test
-    # uses. Confirms the projection is genuinely circular (distance
-    # from center), not secretly axis-aligned the way LinearGradient's
-    # projection is.
+    # center (50,50), radius 50: (75,50) and (50,75) are both distance
+    # 25 from center in different directions, so both must land on the
+    # same color -- t=0.5 -> 0 + 0.5*(255-0) = 127.5 -> 128. That's
+    # what makes the projection circular rather than secretly
+    # axis-aligned like LinearGradient's.
     var g = RadialGradient(50.0, 50.0, 50.0)
     g.add_stop(0.0, Color(0, 0, 0, 255))
     g.add_stop(1.0, Color(255, 255, 255, 255))
@@ -175,10 +168,9 @@ def test_radial_color_at_half_radius_interpolates_regardless_of_direction() rais
 
 
 def test_radial_zero_radius_is_a_solid_fill_of_the_last_stop() raises:
-    # radius=0.0 is degenerate (every offset's circle has collapsed to
-    # one point) -- documented as resolving to t=1.0 rather than
-    # dividing by zero, so it renders the highest-offset stop's color
-    # everywhere, not the first stop's.
+    # radius=0.0 collapses every offset's circle to one point,
+    # resolving to t=1.0 rather than dividing by zero -- the
+    # highest-offset stop's color everywhere, not the first's.
     var g = RadialGradient(10.0, 10.0, 0.0)
     g.add_stop(0.0, Color(0, 0, 255))
     g.add_stop(1.0, Color(255, 0, 0))

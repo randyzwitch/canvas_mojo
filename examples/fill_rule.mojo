@@ -6,15 +6,14 @@ EVEN_ODD (the default) counts crossings; the overlap region has been
 crossed twice, so it's "outside" again -- a hole appears exactly where
 the two squares cover each other. NONZERO tracks signed winding
 instead; both squares wind the same direction, so the overlap's signed
-count is 2 (not 0) -- nonzero, so filled solid, no hole. Same input
-shape, only the fill rule differs, to make the divergence obvious
-rather than needing two different shapes to compare.
+count is 2 (not 0) -- nonzero, so filled solid, no hole. One input
+shape with only the rule changed, so the divergence is visible without
+comparing two different shapes.
 
-See fill_rule.mojo's own module docstring for why this matters for
-chart rendering: overlapping regions (stacked/unioned areas, self-
-crossing paths from data with duplicate or looping segments) need
-NONZERO to render as one solid region rather than showing a spurious
-seam.
+This matters for chart rendering: overlapping regions -- stacked or
+unioned areas, self-crossing paths from data with duplicate or looping
+segments -- need NONZERO to render as one solid region rather than
+showing a spurious seam.
 
 Run with:
     pixi run example

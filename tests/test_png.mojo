@@ -1,29 +1,21 @@
 """Byte-level tests for the PNG encoder and decoder.
 
-Every non-compressed byte here (signature, IHDR fields, chunk framing,
-CRC-32/Adler-32 placement) was independently computed by hand (struct
-layout + zlib as an *oracle* to cross-check against), not derived from
-this code's own output, then confirmed the actual Mojo output matches
-byte-for-byte before being locked in as an assertion. The one
-exception is IDAT's own compressed payload: canvas_mojo.io.deflate's
-own `deflate()` (see that module's own docstring for how it's
-verified) makes hand-deriving an exact LZ77+Huffman bitstream
-impractical for a human to do reliably -- EXPECTED_HEX's own IDAT
-bytes were captured from this package's actual output instead, then
-independently verified two ways before being trusted: decompressed
-back through canvas_mojo's own `inflate()` (round-trip identity) AND,
-separately, through Python's `zlib.decompress()` (a wholly independent
-implementation) -- both reproduce the exact same known raw scanline
-bytes [0, 10, 20, 30, 40, 50, 60], and the Adler-32 trailer and every
-chunk's own CRC-32 were independently recomputed and confirmed to
-match too (see tests/test_deflate.mojo for deflate()'s own dedicated
-round-trip/cross-verification coverage).
+Every non-compressed byte here -- signature, IHDR fields, chunk
+framing, CRC-32/Adler-32 placement -- was computed by hand from the
+struct layout with zlib as an oracle, then confirmed against the real
+output. The exception is IDAT's compressed payload, where hand-deriving
+an exact LZ77+Huffman bitstream isn't practical: EXPECTED_HEX's IDAT
+bytes were captured from real output and verified two ways --
+decompressed back through `inflate()`, and separately through Python's
+`zlib.decompress()` -- both reproducing the raw scanline bytes
+[0, 10, 20, 30, 40, 50, 60], with the Adler-32 trailer and every chunk
+CRC-32 recomputed to match.
 
-A 2x1 canvas keeps the whole file small enough to check in full (72
-bytes total) -- unlike test_bmp.mojo's tests, which check specific
-header fields and rows, these check every single byte, since a wrong
-CRC/Adler-32/DEFLATE-framing byte anywhere would make a real PNG
-decoder reject the file outright, not just misrender it.
+A 2x1 canvas keeps the whole file checkable in full at 72 bytes. Unlike
+test_bmp.mojo, which checks specific header fields and rows, these
+check every byte: a wrong CRC, Adler-32 or DEFLATE-framing byte
+anywhere makes a real decoder reject the file outright rather than
+misrender it.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -34,11 +26,9 @@ from canvas_mojo.io.png import read_png, write_png
 
 comptime TMP_PATH = "tests/_test_png_output.png"
 
-# Captured from this package's own write_png() output for a 2x1 canvas
-# with pixels (10,20,30) and (40,50,60), then independently verified
-# -- see this file's own module docstring for exactly how. Not
-# hand-derived byte by byte: real LZ77+Huffman compression makes that
-# impractical.
+# Captured from write_png()'s output for a 2x1 canvas with pixels
+# (10,20,30) and (40,50,60), then verified as this module's docstring
+# describes.
 comptime EXPECTED_HEX = "89504e470d0a1a0a0000000d49484452000000020000000108020000007b40e8dd0000000f49444154780163e01291d330b20100023700d3096df20d0000000049454e44ae426082"
 
 
@@ -112,22 +102,18 @@ def _assert_tag_at(buf: List[UInt8], offset: Int, tag: String) raises:
 def test_chunk_type_tags_appear_in_order() raises:
     var buf = _write_sample()
     _assert_tag_at(buf, 12, "IHDR")
-    # IDAT's own tag offset (37) doesn't depend on IDAT's own length --
-    # only on IHDR's fixed 13-byte data size, which never changes --
-    # so this stays the same regardless of how well IDAT's own payload
-    # compresses. IEND's offset does shift with IDAT's own length,
-    # which depends on how well the payload compresses.
+    # IDAT's tag offset (37) depends only on IHDR's fixed 13-byte data
+    # size, so it holds however well the payload compresses. IEND's
+    # offset does shift with IDAT's length.
     _assert_tag_at(buf, 37, "IDAT")
     _assert_tag_at(buf, 64, "IEND")
 
 
 def test_iend_crc_is_the_universal_constant() raises:
-    # IEND always has empty data, so its CRC-32 (over just the ASCII
-    # bytes "IEND") is the same fixed value in every PNG ever written
-    # -- 0xAE426082, confirmed independently against zlib's own crc32.
-    # Offset (68, the file's own last 4 bytes) shifts with IDAT's own
-    # length the same way IEND's own tag offset does above; the value
-    # itself doesn't.
+    # IEND always has empty data, so its CRC-32 over the ASCII bytes
+    # "IEND" is the same 0xAE426082 in every PNG, cross-checked against
+    # zlib's crc32. The offset (68, the file's last 4 bytes) shifts
+    # with IDAT's length; the value doesn't.
     var buf = _write_sample()
     assert_equal(buf[68], UInt8(0xAE))
     assert_equal(buf[69], UInt8(0x42))
@@ -139,18 +125,14 @@ comptime READ_TMP_PATH = "tests/_test_png_read_input.png"
 
 
 def _read_png_bytes() -> List[UInt8]:
-    # A real PNG file (121 bytes: width=5, height=4, RGB), generated by
-    # Python's zlib -- dynamic-Huffman DEFLATE (this package's own
-    # write_png only ever emits a single fixed-Huffman block, see
-    # canvas_mojo/io/deflate.mojo's own module docstring), cycling
-    # through all five PNG scanline filter types (None/Sub/Up/Average/
-    # Paeth) one row each (write_png itself only ever emits filter type
-    # None), so every reconstruction formula in _unfilter_scanlines and
-    # every DEFLATE block type inflate() supports gets exercised by a
-    # single file -- real coverage of what a full-featured external
-    # encoder produces, not a second look at this package's own
-    # narrower writer. Independently verified by probe against the
-    # same pixel values before being locked in here.
+    # A real 121-byte PNG (width=5, height=4, RGB) generated by
+    # Python's zlib: dynamic-Huffman DEFLATE, cycling through all five
+    # scanline filter types (None/Sub/Up/Average/Paeth), one per row.
+    # write_png emits only a fixed-Huffman block and filter type None,
+    # so this one file is what exercises every reconstruction formula
+    # in _unfilter_scanlines and every DEFLATE block type inflate()
+    # supports -- coverage of what a full-featured external encoder
+    # produces, not a second look at this package's narrower writer.
     return [
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0,
         0, 0, 5, 0, 0, 0, 4, 8, 2, 0, 0, 0, 201, 81, 98, 23, 0,
@@ -195,12 +177,9 @@ def test_read_decodes_all_five_filter_types_correctly() raises:
 
 
 def test_read_write_round_trip() raises:
-    # This package's own writer, read back by this package's own
-    # reader -- a different code path than the hand-crafted real-zlib
-    # vector above (write_png only ever emits a single fixed-Huffman
-    # block and filter type None -- see _read_png_bytes' own comment),
-    # so this is real coverage of that specific path, not a duplicate
-    # of the test above.
+    # This package's writer read back by its reader: a different path
+    # from the real-zlib vector above, since write_png emits only a
+    # fixed-Huffman block and filter type None.
     var c = Canvas(6, 5, Color(240, 240, 240))
     for y in range(5):
         for x in range(6):

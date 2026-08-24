@@ -1,8 +1,6 @@
-"""Tests for resize.mojo: downsample()'s own box-filter averaging and
-its error paths. Every expected pixel here is independently computed
-(via a Python one-liner, not read off the code's own output) before
-being trusted in an assertion -- see this test's own comments for the
-arithmetic each case checks.
+"""Tests for resize.mojo: downsample()'s box-filter averaging and its
+error paths. Every expected pixel is computed independently, with the
+arithmetic given per case below.
 """
 
 from std.testing import assert_equal, assert_raises, TestSuite
@@ -22,10 +20,9 @@ def _assert_color(c: Canvas, x: Int, y: Int, expected: Color, label: String) rai
 
 
 def test_downsample_by_2_averages_each_2x2_block() raises:
-    # A 4x4 source, factor=2, giving a 2x2 output -- four independent
-    # blocks, each hand-computed via `(sum + n // 2) // n` (n=4, the
-    # exact formula downsample() itself uses -- see its own docstring
-    # for why round-to-nearest, not truncation):
+    # A 4x4 source at factor=2 gives a 2x2 output: four blocks, each
+    # computed via `(sum + n // 2) // n` with n=4, downsample()'s own
+    # round-to-nearest formula:
     #   block (0,0): four Color(100,100,100) -- an exact average, no
     #     rounding ambiguity to worry about: (100,100,100).
     #   block (1,0): two Color(0,0,0) + two Color(1,1,1) -- sum=2, n=4,

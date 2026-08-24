@@ -1,13 +1,12 @@
 """Demo: the arc primitive family -- draw_arc(_aa) for a bare curved
 boundary, fill_arc(_aa) for a solid pie-slice wedge, fill_ring_sector
 (_aa) for a donut/ring segment. Exact circle math (cos/sin sampled
-directly), not a Bezier approximation -- see canvas_mojo.shapes.arcs's own
-_arc_points docstring.
+directly), not a Bezier approximation -- see
+canvas_mojo.shapes.arcs._arc_points.
 
-A 3-wedge pie chart and a 2-segment donut chart, the two concrete
-shapes this exists for, plus a wedge deliberately spanning the
-atan2 +/-pi discontinuity to make _angle_in_span's wraparound handling
-visible, not just passing in a test.
+A 3-wedge pie chart and a 2-segment donut chart, plus a wedge spanning
+the atan2 +/-pi discontinuity, which makes _angle_in_span's wraparound
+handling visible rather than only tested.
 
 Run with:
     pixi run example

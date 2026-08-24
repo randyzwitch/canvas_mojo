@@ -3,10 +3,8 @@ fill) and fill_path_gradient (an arbitrary shape, here reusing the
 donut from path.mojo's own example, so a gradient fill interacting
 with a punched-through hole is visible directly) -- plus
 RadialGradient with fill_rect_radial_gradient (a swatch with a radial
-highlight) and fill_path_radial_gradient (the same donut, now with a
-*genuinely* concentric gradient around its center, not the
-LinearGradient-along-a-diameter approximation this example used before
-RadialGradient existed).
+highlight) and fill_path_radial_gradient (the same donut, with a
+concentric gradient around its center).
 
 Run with:
     pixi run example
@@ -24,8 +22,8 @@ from canvas_mojo.io.png import write_png
 def main() raises:
     var c = Canvas(1920, 780, Color(255, 255, 255))
 
-    # A horizontal bar-fill gradient -- axis matches the rect's own
-    # width, so the gradient's two stops land exactly on its edges.
+    # A horizontal bar-fill gradient; the axis matches the rect's
+    # width, so its two stops land exactly on the edges.
     var horizontal = LinearGradient(120.0, 0.0, 720.0, 0.0)
     horizontal.add_stop(0.0, Color(40, 100, 200))
     horizontal.add_stop(1.0, Color(220, 60, 120))
@@ -38,9 +36,9 @@ def main() raises:
     vertical.add_stop(1.0, Color(150, 30, 60))
     fill_rect_gradient(c, 120, 420, 600, 240, vertical)
 
-    # fill_path_gradient on a donut (see examples/path.mojo) --
-    # the gradient still applies per-pixel across both the outer shape
-    # and around the punched-through hole correctly.
+    # fill_path_gradient on a donut (see examples/path.mojo): the
+    # gradient applies per pixel across the outer shape and around the
+    # punched-through hole.
     var donut = Path()
     var cx = 1110.0
     var cy = 390.0
@@ -68,12 +66,10 @@ def main() raises:
     donut_radial.add_stop(1.0, Color(60, 60, 160))
     fill_path_radial_gradient(c, donut, donut_radial)
 
-    # A rectangular swatch with a genuine radial highlight -- the
-    # fill_rect_radial_gradient case: no circle primitive involved,
-    # just a rect whose fill happens to source from a RadialGradient
-    # centered on it (a "spotlight"/"glow" panel background, or a
-    # legend swatch that wants a soft highlight rather than a flat
-    # fill or a hard-edged circle drawn on top).
+    # A rectangular swatch with a radial highlight and no circle
+    # primitive involved -- just a rect sourcing its fill from a
+    # RadialGradient centered on it, as a glow panel background or a
+    # legend swatch wanting a soft highlight would.
     var swatch_cx = 1650.0
     var swatch_cy = 390.0
     var swatch_radial = RadialGradient(swatch_cx, swatch_cy, 270.0)

@@ -1,8 +1,5 @@
 """Tests for canvas_mojo/shapes/lines.mojo: exact pixel sets for known
 inputs, verified against hand-traced runs of the same algorithms.
-Split out of the original monolithic test_primitives.mojo along with
-canvas_mojo/primitives.mojo's own split into canvas_mojo/shapes/ -- see
-that subpackage's own module docstrings for why.
 """
 
 from std.testing import assert_equal, TestSuite
@@ -88,9 +85,9 @@ def test_draw_line_aa_horizontal_interior_is_fully_opaque() raises:
 
 
 def test_draw_line_aa_round_cap_matches_hand_computed_value() raises:
-    # Hand-verified via the clamped-projection distance formula: for
-    # the horizontal line (1,1)-(7,1), pixel (1,1) -- the exact start
-    # point -- has 14/16 sub-samples within the round cap.
+    # By the clamped-projection distance formula, the horizontal line
+    # (1,1)-(7,1) puts 14/16 of pixel (1,1)'s sub-samples inside the
+    # round cap.
     var c = Canvas(9, 3, BG)
     draw_line_aa(c, 1, 1, 7, 1, FG)
     var cap = c.get_pixel(1, 1)
@@ -113,10 +110,10 @@ def test_draw_line_aa_diagonal_matches_hand_computed_value() raises:
 
 
 def test_draw_line_aa_agrees_with_hard_edged_on_interior_pixels() raises:
-    # Same category of check as fill_circle_aa's consistency test:
-    # deep-interior pixels (not the exact endpoints, which legitimately
-    # differ -- Bresenham's idealized single-pixel endpoint vs. the AA
-    # version's round cap) must land at the same coordinates in both.
+    # fill_circle_aa's consistency check, for lines: deep-interior
+    # pixels must land at the same coordinates in both versions. Not
+    # the endpoints, which legitimately differ -- Bresenham's idealized
+    # single pixel against the AA version's round cap.
     var hard = Canvas(9, 3, BG)
     draw_line(hard, 1, 1, 7, 1, FG)
     var aa = Canvas(9, 3, BG)
@@ -207,14 +204,10 @@ def test_draw_polygon_closes_the_shape() raises:
 
 
 def test_draw_polygon_does_not_double_blend_any_vertex() raises:
-    # Covers both joint categories a polygon has, since they're
-    # different code paths: (1,1) is the CLOSING vertex, shared
-    # between the first segment (as its start) and the closing
-    # segment (as its end). (4,1) is an ordinary INTERIOR joint,
-    # shared between two consecutive segments in the main loop --
-    # same mechanism the polyline joint test already covers, but
-    # worth asserting directly here too rather than only inferring it
-    # from the loop being identical code.
+    # Both joint categories, which are different code paths: (1,1) is
+    # the closing vertex, shared between the first segment's start and
+    # the closing segment's end, while (4,1) is an ordinary interior
+    # joint between consecutive segments in the main loop.
     var c = Canvas(6, 6, Color(0, 0, 0))
     var tri = List[Point]()
     tri.append(Point(1, 1))
@@ -315,14 +308,12 @@ def test_draw_line_no_dashes_is_unaffected() raises:
 
 def test_draw_polyline_dash_phase_carries_across_the_joint() raises:
     # An L-shape, (0,0)->(4,0)->(4,4), pattern [3,2] (period 5).
-    # Segment 0 (horizontal) ends at (4,0) with accumulated distance
-    # 4 -- an off pixel (4 is in [3,5)), matching the previous test's
-    # own trace. Segment 1 (vertical) must carry that 4 forward, not
-    # restart its own distance at 0 -- the two behaviors diverge
-    # specifically at (4,3): carried, its distance is 4+3=7 (wraps to
-    # 2 -> on); reset-to-0, its distance would be 3 (-> off). This is
-    # the one pixel that actually distinguishes correct carry-forward
-    # from a per-segment reset, not just another on/off check.
+    # Segment 0 ends at (4,0) with accumulated distance 4, an off pixel
+    # since 4 is in [3,5). Segment 1 must carry that 4 forward rather
+    # than restart at 0, and the two diverge at exactly (4,3): carried,
+    # distance is 4+3=7, wrapping to 2 and on; reset, it's 3 and off.
+    # That one pixel is what distinguishes carry-forward from a
+    # per-segment reset.
     var dashes: List[Float64] = [3.0, 2.0]
     var points: List[Point] = [Point(0, 0), Point(4, 0), Point(4, 4)]
     var c = Canvas(10, 10, BG)
@@ -333,11 +324,10 @@ def test_draw_polyline_dash_phase_carries_across_the_joint() raises:
 
 
 def test_draw_line_aa_dashed_has_background_gaps() raises:
-    # Not a hand-computed-coverage test like the AA tests above --
-    # just confirms dashing actually creates gaps in an AA stroke, the
-    # same qualitative property the hard-edged test checks exactly.
-    # width=1 keeps this close enough to the hard-edged case that a
-    # generously-off-pattern point is unambiguously background.
+    # Qualitative, unlike the hand-computed-coverage tests above: that
+    # dashing creates gaps in an AA stroke at all. width=1 keeps this
+    # close enough to the hard-edged case that a point well inside an
+    # off span is unambiguously background.
     var dashes: List[Float64] = [3.0, 2.0]
     var c = Canvas(10, 3, BG)
     draw_line_aa(c, 0, 1, 9, 1, FG, dashes=dashes)
@@ -366,15 +356,13 @@ def _brute_force_stroke_polyline_aa(
     dashes: List[Float64],
     dash_offset: Float64,
 ) raises:
-    """Deliberately naive reference for _draw_polyline_core_aa's own
-    column-bucket optimization (canvas_mojo.shapes.lines's own docstring there)
-    -- for every pixel/sample, tests distance to EVERY segment
-    directly, no row-level or column-level pre-filtering of any kind.
-    Same underlying per-sample "minimum distance across every on-dash
-    candidate segment" math and the same coverage-to-alpha blend, just
-    without the bucket bookkeeping the real function uses to skip most
-    of that work -- a divergence here would mean the optimization
-    changed a real *result*, not merely how fast it's computed.
+    """Naive reference for _draw_polyline_core_aa's column-bucket
+    optimization: for every pixel and sample, tests distance to EVERY
+    segment, with no row- or column-level pre-filtering. Same
+    per-sample "minimum distance across every on-dash candidate" math
+    and the same coverage-to-alpha blend, without the bucket
+    bookkeeping -- so a divergence means the optimization changed a
+    result, not just the speed.
     """
     var count = len(points)
     if count == 0:
@@ -469,16 +457,12 @@ def _brute_force_stroke_polyline_aa(
 
 
 def _jagged_stress_points() -> List[Point]:
-    # Same adversarial shape dataviz_mojo's own canvas_mojo-reported
-    # benchmark used: consecutive points jump a large fraction of the
-    # whole y-range every step (i*37 mod 101 -- a period-101 pseudo-
-    # random-looking sequence, not actually random, so this test stays
-    # deterministic), which is exactly what made row_candidates span
-    # most of a row's own column range in the pre-optimization version
-    # -- see canvas_mojo.shapes.lines's own docstring on col_candidates for why
-    # that shape specifically was the one worth stress-testing here,
-    # not a smooth/monotonic polyline a bucket-indexing bug could
-    # easily hide behind.
+    # An adversarial shape: consecutive points jump a large fraction of
+    # the y-range every step (i*37 mod 101, a period-101 sequence that
+    # looks random but keeps this deterministic). That's what makes a
+    # row's candidate list span most of its column range, where a
+    # bucket-indexing bug shows up -- a smooth monotonic polyline would
+    # hide one.
     var points = List[Point](capacity=97)
     for i in range(97):
         var x = Int(Float64(i) / 96.0 * 90.0)
@@ -502,9 +486,8 @@ def test_draw_polyline_aa_matches_a_brute_force_reference_on_a_jagged_stress_pat
 
 
 def test_draw_polygon_aa_matches_a_brute_force_reference_on_a_jagged_stress_path() raises:
-    # Same stress shape, closed this time -- exercises the wraparound
-    # `(seg + 1) % count` segment (points[96] -> points[0]) through both
-    # the bucket path and the reference identically.
+    # The same stress shape closed, so the wraparound segment
+    # (points[96] -> points[0]) runs through both paths.
     var points = _jagged_stress_points()
     var canvas = Canvas(100, 140, Color(255, 255, 255))
     draw_polygon_aa(canvas, points, Color(0, 0, 0), width=2.0)
@@ -519,11 +502,9 @@ def test_draw_polygon_aa_matches_a_brute_force_reference_on_a_jagged_stress_path
 
 
 def test_draw_polyline_aa_dashed_matches_a_brute_force_reference_on_a_jagged_stress_path() raises:
-    # Same stress shape again, dashed -- confirms a bucketed segment's
-    # own dash state (evaluated per candidate, per sample, same as
-    # before -- see _draw_polyline_core_aa's own docstring) still
-    # agrees with the reference once most segments are being skipped
-    # via buckets instead of a full per-pixel scan.
+    # The stress shape dashed, so per-candidate, per-sample dash state
+    # still agrees with the reference once buckets skip most
+    # segments.
     var points = _jagged_stress_points()
     var dashes: List[Float64] = [4.0, 3.0]
     var canvas = Canvas(100, 140, Color(255, 255, 255))

@@ -69,8 +69,8 @@ def test_arc_to_before_move_to_raises() raises:
 
 
 def test_quad_point_matches_hand_derived_values() raises:
-    # Independently computed by hand (De Casteljau / the standard
-    # quadratic Bezier formula) before trusting the code's own output.
+    # Computed by hand via De Casteljau / the standard quadratic
+    # Bezier formula.
     var p0 = FPoint(0.0, 0.0)
     var control = FPoint(10.0, 0.0)
     var p1 = FPoint(10.0, 10.0)
@@ -133,35 +133,32 @@ def test_flatten_cubic_curve_passes_through_hand_derived_midpoint() raises:
 
 def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
     # Center (0, 0), radius 10, start_angle=0 -> end_angle=pi/2: a
-    # quarter circle from (10, 0) to (0, 10) -- both endpoints exact,
-    # independently hand-derived (r*cos(0)=10, r*sin(0)=0; r*cos(pi/2)
-    # ~= 0, r*sin(pi/2) ~= 10, both rounding cleanly). arc_to's own
-    # flattening reuses canvas_mojo.shapes.arcs' _arc_points, so the arc's own
-    # start point (already present via move_to) must NOT be duplicated
-    # -- see arc_to's own docstring.
+    # quarter circle from (10, 0) to (0, 10), both endpoints exact
+    # (r*cos(0)=10, r*sin(0)=0; r*cos(pi/2) ~= 0, r*sin(pi/2) ~= 10,
+    # each rounding cleanly). arc_to flattens through
+    # canvas_mojo.shapes.arcs' _arc_points, so the arc's start point,
+    # already placed by move_to, must not be duplicated.
     var p = Path()
     p.move_to(10.0, 0.0)
     p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
     var subpaths = _flatten(p)
     assert_equal(len(subpaths), 1)
     ref pts = subpaths[0].points
-    # _arc_points's own step count: max(4, Int(radius * span)) ==
-    # max(4, Int(10 * pi/2)) == 15 steps -> 16 sampled points (steps+1,
-    # index 0 == the arc's own start). arc_to's flatten branch skips
-    # that index-0 duplicate (already present via move_to below), so
-    # the sub-path holds move_to's own point plus arc_points[1:] --
-    # 1 + 15 == 16, not 17. A wrong count here would mean the
-    # duplicate-skip silently broke.
+    # _arc_points' step count is max(4, Int(radius * span)) ==
+    # max(4, Int(10 * pi/2)) == 15, giving 16 sampled points with index
+    # 0 at the arc's start. arc_to skips that duplicate, so the
+    # sub-path holds move_to's point plus arc_points[1:]: 1 + 15 == 16,
+    # not 17. A wrong count means the skip broke.
     assert_equal(len(pts), 16)
     assert_equal(pts[0].x, 10)
     assert_equal(pts[0].y, 0)
     var last = pts[len(pts) - 1]
     assert_equal(last.x, 0)
     assert_equal(last.y, 10)
-    # every intermediate sample must be within a pixel of the circle
-    # itself (radius 10, centered at origin) -- confirms real curved
-    # sampling happened, not just "start and end points, straight line
-    # between" (which would also pass a start/end-only check).
+    # Every intermediate sample must sit within a pixel of the circle
+    # (radius 10, origin-centered): real curved sampling, not a
+    # straight line between endpoints, which a start/end check alone
+    # would accept.
     for i in range(1, len(pts) - 1):
         var p_i = pts[i]
         var dist = sqrt(Float64(p_i.x * p_i.x + p_i.y * p_i.y))
@@ -169,11 +166,9 @@ def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
 
 
 def test_arc_to_updates_current_point_to_the_arc_end() raises:
-    # A line_to() right after arc_to() must start exactly where the
-    # arc left off (its own end point), not the arc's own center or
-    # start -- confirms arc_to's own _current_x/_current_y bookkeeping
-    # (path.mojo), the same contract line_to/quad_curve_to/
-    # cubic_curve_to already have.
+    # A line_to() after arc_to() must start where the arc ended, not
+    # at its center or start: arc_to's _current_x/_current_y
+    # bookkeeping, the same contract the other segment types have.
     var p = Path()
     p.move_to(10.0, 0.0)
     p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
@@ -189,16 +184,14 @@ def test_arc_to_updates_current_point_to_the_arc_end() raises:
 
 
 def test_fill_path_arc_to_matches_fill_arc_for_a_wedge() raises:
-    # arc_to's own flattening reuses the identical _arc_points helper
-    # fill_arc itself samples through, so a move_to(arc start) ->
-    # arc_to(...) -> line_to(center) -> close() wedge traces the exact
-    # same cyclic edge list fill_arc's own fill_polygon call does
-    # (arc_points[0] -> ... -> arc_points[-1] -> center ->
-    # arc_points[0]), just starting from a different point around the
-    # same loop -- fill_path's crossing scan is rotation-invariant, so
-    # the two must fill byte-identical, the same parity relationship
-    # test_fill_path_matches_fill_polygon_for_a_simple_triangle above
-    # confirms for straight edges.
+    # arc_to flattens through the same _arc_points fill_arc samples
+    # through, so a move_to(arc start) -> arc_to(...) -> line_to(center)
+    # -> close() wedge traces the cyclic edge list fill_arc's
+    # fill_polygon call does, entered at a different point around the
+    # same loop. fill_path's crossing scan is rotation-invariant, so
+    # the two fill byte-identically -- the parity
+    # test_fill_path_matches_fill_polygon_for_a_simple_triangle shows
+    # for straight edges.
     var cx = 30.0
     var cy = 30.0
     var radius = 20.0
@@ -226,19 +219,14 @@ def test_fill_path_arc_to_matches_fill_arc_for_a_wedge() raises:
 
 
 def test_fill_path_aa_arc_to_wedge_has_a_real_antialiased_boundary() raises:
-    # Same wedge as test_fill_path_arc_to_matches_fill_arc_for_a_wedge
-    # above, through fill_path_aa instead of fill_path -- not a byte-
-    # identical parity test against fill_arc_aa this time: fill_arc_aa
-    # samples an analytic "within radius AND within angle span" test
-    # directly (see its own docstring), a genuinely different algorithm
-    # from fill_path_aa's flattened-boundary point-in-polygon
-    # supersampling, so the two don't agree pixel-for-pixel right at
-    # the edge the way the hard-edged pair does. What must still hold,
-    # confirmed directly rather than assumed: full coverage deep
-    # inside the wedge, zero coverage clearly outside it, and a real
-    # blended (neither pure BG nor pure FG) pixel exactly on the arc's
-    # own boundary -- proof AA supersampling actually ran on a curved
-    # edge, not just a straight one.
+    # The same wedge through fill_path_aa, but not a byte-identical
+    # parity test against fill_arc_aa: that samples an analytic "within
+    # radius AND within angle span" test, a different algorithm from
+    # fill_path_aa's flattened-boundary supersampling, so the two
+    # diverge right at the edge where the hard-edged pair doesn't. What
+    # must hold: full coverage deep inside the wedge, zero coverage
+    # clearly outside, and a blended pixel exactly on the arc boundary,
+    # which is the proof AA sampling ran on a curved edge.
     var cx = 30.0
     var cy = 30.0
     var radius = 20.0
@@ -256,9 +244,8 @@ def test_fill_path_aa_arc_to_wedge_has_a_real_antialiased_boundary() raises:
     _assert_pixel(c, Int(cx) + 5, Int(cy) + 5, FG, "deep inside the wedge -- full coverage")
     _assert_pixel(c, Int(cx) - 10, Int(cy) - 10, BG, "opposite quadrant -- clearly outside, zero coverage")
 
-    # (cx + r*cos(pi/4), cy + r*sin(pi/4)) sits exactly on the arc's
-    # own boundary -- hand-derived via the same formula _arc_points
-    # itself uses, not guessed.
+    # (cx + r*cos(pi/4), cy + r*sin(pi/4)) sits exactly on the arc
+    # boundary, by the same formula _arc_points uses.
     var edge_x = Int(cx + radius * cos(pi / 4.0))
     var edge_y = Int(cy + radius * sin(pi / 4.0))
     var edge = c.get_pixel(edge_x, edge_y)
@@ -266,14 +253,11 @@ def test_fill_path_aa_arc_to_wedge_has_a_real_antialiased_boundary() raises:
 
 
 def test_stroke_path_aa_draws_along_an_open_arc_to_segment() raises:
-    # Same quarter-circle as the flatten test above, left open (no
-    # close()) -- confirms stroke_path_aa (draw_polyline_aa under the
-    # hood, see stroke_path_aa's own docstring) actually traces the
-    # curved edge itself: a point exactly on the arc (same pi/4
-    # boundary point as the fill_path_aa test above) picks up real
-    # stroke coverage, while a point well clear of the curve (near the
-    # wedge's own center, nowhere close to any drawn segment) stays
-    # untouched background.
+    # The same quarter-circle left open, so stroke_path_aa
+    # (draw_polyline_aa underneath) traces the curved edge itself: the
+    # pi/4 boundary point picks up real stroke coverage, while a point
+    # near the wedge center, clear of every drawn segment, stays
+    # background.
     var cx = 30.0
     var cy = 30.0
     var radius = 20.0
@@ -318,9 +302,8 @@ def test_flatten_marks_closed_subpaths() raises:
 
 
 def test_fill_path_matches_fill_polygon_for_a_simple_triangle() raises:
-    # fill_path's scanline algorithm is a direct generalization of
-    # fill_polygon's own -- for a single simple-line (no-curve)
-    # sub-path, the two must produce byte-identical output.
+    # fill_path's scanline algorithm generalizes fill_polygon's, so for
+    # a single curve-free sub-path the two must be byte-identical.
     var points: List[Point] = [Point(10, 10), Point(50, 10), Point(30, 50)]
 
     var c1 = Canvas(60, 60, BG)
@@ -364,12 +347,10 @@ def test_fill_path_punches_a_hole_with_a_second_subpath() raises:
 
 
 def test_fill_path_aa_matches_fill_polygon_aa_for_a_simple_triangle() raises:
-    # Same parity relationship test_fill_path_matches_fill_polygon_
-    # for_a_simple_triangle above confirms for the hard-edged pair --
-    # fill_path_aa's supersampled coverage test is a direct
-    # generalization of fill_polygon_aa's own, so for a single
-    # simple-line sub-path the two must produce byte-identical output,
-    # including the antialiased edge pixels, not just the interior.
+    # The hard-edged pair's parity relationship, for the AA pair:
+    # fill_path_aa's coverage test generalizes fill_polygon_aa's, so a
+    # single curve-free sub-path must match byte for byte, antialiased
+    # edge pixels included.
     var points: List[Point] = [Point(10, 10), Point(50, 10), Point(30, 50)]
 
     var c1 = Canvas(60, 60, BG)
@@ -393,13 +374,11 @@ def test_fill_path_aa_matches_fill_polygon_aa_for_a_simple_triangle() raises:
 
 
 def test_fill_path_aa_punches_a_hole_with_a_second_subpath() raises:
-    # Same shape as test_fill_path_punches_a_hole_with_a_second_
-    # subpath above, through the AA entry point instead -- both test
-    # points sit deep inside their respective region (full coverage in
-    # the ring, zero coverage in the hole), so this holds even without
-    # hand-computing partial-coverage alpha values: hole-punching must
-    # still work when _point_in_subpaths (not the discrete
-    # _row_crossings) is what combines the two sub-paths.
+    # The same shape through the AA entry point. Both test points sit
+    # deep inside their region -- full coverage in the ring, zero in
+    # the hole -- so no partial-coverage alpha needs computing:
+    # hole-punching must survive _point_in_subpaths combining the
+    # sub-paths instead of the discrete _row_crossings.
     var p = Path()
     p.move_to(10.0, 10.0)
     p.line_to(50.0, 10.0)
@@ -420,13 +399,11 @@ def test_fill_path_aa_punches_a_hole_with_a_second_subpath() raises:
 
 
 def test_point_in_subpaths_nonzero_fills_the_overlap_of_same_direction_subpaths() raises:
-    # The continuous-membership analog of test_fill_path_even_odd_
-    # leaves_a_hole/test_fill_path_nonzero_fills_the_overlap above --
-    # same two overlapping same-direction squares, checked directly
+    # The continuous-membership analog of the even-odd/nonzero pair
+    # above: the same two overlapping same-direction squares, checked
     # against _point_in_subpaths (what fill_path_aa's supersampling
-    # actually calls) rather than through rendered pixels, confirming
-    # the fill_rule divergence holds at the continuous level too, not
-    # only for the discrete per-row scan.
+    # calls) rather than rendered pixels, so the fill_rule divergence
+    # is confirmed at the continuous level too.
     var p = Path()
     _square_subpath(p, 0.0, 0.0, 20.0, 20.0)
     _square_subpath(p, 10.0, 10.0, 30.0, 30.0)
@@ -484,10 +461,9 @@ def test_stroke_path_aa_respects_translucent_input_color() raises:
 
 
 def test_fill_path_gradient_matches_gradient_color_at_per_pixel() raises:
-    # Same gradient and hand-derived midpoint value as
-    # test_gradient.mojo's own color_at test -- confirms
-    # fill_path_gradient queries color_at per pixel, the same as
-    # fill_rect_gradient's own equivalent test.
+    # The gradient and hand-derived midpoint from test_gradient.mojo's
+    # color_at test, confirming fill_path_gradient queries color_at per
+    # pixel as fill_rect_gradient does.
     var g = LinearGradient(0.0, 0.0, 100.0, 0.0)
     g.add_stop(0.0, Color(0, 0, 0, 255))
     g.add_stop(1.0, Color(255, 255, 255, 255))
@@ -507,10 +483,9 @@ def test_fill_path_gradient_matches_gradient_color_at_per_pixel() raises:
 
 
 def test_fill_path_radial_gradient_matches_gradient_color_at_per_pixel() raises:
-    # Same center/radius and hand-derived exact-distance point as
-    # test_gradient.mojo's own radial Pythagorean-triple test --
-    # confirms fill_path_radial_gradient queries color_at per pixel,
-    # the same as fill_path_gradient's own equivalent test above.
+    # The center/radius and exact-distance point from
+    # test_gradient.mojo's radial Pythagorean-triple test, confirming
+    # fill_path_radial_gradient queries color_at per pixel.
     var g = RadialGradient(0.0, 0.0, 5.0)
     g.add_stop(0.0, Color(0, 0, 0, 255))
     g.add_stop(1.0, Color(255, 255, 255, 255))
@@ -538,13 +513,11 @@ def _square_subpath(mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Floa
 
 
 def test_fill_path_even_odd_leaves_a_hole_where_same_direction_subpaths_overlap() raises:
-    # Two squares, (0,0)-(20,20) and (10,10)-(30,30), both traced in
-    # the same rotational direction, as two sub-paths of ONE path --
-    # independently traced by hand before trusting this: under
-    # EVEN_ODD (the default), the overlap region x=[10,20), y=[10,20)
-    # has been crossed twice, so it's "outside" again -- a hole
-    # appears exactly there, even though both squares individually
-    # would fill it.
+    # Two squares, (0,0)-(20,20) and (10,10)-(30,30), traced the same
+    # rotational direction as two sub-paths of ONE path. Under EVEN_ODD
+    # the overlap x=[10,20), y=[10,20) has been crossed twice, so it
+    # reads as outside and a hole appears there, though either square
+    # alone would fill it.
     var p = Path()
     _square_subpath(p, 0.0, 0.0, 20.0, 20.0)
     _square_subpath(p, 10.0, 10.0, 30.0, 30.0)
@@ -558,12 +531,10 @@ def test_fill_path_even_odd_leaves_a_hole_where_same_direction_subpaths_overlap(
 
 
 def test_fill_path_nonzero_fills_the_overlap_of_same_direction_subpaths_solid() raises:
-    # Identical shape to the EVEN_ODD test above, only the fill rule
-    # differs -- confirms fill_rule actually changes the result on the
-    # same input, not just that each rule independently seems
-    # reasonable. NONZERO's signed winding reaches 2 (not 0) in the
-    # overlap, since both squares wind the same direction -- nonzero,
-    # so filled, no hole.
+    # The EVEN_ODD shape with only the fill rule changed, so fill_rule
+    # demonstrably changes the result on one input. NONZERO's signed
+    # winding reaches 2 in the overlap, since both squares wind the
+    # same direction: nonzero, so filled, no hole.
     var p = Path()
     _square_subpath(p, 0.0, 0.0, 20.0, 20.0)
     _square_subpath(p, 10.0, 10.0, 30.0, 30.0)
