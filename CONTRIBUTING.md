@@ -265,6 +265,22 @@ and you write a bug).
 Docstrings are rendered into the docs site by `mojo doc` + modo, so
 public ones are user-facing documentation, not just internal notes.
 
+### Formatting
+
+```sh
+pixi run fmt   # mojo format over canvas_mojo/ tests/ examples/ scripts/
+```
+
+Default 80 columns, so a bare `mojo format` and an editor formatting on
+save both match. You don't strictly need to run it: CI formats every
+pull request and commits the result back to the branch
+(`.github/workflows/format.yml`). The exception is a PR from a fork,
+where CI can't push to your branch — those fail the check and ask you
+to run `pixi run fmt` yourself.
+
+The formatter only touches code layout. Docstring and comment prose is
+wrapped by hand; see the section above for how to write it.
+
 ## Testing
 
 Tests use `TestSuite` from `std.testing`, with every file ending:

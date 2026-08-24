@@ -1,0 +1,91 @@
+name: Format
+
+# Formats every .mojo file on a pull request and commits the result
+# back to the branch, rather than failing a check and handing the work
+# back. Nothing here can drift out of `mojo format`'s default
+# 80-column style, and nobody has to remember to run it.
+#
+# `pixi run fmt` is the same invocation a contributor runs locally (see
+# pixi.toml) -- one definition, so CI and a developer's machine can't
+# disagree about which paths or which line length.
+#
+# Fork pull requests cannot be auto-fixed: GitHub gives the workflow a
+# read-only GITHUB_TOKEN for them, and the head branch lives in another
+# repository. Those get a clear failure asking for `pixi run fmt`
+# instead, which is the same outcome a plain --check gate would give,
+# but only in the case where pushing back is genuinely impossible.
+#
+# Worth knowing about the auto-fix commit: a push made with the default
+# GITHUB_TOKEN deliberately does not trigger further workflow runs, so
+# CI's test job will not re-run on the formatting commit. That is
+# acceptable here specifically because `mojo format` only ever changes
+# line wrapping, trailing commas, string-literal splitting and quote
+# style -- nothing that can alter behavior. It is not a general licence
+# to have CI commit code.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    # Only needs a Mojo toolchain, no fonts and no test run, so this is
+    # far lighter than ci.yml -- but pixi still has to install Mojo
+    # itself, hence not a 5-minute timeout.
+    timeout-minutes: 20
+    steps:
+      # Check out the PR's head branch itself, not the merge commit
+      # Actions defaults to: a detached merge ref has nowhere to push a
+      # fix back to. `persist-credentials` (the default) is what lets
+      # the later `git push` reuse GITHUB_TOKEN.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.76.2
+          cache: true
+
+      - name: Format
+        run: pixi run fmt
+
+      # Split from the commit step below so the log shows what moved
+      # even when the job then fails on a fork.
+      - name: Check for changes
+        id: changed
+        run: |
+          if git diff --quiet; then
+            echo "dirty=false" >> "$GITHUB_OUTPUT"
+            echo "Already formatted."
+          else
+            echo "dirty=true" >> "$GITHUB_OUTPUT"
+            git diff --stat
+          fi
+
+      # github.event.pull_request.head.repo.fork is the reliable signal
+      # here: comparing repository *names* would also flag a
+      # same-repo branch pushed by someone without write access, which
+      # this can still fix.
+      - name: Fail on an unformattable fork PR
+        if: >
+          steps.changed.outputs.dirty == 'true' &&
+          github.event.pull_request.head.repo.fork
+        run: |
+          echo "::error::This PR is not formatted, and comes from a fork, so CI cannot push the fix back. Run 'pixi run fmt' and commit the result."
+          exit 1
+
+      - name: Commit the formatting
+        if: >
+          steps.changed.outputs.dirty == 'true' &&
+          !github.event.pull_request.head.repo.fork
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Apply mojo format"
+          git push
