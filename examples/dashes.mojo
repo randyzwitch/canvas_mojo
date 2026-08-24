@@ -26,11 +26,9 @@ def main() raises:
     draw_line(c, 60, 120, 1020, 120, Color(120, 120, 120), dashes)
     draw_line_aa(c, 60, 210, 1020, 210, Color(120, 120, 120), dashes=dashes)
 
-    # A pentagon outline -- large enough, with a dash period short
-    # enough relative to each edge's length, that a phase reset at any
-    # vertex would be visible as two dashes landing back-to-back
-    # (or a gap doubling) right at that corner instead of the pattern
-    # just continuing through it.
+    # A pentagon outline, large enough and with a short enough dash
+    # period per edge that a phase reset at any vertex would show as
+    # two dashes back-to-back, or a doubled gap, right at the corner.
     var cx = 540.0
     var cy = 585.0
     var r = 330.0

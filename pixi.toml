@@ -46,7 +46,7 @@ test = "bash scripts/run_parallel.sh tests/test_text.mojo tests/test_font_discov
 # example` has already been run at least once (copies its output
 # images rather than re-rendering them itself, the same "separate,
 # independently-invoked task" split this file's own example/test
-# tasks already have) -- every example now writes a real, DEFLATE-
+# tasks already have) -- every example writes a real, DEFLATE-
 # compressed .png via canvas_mojo.io.png's own write_png (see that
 # module's and canvas_mojo/io/deflate.mojo's own docstrings: this
 # package's own native LZ77 + fixed-Huffman encoder, no external

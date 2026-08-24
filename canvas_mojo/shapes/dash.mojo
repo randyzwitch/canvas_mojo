@@ -1,10 +1,9 @@
 """Dash-pattern phase logic -- shared by every stroked shape in
 canvas_mojo.shapes (lines, polylines/polygons, and indirectly arcs via
 draw_polyline/draw_polyline_aa). Split into its own file since it has
-no dependency on Canvas or any shape's own geometry, unlike everything
-else `canvas_mojo.primitives` used to bundle it with -- see
-canvas_mojo.shapes.lines's own module docstring for the hard-edged
-vs. `_aa` naming convention every file in this subpackage follows.
+no dependency on Canvas or any shape's geometry, unlike every other
+file in this subpackage -- see canvas_mojo.shapes.lines for the
+hard-edged vs. `_aa` naming convention every file here follows.
 """
 
 from std.math import floor
@@ -17,11 +16,10 @@ def _is_dash_on(distance: Float64, dashes: List[Float64], offset: Float64) -> Bo
     repeating indefinitely and shifted by `offset`?
 
     An empty `dashes` list -- the default everywhere this is called
-    from -- means "no dash pattern," always on: every draw_line/
-    draw_polyline/etc. call that doesn't pass dashes= behaves exactly
-    as it did before this parameter existed.
+    from -- means "no dash pattern," always on: a draw_line/
+    draw_polyline/etc. call that doesn't pass dashes= draws solid.
 
-    An odd-length list is doubled (Cairo's own convention, matched
+    An odd-length list is doubled (Cairo's convention, matched
     here for anyone porting a pattern from it): [5, 2, 1] means the
     same as [5, 2, 1, 5, 2, 1] -- an odd count otherwise couldn't
     alternate on/off evenly around the repeat.

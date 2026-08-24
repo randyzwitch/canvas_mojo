@@ -1,32 +1,22 @@
-"""Generates docs/src/examples/*.md from examples/*.mojo -- run as
-part of `pixi run docs` (see pixi.toml), before `mojo doc`/`modo
-build`, so a new example file automatically gets a docs page without
-anyone hand-writing one.
+"""Generates docs/src/examples/*.md from examples/*.mojo, run as part of
+`pixi run docs` before `mojo doc`/`modo build`, so a new example gets a
+docs page without anyone hand-writing one.
 
-Unlike dataviz_mojo's own gen_example_docs.mojo (this package is that
-one's own base dependency, and the two scripts share their name and
-overall shape deliberately), there's no single "one-call convenience
-function" every example funnels its demo through here -- every example
-in this repo is itself the pattern being taught, start to finish:
-imports, any small helper function, `main()`, and the final
-write_bmp()/write_png() call that actually produces the picture shown
-above the snippet. So extraction doesn't try to cut anything out of
-the "real" logic the way dataviz_mojo's own script does for its
-boilerplate -- the shown snippet is simply the whole file, minus its
-own leading module docstring (which is where this page's own hook
-sentence and prose come from instead, see `_first_sentence()`).
+The shown snippet is the whole example file minus its leading module
+docstring -- nothing is extracted or trimmed out of the "real" logic,
+because every example here *is* the pattern being taught, start to
+finish: imports, any helper, `main()`, and the write_bmp()/write_png()
+call producing the picture above the snippet. The docstring becomes the
+page's hook sentence and prose instead (see `_first_sentence()`).
 
-A Mojo script, not Python -- this repo's own tooling stays in the
-language it's showcasing, string-matching primitives (`.strip()`,
-`.startswith()`, `.find()`) doing the same job Python's `re` module
-would, without needing Mojo to have its own regex module (it doesn't,
-as of this writing).
+A Mojo script rather than Python, so this repo's tooling stays in the
+language it showcases. String primitives (`.strip()`, `.startswith()`,
+`.find()`) do what Python's `re` would; Mojo has no regex module.
 
-Adding a new example: add it to both `_titles()` and exactly one
-category in `_categories()` below -- `main()`'s own assertions catch a
-missing entry either way (a real .mojo file with no category, or a
-category referencing a name that doesn't exist) rather than silently
-skipping it or crashing deep in string formatting.
+Adding an example: list it in both `_titles()` and exactly one category
+in `_categories()`. `main()`'s assertions catch either omission -- a
+file with no category, or a category naming a file that doesn't exist
+-- rather than skipping it silently or failing deep in formatting.
 """
 
 from std.collections import Dict
@@ -122,10 +112,10 @@ def _extract_docstring(source: String) -> String:
 
 
 def _first_sentence(docstring: String) -> String:
-    # Every docstring here starts "Demo: <one-line hook> -- <detail>".
-    # Collapse hand-wrapped newlines within the first paragraph into a
-    # single flowing line, then cut at the first " -- " boundary (the
-    # hook) if there is one, else keep the whole first sentence.
+    # Every docstring starts "Demo: <one-line hook> -- <detail>".
+    # Collapse the first paragraph's hand-wrapped newlines into one
+    # line, then cut at the first " -- " if present, else keep the
+    # whole first sentence.
     var para_end = docstring.find("\n\n")
     var first_para = String(docstring[byte=0:para_end]) if para_end != -1 else docstring
 
@@ -154,12 +144,10 @@ def _first_sentence(docstring: String) -> String:
 
 
 def _snippet_after_docstring(source: String) -> String:
-    """Everything in the file after its own leading module docstring's
-    closing `\"\"\"` -- imports, any helper function, `main()`, the
-    real write_bmp()/write_png() call and all -- with the blank lines
-    that separated it from the docstring above trimmed off both ends.
-    This *is* the example, unabridged; see this file's own module
-    docstring for why nothing further gets cut."""
+    """Everything after the leading module docstring's closing
+    `\"\"\"` -- imports, helpers, `main()`, the write_bmp()/write_png()
+    call -- with the separating blank lines trimmed from both ends. The
+    example unabridged."""
     var start = source.find('"""')
     if start == -1:
         return String(source.strip())
@@ -174,15 +162,9 @@ def _build_page(name: String, title: String) raises -> String:
     var source = _read_file(_EXAMPLES_DIR + "/" + name + ".mojo")
     var docstring = _extract_docstring(source)
     var hook = _first_sentence(docstring)
-    # Every example writes a .bmp unconditionally; docs display always
-    # uses the .png scripts/convert_example_images.sh converts that
-    # .bmp into (see pixi.toml's own imagemagick dependency comment
-    # for why a real conversion, not the raw .bmp, matters at this
-    # resolution) -- not canvas_mojo.io.png's own write_png output even
-    # for png_output.mojo (the one example that also writes one): that
-    # file's own .png is a demo of this package's own write_png/
-    # read_png round trip, not a docs-display asset, and is
-    # deliberately uncompressed (see that script's own docstring).
+    # Every example writes both a .bmp and a .png through this
+    # package's own write_png; docs display uses the .png, which
+    # `pixi run docs-build` copies straight out of examples/.
     var image = "out_" + name + ".png"
     var snippet = _snippet_after_docstring(source)
 

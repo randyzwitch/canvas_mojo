@@ -10,9 +10,8 @@
 # core count is what makes this a real speedup rather than a resource-
 # contention regression.
 #
-# Not GNU parallel: this repo already reverted one external tool
-# (imagemagick, see git log) specifically to stay dependency-free where
-# a stdlib-adjacent tool already does the job -- xargs -P is part of
+# Not GNU parallel: this repo stays dependency-free where a
+# stdlib-adjacent tool already does the job -- xargs -P is part of
 # findutils, already present everywhere `mojo`/`pixi` themselves run,
 # nothing new to install.
 #

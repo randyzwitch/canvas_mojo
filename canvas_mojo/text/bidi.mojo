@@ -3,18 +3,15 @@ implementation of the Unicode Bidirectional Algorithm (UAX #9), just
 enough to lay out real mixed Hebrew/Arabic/Latin/digit text correctly:
 classify each codepoint's direction, assign it an embedding level,
 reorder the line into visual (left-to-right-drawable) order via the
-same run-reversal technique UAX #9's own rule L2 uses, and mirror
+same run-reversal technique UAX #9's rule L2 uses, and mirror
 paired characters (parens/brackets/comparisons) that end up inside a
 right-to-left run.
 
-What this deliberately does NOT implement, and why that's a reasonable
-line to draw rather than an oversight: UAX #9's full weak/neutral-type
-resolution (rules W1-W7, N0-N2) has many rules for corner cases this
-collapses into one simplified rule (a neutral/weak run takes the
-level of the strong text immediately before it, or the paragraph's
-own base level if there is none -- correct for the overwhelmingly
-common case of digits/punctuation/spaces sitting between words, not
-exhaustively correct for every adjacency UAX #9 itself enumerates).
+What this does NOT implement: UAX #9's full weak/neutral-type
+resolution (rules W1-W7, N0-N2) collapses here into one simplified
+rule -- a neutral/weak run takes the level of the strong text next to
+it, or the paragraph's base level -- correct for digits, punctuation
+and spaces between words, not for every adjacency UAX #9 enumerates.
 Explicit directional formatting characters (LRE/RLE/PDF/LRI/RLI/FSI/
 PDI/LRM/RLM) aren't recognized at all -- a real, separable feature for
 callers that need explicit direction overrides, not a silent gap in
@@ -27,7 +24,7 @@ visible limitation for vocalized/diacritic-heavy text specifically,
 not for plain consonantal text.
 
 Font/glyph-shaping note: this module only reorders and mirrors
-*existing* codepoints -- it does not perform Arabic's own contextual
+*existing* codepoints -- it does not perform Arabic's contextual
 letter-shaping (selecting a letter's isolated/initial/medial/final
 glyph form and connecting it to its neighbors). Hebrew has no
 contextual shaping at all (each codepoint always maps to the same
@@ -37,7 +34,7 @@ right-to-left *order* and correctly-mirrored punctuation, but each
 letter renders in its isolated form, disconnected from its neighbors
 -- directionally correct, not visually shaped. Real Arabic shaping
 (a per-letter joining-type table, contextual glyph selection, and
-mapping to the font's own Arabic Presentation Forms glyphs) is a
+mapping to the font's Arabic Presentation Forms glyphs) is a
 separate, larger feature, not attempted here.
 """
 
@@ -49,21 +46,18 @@ comptime _WEAK_NUMBER = 3
 
 
 def _codepoint_class(cp: Int) -> Int:
-    """Simplified strong-L / strong-R / weak classification -- see
-    this module's own docstring for what "simplified" means here.
-    Whitespace and common punctuation are WEAK_NEUTRAL (resolved to
-    match the surrounding strong run's level exactly, staying part of
-    its flow); digits are their own WEAK_NUMBER class -- UAX #9's own
-    "European Number" category, which needs different treatment: a
-    run of digits inside right-to-left text must still display left-
-    to-right internally ("123" reads as one-two-three, not reversed,
-    even embedded in a Hebrew sentence), which _resolve_levels handles
-    by giving WEAK_NUMBER its own even (LTR) level rather than
-    inheriting an odd (RTL) one. Hebrew/Arabic (and their
-    presentation-form blocks) are STRONG_R; everything else defaults
-    to STRONG_L, matching the practical reality that most scripts
-    (Latin, Cyrillic, Greek, CJK, ...) are left-to-right and this
-    isn't trying to enumerate them all.
+    """Simplified strong-L / strong-R / weak classification.
+    Whitespace and common punctuation are WEAK_NEUTRAL, resolving to
+    the surrounding strong run's level. Digits are WEAK_NUMBER, UAX
+    #9's "European Number" category, which needs separate treatment: a
+    digit run inside RTL text still displays left-to-right ("123" reads
+    one-two-three even in a Hebrew sentence), so _resolve_levels gives
+    it an even (LTR) level rather than an inherited odd one.
+
+    Hebrew/Arabic and their presentation-form blocks are STRONG_R;
+    everything else defaults to STRONG_L, since most scripts (Latin,
+    Cyrillic, Greek, CJK, ...) are left-to-right and enumerating them
+    isn't the point.
     """
     if cp >= 0x30 and cp <= 0x39:
         return _WEAK_NUMBER
@@ -107,36 +101,26 @@ def detect_base_level(codepoints: List[Int]) -> Int:
 
 
 def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
-    """One level per codepoint, in three passes -- see this module's
-    own docstring for why this whole function is a deliberate
-    simplification of UAX #9's own weak-type resolution rules (W1-W7,
-    N0-N2), not an attempt to reproduce them exactly.
+    """One level per codepoint, in three passes -- the simplification
+    of UAX #9's W1-W7/N0-N2 this module's docstring describes.
 
     Pass 1: strong characters get their natural level (base_level if
     they match the paragraph direction, base_level+1 if they oppose
     it); everything else is left unresolved (-1).
 
     Pass 2: WEAK_NUMBER (digits) resolve against the nearest preceding
-    resolved level, bumped to the next even level if that's odd (RTL)
-    -- a digit run must display left-to-right internally even
-    embedded in RTL text ("123" reads as one-two-three, never
-    reversed). Confirmed necessary by probe: without this bump, "123"
-    inside Hebrew text came out reordered to "321".
+    resolved level, bumped to the next even level if that one is odd
+    (RTL), since a digit run displays left-to-right even inside RTL
+    text. Without the bump, "123" in Hebrew text comes out "321".
 
     Pass 3: remaining WEAK_NEUTRAL runs (whitespace/punctuation)
-    resolve against *both* neighbors, not just the preceding one --
-    the same level on both sides uses that level; different levels (a
-    genuine direction boundary) fall back to the paragraph's own
-    base_level; at either end of the line, whichever neighbor exists
-    wins. This two-sided rule matters concretely, not just in theory:
-    a one-sided "inherit the preceding level" rule (tried first, then
-    replaced) pulled the space between an RTL word and a following
-    LTR word into the RTL run's own reversal, corrupting the spacing
-    around it -- confirmed via probe ("Hello שלום World" rendered
-    with a doubled gap after "Hello" and no gap before "World") before
-    switching to this two-sided version, which resolves that boundary
-    space to the paragraph's base level instead, leaving it exactly
-    where it logically belongs.
+    resolve against *both* neighbors: matching levels win, differing
+    levels (a real direction boundary) fall back to base_level, and at
+    either end of the line whichever neighbor exists wins. The
+    two-sided rule matters -- inheriting only from the preceding level
+    pulls the space between an RTL word and a following LTR word into
+    the RTL run's reversal, so "Hello שלום World" renders with a
+    doubled gap after "Hello" and none before "World".
     """
     var n = len(codepoints)
     var levels = List[Int](capacity=n)
@@ -189,15 +173,12 @@ def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
 
 def _reorder_indices(levels: List[Int]) -> List[Int]:
     """UAX #9 rule L2, applied to an index array rather than the
-    codepoints directly (so a caller can reorder any per-codepoint
-    data it's tracking alongside, not just the codepoint values
-    themselves): from the highest level present down to the lowest
-    *odd* level, reverse every maximal run of consecutive positions
-    whose level is at or above the level being processed. This is the
-    standard, general nested-run-reversal technique -- correct for
-    arbitrarily nested RTL-in-LTR-in-RTL text, not just one level of
-    embedding, despite _resolve_levels' own simplified level
-    assignment above.
+    codepoints themselves, so a caller can reorder per-codepoint data
+    it tracks alongside: from the highest level present down to the
+    lowest *odd* level, reverse every maximal run of positions at or
+    above the level being processed. The standard nested-run reversal,
+    correct for arbitrarily nested RTL-in-LTR-in-RTL text even though
+    _resolve_levels assigns levels more simply.
     """
     var n = len(levels)
     var indices = List[Int](capacity=n)
@@ -247,12 +228,10 @@ def _reorder_indices(levels: List[Int]) -> List[Int]:
 
 def _mirror_codepoint(cp: Int) -> Int:
     """UAX #9 rule L4: a paired character (parens, brackets, braces,
-    angle brackets/comparisons, guillemets, <=/>=) swaps for its
-    mirror image when it ends up inside a right-to-left run -- "(" in
-    RTL text must visually open to the *left*, which means drawing it
-    as ")"'s glyph, not literally flipping the glyph's own pixels.
-    Covers the common practical set, not the full ~500-entry Unicode
-    BidiMirroring.txt (see this module's own docstring on scope).
+    angle brackets, guillemets, <=/>=) swaps for its mirror image
+    inside a right-to-left run -- "(" in RTL text opens to the *left*,
+    which means drawing ")"'s glyph rather than flipping pixels.
+    Covers the common set, not BidiMirroring.txt's full ~500 entries.
     """
     if cp == 0x28:
         return 0x29
@@ -287,12 +266,10 @@ def _mirror_codepoint(cp: Int) -> Int:
 
 def visual_order(codepoints: List[Int], base_level: Int) -> List[Int]:
     """The full pipeline: resolve each codepoint's embedding level,
-    reorder into visual (left-to-right-drawable) order, and mirror
-    any paired character that ends up at an odd (RTL) level after
-    reordering -- the sequence a caller can now walk strictly left to
-    right (accumulating glyph advances rightward) and get correct
-    on-screen output for mixed-direction text, no different from how
-    it already walked a plain LTR line.
+    reorder into visual (left-to-right-drawable) order, and mirror any
+    paired character left at an odd (RTL) level. The result is a
+    sequence a caller walks strictly left to right, accumulating glyph
+    advances rightward, exactly as it walks a plain LTR line.
     """
     var levels = _resolve_levels(codepoints, base_level)
     var order = _reorder_indices(levels)

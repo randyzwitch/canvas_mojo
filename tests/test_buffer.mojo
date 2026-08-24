@@ -59,12 +59,10 @@ def test_in_bounds_edges() raises:
 
 
 def test_no_active_clip_means_in_clip_is_unconditionally_true() raises:
-    # With an empty clip stack, in_clip is purely "is a clip
-    # restricting this coordinate" -- the answer is no, full stop,
-    # regardless of whether the coordinate is even on the canvas.
-    # That's in_bounds' job, checked separately (and first) by
-    # set_pixel -- in_clip doesn't duplicate it by implicitly encoding
-    # canvas size into a "default" rect the way an earlier version did.
+    # With an empty clip stack, in_clip answers only "is a clip
+    # restricting this coordinate", which is no regardless of whether
+    # the coordinate is on the canvas at all. Canvas bounds are
+    # in_bounds' job, which set_pixel checks separately and first.
     var c = Canvas(4, 3, Color(5, 6, 7))
     assert_true(c.in_clip(0, 0))
     assert_true(c.in_clip(3, 2))
@@ -94,7 +92,7 @@ def test_pop_clip_restores_full_canvas() raises:
     c.push_clip(3, 3, 4, 4)
     c.pop_clip()
 
-    c.set_pixel(1, 1, Color(255, 255, 255))  # was outside the old clip
+    c.set_pixel(1, 1, Color(255, 255, 255))  # outside the popped clip
     _assert_pixel_eq(c, 1, 1, 255)
 
 
@@ -106,10 +104,10 @@ def test_pop_clip_on_empty_stack_is_a_noop() raises:
 
 
 def test_nested_push_clip_intersects_with_parent() raises:
-    # A child clip that extends past its parent's is cut down to the
-    # overlap, not applied as-is -- the whole point of a stack over a
-    # single replaceable rect: a sub-plot can't draw outside its
-    # parent plot's region just by pushing a wider clip of its own.
+    # A child clip extending past its parent's is cut to the overlap,
+    # which is the point of a stack over a single replaceable rect: a
+    # sub-plot can't escape its parent's region by pushing a wider
+    # clip.
     var c = Canvas(20, 20, Color(0, 0, 0))
     c.push_clip(2, 2, 10, 10)  # parent: x in [2,12), y in [2,12)
     c.push_clip(5, 5, 20, 20)  # child, deliberately oversized
@@ -129,9 +127,9 @@ def test_nested_push_clip_intersects_with_parent() raises:
 
 
 def test_fill_respects_the_active_clip() raises:
-    # Canvas.fill() loops over the whole canvas calling set_pixel --
-    # proves clipping composes with existing Canvas methods too, not
-    # just free functions in canvas_mojo.shapes.
+    # Canvas.fill() loops over the whole canvas through set_pixel, so
+    # clipping composes with Canvas's own methods, not just the free
+    # functions in canvas_mojo.shapes.
     var c = Canvas(6, 6, Color(0, 0, 0))
     c.push_clip(2, 2, 2, 2)  # x in [2,4), y in [2,4)
     c.fill(Color(255, 255, 255))

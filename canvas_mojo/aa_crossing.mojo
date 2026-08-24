@@ -1,34 +1,22 @@
-"""`_AACrossing` and its own sort -- one sub-scanline crossing at a
-real-valued x (`canvas_mojo.shapes.polygon_fill`'s own `_Crossing`'s
-fractional-y counterpart: x stays `Float64`, not rounded to `Int`,
-since an AA sweep needs to place a crossing between two supersample
-columns, not just two whole pixels), plus the insertion sort both
-`fill_polygon_aa` (`canvas_mojo.shapes.polygon_fill`) and
-`fill_path_aa` (`path.mojo`) use to order one sub-scanline's own
-crossings by x before their identical left-to-right winding-number
-scan.
+"""`_AACrossing` and its sort: one sub-scanline crossing at a
+real-valued x -- polygon_fill's `_Crossing` with a fractional y, where
+x stays `Float64` rather than rounding to `Int`, since an AA sweep
+places a crossing between two supersample columns, not two whole
+pixels -- plus the insertion sort `fill_polygon_aa` and `fill_path_aa`
+both use to order a sub-scanline's crossings before their identical
+left-to-right winding scan.
 
-A shared leaf module specifically so *neither* of those two files has
-to import it from the other: `path.mojo` already imports *from*
-`canvas_mojo.shapes.polygon_fill` (real drawing primitives, not just
-this), so `canvas_mojo.shapes.polygon_fill` importing `_AACrossing`
-back from `path.mojo` would be a genuine cycle (path -> polygon_fill
--> path), not just an inconvenience -- which is why this struct and
-its sort used to be duplicated verbatim in both files instead
-(byte-identical logic, only the surrounding docstrings differed)
-rather than shared. This module has no import of its own from either,
-so both can depend on it with no cycle at all: polygon_fill ->
-aa_crossing, path -> aa_crossing, path -> polygon_fill, a clean DAG.
+A leaf module so neither file imports it from the other: `path.mojo`
+already imports drawing primitives *from* `polygon_fill`, so importing
+`_AACrossing` back the other way would be a real cycle. This module
+imports from neither, leaving a clean DAG (polygon_fill ->
+aa_crossing, path -> aa_crossing, path -> polygon_fill).
 
-Insertion sort, not a general-purpose one: one sub-scanline's own
-crossing count is always small (a handful, not the whole polygon's/
-path's point count) -- the same reasoning
-`canvas_mojo.shapes.polygon_fill`'s own `_spans_from_crossings` (a
-third, still-separate copy of this same insertion sort, over
-`_Crossing`/`Int` rather than `_AACrossing`/`Float64` -- not folded in
-here, since unifying all three into one generic sort is a bigger,
-separate change from just resolving this file's own two-copy
-duplication) already relies on for its own identical choice.
+Insertion sort, since a sub-scanline's crossing count is a handful,
+not the whole path's point count -- the same reasoning
+`polygon_fill`'s `_spans_from_crossings` uses for its own copy of this
+sort over `_Crossing`/`Int`. Unifying the two behind one generic sort
+would be a larger change than sharing this struct was.
 """
 
 

@@ -1,9 +1,5 @@
 """Tests for canvas_mojo/shapes/polygon_fill.mojo: exact pixel sets for
-known inputs, verified against hand-traced runs of the same
-algorithms. Split out of the original monolithic test_primitives.mojo
-along with canvas_mojo/primitives.mojo's own split into
-canvas_mojo/shapes/ -- see that subpackage's own module docstrings for
-why.
+known inputs, verified against hand-traced runs of the same algorithms.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -33,13 +29,10 @@ def _assert_pixel(c: Canvas, x: Int, y: Int, expected: Color, label: String) rai
 
 
 def test_fill_polygon_matches_fill_rect_with_asymmetric_corners() raises:
-    # fill_rect(x=1, y=1, width=4, height=2) fills columns 1..4
-    # (inclusive) and rows 1..2. To match exactly, fill_polygon's
-    # corners must be asymmetric: inclusive on the last column
-    # (x+width-1) but one-past on the last row (y+height) -- see the
-    # Y-extent-is-half-open explanation in fill_polygon's docstring.
-    # Verified by direct pixel comparison, not just by trusting the
-    # derivation.
+    # fill_rect(x=1, y=1, width=4, height=2) fills columns 1..4 and
+    # rows 1..2. Matching it exactly needs asymmetric polygon corners:
+    # inclusive on the last column (x+width-1), one-past on the last
+    # row (y+height) -- see fill_polygon's half-open Y-extent.
     var hard = Canvas(8, 6, BG)
     fill_rect(hard, 1, 1, 4, 2, FG)
 
@@ -60,10 +53,8 @@ def test_fill_polygon_matches_fill_rect_with_asymmetric_corners() raises:
 
 def test_fill_polygon_triangle_matches_hand_traced_rows() raises:
     # Hand-traced scanline crossings for triangle (1,1),(4,1),(1,4):
-    # row widths 4,3,2 for y=1,2,3 (y=4 excluded -- the polygon's
-    # bottom vertex is a single point there, correctly zero-width).
-    # Unlike draw_polygon's stroke-only test on this same triangle,
-    # the interior is now filled too.
+    # row widths 4,3,2 at y=1,2,3, with y=4 excluded, where the bottom
+    # vertex is a single zero-width point.
     var c = Canvas(6, 6, BG)
     var tri = List[Point]()
     tri.append(Point(1, 1))
@@ -117,16 +108,13 @@ def test_fill_polygon_blends_translucent_color_correctly() raises:
 
 
 def test_spans_from_crossings_merges_touching_spans() raises:
-    # Independently traced by hand before trusting the code: four
-    # crossings at x=[10,15,15,20] with directions [+1,-1,+1,-1] (two
-    # unrelated edges happening to cross the same row at the same
-    # rounded x=15, a real, reachable pattern for a self-intersecting
-    # shape, not a contrived one) produce, from the winding scan
-    # alone, two spans (10,15) and (15,20) that both -- correctly,
-    # given X-fill's own inclusive-inclusive convention -- include
-    # x=15, which would double-blend a translucent color there without
-    # the merge step. Confirmed the merge collapses them into one
-    # span (10,20), covering x=15 exactly once.
+    # Four crossings at x=[10,15,15,20] with directions [+1,-1,+1,-1]
+    # -- two unrelated edges crossing one row at the same rounded x=15,
+    # reachable in any self-intersecting shape. The winding scan alone
+    # gives spans (10,15) and (15,20), both of which include x=15 under
+    # the inclusive X-fill convention, double-blending a translucent
+    # color there. The merge step collapses them to (10,20), covering
+    # x=15 once.
     var crossings: List[_Crossing] = [
         _Crossing(10, 1),
         _Crossing(15, -1),
@@ -143,11 +131,9 @@ def test_fill_polygon_self_intersecting_bowtie_matches_hand_derived_spans() rais
     # A "bowtie": (0,0),(20,0),(0,20),(20,20) in this vertex order
     # crosses itself at (10,10) -- independently traced by hand:
     # both y=5 (upper triangle) and y=15 (lower triangle, symmetric)
-    # fill x=[5,15]. This is the case fill_polygon's own docstring
-    # used to warn wasn't supported; it's just a self-intersecting
-    # simple case (a genuine pinch, not an overlap) where EVEN_ODD and
-    # NONZERO happen to agree -- see the fill_path tests for a case
-    # where they don't.
+    # fill x=[5,15]. A genuine pinch rather than an overlap, so
+    # EVEN_ODD and NONZERO agree here -- see the fill_path tests for a
+    # case where they don't.
     var pts: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20), Point(20, 20)]
     var c = Canvas(21, 21, BG)
     fill_polygon(c, pts, FG)
@@ -160,10 +146,9 @@ def test_fill_polygon_self_intersecting_bowtie_matches_hand_derived_spans() rais
 
 
 def test_fill_polygon_nonzero_agrees_with_even_odd_for_a_simple_polygon() raises:
-    # The two fill rules only ever diverge where a shape's own winding
-    # number reaches 2 or more (an overlap) -- for any simple polygon,
-    # nowhere does, so they must always agree. A real property to
-    # check, not just "both compile": a triangle, both rules.
+    # The two rules diverge only where winding reaches 2 or more, which
+    # never happens in a simple polygon, so a triangle must fill
+    # identically under both.
     var pts: List[Point] = [Point(10, 10), Point(50, 10), Point(30, 50)]
     var c1 = Canvas(60, 60, BG)
     fill_polygon(c1, pts, FG, fill_rule=FillRule.EVEN_ODD)
@@ -180,9 +165,8 @@ def test_fill_polygon_nonzero_agrees_with_even_odd_for_a_simple_polygon() raises
 
 
 def test_point_in_polygon_matches_hand_derived_membership() raises:
-    # Right triangle (0,0),(20,0),(0,20) -- hypotenuse is the line
-    # x+y=20, so membership is exactly "x>=0 and y>=0 and x+y<20".
-    # Independently confirmed by hand before trusting this.
+    # Right triangle (0,0),(20,0),(0,20): the hypotenuse is x+y=20, so
+    # membership is exactly "x>=0 and y>=0 and x+y<20".
     var tri: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20)]
     assert_true(_point_in_polygon(tri, 5.0, 5.0, FillRule.EVEN_ODD))  # 10 < 20
     assert_true(not _point_in_polygon(tri, 15.0, 15.0, FillRule.EVEN_ODD))  # 30 > 20
@@ -208,12 +192,10 @@ def test_fill_polygon_aa_pixel_outside_bounding_box_is_untouched() raises:
 
 
 def test_fill_polygon_aa_zero_coverage_pixel_inside_bounding_box_is_untouched() raises:
-    # (15,15) is inside the triangle's bounding box (0..20 both axes)
-    # but has zero sub-samples inside the actual shape (15+15=30, well
-    # past the hypotenuse) -- distinct from being outside the box
-    # entirely, and worth its own test: a naive "touch every pixel in
-    # the box" implementation could get this wrong in a way the
-    # far-outside case wouldn't catch.
+    # (15,15) sits inside the bounding box but has zero sub-samples
+    # inside the shape (15+15=30, past the hypotenuse) -- a case a
+    # naive "touch every pixel in the box" implementation gets wrong
+    # and the far-outside case wouldn't catch.
     var tri: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20)]
     var c = Canvas(21, 21, BG)
     fill_polygon_aa(c, tri, FG)
@@ -221,12 +203,10 @@ def test_fill_polygon_aa_zero_coverage_pixel_inside_bounding_box_is_untouched() 
 
 
 def test_fill_polygon_aa_partial_coverage_matches_hand_computed_values() raises:
-    # Hand-verified by independently summing the 4x4 sub-sample grid
-    # (same methodology as fill_circle_aa's own equivalent test, same
-    # white-on-black setup so the resulting gray value equals the
-    # coverage fraction exactly: round(n/16 * 255)): pixel (10,10)
-    # (straddling the hypotenuse) has 6/16 covered -> alpha 96; pixel
-    # (0,10) (straddling the left edge, x=0) has 8/16 -> alpha 128.
+    # Hand-summed 4x4 sub-sample grids, white-on-black so the gray
+    # value equals the coverage fraction exactly (round(n/16 * 255)):
+    # pixel (10,10) straddles the hypotenuse at 6/16 -> alpha 96, and
+    # (0,10) straddles the left edge at 8/16 -> alpha 128.
     var tri: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20)]
     var c = Canvas(21, 21, BG)
     fill_polygon_aa(c, tri, FG)
@@ -253,24 +233,20 @@ def test_fill_polygon_aa_respects_translucent_input_color() raises:
 
 
 def test_point_in_polygon_nonzero_fills_the_overlap_of_a_bridge_connected_double_square() raises:
-    # fill_polygon (unlike fill_path) has no multiple-sub-path notion
-    # -- a bowtie's single pinch point isn't enough to show EVEN_ODD
-    # vs. NONZERO actually diverge (see fill_rule.mojo's own example
-    # docstring for why), so demonstrating real divergence on ONE
-    # closed polygon needs a shape whose winding genuinely reaches 2
-    # somewhere: two same-direction squares, A=(0,0)-(20,20) and
-    # B=(10,10)-(30,30), connected into a single closed boundary by a
-    # zero-width "bridge" edge walked out and back --
-    # (0,0)->(20,0)->(20,20)->(0,20)->(0,0)->(10,10)->(30,10)->
-    # (30,30)->(10,30)->(10,10)->[closes back to (0,0)]. The bridge's
-    # two coincident opposite-direction traversals cancel each other's
-    # winding contribution everywhere except exactly on that segment
-    # (never sampled by the test points below), so away from it this
-    # behaves exactly like the two squares independently -- confirmed
-    # by hand before trusting this: EVEN_ODD sees the overlap
-    # crossed twice (a hole), NONZERO sees the same-direction winding
-    # reach 2 there (solid), each square's own non-overlapping
-    # interior agreeing under both rules.
+    # fill_polygon has no sub-paths, and a bowtie's single pinch point
+    # can't make EVEN_ODD and NONZERO diverge, so showing divergence on
+    # one closed polygon needs a shape whose winding reaches 2: two
+    # same-direction squares, A=(0,0)-(20,20) and B=(10,10)-(30,30),
+    # joined into one boundary by a zero-width bridge walked out and
+    # back -- (0,0)->(20,0)->(20,20)->(0,20)->(0,0)->(10,10)->
+    # (30,10)->(30,30)->(10,30)->(10,10)->[closes to (0,0)].
+    #
+    # The bridge's two coincident opposite-direction traversals cancel
+    # everywhere except on that segment, never sampled below, so away
+    # from it this behaves as the two squares would independently:
+    # EVEN_ODD sees the overlap crossed twice (a hole), NONZERO sees
+    # winding reach 2 (solid), and both agree on each square's
+    # non-overlapping interior.
     var poly: List[Point] = [
         Point(0, 0), Point(20, 0), Point(20, 20), Point(0, 20), Point(0, 0),
         Point(10, 10), Point(30, 10), Point(30, 30), Point(10, 30), Point(10, 10),

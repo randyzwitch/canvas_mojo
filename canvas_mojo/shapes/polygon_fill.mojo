@@ -1,21 +1,15 @@
-"""A polygon's *interior* fill -- the scanline/winding-number
-machinery (`_Crossing`, `_Span`, `_is_inside`, `_spans_from_crossings`)
-and its two consumers here (`fill_polygon`, `fill_polygon_aa`), plus
+"""A polygon's *interior* fill: the scanline/winding-number machinery
+(`_Crossing`, `_Span`, `_is_inside`, `_spans_from_crossings`), its two
+consumers here (`fill_polygon`, `fill_polygon_aa`), and
 `_point_in_polygon`/`_polygon_row_crossings_aa`, the real-valued
-membership tests `fill_polygon_aa`'s own supersampling needs.
+membership tests `fill_polygon_aa`'s supersampling needs.
 
-Not to be confused with `draw_polygon`/`draw_polygon_aa` in
-canvas_mojo.shapes.lines, which stroke a polygon's *outline* via an
-entirely different (Bresenham/supersampled-line) algorithm -- two
-genuinely different operations that happen to share half a name; see
-that module's own docstring for why they're kept in separate files.
+Not `draw_polygon`/`draw_polygon_aa` in canvas_mojo.shapes.lines, which
+stroke a polygon's *outline* through a different algorithm entirely.
 
-`_Crossing`/`_spans_from_crossings`/`_is_inside` are also imported
-directly by path.mojo (see that module's own import list) -- shared
-with fill_path/fill_path_aa's own scanline fill there, since the two
-differ only in how they collect a row's crossings, not in how a row of
-crossings becomes filled spans; see _spans_from_crossings's own
-docstring.
+path.mojo imports `_Crossing`/`_spans_from_crossings`/`_is_inside` for
+fill_path/fill_path_aa: the two fills differ in how they collect a
+row's crossings, not in how those crossings become spans.
 """
 
 from canvas_mojo.color import Color
@@ -27,12 +21,10 @@ from canvas_mojo.aa_crossing import _AACrossing, _sort_aa_crossings_by_x
 
 struct _Crossing(ImplicitlyCopyable, Movable):
     """One scanline crossing: where an edge crosses row y, and which
-    way it's going (+1 for an edge stepping from lower y to higher y,
-    -1 the other way) -- the signed direction is what nonzero winding
-    needs; even-odd only needs the count, but a signed +/-1 per
-    crossing still flips parity exactly once per crossing regardless
-    of sign, so one representation serves both rules (see
-    _is_inside).
+    way it goes (+1 stepping from lower y to higher, -1 the other way).
+    Nonzero winding needs the sign; even-odd needs only the count, but
+    a signed +/-1 flips parity once per crossing either way, so one
+    representation serves both rules (see _is_inside).
     """
 
     var x: Int
@@ -72,30 +64,18 @@ def _spans_from_crossings(mut crossings: List[_Crossing], fill_rule: FillRule) -
     combined) and what they do with each resulting span (set_pixel one
     flat color, or query a gradient per pixel), not in this scan.
 
-    For EVEN_ODD specifically, this produces byte-identical spans to
-    the simpler "sort plain x values, pair them up (1st-2nd, 3rd-4th,
-    ...)" approach this replaced, for any simple (non-self-
-    intersecting) polygon -- verified directly against every existing
-    fill_polygon test, not just argued: a signed winding number's
-    parity flips exactly once per crossing regardless of that
-    crossing's sign, which is exactly what alternating in/out pairing
-    already assumed.
+    Under EVEN_ODD this gives byte-identical spans to plain
+    sort-and-pair (1st-2nd, 3rd-4th, ...) for any non-self-intersecting
+    polygon: winding parity flips once per crossing regardless of sign,
+    which is what alternating in/out pairing assumes.
 
-    One more step beyond the plain winding scan: adjacent spans get
-    merged wherever one's end_x touches or overlaps the next one's
-    start_x. This matters for a genuinely self-intersecting shape
-    where two unrelated edges happen to cross the same scanline at the
-    same rounded integer x -- winding can dip back to "outside" and
-    immediately back to "inside" at that exact x, which without
-    merging would produce two spans that both (correctly, given the
-    X-fill's own inclusive-inclusive convention -- see fill_polygon's
-    docstring) include that shared x, double-blending a translucent
-    color there. Confirmed this is a real, reachable case (not just a
-    theoretical one) and that merging fixes it: synthetic touching
-    crossings run directly through this function
-    (test_spans_from_crossings_merges_touching_spans) and a self-
-    intersecting bowtie polygon run through fill_polygon itself
-    (test_fill_polygon_self_intersecting_bowtie_matches_hand_derived_spans).
+    One step beyond the plain winding scan: adjacent spans merge
+    wherever one's end_x touches or overlaps the next one's start_x.
+    In a self-intersecting shape, two unrelated edges can cross one
+    scanline at the same rounded x, dipping winding to "outside" and
+    straight back to "inside" there. Unmerged, that yields two spans
+    both including that x -- correct under the inclusive X-fill
+    convention, but a double blend for a translucent color.
     """
     for i in range(1, len(crossings)):
         var key = crossings[i]
@@ -136,22 +116,18 @@ def fill_polygon(
     """Fill a polygon's interior with the scanline algorithm.
 
     For each row, find where every edge crosses it and accumulate a
-    signed winding number left to right (see _spans_from_crossings);
-    `fill_rule` (default EVEN_ODD, matching this function's original
-    and still-unchanged behavior when unspecified) decides which
-    resulting regions count as "inside" -- see fill_rule.mojo for what
-    the two rules actually mean and why NONZERO exists.
+    signed winding number left to right (see _spans_from_crossings).
+    `fill_rule` (EVEN_ODD by default) decides which regions count as
+    inside -- see fill_rule.mojo.
 
-    Y-extent per edge uses the standard half-open [min(y0,y1),
-    max(y0,y1)) convention -- required for correctness, not just a
-    style choice: without it, a vertex shared by two edges going in
-    opposite y-directions would be counted as a crossing by both
-    edges (double-counted), while a vertex that's a genuine local
-    extremum (a triangle's apex, say) needs to contribute *zero* net
-    crossings, not two. This asymmetric rule is what makes both cases
-    come out right, and it's the same convention real rasterizers use
-    (OpenGL/DirectX's "top-left fill rule") so adjacent shapes sharing
-    an edge tile without a gap or double-covered seam.
+    Y-extent per edge uses the half-open [min(y0,y1), max(y0,y1))
+    convention, which correctness depends on: without it a vertex
+    shared by two edges running in opposite y-directions counts as a
+    crossing twice, while a local extremum such as a triangle's apex
+    must contribute zero net crossings rather than two. This is the
+    same rule real rasterizers use (OpenGL/DirectX's "top-left fill
+    rule"), so adjacent shapes sharing an edge tile without a gap or a
+    double-covered seam.
 
     One concrete, surprising-if-undocumented consequence: a polygon's
     bottom-most row, when it's a horizontal edge (as in any axis-
@@ -164,14 +140,10 @@ def fill_polygon(
     inclusive; only the Y-extent per edge is half-open. Verified
     exactly against fill_rect with those corners.)
 
-    A self-intersecting polygon is fully supported now (this
-    function's own docstring used to warn it wasn't) -- under either
-    fill rule, every pixel gets exactly one set_pixel call per row,
-    never two, including right at a self-intersection: see
-    _spans_from_crossings' own docstring for the specific case (two
-    unrelated edges crossing the same row at the same rounded x) that
-    needed an explicit span-merge step, not just the winding scan
-    alone, to guarantee this.
+    A self-intersecting polygon is fully supported: under either fill
+    rule every pixel gets exactly one set_pixel call per row, including
+    at the intersection itself -- see _spans_from_crossings on the
+    span-merge step that guarantees it.
     """
     var n = len(points)
     if n < 3:
@@ -208,23 +180,17 @@ def fill_polygon(
 
 
 def _point_in_polygon(points: List[Point], fx: Float64, fy: Float64, fill_rule: FillRule) -> Bool:
-    """The same winding-number membership test fill_polygon's per-row
-    crossing scan uses, generalized from an integer scanline to one
-    arbitrary real-valued point -- the analytic coverage test
-    fill_polygon_aa's supersampling needs (the same relationship
-    fill_circle's integer distance test has to fill_circle_aa's
-    real-valued one).
+    """fill_polygon's winding-number membership test generalized from
+    an integer scanline to one arbitrary real-valued point, which is
+    what fill_polygon_aa's supersampling needs.
 
-    A horizontal ray from (fx, fy) extended in the +x direction:
-    every edge crossing the line y=fy at an x strictly greater than
-    fx contributes its signed direction to a running winding number,
-    same half-open Y-extent convention ([min(y0,y1), max(y0,y1)))
-    fill_polygon's own row scan uses and for the identical reason (a
-    shared vertex between opposite-direction edges must count once,
-    not twice). `_is_inside(winding, fill_rule)` decides membership --
-    the same function fill_polygon's spans already use, so a hard-
-    edged and AA fill agree on where a shape's boundary is, not just
-    approximately.
+    A horizontal ray from (fx, fy) in the +x direction: every edge
+    crossing y=fy at an x strictly greater than fx contributes its
+    signed direction to a running winding number, under the same
+    half-open Y-extent convention and for the same reason.
+    `_is_inside(winding, fill_rule)` decides membership -- the function
+    fill_polygon's spans use, so hard-edged and AA fills agree exactly
+    on where a boundary is.
     """
     var winding = 0
     var n = len(points)
@@ -246,11 +212,9 @@ def _point_in_polygon(points: List[Point], fx: Float64, fy: Float64, fill_rule: 
 
 
 def _polygon_row_crossings_aa(points: List[Point], fy: Float64) -> List[_AACrossing]:
-    """_point_in_polygon's own per-sample ray-cast, factored out to run
-    once per sub-scanline instead of once per sub-pixel sample -- see
-    fill_polygon_aa's own docstring for why this is what makes its
-    sweep sub-quadratic (the identical technique, and the identical
-    reasoning, as path.mojo's fill_path_aa/_row_crossings_aa).
+    """_point_in_polygon's per-sample ray-cast, hoisted to run once per
+    sub-scanline -- the technique path.mojo's fill_path_aa uses, and
+    what keeps fill_polygon_aa's sweep sub-quadratic.
     """
     var crossings = List[_AACrossing]()
     var n = len(points)
@@ -285,35 +249,19 @@ def fill_polygon_aa(
     visited exactly once, so there's no double-blend hazard the way a
     naive per-edge fill would have.
 
-    Closes the one inconsistency left once every other filled
-    primitive (circle/ellipse/arc/ring) already had an AA companion:
-    an arbitrary filled shape -- the general case an area chart's
-    region or a custom marker boundary actually is -- could only ever
-    render hard-edged. `draw_polygon_aa` already existed, but only as
-    an AA *outline*; this is the fill fill_polygon itself never had.
+    Distinct from `draw_polygon_aa`, which is an AA *outline*.
 
-    Same pixel-centered-AT-its-integer-coordinate convention every
-    other AA primitive here uses (not a unit square with the pixel at
-    its corner), and the same `fill_rule` parameter fill_polygon
-    itself takes, sharing `_is_inside` so the hard-edged and AA fills
-    of the identical shape agree on where the boundary is.
+    Same pixel-centered-at-its-integer-coordinate convention as every
+    other AA primitive here, and the same `fill_rule` fill_polygon
+    takes, sharing `_is_inside` so the two agree on the boundary.
 
-    Swept per sub-scanline (_polygon_row_crossings_aa), not per
-    sub-pixel sample via a fresh _point_in_polygon ray-cast -- the
-    identical rewrite, for the identical reason, path.mojo's own
-    fill_path_aa already went through (see that function's own
-    docstring for the full complexity argument: O(pixels *
-    supersample^2 * edges) collapses to O(pixels * supersample) once a
-    sub-scanline's crossings are collected once and swept left-to-right
-    with a single forward-only pointer instead of re-scanned per
-    sample). `_point_in_polygon` itself is untouched -- still the
-    tested, from-scratch reference implementation this sweep's own
-    output must agree with pixel-for-pixel.
+    Swept per sub-scanline (_polygon_row_crossings_aa) rather than per
+    sub-pixel sample: see fill_path_aa for the complexity argument.
+    `_point_in_polygon` remains the reference implementation this
+    sweep's output must match pixel for pixel.
 
-    Not fused with fill_polygon behind an `antialias: Bool` -- see
-    canvas_mojo.shapes.lines's own module docstring for why that split
-    is kept visible everywhere else (a real complexity-class jump per
-    pixel), the same reasoning applies here.
+    Not fused with fill_polygon behind an `antialias: Bool`, for the
+    reason canvas_mojo.shapes.lines gives.
     """
     var n = len(points)
     if n < 3:

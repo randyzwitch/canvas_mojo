@@ -1,26 +1,20 @@
 """Tests for canvas_mojo/text/glyph_outline.mojo.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
-alias) to run -- same real-machine dependency tests/
-test_text.mojo and test_font_discovery.mojo already document.
+alias), the same real-machine dependency test_text.mojo and
+test_font_discovery.mojo document.
 
-Locked-in values below are all re-measured against this machine's real
-DejaVu Sans through the native `ttf.mojo` path specifically, not
-carried over from the earlier FreeType-backed version of this module:
-`num_glyphs`/`units_per_EM`/`ascender`/`descender` match this exact
-font's well-known real metrics (the same values `ttf.mojo`'s own
-from-scratch Python-oracle cross-check already confirmed). Glyph
-metrics ("I"'s width/height/advance at size 60) do *not* match the old
-FreeType-hinted values exactly anymore -- a real, understood,
-expected difference documented at each assertion below, not a
-regression: FreeType's default hinting rounds thin stems (like "I"'s
-own single vertical stroke) to whole pixels for on-screen crispness;
-this module's native path never hints, by design (see `ttf.mojo`'s
-own module docstring for why). Every "I"-at-size-60 value here is
-exact -- `raw_units * 60 / 2048` for `units_per_EM=2048` and any
-integer `raw_units` is exactly representable in `Float64` (2048 is a
-power of two), so these are provable exact arithmetic, not values
-needing a tolerance.
+Locked-in values are measured against this machine's DejaVu Sans
+through the native `ttf.mojo` path:
+`num_glyphs`/`units_per_EM`/`ascender`/`descender` match the font's
+well-known metrics, which `ttf.mojo`'s Python oracle confirms. Glyph
+metrics ("I"'s width/height/advance at size 60) are unhinted and so
+differ slightly from a hinting rasterizer's, which rounds thin stems
+like "I"'s single stroke to whole pixels.
+
+Every "I"-at-size-60 value is exact rather than tolerance-based:
+`raw_units * 60 / 2048` is exactly representable in `Float64` for any
+integer `raw_units`, since 2048 is a power of two.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -44,12 +38,11 @@ def _sans_face(pixel_size: Int) raises -> TTFFace:
 
 
 def test_line_metrics_match_known_font_metrics() raises:
-    # DejaVu Sans's real metrics: units_per_EM=2048, ascender=1901,
-    # descender=-483 (font design units) -- confirmed via ttf.mojo's
-    # own from-scratch Python-oracle cross-check. At 60px: exactly
-    # 1901*60/2048 = 55.693359375 and -483*60/2048 = -14.150390625 --
-    # exact arithmetic (2048 is a power of two), not an approximation,
-    # so this is a real equality check, not a tolerance-based one.
+    # DejaVu Sans's metrics in font design units: units_per_EM=2048,
+    # ascender=1901, descender=-483, per ttf.mojo's Python oracle. At
+    # 60px that's exactly 1901*60/2048 = 55.693359375 and
+    # -483*60/2048 = -14.150390625 -- exact, since 2048 is a power of
+    # two, so equality rather than tolerance.
     var face = _sans_face(60)
     var lm = face_line_metrics(face)
     assert_equal(lm.ascender, 55.693359375)
@@ -58,11 +51,8 @@ def test_line_metrics_match_known_font_metrics() raises:
 
 
 def test_line_metrics_without_a_size_raises() raises:
-    # Confirmed via probe, not assumed: without set_pixel_size, this
-    # doesn't crash -- it raises explicitly (see ttf.mojo's own
-    # TTFFace.scale docstring), the same "don't silently trust an
-    # unset size" stance the FreeType-backed version of this module
-    # already took.
+    # Without set_pixel_size this raises explicitly (see
+    # TTFFace.scale) rather than measuring at some defaulted size.
     var path = resolve_font_file("Sans")
     var face = TTFFace(path)
     var raised = False
@@ -75,15 +65,10 @@ def test_line_metrics_without_a_size_raises() raises:
 
 
 def test_glyph_metrics_i_at_size_60() raises:
-    # "I" at size 60 in Sans -- re-measured against the native,
-    # unhinted path specifically (see this file's own module
-    # docstring for why these differ from the old FreeType-hinted
-    # values, and why they're nonetheless exact rather than
-    # tolerance-based): width=5.91796875 (raw 202 units -- DejaVu
-    # Sans's own "I" stem, unrounded), height=43.740234375 (raw 1492
-    # units), advance=17.6953125 (raw 604 units, matching ttf.mojo's
-    # own test_ttf.mojo... this is the same font/glyph, cross-checked
-    # independently there too).
+    # "I" at size 60 in Sans, unhinted: width=5.91796875 (raw 202
+    # units, DejaVu Sans's unrounded "I" stem), height=43.740234375
+    # (raw 1492), advance=17.6953125 (raw 604, which test_ttf.mojo
+    # cross-checks against the same font).
     var face = _sans_face(60)
     var gm = glyph_metrics(face, 73)  # 'I'
     assert_equal(gm.width, 5.91796875)
@@ -104,30 +89,23 @@ def test_glyph_metrics_without_a_size_raises() raises:
 
 
 def test_i_glyph_outline_is_a_simple_rectangle() raises:
-    # Confirmed via probe: exactly 1 contour, 4 points, all on-curve
-    # (no curves in a capital I) -- decomposes to move_to + 3x line_to
-    # + a closing line_to back to the start + close(), 6 commands
-    # total. Locked in here as a structural regression check -- the
-    # exact same fact ttf.mojo's own test_ttf.mojo independently
-    # confirms at the raw-outline level (this test confirms it survives
-    # the full path-decomposition step too).
+    # Exactly 1 contour, 4 points, all on-curve (a capital I has no
+    # curves), decomposing to move_to + 3x line_to + a closing line_to
+    # + close(): 6 commands. test_ttf.mojo confirms the same at the
+    # raw-outline level; this checks it survives decomposition.
     var face = _sans_face(60)
     var p = glyph_path(face, 73, 0.0, 0.0)  # 'I'
     assert_equal(len(p.commands), 6)
 
 
 def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
-    # The real end-to-end check: decompose a genuinely curved,
-    # multi-contour glyph ('O' has an outer and inner contour) and
-    # rasterize it through this package's own fill_path_aa -- no
-    # FreeType, no Cairo, no linked font-rendering library anywhere in
-    # this call chain. A correct render has ink (the ring itself), a
-    # real hole at the visual center (the inner contour correctly
-    # punched via fill_path_aa's default EVEN_ODD rule), and covers a
-    # plausible fraction of its own bounding box (a ring covers
-    # meaningfully less than a solid disc would, but nowhere near
-    # zero) -- confirmed by direct pixel inspection, the same rigor
-    # tests/test_text.mojo's own ink-bbox checks use.
+    # The end-to-end check: decompose a curved multi-contour glyph
+    # ('O' has an outer and an inner contour) and rasterize it through
+    # fill_path_aa, with no linked font library in the call chain. A
+    # correct render has ink in the ring, a hole at the visual center
+    # from the inner contour under the default EVEN_ODD rule, and
+    # covers a plausible fraction of its bounding box -- less than a
+    # solid disc, nowhere near zero.
     var face = _sans_face(40)
     var gm = glyph_metrics(face, 79)  # 'O'
     var c = Canvas(60, 60, BG)
@@ -149,10 +127,9 @@ def test_o_glyph_renders_a_round_shape_with_a_hole() raises:
     var center_pixel = c.get_pixel(center_x, center_y)
     assert_true(center_pixel.r == BG.r and center_pixel.g == BG.g and center_pixel.b == BG.b)
 
-    # A ring's own ink is a real fraction of its bounding box, but
-    # nowhere near all of it (that would mean the hole didn't get
-    # punched) or almost none of it (that would mean barely anything
-    # rendered at all).
+    # A ring's ink is a real fraction of its bounding box: all of it
+    # would mean the hole wasn't punched, almost none that barely
+    # anything rendered.
     var bbox_area = Int(gm.width + 2.0) * Int(gm.height + 2.0)
     assert_true(ink_pixels > bbox_area // 10)
     assert_true(ink_pixels < bbox_area * 8 // 10)
@@ -164,11 +141,9 @@ def test_has_glyph_true_for_a_real_character() raises:
 
 
 def test_has_glyph_false_for_a_codepoint_this_font_lacks() raises:
-    # Confirmed via probe: DejaVu Sans has no CJK coverage -- cmap
-    # lookup returns glyph index 0 (.notdef) for it, not a real glyph.
-    # If this ever starts failing because DejaVu Sans gained CJK
-    # glyphs, that's a real environment change, not a sign has_glyph
-    # itself is wrong.
+    # DejaVu Sans has no CJK coverage, so cmap lookup returns glyph
+    # index 0 (.notdef). A failure here means the installed font gained
+    # CJK glyphs, not that has_glyph is wrong.
     var face = _sans_face(24)
     assert_true(not has_glyph(face, 0x4E2D))  # 中
 

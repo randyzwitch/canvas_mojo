@@ -1,58 +1,39 @@
-"""Native TrueType (`sfnt`/`glyf`) font file parser -- reads a font
-file's own binary tables directly (table directory, `head`, `maxp`,
-`hhea`, `hmtx`, `cmap`, `glyf`, `loca`) rather than linking against
-FreeType. Same "translate the real spec faithfully" methodology this
-package already used for FreeType's own `FT_Outline_Decompose`
-(`glyph_outline.mojo`) and zlib's own `puff.c` (`io/deflate.mojo`):
-every field offset and decode algorithm below was transcribed directly
-from Microsoft's OpenType 1.9.1 specification (learn.microsoft.com/
-typography/opentype/spec/{otff,head,maxp,hhea,hmtx,cmap,loca,glyf}),
-not guessed at or reconstructed from memory -- and cross-checked
-against a real font file via an independent Python oracle (using only
-`struct.unpack`, no font libraries) before being trusted here, the
-same "oracle, not just self-consistent" discipline the DEFLATE/PNG
-work used zlib for.
+"""Native TrueType (`sfnt`/`glyf`) font file parser: reads a font file's
+binary tables directly (table directory, `head`, `maxp`, `hhea`,
+`hmtx`, `cmap`, `glyf`, `loca`) rather than linking a font library.
+Every field offset and decode algorithm below is transcribed from
+Microsoft's OpenType 1.9.1 specification (learn.microsoft.com/
+typography/opentype/spec/{otff,head,maxp,hhea,hmtx,cmap,loca,glyf}) and
+cross-checked against a real font file through an independent Python
+oracle using only `struct.unpack` -- the same faithful-translation
+discipline `io/deflate.mojo` applies to zlib's `puff.c`.
 
-Deliberately scoped, matching this package's own established v1-scope
-pattern (see `io/png.mojo`'s own docstring for the precedent):
+Scope, in the same spirit as `io/png.mojo`'s:
 
 - **TrueType (`glyf`) outlines only.** A font whose `sfntVersion` is
-  `OTTO` (CFF/OpenType-CFF outlines) raises a clear, specific error
-  rather than being silently misread -- CFF's own outline encoding
-  (a completely different Type 2 charstring bytecode, cubic Beziers
-  natively rather than TrueType's quadratic-with-implied-midpoints)
-  is real, addressable scope if a concrete font needs it, not
-  attempted speculatively ahead of one.
-- **No hinting.** FreeType's own hinting bytecode interpreter (plus
-  its auto-hinter for unhinted fonts) is a large, separate subsystem;
-  skipped here on purpose, not by oversight -- hinting mostly matters
-  for crisp rendering at small pixel sizes on non-antialiased
-  displays, and every glyph this package renders already goes through
-  `fill_path_aa`'s own supersampled coverage AA, which makes unhinted
-  outlines look correct at the sizes a chart actually uses (verified
-  directly, not assumed -- see this module's own test file).
-- **Variable fonts** (`fvar`/`gvar`) aren't specially handled, but
-  don't need to be: `glyf`/`loca` still hold the font's default
-  (non-varied) outline data regardless, and this module never reads
-  `gvar`'s own per-instance deltas, so a variable font's default
-  instance is what gets read automatically, by omission rather than
-  explicit support.
-- **Composite glyphs** (accented characters built from a base glyph +
-  mark, e.g. glyph "é" = "e" + combining acute) are supported,
-  including the scale/2x2-transform component flags -- point-matching
-  placement mode (`ARGS_ARE_XY_VALUES` unset) is not, and raises a
-  clear error, since every composite glyph actually encountered in
-  real fonts during this module's own verification used the far more
-  common xy-offset mode.
+  `OTTO` (CFF/OpenType-CFF outlines) raises a clear error rather than
+  being misread. CFF's outline encoding is a different Type 2
+  charstring bytecode, natively cubic where TrueType is
+  quadratic-with-implied-midpoints.
+- **No hinting.** A hinting bytecode interpreter (plus an auto-hinter
+  for unhinted fonts) is a large separate subsystem. Hinting mostly
+  matters for crisp rendering at small sizes on non-antialiased
+  displays, and every glyph here goes through `fill_path_aa`'s
+  supersampled coverage AA, which keeps unhinted outlines correct at
+  the sizes a chart uses.
+- **Variable fonts** (`fvar`/`gvar`) need no special handling:
+  `glyf`/`loca` hold the default non-varied outlines, and this module
+  never reads `gvar`'s per-instance deltas, so a variable font's
+  default instance is what gets read.
+- **Composite glyphs** (accented characters built from a base plus a
+  mark, "é" = "e" + combining acute) are supported, including the
+  scale/2x2-transform component flags. Point-matching placement
+  (`ARGS_ARE_XY_VALUES` unset) raises: every composite glyph found in
+  real fonts here used the far more common xy-offset mode.
 
-Real, non-hypothetical fact this module's own test file locks in, not
-just asserted: parsing DejaVu Sans natively gives `unitsPerEm=2048`,
-`numGlyphs=6253`, `ascender=1901`, `descender=-483` -- the exact same
-values already independently verified against FreeType itself
-elsewhere in this codebase (`glyph_outline.mojo`'s own module
-docstring), not a coincidence: both are reading the same real font
-file's own real data, just through two completely different
-implementations.
+Locked in by this module's tests: parsing DejaVu Sans gives
+`unitsPerEm=2048`, `numGlyphs=6253`, `ascender=1901`, `descender=-483`,
+the same values a Python oracle reads from the same bytes.
 """
 
 from canvas_mojo.path import Path
@@ -95,8 +76,8 @@ def _u32(data: List[UInt8], pos: Int) raises -> Int:
 
 
 def _f2dot14(data: List[UInt8], pos: Int) raises -> Float64:
-    """16-bit signed 2.14 fixed-point (component-transform scale
-    values) -- OpenType spec's own `F2DOT14` type.
+    """16-bit signed 2.14 fixed-point, OpenType's `F2DOT14`, used for
+    component-transform scale values.
     """
     return Float64(_i16(data, pos)) / 16384.0
 
@@ -110,16 +91,15 @@ def _tag_at(data: List[UInt8], pos: Int) raises -> String:
 
 struct RawGlyphOutline(Movable):
     """A decoded glyph outline in plain-`List` form: on-curve/off-curve
-    points plus per-contour end indices, the same logical shape
-    FreeType's own `FT_Outline` exposes (points + tags + contour-end
-    array) but as owned `List`s instead of raw C pointers, so this
-    module has zero FFI/pointer surface of its own. `on_curve[i]`
-    corresponds to `points_x[i]`/`points_y[i]`; `contour_ends[c]` is
-    the inclusive index of the last point of contour `c`, matching
-    `glyf`'s own `endPtsOfContours` convention exactly (and OpenType's
-    own composite-glyph point renumbering, so a composite glyph's
-    contours from every component land in this same flat structure
-    with no special-casing needed by a caller).
+    points plus per-contour end indices -- FreeType's `FT_Outline`
+    shape (points, tags, contour ends) as owned `List`s rather than raw
+    C pointers, so this module has no pointer surface.
+
+    `on_curve[i]` corresponds to `points_x[i]`/`points_y[i]`, and
+    `contour_ends[c]` is the inclusive index of contour `c`'s last
+    point, matching `glyf`'s `endPtsOfContours` and OpenType's
+    composite-glyph point renumbering -- so every component's contours
+    land in this one flat structure with no special-casing.
     """
 
     var points_x: List[Int]
@@ -134,17 +114,15 @@ struct RawGlyphOutline(Movable):
         self.contour_ends = List[Int]()
 
     def bounding_box(self) -> Tuple[Int, Int, Int, Int]:
-        """(xMin, yMin, xMax, yMax) across every point -- computed
-        directly from the point coordinate data, exactly how the
-        OpenType spec itself defines a glyph's bounding box ("obtained
-        directly from the point coordinate data for the glyph, comparing
-        all on-curve and off-curve points"), rather than trusting the
-        `glyf` header's own xMin/yMin/xMax/yMax fields -- those exist
-        for simple glyphs, but scanning the (already fully assembled,
-        post-transform) point list works uniformly for composite glyphs
-        too, with no extra table reads or format-specific cases needed.
-        A glyph with no points (whitespace) returns all zeros, matching
-        FreeType's own convention for an empty outline's metrics.
+        """(xMin, yMin, xMax, yMax) across every point, computed from
+        the point coordinate data the way the OpenType spec defines a
+        glyph's bounding box ("obtained directly from the point
+        coordinate data for the glyph, comparing all on-curve and
+        off-curve points"), rather than from the `glyf` header's
+        xMin/yMin/xMax/yMax. Those exist only for simple glyphs, while
+        scanning the assembled post-transform point list also covers
+        composite ones. A glyph with no points (whitespace) returns all
+        zeros.
         """
         if len(self.points_x) == 0:
             return (0, 0, 0, 0)
@@ -167,10 +145,8 @@ struct RawGlyphOutline(Movable):
 
 
 struct TTFFace(Movable):
-    """A parsed TrueType font file -- owns the raw file bytes plus the
-    handful of table offsets/global metrics this module actually
-    reads. See this module's own docstring for exactly which tables
-    and which parts of them.
+    """A parsed TrueType font file: the raw file bytes plus the table
+    offsets and global metrics this module reads.
     """
 
     var data: List[UInt8]
@@ -187,12 +163,10 @@ struct TTFFace(Movable):
     var _hmtx_offset: Int
     var _pixel_size: Int
     """-1 until `set_pixel_size` is called -- deliberately not a valid
-    size by default, the same "no unset-size default to silently trust"
-    stance this codebase's now-removed FreeType FFI binding needed for
-    the same reason (confirmed via probe there that an unset size
-    doesn't crash on its own, it just silently returns a small,
-    wrong-looking size instead -- the same trap worth guarding against
-    here, not a new concern this module introduces).
+    size by default. A rasterizer that defaults an unset size doesn't
+    fail loudly; it silently measures and draws at a small,
+    wrong-looking one, so every read of this goes through `scale()`,
+    which raises instead.
     """
 
     def __init__(out self, path: String) raises:
@@ -262,18 +236,15 @@ struct TTFFace(Movable):
         self.data = data^
 
     def set_pixel_size(mut self, pixel_size: Int):
-        """Set this face's own active rasterization size, in pixels --
-        must be called before `scale()`/any pixel-space metric or
-        outline query.
+        """Set this face's active rasterization size in pixels. Must
+        precede `scale()` or any pixel-space metric or outline query.
         """
         self._pixel_size = pixel_size
 
     def scale(self) raises -> Float64:
-        """Raw font-design-units -> pixels conversion factor at this
-        face's own active pixel size (`pixel_size / units_per_em`) --
-        raises if `set_pixel_size` was never called, the same "don't
-        silently trust an unset size" stance this codebase's
-        now-removed FreeType FFI binding took for the same reason.
+        """Font-design-units -> pixels conversion factor at the active
+        pixel size (`pixel_size / units_per_em`). Raises if
+        `set_pixel_size` was never called (see `_pixel_size`).
         """
         if self._pixel_size < 0:
             raise Error(
@@ -283,24 +254,20 @@ struct TTFFace(Movable):
         return Float64(self._pixel_size) / Float64(self.units_per_em)
 
     def advance_width(self, glyph_index: Int) raises -> Int:
-        """`hmtx`'s own "if fewer hMetrics entries than glyphs, the
-        last entry's advance width repeats for every remaining glyph"
-        rule (spec's own explicit optimization for monospace/large
-        fonts) -- not a simplification made here.
+        """`hmtx`'s rule that when there are fewer hMetrics entries
+        than glyphs, the last entry's advance width repeats for the
+        rest -- the spec's optimization for monospace and large fonts.
         """
         var index = glyph_index if glyph_index < self.num_h_metrics else self.num_h_metrics - 1
         return _u16(self.data, self._hmtx_offset + index * 4)
 
     def glyph_index_for_codepoint(self, codepoint: Int) raises -> Int:
-        """Look up `codepoint` in this font's own `cmap` table,
-        preferring a full-Unicode format 12 subtable (covers
-        supplementary planes -- emoji, some CJK) over a
-        BMP-only format 4 one, matching real encoding-record
-        priority real text stacks already use (see this module's own
-        docstring / OpenType `cmap` spec's own "Windows platform"
-        section). Returns 0 (".notdef") if no installed subtable maps
-        this codepoint, the same "not found" convention `cmap` itself
-        defines.
+        """Look up `codepoint` in the `cmap` table, preferring a
+        full-Unicode format 12 subtable (which covers supplementary
+        planes: emoji, some CJK) over a BMP-only format 4 one, the
+        encoding-record priority real text stacks use. Returns 0
+        (".notdef") when no subtable maps the codepoint, `cmap`'s
+        not-found convention.
         """
         var cmap_off = self._cmap_offset
         var num_tables = _u16(self.data, cmap_off + 2)
@@ -315,11 +282,10 @@ struct TTFFace(Movable):
             var absolute = cmap_off + subtable_offset
             var format = _u16(self.data, absolute)
             # Prefer format 12 (full Unicode) over format 4 (BMP-only)
-            # over anything else -- matches the actual priority DejaVu
-            # Sans's own cmap table exposes for exactly this reason
-            # (confirmed via probe, not assumed): platform 0/encoding 4
-            # and platform 3/encoding 10 both point at its one format-12
-            # subtable, which is the superset of what its format-4
+            # over anything else, the priority DejaVu Sans's cmap
+            # exposes: platform 0/encoding 4 and platform 3/encoding 10
+            # both point at its one format-12 subtable, a superset of
+            # what its format-4
             # subtable covers.
             var is_unicode_platform = platform_id == 0 or (platform_id == 3 and (encoding_id == 1 or encoding_id == 10))
             if is_unicode_platform:
@@ -361,7 +327,7 @@ struct TTFFace(Movable):
                 else:
                     # "This obscure indexing trick works because
                     # glyphIdArray immediately follows idRangeOffset in
-                    # the font file" -- OpenType spec's own words,
+                    # the font file" -- the OpenType spec's words,
                     # translated directly: glyphId = *(idRangeOffset[i]/2
                     # + (c - startCode[i]) + &idRangeOffset[i]).
                     var glyph_addr = id_range_offset_off + i * 2 + range_offset + (codepoint - start_code) * 2
@@ -380,9 +346,9 @@ struct TTFFace(Movable):
     def _lookup_cmap_format12(self, subtable_offset: Int, codepoint: Int) raises -> Int:
         var num_groups = _u32(self.data, subtable_offset + 12)
         var groups_off = subtable_offset + 16
-        # Linear scan -- groups are sorted per spec, so a binary search
-        # would be faster, but correctness first: num_groups is small
-        # (tens, not thousands) for every real font checked so far.
+        # Linear scan. Groups are sorted per spec, so a binary search
+        # would be faster, but num_groups is in the tens for every real
+        # font checked.
         for i in range(num_groups):
             var group_off = groups_off + i * 12
             var start_char = _u32(self.data, group_off)
@@ -443,10 +409,10 @@ struct TTFFace(Movable):
         var instruction_length = _u16(self.data, pos)
         pos += 2 + instruction_length  # skip instructions -- no hinting, see module docstring
 
-        # Flags: packed with a repeat-count byte -- decode into one
-        # flag byte per point (REPEAT_FLAG, mask 0x08) before reading
-        # any coordinates, matching the spec's own required order
-        # (flags array fully precedes both coordinate arrays).
+        # Flags are packed with a repeat-count byte (REPEAT_FLAG, mask
+        # 0x08). Decode one flag byte per point before reading
+        # coordinates: the spec puts the whole flags array ahead of
+        # both coordinate arrays.
         var flags = List[Int](capacity=num_points)
         while len(flags) < num_points:
             var f = _u8(self.data, pos)
@@ -544,13 +510,12 @@ struct TTFFace(Movable):
                 var cx = Float64(child.points_x[i])
                 var cy = Float64(child.points_y[i])
                 # x' = xscale*x + scale10*y ; y' = scale01*x + yscale*y
-                # -- OpenType spec's own component-transform formula,
-                # translated directly. UNSCALED_COMPONENT_OFFSET is the
-                # documented Microsoft/Apple default (used whenever
-                # neither offset flag is explicitly set, which is every
-                # real font checked so far): the arg1/arg2 offset is in
-                # the *parent's* coordinate system, added after scaling,
-                # not scaled itself.
+                # -- OpenType's component-transform formula.
+                # UNSCALED_COMPONENT_OFFSET is the documented
+                # Microsoft/Apple default when neither offset flag is
+                # set: the arg1/arg2 offset is in the *parent's*
+                # coordinate system, added after scaling rather than
+                # scaled itself.
                 var tx = xscale * cx + scale10 * cy
                 var ty = scale01 * cx + yscale * cy
                 outline.points_x.append(Int(round(tx)) + arg1)
@@ -576,15 +541,15 @@ def _native_py(pen_y: Float64, raw: Int, scale: Float64) -> Float64:
 def _decompose_contour_native(
     outline: RawGlyphOutline, first: Int, last: Int, mut path: Path, pen_x: Float64, pen_y: Float64, scale: Float64
 ) raises:
-    """Same algorithm this codebase's now-removed FreeType FFI binding
-    used (itself a direct translation of FreeType's own
-    `FT_Outline_Decompose`), adapted to this module's plain-`List`-based
-    `RawGlyphOutline` instead of FreeType's pointer-based `FT_Outline`
-    -- and simplified accordingly: `glyf` outlines are always quadratic
-    (on-curve/off-curve only), never cubic, so the CUBIC branch that
-    algorithm needs (FreeType's outline API is format-agnostic; it can
-    hand back cubic control points for CFF-outline fonts) simply never
-    applies to native TrueType parsing and is omitted, not forgotten.
+    """A direct translation of FreeType's `FT_Outline_Decompose`
+    algorithm, against this module's plain-`List`-based
+    `RawGlyphOutline` rather than a pointer-based `FT_Outline` -- and
+    simplified accordingly: `glyf` outlines are always quadratic
+    (on-curve/off-curve only), never cubic, so that algorithm's CUBIC
+    branch (needed only because FreeType's outline API is
+    format-agnostic and can hand back cubic control points for
+    CFF-outline fonts) never applies here and is omitted, not
+    forgotten.
     """
     if last < first:
         return
@@ -677,11 +642,10 @@ def _decompose_contour_native(
 
 def outline_to_path(outline: RawGlyphOutline, pen_x: Float64, pen_y: Float64, scale: Float64) raises -> Path:
     """One glyph's full outline (all contours) as a `Path`, positioned
-    so its own local (0, 0) lands at (pen_x, pen_y) -- same convention
-    `glyph_outline.mojo`'s own `glyph_path` uses.
-    `scale` converts raw font-design-units (this font's own
-    `units_per_em` grid) to pixels -- typically `pixel_size /
-    face.units_per_em`.
+    so its local (0, 0) lands at (pen_x, pen_y), the convention
+    `glyph_outline.glyph_path` uses. `scale` converts font-design-units
+    on this font's `units_per_em` grid to pixels, typically
+    `pixel_size / face.units_per_em`.
     """
     var path = Path()
     var last = -1

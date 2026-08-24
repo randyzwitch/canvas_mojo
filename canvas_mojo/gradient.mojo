@@ -1,35 +1,15 @@
-"""Color gradients -- the minimal fill-source abstractions that justify
-existing: fill_rect_gradient/fill_path_gradient (LinearGradient) and
-fill_rect_radial_gradient/fill_path_radial_gradient (RadialGradient)
-are the only gradient-aware fill entry points (see canvas_mojo.shapes.
-rects/path.mojo), not every fill_* primitive retrofitted with a gradient
-variant. Narrower than that on purpose: these cover the concrete
-chart use cases (bar/area fills, and radial ones like bubble/donut
-centers or a radial legend swatch) this exists for; circle/ellipse/
-polygon gradient variants are easy to add later if something concrete
-needs one, not built speculatively now.
+"""Color gradients: `LinearGradient` and `RadialGradient`, consumed by
+fill_rect_gradient/fill_path_gradient and their radial counterparts
+(canvas_mojo.shapes.rects, path.mojo). Those four are the only
+gradient-aware fills; circle/ellipse/polygon variants aren't built.
 
-Both gradient kinds reduce a point to a single projected position `t`
-(LinearGradient: distance along an axis; RadialGradient: distance from
-a center, relative to a radius) and then do the *identical* stop
-lookup and interpolation on that `t` -- factored into the shared
-`_color_at_t` below rather than duplicated, since that part of the
-math has nothing gradient-shape-specific about it. The projection
-itself stays on each struct, not shared, since it's the one part that
-actually differs; kept as two separate structs/functions rather than
-one generic "Gradient" type, matching this codebase's existing
-preference for distinct named functions over a shared type dispatched
-by a flag or trait (the same reason `LinearGradient` got its own
-`fill_*_gradient` functions instead of being folded into `fill_rect`/
-`fill_path` in the first place).
+Both kinds reduce a point to a projected position `t` -- distance along
+an axis (linear) or from a center relative to a radius (radial) -- then
+share `_color_at_t` for stop lookup and interpolation. Only the
+projection differs, so only the projection lives on each struct.
 
-Only "pad" extend behavior is supported for both -- a point beyond
-either endpoint (linear) or outside the radius (radial) gets that
-endpoint's/edge's own color, clamped, not tiled or mirrored
-(repeat/reflect extend modes real gradient APIs also offer) -- the
-common case for a bar/area/bubble fill, where "the gradient's edges
-are the shape's own edges" is what's actually wanted, not a repeating
-pattern.
+Extend behavior is "pad" only: a point past either endpoint or outside
+the radius takes that edge's color, clamped. No repeat or reflect.
 """
 
 from std.math import sqrt
@@ -47,36 +27,26 @@ struct _GradientStop(ImplicitlyCopyable, Movable):
 
 
 def _round_channel(value: Float64) -> UInt8:
-    # Channel values are always non-negative here (interpolated
-    # between two UInt8s), so a plain +0.5 truncation is standard
-    # round-to-nearest -- no away-from-zero complexity needed the way
-    # geometry.py's pixel coordinates (which can be negative) require.
+    # Channel values are non-negative here (interpolated between two
+    # UInt8s), so +0.5 truncation is round-to-nearest -- none of the
+    # away-from-zero handling geometry.mojo's signed pixel coordinates
+    # need.
     return UInt8(value + 0.5)
 
 
 def _color_at_t(
     stops: List[_GradientStop], lowest: _GradientStop, highest: _GradientStop, t_in: Float64
 ) -> Color:
-    """The shared "given a projected position, what color" logic
-    behind both LinearGradient.color_at and RadialGradient.color_at --
-    see this module's own docstring for why the projection itself
-    stays separate but this part is shared. `t_in` is expected already
-    clamped to [0, 1] by the caller (each gradient kind's own "pad"
-    extend rule is about *how* it clamps -- e.g. radial clamps a
-    distance that can't go negative in the first place -- not about
-    this shared lookup, so the clamp itself isn't duplicated here).
+    """The "given a projected position, what color" half both
+    LinearGradient.color_at and RadialGradient.color_at share. `t_in`
+    arrives already clamped to [0, 1]: each gradient kind clamps
+    differently (a radial distance can't go negative to begin with), so
+    the clamp stays with the projection.
 
-    `lowest`/`highest` (the stops with the smallest/largest offset)
-    are passed in already found, not rescanned from `stops` here --
-    they never change for a given gradient's fixed stop list, so
-    LinearGradient/RadialGradient each track them incrementally in
-    their own add_stop instead of this function re-scanning the whole
-    list on every single call, which color_at made once per pixel of
-    every gradient fill (fill_rect_gradient/fill_path_gradient and
-    their radial counterparts, canvas_mojo/shapes/rects.mojo and
-    canvas_mojo/path.mojo) -- a hot enough path that an O(stops) scan
-    repeated per pixel was pure waste for a value that's the same
-    every time.
+    `lowest`/`highest` -- the smallest- and largest-offset stops --
+    come in already found. They never change for a fixed stop list, and
+    color_at runs once per pixel of a gradient fill, so each gradient
+    tracks them incrementally in add_stop rather than rescanning here.
     """
     if len(stops) == 0:
         return Color(0, 0, 0, 0)
@@ -129,10 +99,9 @@ struct LinearGradient(Movable):
     Add stops with add_stop(), then pass to fill_rect_gradient/
     fill_path_gradient (or query color_at() directly).
 
-    Stops don't need to be added in offset order -- color_at() finds
-    the bracketing pair by scanning all stops each call, a linear scan
-    over what's typically 2-4 stops for a chart fill, not worth
-    maintaining a sorted-insertion invariant for this size.
+    Stops need not be added in offset order: color_at() finds the
+    bracketing pair by scanning all stops, typically 2-4 for a chart
+    fill, which is too few to be worth a sorted-insertion invariant.
     """
 
     var x0: Float64
@@ -140,17 +109,14 @@ struct LinearGradient(Movable):
     var x1: Float64
     var y1: Float64
     var stops: List[_GradientStop]
-    # Cached once from x0/y0/x1/y1 (which never change after
-    # construction -- there's no setter) instead of recomputed by
-    # color_at on every call: color_at runs once per pixel of a
-    # gradient fill, and this axis/length math only ever depends on
-    # the endpoints, never on the query point.
+    # Cached from x0/y0/x1/y1, which never change after construction:
+    # color_at runs per pixel, and this axis/length math depends only
+    # on the endpoints, never the query point.
     var _axis_x: Float64
     var _axis_y: Float64
     var _len2: Float64
-    # The smallest-/largest-offset stop so far -- tracked incrementally
-    # here instead of scanned from `stops` by _color_at_t on every
-    # call; see that function's own docstring for why.
+    # The smallest-/largest-offset stop so far, tracked incrementally
+    # rather than rescanned per call; see _color_at_t.
     var _lowest: _GradientStop
     var _highest: _GradientStop
 
@@ -163,9 +129,9 @@ struct LinearGradient(Movable):
         self._axis_x = x1 - x0
         self._axis_y = y1 - y0
         self._len2 = self._axis_x * self._axis_x + self._axis_y * self._axis_y
-        # Overwritten by the first real add_stop() call; _color_at_t
-        # never reads these unless len(stops) >= 2, so this placeholder
-        # (transparent black at offset 0.0) is never actually observed.
+        # Overwritten by the first add_stop(); _color_at_t never reads
+        # these below len(stops) >= 2, so this transparent-black
+        # sentinel is never observed.
         self._lowest = _GradientStop(0.0, Color(0, 0, 0, 0))
         self._highest = self._lowest
 
@@ -179,10 +145,9 @@ struct LinearGradient(Movable):
         self.stops.append(stop)
 
     def color_at(self, x: Float64, y: Float64) -> Color:
-        """The gradient's color at (x, y): project onto the axis,
-        clamp to [0, 1] ("pad" extend -- see this module's own
-        docstring), then linearly interpolate between whichever two
-        stops that projected position falls between.
+        """The gradient's color at (x, y): project onto the axis, clamp
+        to [0, 1] ("pad" extend), then interpolate between the two
+        stops bracketing that position.
         """
         var t = 0.0
         if self._len2 != 0.0:
@@ -196,26 +161,22 @@ struct RadialGradient(Movable):
     Add stops with add_stop(), then pass to fill_rect_radial_gradient/
     fill_path_radial_gradient (or query color_at() directly).
 
-    Deliberately the simple single-circle form (center + radius), not
-    the general two-circle "focal point can differ from the center,
-    can itself have a nonzero radius" gradient real vector graphics
-    APIs (SVG, Cairo, HTML5 Canvas) also offer -- that generality
-    exists mainly to fake a 3D-lit-sphere look via an off-center focal
-    point, not a chart need identified so far (bubble/donut centers
-    and radial legend swatches all want a plain concentric gradient).
-    Easy to widen later if something concrete asks for it.
+    The simple single-circle form (center + radius), not the
+    two-circle form SVG/Cairo/HTML5 Canvas offer, where the focal point
+    can sit off-center with its own radius. That generality mostly
+    fakes a 3D-lit-sphere look; bubble centers, donut centers and
+    radial legend swatches all want a concentric gradient.
 
-    Same "stops don't need insertion order" scan as LinearGradient --
-    see its own docstring; both share `_color_at_t` for that part.
+    Stops need not be in insertion order, as in LinearGradient; both
+    share `_color_at_t`.
     """
 
     var cx: Float64
     var cy: Float64
     var radius: Float64
     var stops: List[_GradientStop]
-    # Same incremental lowest-/highest-offset tracking as
-    # LinearGradient's own fields -- see that struct's and
-    # _color_at_t's own docstrings for why.
+    # Same incremental lowest-/highest-offset tracking LinearGradient
+    # does.
     var _lowest: _GradientStop
     var _highest: _GradientStop
 
@@ -224,8 +185,8 @@ struct RadialGradient(Movable):
         self.cy = cy
         self.radius = radius
         self.stops = List[_GradientStop]()
-        # Overwritten by the first real add_stop() call -- see
-        # LinearGradient.__init__'s own comment on this placeholder.
+        # Overwritten by the first add_stop(); see
+        # LinearGradient.__init__.
         self._lowest = _GradientStop(0.0, Color(0, 0, 0, 0))
         self._highest = self._lowest
 
@@ -241,20 +202,15 @@ struct RadialGradient(Movable):
 
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): project onto [0, 1] as
-        `distance_from_center / radius`, clamp ("pad" extend -- see
-        this module's own docstring; a distance is never negative to
-        begin with, so this side only ever clamps the far end), then
-        the same stop lookup/interpolation LinearGradient.color_at
-        uses.
+        `distance_from_center / radius`, clamp ("pad" extend -- a
+        distance is never negative, so only the far end ever clamps),
+        then the stop lookup LinearGradient.color_at uses.
 
-        radius == 0.0 is a degenerate gradient (every stop's circle
-        has collapsed to the same point) -- treated as "everywhere is
-        at least at the outer edge" (t=1.0) rather than dividing by
-        zero, so it renders as a solid fill of the highest-offset
-        stop's color, the same as a LinearGradient whose two endpoints
-        coincide (len2 == 0.0 above) always projects to t=0.0's stop --
-        both are "the axis/radius collapsed" degenerate case, resolved
-        by picking a fixed, documented `t` rather than crashing.
+        radius == 0.0 collapses every stop's circle to one point.
+        Rather than dividing by zero, that resolves to t=1.0 -- a solid
+        fill of the highest-offset stop's color -- just as a
+        LinearGradient with coincident endpoints (len2 == 0.0) resolves
+        to t=0.0's stop.
         """
         var dx = x - self.cx
         var dy = y - self.cy

@@ -4,8 +4,8 @@ canvas_mojo.shapes.lines' draw_polyline/draw_polyline_aa), solid
 wedge/ring fill (fill_arc/fill_ring_sector, built the same way via
 canvas_mojo.shapes.polygon_fill's fill_polygon), and their
 supersampled analytic-coverage AA counterparts (fill_arc_aa/
-fill_ring_sector_aa) -- see canvas_mojo.shapes.lines's own module
-docstring for the hard-edged vs. `_aa` naming convention this follows.
+fill_ring_sector_aa) -- see canvas_mojo.shapes.lines for the
+hard-edged vs. `_aa` naming convention this follows.
 
 Also home to the shared angle/bounding-box math (_arc_points,
 _angle_in_span, _arc_bounds, _union_bounds, _extend_bounds) every
@@ -48,59 +48,44 @@ def _arc_bounds(
     include_center: Bool,
 ) -> Tuple[Float64, Float64, Float64, Float64]:
     """The tight axis-aligned bounding box (min_x, min_y, max_x, max_y)
-    the arc/wedge (cx, cy, radius, start_angle, end_angle) actually
-    occupies -- used by fill_arc_aa/fill_ring_sector_aa (below) to
-    shrink their own pixel-scan range down from the full circumscribing
-    square (a large overestimate for anything short of a near-full
-    circle -- a thin 10-degree pie slice's true extent is a small
-    sliver of that square) to the shape's real footprint, with no
-    change to which pixels end up covered: every pixel this excludes is
-    one the existing per-pixel angle/radius tests would already have
-    found zero coverage in, derived here from the shape's own math
-    instead of sampled per pixel to discover the same thing.
+    the arc/wedge (cx, cy, radius, start_angle, end_angle) occupies.
+    fill_arc_aa/fill_ring_sector_aa scan this instead of the full
+    circumscribing square, which badly overestimates anything short of
+    a near-full circle -- a thin 10-degree slice covers a sliver of it.
+    Coverage is unchanged: every excluded pixel is one the per-pixel
+    angle/radius tests would have scored zero.
 
-    Rigorous, not a heuristic: a circular arc's x and y coordinates are
-    each monotonic in angle *between* the four cardinal angles (0,
-    pi/2, pi, 3*pi/2 -- where cos/sin's own derivative is zero), the
-    only points where either coordinate can reach a local extreme.
-    So the arc's own bounds are exactly the bounds of its two endpoints
-    plus whichever cardinal-angle points actually fall inside
-    [start_angle, end_angle].
+    Rigorous, not a heuristic: an arc's x and y are each monotonic in
+    angle *between* the four cardinal angles (0, pi/2, pi, 3*pi/2,
+    where cos/sin's derivative is zero), the only places either can
+    reach a local extreme. So the bounds are those of the two endpoints
+    plus whichever cardinal points fall inside [start_angle, end_angle].
 
-    `include_center` covers fill_arc_aa's own difference from a plain
-    arc: its wedge is bounded by two straight radii back to (cx, cy),
-    so the center itself can be the shape's own leftmost/rightmost/etc.
-    point (e.g. a thin slice near angle 0, whose two arc endpoints are
-    both near x = cx + radius, but whose straight edges still reach
-    back to x = cx).
+    `include_center` covers the wedge case: fill_arc_aa's shape is
+    bounded by two straight radii back to (cx, cy), so the center can
+    be its extreme point -- a thin slice near angle 0 has both arc
+    endpoints near x = cx + radius, but its straight edges still reach
+    back to x = cx.
 
-    fill_ring_sector_aa has no center point in its shape at all
-    (inner_radius > 0 there) but does have two straight radial edges
-    of its own, from the outer endpoint at each of start_angle/
-    end_angle back to the inner endpoint at that same angle -- and
-    this function, called with `radius` = the outer radius alone,
-    knows nothing about where those inner endpoints are. A straight
-    line's own bounding box is exactly the bounds of its two
-    endpoints, so as long as *both* endpoints are already covered by
-    *some* bounds this function returns, the connecting edge is too --
-    which is why fill_ring_sector_aa below calls this twice (once per
-    radius, both with `include_center=False`) and unions the two
-    results, rather than calling it once with the outer radius alone.
-    That second part used to be a documented shortcut here ("the inner
-    arc's own bounds are always a subset of the outer arc's") --
-    false in general, not just an edge case: whenever [start_angle,
-    end_angle] doesn't reach a cardinal angle, the *inner* arc's own
-    extreme point (closest to the center, at whichever endpoint angle
-    is nearest a cardinal angle) sits *closer to (cx, cy)* than
-    anything on the outer arc reaches at that same extreme -- past the
-    outer arc's own bound in that direction, not inside it. Confirmed
-    both by direct counterexample (cx=270, cy=185, start_angle=-pi/2,
-    end_angle=-pi/6, outer_radius=148.5, inner_radius=74.25: the outer
-    arc's own y-range over that span is [36.5, 110.75], but the inner
-    endpoint at end_angle alone already sits at y=147.875, past that
-    range's own max) and by rendering a real ring sector with the old
-    single-radius bounds, which left exactly the rectangular notch
-    that counterexample predicts -- see this repo's issue #33.
+    fill_ring_sector_aa has no center point (inner_radius > 0) but does
+    have two radial edges, each running from the outer endpoint at an
+    angle to the inner endpoint at that same angle, which a call given
+    only the outer radius knows nothing about. A straight line's bounds
+    are exactly its endpoints' bounds, so covering both endpoints
+    covers the edge -- hence two calls, one per radius, both with
+    `include_center=False`, unioned.
+
+    Outer-radius bounds alone are not enough: "the inner arc's bounds
+    are a subset of the outer arc's" is false in general. Whenever
+    [start_angle, end_angle] reaches no cardinal angle, the inner arc's
+    extreme point -- at whichever endpoint angle sits nearest a
+    cardinal one -- lies closer to (cx, cy) than anything on the outer
+    arc, past the outer bound rather than inside it. Counterexample:
+    cx=270, cy=185, start_angle=-pi/2, end_angle=-pi/6,
+    outer_radius=148.5, inner_radius=74.25 -- the outer arc's y-range
+    is [36.5, 110.75], but the inner endpoint at end_angle sits at
+    y=147.875, and single-radius bounds cut a rectangular notch out of
+    the rendered ring.
     """
     var start_x = cx + radius * cos(start_angle)
     var start_y = cy + radius * sin(start_angle)
@@ -130,32 +115,25 @@ def _arc_bounds(
 def _union_bounds(
     a: Tuple[Float64, Float64, Float64, Float64], b: Tuple[Float64, Float64, Float64, Float64]
 ) -> Tuple[Float64, Float64, Float64, Float64]:
-    """The smallest box containing both `a` and `b` (each an
-    (min_x, min_y, max_x, max_y) box, `_arc_bounds`'s own return
-    shape) -- fill_ring_sector_aa's own way of combining the outer and
-    inner arcs' individually-rigorous bounds into one rigorous bound
-    for the whole ring sector; see `_arc_bounds`'s own docstring for
-    why neither radius's bounds alone are enough.
+    """The smallest box containing both `a` and `b`, each an
+    (min_x, min_y, max_x, max_y) box from `_arc_bounds` -- how
+    fill_ring_sector_aa combines its two radii's bounds into one.
     """
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
 def _arc_points(cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64) -> List[Point]:
     """Sample points along a circular arc (radians, start_angle <=
-    end_angle expected -- pass end_angle = start_angle + 2*pi for a
-    full circle) at roughly 1-pixel arc-length spacing: step count is
-    proportional to radius * angle span, so a tiny pie-chart wedge and
-    a huge full-page donut both get smooth, gap-free sampling, unlike
-    a fixed step count (Path's own choice for curve flattening, see
-    path.mojo) that would facet a large arc or waste work on a tiny
-    one -- arc radii vary far more widely in practice than a Path's
-    typical curve size does.
+    end_angle expected; pass end_angle = start_angle + 2*pi for a full
+    circle) at roughly 1-pixel arc-length spacing. Step count scales
+    with radius * angle span, so a tiny wedge and a full-page donut
+    both sample smoothly, where Path's fixed step count would facet the
+    large one and waste work on the small -- arc radii vary far more
+    than a Path's typical curve size.
 
     Exact circle math (cx + r*cos(theta), cy + r*sin(theta)) sampled
-    directly, not a cubic-Bezier approximation -- matches draw_circle/
-    draw_ellipse's own independently-derived exact math over an
-    approximation, and avoids needing to separately justify a curve-
-    fitting error bound the way a Bezier arc approximation would.
+    directly, not a cubic-Bezier approximation, matching draw_circle/
+    draw_ellipse and needing no curve-fitting error bound.
     """
     var span = end_angle - start_angle
     var steps = max(4, Int(radius * abs(span)))
@@ -171,11 +149,10 @@ def _arc_points(cx: Float64, cy: Float64, radius: Float64, start_angle: Float64,
 
 def _angle_in_span(angle: Float64, start_angle: Float64, end_angle: Float64) -> Bool:
     """Is `angle` within [start_angle, end_angle] once normalized into
-    the same 2*pi-wide window starting at start_angle? atan2's own
-    range is (-pi, pi], which won't line up with an arbitrary
-    start_angle/end_angle pair on its own -- e.g. a wedge spanning the
-    atan2 discontinuity at +/-pi needs a sample's raw angle shifted by
-    a full turn before the plain <= / >= comparison means anything.
+    the 2*pi-wide window starting at start_angle? atan2's range is
+    (-pi, pi], which won't line up with an arbitrary start/end pair: a
+    wedge spanning the discontinuity at +/-pi needs the sample's raw
+    angle shifted a full turn before <= / >= means anything.
     """
     var a = angle
     while a < start_angle:
@@ -186,10 +163,9 @@ def _angle_in_span(angle: Float64, start_angle: Float64, end_angle: Float64) -> 
 
 
 def draw_arc(mut canvas: Canvas, cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64, color: Color):
-    """The arc's own curved boundary only (no radii back to center) --
-    hard-edged, ~1px, via draw_polyline over exact-math sampled points
-    (see _arc_points). For a solid pie-slice wedge instead, see
-    fill_arc; for a ring/donut segment, see fill_ring_sector.
+    """The arc's curved boundary only, no radii back to center:
+    hard-edged, ~1px, via draw_polyline over _arc_points' samples. For
+    a solid wedge see fill_arc; for a ring segment, fill_ring_sector.
     """
     if radius <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
@@ -218,13 +194,11 @@ def draw_arc_aa(
 
 
 def fill_arc(mut canvas: Canvas, cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64, color: Color):
-    """A solid pie-slice wedge: the arc plus two straight radii back
-    to the center, filled -- what a pie chart's own slice needs.
-    Built by sampling the arc (see _arc_points), appending the center
-    point to close the wedge shape, and handing the result to
-    fill_polygon -- the same "sample a curve into a polygon, reuse
-    already-tested fill machinery" approach path.mojo uses for
-    Bezier curves.
+    """A solid pie-slice wedge: the arc plus two straight radii back to
+    the center, filled. Samples the arc (_arc_points), appends the
+    center point to close the shape, and hands it to fill_polygon --
+    the same "sample a curve into a polygon" approach path.mojo takes
+    for Bezier curves.
     """
     if radius <= 0.0:
         return
@@ -243,24 +217,16 @@ def fill_arc_aa(
     color: Color,
     supersample: Int = 4,
 ):
-    """Anti-aliased pie-slice wedge -- supersampled analytic coverage,
+    """Anti-aliased pie-slice wedge: supersampled analytic coverage,
     testing each sub-sample against the wedge's exact definition
-    (within `radius` of center AND within the angle span), the same
-    technique fill_circle_aa uses for a plain disk, generalized with
-    an angular membership test (_angle_in_span). Not built by
-    rasterizing a flattened polygon through a generic AA fill -- no
-    such thing exists in this codebase (fill_polygon is hard-edged
-    only; draw_polygon_aa is an AA *outline*, not a fill) -- and a
-    wedge's membership test is clean enough analytically that
-    inventing one wasn't needed here.
+    (within `radius` of center AND within the angle span) -- what
+    fill_circle_aa does for a disk, plus an angular membership test
+    (_angle_in_span), rather than rasterizing a flattened polygon.
 
-    Scans only `_arc_bounds`' own tight bounding box (expanded by 1px
-    for the AA sampling margin at its own edge), not the full
-    circumscribing square of `radius` -- see that function's own
-    docstring. This is the dominant cost for anything but a near-full
-    pie: a thin slice's true footprint can be a small fraction of its
-    own circumscribing circle's bounding square, and every pixel
-    outside that footprint would have scored zero coverage anyway.
+    Scans `_arc_bounds`' tight box, expanded 1px for the AA sampling
+    margin, not the full circumscribing square. That's the dominant
+    cost for anything but a near-full pie, since a thin slice covers a
+    small fraction of that square.
     """
     if radius <= 0.0:
         return
@@ -278,17 +244,13 @@ def fill_arc_aa(
 
     for py in range(min_py, max_py + 1):
         for px in range(min_px, max_px + 1):
-            # A wedge's angular boundary makes a rigorous "whole pixel
-            # square is provably *inside*" test fiddly (angle
-            # wraparound, a pixel straddling the center where angle is
-            # undefined) -- not attempted here. But "provably *outside*
-            # the radius entirely, regardless of angle" is cheap and
-            # unconditionally valid (same AABB-vs-circle nearest-point
-            # test as fill_circle_aa's own fast path): most of this
-            # wedge's own square bounding box is actually outside its
-            # circumscribing circle already for anything but a full
-            # pie, so this alone skips a real fraction of the box
-            # without needing the angle math at all.
+            # A rigorous "whole pixel square is provably inside" test
+            # is fiddly for a wedge (angle wraparound, a pixel
+            # straddling the center where angle is undefined) and isn't
+            # attempted. "Provably outside the radius, regardless of
+            # angle" is cheap and always valid -- the AABB-vs-circle
+            # nearest-point test fill_circle_aa uses -- and skips a
+            # real fraction of the box with no angle math.
             var dx = abs(Float64(px) - cx)
             var dy = abs(Float64(py) - cy)
             var near_dx = max(0.0, dx - 0.5)
@@ -323,11 +285,10 @@ def fill_ring_sector(
     color: Color,
 ):
     """A solid ring/donut segment: the region between inner_radius and
-    outer_radius, within the given angle span -- what a donut chart's
-    own segment needs. Built the same way fill_arc is: sample the
-    outer arc forward and the inner arc backward (so the combined
-    point sequence traces the ring's boundary in one continuous loop,
-    not two disconnected arcs) into one polygon, then fill_polygon.
+    outer_radius within the angle span. Built like fill_arc -- sample
+    the outer arc forward and the inner arc backward, so the combined
+    points trace the ring's boundary as one continuous loop, then
+    fill_polygon.
     """
     if outer_radius <= 0.0 or inner_radius < 0.0 or inner_radius >= outer_radius:
         return
@@ -349,18 +310,13 @@ def fill_ring_sector_aa(
     color: Color,
     supersample: Int = 4,
 ):
-    """Anti-aliased version of fill_ring_sector -- same analytic
-    per-sample technique as fill_arc_aa, with a second radius test
-    (see draw_ellipse_aa's own inner/outer ring test for the closest
-    precedent: a fixed-width ring rather than an angular wedge, but
-    the same "two independent boundary tests, both must pass" shape).
+    """Anti-aliased fill_ring_sector: fill_arc_aa's per-sample
+    technique plus a second radius test -- two independent boundary
+    tests, both of which must pass, as in draw_ellipse_aa's ring.
 
-    Scans the union of `_arc_bounds`' own tight bounding boxes for the
-    outer and inner radii (both with no center point -- see that
-    function's own docstring for exactly why *both* radii need their
-    own call, not just the outer one), the same dominant fix
-    fill_arc_aa's own docstring explains, just applied twice and
-    combined via `_union_bounds`.
+    Scans the union of `_arc_bounds`' boxes for the outer and inner
+    radii, both with no center point; see that function for why the
+    outer radius alone isn't enough.
     """
     if outer_radius <= 0.0 or inner_radius < 0.0 or inner_radius >= outer_radius:
         return
@@ -381,13 +337,10 @@ def fill_ring_sector_aa(
 
     for py in range(min_py, max_py + 1):
         for px in range(min_px, max_px + 1):
-            # Same radius-only (angle-independent) fast-outside skip
-            # fill_arc_aa's own docstring explains -- valid here too,
-            # for both the outer edge (pixel square entirely beyond
-            # outer_radius) and the inner hole (pixel square's
-            # farthest point from center still inside inner_radius,
-            # so even the *closest-to-the-ring* corner never reaches
-            # it).
+            # fill_arc_aa's radius-only fast-outside skip, applied at
+            # both edges: the pixel square entirely beyond
+            # outer_radius, or its farthest point from center still
+            # within inner_radius, so no corner reaches the ring.
             var dx = abs(Float64(px) - cx)
             var dy = abs(Float64(py) - cy)
             var near_dx = max(0.0, dx - 0.5)

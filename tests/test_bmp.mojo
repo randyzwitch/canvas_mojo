@@ -8,8 +8,8 @@ channel swap, bottom-up row order, and per-row padding to a 4-byte
 boundary.
 
 The canvas is deliberately 3 pixels wide (9 bytes/row) so padding is
-actually exercised -- the earlier 64px-wide demo never hit that path,
-since 64*3=192 is already a multiple of 4.
+actually exercised -- a width whose row bytes already land on a 4-byte
+boundary (64*3=192, say) would never reach that code at all.
 """
 
 from std.testing import assert_equal, TestSuite

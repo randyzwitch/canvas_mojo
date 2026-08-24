@@ -9,12 +9,10 @@ data's y increases upward, so the transform flips it -- data point
 (x, 0) lands at the pixel row near the bottom of the plot area, and
 (x, 100) lands near the top.
 
-Two panels, same data: the left one is the plain transform from
-before; the right one adds a small rotation, to make what that
-parameter actually does visually obvious (a whole tilted coordinate
-frame, axes and all -- not a single rotated label, which is a
-different feature entirely; see geometry.mojo's Transform2D
-docstring).
+Two panels, same data: the left uses a plain transform, the right adds
+a small rotation, which makes clear what that parameter does -- tilts
+a whole coordinate frame, axes and all, not a single label, which is
+draw_text's separate feature.
 
 Run with:
     pixi run example
@@ -32,9 +30,8 @@ from canvas_mojo.io.png import write_png
 
 
 def _draw_panel(mut c: Canvas, t: Transform2D):
-    """Draw the same small line-plus-markers plot through whatever
-    transform `t` is -- axes included, so a rotated transform visibly
-    tilts them too, not just the plotted data.
+    """Draw the same line-plus-markers plot through transform `t`, axes
+    included, so a rotated transform visibly tilts them too.
     """
     var axis_x0 = t.to_pixel(0.0, 0.0)
     var axis_x1 = t.to_pixel(10.0, 0.0)
@@ -63,9 +60,9 @@ def main() raises:
     var plain = Transform2D(96.0, -7.2, 120.0, 840.0)
     _draw_panel(c, plain)
 
-    # same scale/mapping, shifted into the right half of the canvas
-    # and tilted 12 degrees -- everything the plain panel draws
-    # (axes, line, markers) goes through this same tilted frame.
+    # same scale/mapping, shifted into the canvas's right half and
+    # tilted 12 degrees, so axes, line and markers all pass through the
+    # tilted frame.
     var rotated = Transform2D(96.0, -7.2, 1200.0, 840.0, rotation=pi / 15.0)
     _draw_panel(c, rotated)
 

@@ -1,34 +1,27 @@
 """Font discovery via libfontconfig -- resolves a family/slant/weight
-request to an actual font file path on disk, the same job Cairo's own
-`select_font_face` used to do invisibly (via fontconfig underneath
-it) before Cairo was removed from `canvas_mojo/text/render.mojo`. This
-is one of three jobs text rendering needs: font discovery (this
-module, via fontconfig), glyph resolution & metrics (native, `ttf.
-mojo`), and rasterization (also native, this package's own
-`fill_path_aa` -- see `path.mojo`).
+request to an actual font file path on disk. This is one of three jobs
+text rendering needs: font discovery (this module, via fontconfig),
+glyph resolution & metrics (native, `ttf.mojo`), and rasterization
+(also native, `fill_path_aa` -- see `path.mojo`).
 
 Deliberately linked directly against libfontconfig rather than
 translated from its source: fontconfig is MIT-licensed, a small,
 stable, mature C API, and the actual system font database (install
 locations, aliasing, per-language fallback) is its own mature,
-continuously-updated subsystem, not something worth re-deriving. This
-module never imports anything from
-`third_party/cairo_mojo` or `canvas_mojo.text` -- the entire point is
-to be usable, and eventually keep working, independent of Cairo. That
-independence is also why `FontSlant`/`FontWeight` and the raw C-string
-helpers below are small local duplicates of concepts that already
-exist elsewhere in this codebase (`cairo_mojo`'s own `FontSlant`/
-`FontWeight`, `canvas_mojo/text/render.mojo`'s own `_c_string`) rather than
-imports of them -- importing either would pull in `cairo_mojo`'s own
-top-level dependency chain transitively, the same "a struct's method
-surface (and whatever it imports) resolves eagerly, not lazily"
-lesson `canvas_mojo/vector/draw_target.mojo`'s own docstring documents
-for `DrawTarget` excluding `draw_text`.
+continuously-updated subsystem, not something worth re-deriving.
+
+This module imports nothing from `canvas_mojo.text`, and that
+independence is why `FontSlant`/`FontWeight` and the raw C-string
+helpers below live here rather than being imported from a module that
+uses them -- a struct's method surface (and whatever it imports)
+resolves eagerly, not lazily, the same lesson `canvas_mojo/vector/
+draw_target.mojo` documents for `DrawTarget` excluding
+`draw_text`.
 
 This module resolves a font *file*, nothing more -- it does not parse
-that file, measure text, hint, or rasterize anything. `canvas_mojo.text`
-still does all of that via Cairo today; this is a standalone building
-block, not yet wired into `draw_text`/`measure_text`.
+that file, measure text, hint, or rasterize anything. `render.mojo`
+drives it, together with `ttf.mojo` and `fill_path_aa`, to actually
+draw text.
 """
 
 from std.ffi import OwnedDLHandle, RTLD, c_char, c_int, c_uint
@@ -41,8 +34,9 @@ comptime _FONTCONFIG_LIB_ENV_VAR = "FONTCONFIG_LIB"
 
 
 struct FontSlant(Copyable, ImplicitlyCopyable, Movable):
-    """Mirrors `cairo_mojo.FontSlant`'s own three values -- a local,
-    cairo-free duplicate (see this module's own docstring for why).
+    """A font's upright/italic/oblique style, as requested of
+    fontconfig. Defined here to keep this module independent of
+    `canvas_mojo.text`; `render.mojo` re-exports it.
     """
 
     var _value: Int
@@ -59,8 +53,8 @@ struct FontSlant(Copyable, ImplicitlyCopyable, Movable):
 
 
 struct FontWeight(Copyable, ImplicitlyCopyable, Movable):
-    """Mirrors `cairo_mojo.FontWeight`'s own two values -- a local,
-    cairo-free duplicate (see this module's own docstring for why).
+    """A font's normal/bold weight, as requested of fontconfig, defined
+    here for the same reason FontSlant is.
     """
 
     var _value: Int
@@ -75,13 +69,12 @@ struct FontWeight(Copyable, ImplicitlyCopyable, Movable):
         return self._value == other._value
 
 
-# fontconfig's own <fontconfig/fontconfig.h> integer scale for the
-# "slant"/"weight" pattern properties -- not Cairo's enum values, a
-# separate, fontconfig-specific numbering fontconfig itself defines
-# and documents. FC_WEIGHT_REGULAR/FC_WEIGHT_BOLD (not the 100-900
-# OpenType-style scale fontconfig also supports via FcWeightFromOpenType)
-# since only NORMAL/BOLD are exposed here, matching what
-# canvas_mojo/text/render.mojo's own FontWeight currently offers.
+# fontconfig's <fontconfig/fontconfig.h> integer scale for the
+# "slant"/"weight" pattern properties -- its own numbering, unrelated
+# to this module's FontSlant/FontWeight. FC_WEIGHT_REGULAR/
+# FC_WEIGHT_BOLD, not the 100-900 OpenType scale fontconfig also
+# accepts via FcWeightFromOpenType, since only NORMAL/BOLD are
+# exposed.
 comptime _FC_SLANT_ROMAN = c_int(0)
 comptime _FC_SLANT_ITALIC = c_int(100)
 comptime _FC_SLANT_OBLIQUE = c_int(110)
@@ -89,14 +82,13 @@ comptime _FC_SLANT_OBLIQUE = c_int(110)
 comptime _FC_WEIGHT_REGULAR = c_int(80)
 comptime _FC_WEIGHT_BOLD = c_int(200)
 
-# FcMatchKind -- only FcMatchPattern (0) is used here (FcConfigSubstitute's
-# own "substitute for a pattern being matched against available fonts"
-# mode, the same mode Cairo's own toy API uses internally).
+# FcMatchKind: only FcMatchPattern (0) is used, FcConfigSubstitute's
+# "substitute for a pattern being matched against available fonts".
 comptime _FC_MATCH_PATTERN = c_int(0)
 
-# FcResult -- only FcResultMatch (0) is checked; every other value
-# (NoMatch/TypeMismatch/NoId/OutOfMemory) is treated as failure alike,
-# since none of them leave a usable "file" property to read.
+# FcResult: only FcResultMatch (0) counts as success. NoMatch/
+# TypeMismatch/NoId/OutOfMemory all fail alike, since none leave a
+# usable "file" property.
 comptime _FC_RESULT_MATCH = c_int(0)
 
 
@@ -115,11 +107,10 @@ def _fc_weight_value(weight: FontWeight) -> c_int:
 
 
 # --- Runtime loader ------------------------------------------------------
-# Same discovery shape as third_party/cairo_mojo/cairo_mojo/cairo_runtime.mojo
-# (explicit env var override, then canonical names, then optional
-# ldconfig/Homebrew/pkg-config hints) -- deliberately not imported from
-# there (see this module's own docstring: no cairo_mojo dependency,
-# anywhere, ever, in this file).
+# Explicit env var override, then each platform's canonical library
+# names, then -- only if all of those fail to dlopen -- optional
+# ldconfig/Homebrew/pkg-config hints. See _cheap_fontconfig_candidates
+# and _expensive_fontconfig_hint_candidates below for the split.
 
 
 def _append_unique(mut candidates: List[String], value: String):
@@ -178,19 +169,14 @@ def _append_pkg_config_hints(mut candidates: List[String], is_macos: Bool):
 
 def _cheap_fontconfig_candidates() -> List[String]:
     """The zero-subprocess candidates: an explicit env var override,
-    then each platform's own canonical library name -- what almost
-    every real installation resolves via already, through the dynamic
-    linker's own search path (ld.so.cache on Linux, dyld's own
-    mechanism on macOS), no shelling out required. Tried first, by
-    _open_fontconfig_library below, before ever paying for the
-    ldconfig/Homebrew/pkg-config subprocess spawns
-    _expensive_fontconfig_hint_candidates exists for -- confirmed via
-    a timing probe to matter, not a hypothetical: a raw dlopen of
-    "libfontconfig.so.1" alone (this tier, on a machine where it's
-    already on the linker's search path) measured ~12ms, against
-    ~17ms for the ldconfig hint and ~28ms for the pkg-config hint --
-    ~45ms of real subprocess-spawn cost this tier lets a normal
-    installation skip entirely.
+    then each platform's canonical library name, which almost every
+    real installation already resolves through the dynamic linker's
+    search path (ld.so.cache on Linux, dyld on macOS).
+    _open_fontconfig_library tries these before paying for
+    _expensive_fontconfig_hint_candidates' subprocess spawns. Measured:
+    a raw dlopen of "libfontconfig.so.1" ~12ms, against ~17ms for the
+    ldconfig hint and ~28ms for pkg-config -- ~45ms of subprocess cost
+    a normal installation skips.
     """
     var candidates: List[String] = []
     _append_unique(candidates, getenv(_FONTCONFIG_LIB_ENV_VAR))
@@ -209,13 +195,10 @@ def _cheap_fontconfig_candidates() -> List[String]:
 
 
 def _expensive_fontconfig_hint_candidates(mut candidates: List[String]) raises:
-    """The subprocess-derived candidates (ldconfig/Homebrew/pkg-config)
-    -- appended to `candidates` only once every _cheap_fontconfig_
-    candidates entry has already failed to dlopen (see
-    _open_fontconfig_library): a real installation on a nonstandard
-    prefix the dynamic linker's own search path doesn't already cover,
-    confirmed by every canonical name above failing first, not assumed
-    up front.
+    """The subprocess-derived candidates (ldconfig/Homebrew/pkg-config),
+    appended only once every _cheap_fontconfig_candidates entry has
+    failed to dlopen -- an installation on a nonstandard prefix the
+    dynamic linker's search path doesn't cover.
     """
     if CompilationTarget.is_linux():
         _append_linux_ldconfig_hints(candidates)
@@ -236,10 +219,9 @@ def _open_fontconfig_library() raises -> OwnedDLHandle:
         except err:
             errors.append(String(candidate, " -> ", String(err)))
 
-    # Only reached once every zero-subprocess candidate above has
-    # failed -- this is the tier that pays for real subprocess spawns
-    # (ldconfig/Homebrew/pkg-config), computed here rather than
-    # unconditionally up front the way it used to be.
+    # Reached only once every zero-subprocess candidate has failed:
+    # the tier that pays for ldconfig/Homebrew/pkg-config spawns,
+    # computed here rather than up front.
     var hints = List[String]()
     _expensive_fontconfig_hint_candidates(hints)
     for candidate in hints:
@@ -259,13 +241,9 @@ def _open_fontconfig_library() raises -> OwnedDLHandle:
 
 
 # --- Raw C-string helpers -------------------------------------------------
-# Duplicated from canvas_mojo/text/render.mojo's own _c_string, deliberately --
-# see this module's own docstring for why importing it instead isn't an
-# option. Same manually-built-NUL-terminated-buffer approach that
-# module's own docstring documents working around a real, root-caused
-# Mojo/cairo_mojo marshaling bug for -- applied here too on the "don't
-# trust a shortcut that's already bitten this codebase once" principle,
-# not because this specific bug is confirmed present in fontconfig calls.
+# Local, so this module depends on nothing in `canvas_mojo.text`. A
+# manually-built NUL-terminated buffer rather than a String-to-`char*`
+# shortcut, which isn't trustworthy at an FFI boundary here.
 
 
 def _c_string(text: String) -> Pointer[c_char, MutUntrackedOrigin]:
@@ -281,13 +259,10 @@ def _c_string(text: String) -> Pointer[c_char, MutUntrackedOrigin]:
 def _string_from_c_string(ptr: Pointer[c_char, ImmUntrackedOrigin]) -> String:
     """Read a NUL-terminated C string back into a Mojo String.
 
-    Confirmed necessary, not assumed: `String(ptr)` for a raw
-    `Pointer[c_char, ImmUntrackedOrigin]` does NOT decode the
-    pointee bytes in this Mojo version -- it formats the pointer's own
-    address instead. Verified against cairo_mojo's own
-    `cairo_version_string()` (a real, already-shipping `char*`-
-    returning binding) printing a bare hex address, not a version
-    string, before writing this byte-walking replacement.
+    `String(ptr)` on a raw `Pointer[c_char, ImmUntrackedOrigin]` does
+    NOT decode the pointee bytes in this Mojo version -- it formats the
+    pointer's address, which a real `char*`-returning C binding prints
+    as a bare hex number. Hence walking the bytes.
     """
     var out = String()
     var i = 0
@@ -305,10 +280,9 @@ def _imm(ptr: Pointer[c_char, MutUntrackedOrigin]) -> Pointer[c_char, ImmUntrack
 
 
 # --- Opaque fontconfig types -----------------------------------------------
-# `FcConfig`/`FcPattern` are incomplete C structs in fontconfig's own
-# header -- used only as pointer targets, the same convention
-# third_party/cairo_mojo/cairo_mojo/_bindings.mojo uses for Cairo's own
-# opaque types (`_cairo`, `_cairo_surface`, ...).
+# `FcConfig`/`FcPattern`/`FcCharSet` are incomplete C structs in
+# fontconfig's header, declared as empty structs here and used
+# only as pointer targets, never dereferenced.
 @fieldwise_init
 struct _FcConfig(Copyable, Movable):
     pass
@@ -330,15 +304,13 @@ def resolve_font_file(
     weight: FontWeight = FontWeight.NORMAL,
 ) raises -> String:
     """Resolve `family`/`slant`/`weight` to an absolute font file path,
-    via fontconfig's own family-name matching/aliasing/fallback --
-    the same resolution Cairo's `select_font_face` does internally.
+    via fontconfig's family-name matching/aliasing/fallback.
 
-    Raises if libfontconfig can't be loaded, or if fontconfig itself
-    reports no match (FcResultMatch is the only success code accepted --
-    fontconfig's own generic "sans-serif"/"serif"/"monospace" aliases
-    and per-system default-substitution mean an actual "no match at
-    all" is rare in practice, but not impossible on a font-less
-    system).
+    Raises if libfontconfig can't be loaded, or if fontconfig reports
+    no match (FcResultMatch is the only accepted success code). Its
+    generic "sans-serif"/"serif"/"monospace" aliases and per-system
+    default substitution make a true no-match rare, though possible on
+    a font-less system.
     """
     return _resolve_font_file_impl(family, slant, weight, -1)
 
@@ -349,35 +321,19 @@ def resolve_font_file_for_char(
     weight: FontWeight,
     codepoint: Int,
 ) raises -> String:
-    """Like `resolve_font_file`, but also constrains the match to a
-    font that actually contains `codepoint` (via `FC_CHARSET`) -- the
-    font-fallback lookup `canvas_mojo/text/render.mojo` uses when the
-    caller's own requested family lacks a glyph for some character
-    (e.g. CJK text requested under a Latin-only "Sans" family):
-    fontconfig's own family/generic-alias fallback chain (the same
-    system-wide configuration real desktop text stacks already rely
-    on) picks a *different* font that actually has the glyph, if one
-    is installed.
+    """Like `resolve_font_file`, but constrained (via `FC_CHARSET`) to
+    a font that actually contains `codepoint`. This is the fallback
+    lookup `render.mojo` uses when the requested family has no glyph
+    for a character -- CJK text under a Latin-only "Sans", say -- and
+    it goes through the same system-wide fallback chain desktop text
+    stacks rely on.
 
-    Verified against real, contrasting behavior, not assumed from the
-    API alone: on a system where the "Ubuntu" font lacks a glyph (a
-    snowman symbol) that "DejaVu Sans" happens to have,
-    `resolve_font_file_for_char("Ubuntu", ..., snowman)` returns
-    DejaVu Sans's file, while the identical call for a character
-    "Ubuntu" *does* have (a plain "A") returns Ubuntu's own file
-    unchanged -- real, contrasting fallback, not just "always returns
-    the same thing regardless of the charset constraint."
-
-    If no installed font has `codepoint` at all, fontconfig's own
-    default-substitution still returns its best-effort closest match
-    (confirmed directly: requesting a font for a CJK character with no
-    CJK font installed anywhere on the system still returns a real
-    font file, just one that -- like every other installed font --
-    doesn't actually contain that glyph). Callers that need to
-    distinguish "found a font with the glyph" from "fontconfig gave up
-    and returned its best guess" should check the *result* (e.g. via
-    `glyph_outline.has_glyph`) against whatever this returns, not
-    trust the return value alone.
+    If no installed font has `codepoint`, fontconfig's default
+    substitution still returns a best-effort match: a real font file
+    that, like every other installed font, lacks the glyph. A caller
+    that must distinguish "found a font with the glyph" from
+    "fontconfig gave up" checks the result with
+    `glyph_outline.has_glyph` rather than trusting the return value.
     """
     return _resolve_font_file_impl(family, slant, weight, codepoint)
 
@@ -389,10 +345,9 @@ def _resolve_font_file_impl(
     char_constraint: Int,
 ) raises -> String:
     """Shared implementation for `resolve_font_file`/
-    `resolve_font_file_for_char` -- `char_constraint == -1` means "no
-    charset constraint" (plain family/slant/weight matching); any
-    other value adds an `FC_CHARSET` containing exactly that one
-    codepoint to the pattern before matching.
+    `resolve_font_file_for_char`. `char_constraint == -1` means plain
+    family/slant/weight matching; any other value adds an `FC_CHARSET`
+    holding that one codepoint before matching.
     """
     var handle = _open_fontconfig_library()
 
@@ -436,13 +391,10 @@ def _resolve_font_file_impl(
     ](pattern, _imm(weight_obj), _fc_weight_value(weight))
     weight_obj.unsafe_free()
 
-    # Always create a real FcCharSet (cheap) rather than a conditionally-
-    # initialized pointer variable -- only *attaching* it to the pattern
-    # is conditional, sidestepping any need for a placeholder/null value
-    # for the "no constraint" path (constructing a null pointer to a
-    # custom opaque struct type isn't straightforward here -- the same
-    # workaround this codebase's own now-removed FreeType FFI binding
-    # needed for the same reason, back when it existed).
+    # Always create a real FcCharSet (cheap) and make only the
+    # *attaching* conditional: the no-constraint path then needs no
+    # null pointer, which isn't straightforward to construct for a
+    # custom opaque struct type here.
     var have_charset = char_constraint != -1
     var charset = handle.call["FcCharSetCreate", Pointer[_FcCharSet, MutUntrackedOrigin]]()
     if have_charset:

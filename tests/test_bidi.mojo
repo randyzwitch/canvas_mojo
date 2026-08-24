@@ -73,12 +73,12 @@ def test_digit_run_inside_hebrew_stays_in_reading_order() raises:
 
 
 def test_embedded_rtl_word_keeps_surrounding_spaces_in_place() raises:
-    # Regression test for a real bug caught by probe: "Hello שלום
-    # World" (base LTR, one Hebrew word embedded) originally pulled
-    # the space *after* the Hebrew word into its own reversal,
-    # corrupting the spacing (a doubled gap after "Hello", none before
-    # "World") -- see bidi.mojo's own _resolve_levels docstring for
-    # the two-sided neutral-resolution fix. Checked here structurally
+    # "Hello שלום World" (base LTR, one Hebrew word embedded): a
+    # one-sided neutral resolution pulls the space *after* the Hebrew
+    # word into its own reversal, corrupting the spacing (a doubled
+    # gap after "Hello", none before "World") -- see bidi.mojo's own
+    # _resolve_levels docstring for the two-sided rule that keeps both
+    # boundary spaces in place. Checked here structurally
     # (both boundary spaces present and correctly placed, Hebrew
     # letters reversed, "Hello"/"World" themselves untouched) rather
     # than one giant hand-typed expected array, so the property that

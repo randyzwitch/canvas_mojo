@@ -1,23 +1,16 @@
-"""SvgCanvas -- a vector `DrawTarget` (see that trait's own docstring)
-that accumulates SVG markup instead of rasterizing into a pixel
-buffer. No anti-aliasing math, no coverage sampling, no fill-rule
-scanline algorithm -- an SVG renderer (a browser, an image viewer, a
-PDF exporter) does all of that itself, at whatever resolution it's
-displayed at, which is the entire point: content drawn through this
-has no fixed pixel size to get wrong the way `canvas_mojo.Canvas`'s raster
-output can (a raster target has to pick a resolution and can blur or
-alias when scaled after the fact; a vector target sidesteps that
-entirely).
+"""SvgCanvas: a vector `DrawTarget` that accumulates SVG markup instead
+of rasterizing into a pixel buffer. No anti-aliasing math, no coverage
+sampling, no fill-rule scanline algorithm -- an SVG renderer (browser,
+image viewer, PDF exporter) does all of that at whatever resolution it
+displays at. Content drawn through this has no fixed pixel size to get
+wrong the way a raster target, which must pick a resolution up front,
+can when scaled after the fact.
 
-Deliberately minimal, matching `DrawTarget`'s own six methods one for
-one -- this is not a general-purpose SVG builder (no gradients, no
-general groups/transforms, no clipping); grow it if and when something
-concrete needs more of SVG's own surface, the same restraint every
-other part of this project has held to. `draw_text`'s own `rotation`
-parameter is the one narrow exception -- a per-`<text>`-element
-`transform="rotate(...)"`, not a general transform stack -- added when
-a real caller (a chart's rotated y-axis title) needed it; see that
-method's own docstring.
+Minimal, matching `DrawTarget`'s six methods one for one. Not a
+general-purpose SVG builder: no gradients, no general groups or
+transforms, no clipping. `draw_text`'s `rotation` is the one exception,
+a per-`<text>` `transform="rotate(...)"` rather than a transform stack,
+because a chart's rotated y-axis title needs it.
 """
 
 from std.math import cos, pi, sin
@@ -32,44 +25,29 @@ from canvas_mojo.text.text_align import TextAlign
 
 comptime _HEX_DIGITS = "0123456789abcdef"
 
-# Decimal places every Float64 coordinate/width/size gets formatted
-# to -- see _format_svg_float's own docstring for why this exists at
-# all (a real, reproducible bug it fixes, not just a tidiness choice).
+# Decimal places every Float64 coordinate/width/size is formatted to;
+# see _format_svg_float for why this rounding exists.
 comptime _SVG_DECIMALS = 3
 
 
 def _hex_byte(value: UInt8) -> String:
     var v = Int(value)
     # `_HEX_DIGITS` is a fixed, pure-ASCII literal, so a raw UTF-8 byte
-    # index (`[byte=...]`) is exactly the character it looks like --
-    # plain positional `s[i]` indexing was removed for Mojo `String` in
-    # favor of `[byte=]`/`[codepoint=]`/`[grapheme=]` (see the wiki's
-    # entry on the Mojo 1.0.0 upgrade this fixed).
+    # index (`[byte=...]`) is exactly the character it looks like.
+    # Mojo `String` has no plain positional `s[i]` indexing -- it
+    # indexes by `[byte=]`/`[codepoint=]`/`[grapheme=]`.
     return String(_HEX_DIGITS[byte=v // 16]) + String(_HEX_DIGITS[byte=v % 16])
 
 
 def _format_svg_float(value: Float64) -> String:
-    """Format `value` to exactly `_SVG_DECIMALS` decimal places --
-    plain `String(Float64)` isn't safe to use for SVG coordinates: a
-    real, reproducible bug, not a hypothetical one, caught by a hand-
-    derived test that compared an exact-string assertion against live
-    output and failed even though the *math* was right -- the same
-    `cx + radius * cos(angle)` expression, compiled as part of this
-    larger file rather than a small standalone probe, produced a
-    float one ULP away from the value the identical formula gave in
-    isolation (confirmed via `python3` and cross-checked against an
-    isolated Mojo probe first -- see the wiki for additional information).
-    `String(Float64)`'s shortest-round-trip formatting makes that 1-
-    ULP difference visible as a different *string*, even though both
-    values are the same point to any real display. Rounding to a
-    fixed, coarse decimal precision (millipixels -- far finer than any
-    real display needs) makes the two collapse to the identical
-    string -- the same fixed-precision-rounding fix works for any
-    caller hitting `String(Float64)`'s own drift (e.g. `0.1 + 0.2`
-    printing extra trailing digits) for tick-label formatting or
-    similar, but isn't factored out to be shared with a caller here:
-    this package has no downstream dependents of its own to share code
-    with (the dependency, if any exists, only ever runs the other way).
+    """Format `value` to exactly `_SVG_DECIMALS` decimal places. Plain
+    `String(Float64)` is not safe for SVG coordinates: the same
+    `cx + radius * cos(angle)` expression can land one ULP apart
+    depending on compilation context, and shortest-round-trip
+    formatting turns that into a different *string* even though both
+    values are the same point on any display. Rounding to millipixels
+    -- far finer than a display resolves -- collapses the two. See the
+    wiki for the full case.
     """
     var scale = 1000.0  # 10 ** _SVG_DECIMALS
     var scaled = _round_to_int(value * scale)
@@ -86,12 +64,10 @@ def _format_svg_float(value: Float64) -> String:
 
 
 def _escape_xml_text(text: String) -> String:
-    """Escape the five XML-significant characters in text *content*
-    (not an attribute value -- `"`/`'` don't need escaping here, only
-    inside quoted attributes, which SvgCanvas never puts label text
-    into) -- `&` first, always, since escaping the other four each
-    introduces a literal `&` of its own that a second `&`-pass would
-    then mangle.
+    """Escape XML-significant characters in text *content*. `"`/`'`
+    need no escaping outside quoted attributes, and label text never
+    goes into one. `&` is escaped first, since escaping the others
+    introduces literal `&`s a later pass would mangle.
     """
     var result = text.replace("&", "&amp;")
     result = result.replace("<", "&lt;")
@@ -100,17 +76,11 @@ def _escape_xml_text(text: String) -> String:
 
 
 def _escape_xml_attr(value: String) -> String:
-    """Escape a string headed into a *double-quoted attribute value*
-    -- draw_text's own `family` parameter (below) is the first caller-
-    supplied string this module ever puts there, so this is a new
-    need `_escape_xml_text` above was never asked to cover: a real CSS
-    font stack (e.g. `"Helvetica Neue", Arial, sans-serif`) routinely
-    contains literal `"` characters, which `_escape_xml_text` -- by
-    its own docstring's own admission -- doesn't escape, because
-    nothing needed it to before now. `&` first, same reason
-    `_escape_xml_text` orders it first: escaping `"`/`<` each
-    introduce a literal `&` of their own that a later `&`-pass would
-    re-mangle.
+    """Escape a string headed into a *double-quoted attribute value*.
+    draw_text's `family` is the caller-supplied string that needs this:
+    a real CSS font stack (`"Helvetica Neue", Arial, sans-serif`)
+    contains literal `"` characters, which `_escape_xml_text` leaves
+    alone. `&` first, for the reason `_escape_xml_text` gives.
     """
     var result = value.replace("&", "&amp;")
     result = result.replace('"', "&quot;")
@@ -123,32 +93,19 @@ def _hex_color(color: Color) -> String:
 
 
 def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
-    """`LinearGradient.stops`, in ascending-offset order -- a real
-    correctness fix for `fill_rect_gradient` below, not a cosmetic
-    one: `LinearGradient.add_stop`'s own docstring guarantees "stops
-    don't need to be added in offset order" (color_at's raster lookup
-    scans for the bracketing pair regardless of insertion order, per
-    _color_at_t's own docstring), but SVG's `<stop>` element doesn't
-    honor that guarantee -- the spec clamps each stop's own offset to
-    be no less than the previous `<stop>` sibling's, so a gradient
-    built with descending offsets (e.g. a legend that flips a bar's
-    value axis) emitted every stop after the first at the *first*
-    stop's own offset, collapsing the whole gradient to one flat color
-    in every SVG viewer while the identical raster call still rendered
-    correctly (reported by dataviz_mojo, whose continuous color legend
-    hit exactly this). Sorting here, once, right before emitting --
-    not changing add_stop's own contract, or LinearGradient's own
-    storage -- is what makes fill_rect_gradient honor the same
-    "insertion order doesn't matter" guarantee raster already does.
+    """`LinearGradient.stops` in ascending-offset order. `add_stop`
+    guarantees insertion order doesn't matter, and the raster lookup
+    honors that, but SVG's `<stop>` clamps each offset to be no less
+    than the previous sibling's -- so descending offsets would emit
+    every stop after the first at the first stop's offset, flattening
+    the gradient to one color in every viewer. Sorting here, right
+    before emitting, keeps that guarantee without touching add_stop's
+    contract or LinearGradient's storage.
 
-    A plain insertion sort, not the stdlib `sort()`: `stops` is
-    typically 2-4 entries for a real chart fill (LinearGradient's own
-    docstring), so O(n^2) here is not a real cost, and insertion sort
-    is trivially stable -- two stops at the identical offset (a
-    deliberate hard color transition, valid in both SVG and this
-    module's own raster interpolation) keep their original relative
-    order rather than risking a sort that's merely offset-correct but
-    silently swaps which color owns which side of the hard edge.
+    Insertion sort rather than stdlib `sort()`: `stops` is typically
+    2-4 entries, and stability matters -- two stops at the same offset
+    are a deliberate hard color transition, and a merely
+    offset-correct sort could swap which color owns which side of it.
     """
     var sorted_stops = List[_GradientStop](capacity=len(stops))
     for stop in stops:
@@ -160,17 +117,12 @@ def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
 
 
 def _path_d(path: Path) -> String:
-    """Path.commands -> an SVG `d` attribute string -- a direct
-    one-to-one mapping (M/L/Q/C/A/Z), not a re-derivation: Path's own
-    six command kinds are already exactly SVG path's own move/line/
-    quadratic/cubic/elliptical-arc/close commands, absolute coordinates
-    both ways (see Path's own docstring: "All coordinates are
-    absolute"), so no coordinate-system translation is needed either.
-    arc_to's `sweep_flag=1` (positive-angle direction), no sign flip --
-    same reasoning as fill_arc_aa/fill_ring_sector_aa's own arc
-    commands below: SVG's coordinate space is y-down, same as
-    `canvas`'s, and increasing angle already sweeps clockwise in that
-    space, so the two conventions already agree.
+    """Path.commands -> an SVG `d` attribute string, one-to-one
+    (M/L/Q/C/A/Z): Path's six command kinds are already SVG path's
+    move/line/quadratic/cubic/elliptical-arc/close, absolute both ways,
+    so nothing is translated. arc_to emits `sweep_flag=1` with no sign
+    flip -- SVG's space is y-down like the raster canvas's, and
+    increasing angle sweeps clockwise in both.
     """
     var d = String("")
     var is_first = True
@@ -210,12 +162,11 @@ def _path_d(path: Path) -> String:
             )
         elif cmd.kind == _ARC_TO:
             # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
-            # cmd.p3.x = end_angle -- see _PathCommand's own docstring
-            # (path.mojo) for this packing. No leading `L` to the arc's
-            # own start point the way fill_arc_aa's standalone wedge
-            # path needs one -- arc_to is always one segment inside a
-            # larger path, continuing from wherever the current point
-            # already is (arc_to's own docstring puts that contract on
+            # cmd.p3.x = end_angle (see _PathCommand in path.mojo). No
+            # leading `L` to the arc's start the way fill_arc_aa's
+            # standalone wedge needs: arc_to is always one segment
+            # inside a larger path, continuing from the current point
+            # already is (arc_to puts that contract on
             # the caller), the same as the L/Q/C branches above.
             var cx = cmd.p1.x
             var cy = cmd.p1.y
@@ -243,18 +194,15 @@ def _path_d(path: Path) -> String:
 
 struct SvgCanvas(DrawTarget, Movable):
     """Accumulates SVG body markup for a `width x height` document.
-    `width`/`height` are public fields, the same shape `Canvas`'s own
-    are -- `render_svg()`'s ox1/oy1 sentinel resolution reads them the
-    same way `render()` reads `Canvas.width`/`.height`.
+    `width`/`height` are public fields, as on `Canvas`.
     """
 
     var width: Int
     var height: Int
     var _body: String
-    # How many gradients this document has already emitted -- the only
-    # thing this is for is minting a fresh `<defs>` id ("grad" +
-    # String(...)) each call, so two fill_rect_gradient calls in the
-    # same document never collide over the same `id`.
+    # How many gradients this document has emitted, used only to mint
+    # a fresh `<defs>` id ("grad" + String(...)) per call so two
+    # fill_rect_gradient calls never collide.
     var _gradient_count: Int
 
     def __init__(out self, width: Int, height: Int):
@@ -281,32 +229,21 @@ struct SvgCanvas(DrawTarget, Movable):
     def fill_rect_gradient(
         mut self, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
     ):
-        """A real SVG `<linearGradient>` (`gradientUnits="userSpaceOnUse"`),
-        not a canvas_mojo.shapes.rects.fill_rect_gradient-style per-pixel
-        raster fill -- `LinearGradient`'s own (x0, y0)-(x1, y1) axis
-        already lives in the identical absolute pixel-space coordinate
-        system this document's own `<rect>` does (the same space
-        `color_at(x, y)`'s raster interpolation assumes), so
-        `userSpaceOnUse` (SVG's own escape from its default, shape-
-        relative `objectBoundingBox` gradient units) is exactly what
-        lets that axis carry over unchanged, no coordinate translation
-        needed.
+        """A real SVG `<linearGradient>` with
+        `gradientUnits="userSpaceOnUse"`, not a per-pixel raster fill.
+        `LinearGradient`'s (x0, y0)-(x1, y1) axis already lives in the
+        same absolute pixel space as this document's `<rect>`, so
+        `userSpaceOnUse` -- SVG's escape from its default shape-relative
+        `objectBoundingBox` units -- carries that axis over untranslated.
 
-        Emits a fresh `<defs><linearGradient id="gradN">...` before
-        every call (own id via `_gradient_count`, see that field's own
-        docstring) rather than trying to detect and dedupe an identical
-        gradient reused across multiple calls -- real duplication in
-        the output markup, but SVG readers already dedupe identical
-        `<defs>` content at parse time in practice, and a caller in
-        this codebase's own charting use case draws a given gradient
-        exactly once per legend/bar anyway (see dataviz_mojo's own
-        continuous color legend, the concrete caller this exists for).
+        Emits a fresh `<defs><linearGradient id="gradN">` per call
+        rather than deduping a gradient reused across calls. That
+        duplicates markup, but SVG readers dedupe identical `<defs>`
+        at parse time, and a chart draws a given gradient once per
+        legend or bar anyway.
 
-        `<stop>` elements are emitted in ascending-offset order,
-        regardless of `gradient.stops`'s own insertion order -- see
-        _stops_sorted_by_offset's own docstring for why that's a real
-        SVG-spec requirement this raster-backed `LinearGradient` never
-        had to honor before now.
+        `<stop>` elements come out in ascending-offset order regardless
+        of insertion order -- see _stops_sorted_by_offset.
         """
         self._gradient_count += 1
         var gid = "grad" + String(self._gradient_count)
@@ -390,15 +327,12 @@ struct SvgCanvas(DrawTarget, Movable):
         end_angle: Float64,
         color: Color,
     ):
-        """A wedge, drawn as `M center L start-point A ... end-point Z`
-        -- the same "line out to the arc, sweep it, line back to
-        center" shape `fill_arc_aa`'s own raster coverage math treats
-        as the wedge's boundary. `sweep_flag=1` (positive-angle
-        direction) with no sign flip: SVG's own coordinate space is
-        y-down by default, the same as `canvas`'s, and increasing
-        angle already sweeps clockwise in that space (confirmed
-        directly for `Mark.ARC`'s own wedges -- see plot.mojo's own
-        docstring), so the two conventions already agree.
+        """A wedge, drawn as `M center L start-point A ... end-point Z`:
+        the same "line out to the arc, sweep it, line back to center"
+        boundary `fill_arc_aa`'s raster coverage math uses.
+        `sweep_flag=1` with no sign flip, since SVG's space is y-down
+        like the raster canvas's and increasing angle sweeps clockwise
+        in both.
         """
         var x0 = cx + radius * cos(start_angle)
         var y0 = cy + radius * sin(start_angle)
@@ -440,18 +374,12 @@ struct SvgCanvas(DrawTarget, Movable):
         color: Color,
     ):
         """A donut wedge: `M outer-start A ... outer-end L inner-end
-        A ... inner-start Z` -- the outer arc swept forward
-        (`sweep_flag=1`, same direction/reasoning as `fill_arc_aa`'s
-        own), then a radial line inward, then the inner arc swept
-        *backward* (`sweep_flag=0`) back to the start angle, closing
-        the ring boundary in one continuous loop -- the same "outer
-        arc forward + inner arc backward, combined into one boundary"
-        shape `canvas_mojo.shapes.arcs.fill_ring_sector`'s own docstring
-        describes for the raster path, expressed as two SVG arc
-        commands instead of two point-sampled polylines. Hand-derived
-        (and cross-checked via python3) against a concrete 90-degree
-        wedge before trusting this shape -- see tests/test_svg.
-        mojo's own test.
+        A ... inner-start Z`. The outer arc sweeps forward
+        (`sweep_flag=1`, as in `fill_arc_aa`), then a radial line
+        inward, then the inner arc sweeps *backward* (`sweep_flag=0`)
+        back to the start angle, closing the ring in one loop -- the
+        boundary `fill_ring_sector` builds from two point-sampled
+        polylines, expressed as two SVG arc commands.
         """
         var outer_x0 = cx + outer_radius * cos(start_angle)
         var outer_y0 = cy + outer_radius * sin(start_angle)
@@ -522,70 +450,42 @@ struct SvgCanvas(DrawTarget, Movable):
         rotation: Float64 = 0.0,
         weight: FontWeight = FontWeight.NORMAL,
     ):
-        """Not part of `DrawTarget` (see that trait's own docstring
-        for why text is excluded) -- meant to be called directly by a
-        caller's own SVG-rendering path once it already knows it's
-        holding an `SvgCanvas`, the same way `canvas_mojo.text.draw_text`
-        would be called directly by a raster-rendering path once it
-        knows it's holding a `Canvas`.
+        """Not part of `DrawTarget`, which excludes text -- call this
+        directly once a caller knows it holds an `SvgCanvas`, the way
+        raster code calls `canvas_mojo.text.draw_text` on a `Canvas`.
 
-        `family` becomes a literal `font-family` attribute on the
-        `<text>` element -- fixing a real gap, not adding an opt-in
-        feature: every `<text>` element emitted before this parameter
-        existed had *no* `font-family` at all, so an SVG viewer fell
-        back to its own undefined user-agent default (varies by
-        viewer -- some default to a serif face), which is why SVG
-        output could look visually inconsistent with this package's
-        own raster `draw_text`, which always resolves a real font via
-        fontconfig. Defaults to `"sans-serif"` (a generic CSS keyword
-        every SVG viewer supports, not a specific face) precisely so
-        every pre-existing call keeps emitting *a* font-family now,
-        not none.
+        `family` becomes a literal `font-family` attribute, always
+        emitted: without one, a viewer falls back to its own undefined
+        default (some pick a serif face), which reads as inconsistent
+        with the raster `draw_text`, where fontconfig always resolves a
+        real font. Defaults to `"sans-serif"`, a generic CSS keyword
+        every viewer supports.
 
-        Deliberately a different value shape than raster draw_text's
-        own `family` parameter, despite the same name and position in
-        the signature: raster's `family` is a fontconfig alias/family
-        name resolved to one concrete font *file* (e.g. "Sans" ->
-        DejaVu Sans's own .ttf); this `family` is a literal CSS
-        `font-family` value -- a generic keyword, a specific face
-        name, or a comma-separated fallback stack -- interpreted by
-        whatever later renders the SVG, not by this package. A caller
-        bridging the two (e.g. dataviz_mojo's own Theme) needs its own
-        mapping between them, not a shared string.
+        This `family` is a different kind of value from raster
+        draw_text's, despite the shared name and position: raster's is
+        a fontconfig alias resolved to one concrete font *file*; this
+        is a literal CSS `font-family` -- keyword, face name, or
+        comma-separated stack -- interpreted by whatever renders the
+        SVG. A caller driving both backends needs its own mapping
+        between the two.
 
-        `(x, y)` is the text baseline anchor, matching `canvas_mojo.text.
-        draw_text`'s own convention exactly -- SVG `<text>` already
-        anchors its own `y` to the alphabetic baseline by default, so
-        no baseline-vs-top-of-glyph adjustment is needed here the way
-        a raster API without that default might need. `text-anchor`
-        (`start`/`middle`/`end`) is the direct SVG equivalent of
-        `align`'s own three values, also both measured from `(x, y)`.
+        `(x, y)` is the baseline anchor, matching raster draw_text:
+        SVG `<text>` anchors `y` to the alphabetic baseline already, so
+        nothing adjusts for glyph tops. `text-anchor`
+        (`start`/`middle`/`end`) is the direct equivalent of `align`'s
+        three values, also measured from `(x, y)`.
 
-        `rotation` (radians, matching `canvas_mojo.text.draw_text`'s own
-        convention exactly -- not degrees) rotates the whole `<text>`
-        element around its own `(x, y)` anchor, via SVG's `transform=
-        "rotate(<degrees> <x> <y>)"` -- omitted entirely when `rotation
-        == 0.0` (the overwhelming common case), so every pre-existing
-        `draw_text` call/output stays byte-for-byte unchanged. No sign
-        flip needed converting from `canvas_mojo.text.draw_text`'s own
-        Cairo-rotation convention: both Cairo's user space and SVG's
-        viewport space put y pointing *down*, so a positive angle reads
-        as clockwise-on-screen in both -- confirmed directly (not just
-        argued) by this method's own hand-derived rotation test, not
-        assumed to carry over from the raster path unchanged just
-        because the reasoning sounds right.
+        `rotation` is radians, as in raster draw_text, and rotates the
+        whole `<text>` around its `(x, y)` anchor via
+        `transform="rotate(<degrees> <x> <y>)"`. Omitted entirely at
+        0.0. No sign flip: raster space and SVG's viewport space both
+        put y downward, so a positive angle is clockwise in both.
 
-        `weight` mirrors `canvas_mojo.text.draw_text`'s own `weight`
-        parameter -- same `FontWeight` type, same `NORMAL` default --
-        so a caller driving both backends from one call site (e.g.
-        dataviz_mojo's own Theme) can pass the same value to either.
-        Emitted as a literal `font-weight="bold"` attribute when
-        `weight == FontWeight.BOLD` (SVG/CSS's own two-value keyword;
-        `FontWeight` doesn't distinguish anything finer than that
-        today), omitted entirely at the default `NORMAL` -- matching
-        `rotation`'s own omit-at-default convention above -- so every
-        pre-existing `draw_text` call/output stays byte-for-byte
-        unchanged.
+        `weight` mirrors raster draw_text's `weight` -- same
+        `FontWeight`, same `NORMAL` default -- so one call site can
+        drive both backends. Emits `font-weight="bold"` for
+        FontWeight.BOLD (SVG/CSS's two-value keyword; `FontWeight`
+        distinguishes nothing finer), omitted at `NORMAL`.
         """
         var escaped_family = _escape_xml_attr(family)
         var anchor = "start"
@@ -647,8 +547,8 @@ struct SvgCanvas(DrawTarget, Movable):
 
 
 def write_svg(svg: SvgCanvas, path: String) raises:
-    """Write `svg`'s accumulated markup to `path` -- the SVG
-    counterpart to `canvas_mojo.io.bmp.write_bmp`/`canvas_mojo.io.png.write_png`.
+    """Write `svg`'s accumulated markup to `path`, the SVG counterpart
+    to `write_bmp`/`write_png`.
     """
     var f = open(path, "w")
     f.write(svg.to_string())

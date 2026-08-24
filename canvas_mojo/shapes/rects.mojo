@@ -13,9 +13,9 @@ from canvas_mojo.shapes.lines import draw_line
 def draw_rect(mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color: Color):
     """Stroke a rectangle's outline (x, y is the top-left corner).
 
-    Draws each edge exactly once -- the left/right edges stop short of
-    the corners already covered by the top/bottom edges, so a
-    translucent color doesn't get blended twice at any pixel.
+    Draws each edge exactly once: the left/right edges stop short of
+    the corners the top/bottom edges already cover, so a translucent
+    color never blends twice.
     """
     if width <= 0 or height <= 0:
         return
@@ -34,11 +34,9 @@ def draw_rect(mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color
 def fill_rect(mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color: Color):
     """Fill a solid rectangle (x, y is the top-left corner).
 
-    Clamps to the canvas's own bounds and the active clip *once*, up
-    front, via effective_fill_rect -- not per pixel through set_pixel
-    -- since every pixel in this loop shares the identical, unchanging
-    bounds check; see that method's own docstring on buffer.mojo's
-    Canvas.
+    Clamps to the canvas bounds and active clip once up front through
+    `Canvas.effective_fill_rect`, rather than per pixel through
+    set_pixel: every pixel in the loop shares the same bounds check.
     """
     if width <= 0 or height <= 0:
         return
@@ -56,10 +54,9 @@ def fill_rect(mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color
 def fill_rect_gradient(
     mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, gradient: LinearGradient
 ):
-    """Fill a solid rectangle the same way fill_rect does, but
-    sourcing each pixel's color from `gradient` (see gradient.mojo)
-    instead of one flat Color. Same once-up-front clamp as fill_rect,
-    for the same reason -- see that function's own docstring.
+    """Fill a rectangle as fill_rect does, sourcing each pixel's color
+    from `gradient` (gradient.mojo) rather than one flat Color. Same
+    once-up-front clamp as fill_rect.
     """
     if width <= 0 or height <= 0:
         return
@@ -77,15 +74,10 @@ def fill_rect_gradient(
 def fill_rect_radial_gradient(
     mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, gradient: RadialGradient
 ):
-    """Fill a solid rectangle the same way fill_rect does, but
-    sourcing each pixel's color from `gradient` (a RadialGradient --
-    see gradient.mojo) instead of one flat Color. A rectangle isn't
-    the shape a radial gradient is usually reached for (a circle/ring
-    is), but it's the same "concrete case that exists" reasoning as
-    fill_rect_gradient: a rectangular legend swatch or background panel
-    wanting a radial highlight doesn't need a circle primitive
-    involved at all. Same once-up-front clamp as fill_rect, for the
-    same reason -- see that function's own docstring.
+    """fill_rect_gradient's RadialGradient counterpart. A rectangle
+    isn't the usual shape for a radial gradient, but a rectangular
+    legend swatch or background panel wanting a radial highlight needs
+    no circle primitive involved. Same once-up-front clamp as fill_rect.
     """
     if width <= 0 or height <= 0:
         return

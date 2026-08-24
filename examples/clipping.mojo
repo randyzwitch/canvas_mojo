@@ -5,11 +5,10 @@ boundary (a big circle, a full-width diagonal line) gets cut off
 cleanly at the clip edge.
 
 Also demonstrates nesting: a second, oversized clip pushed inside the
-first still can't draw outside the parent's region -- push_clip
-intersects with whatever's already active rather than replacing it,
-which is the actual point of a stack over a single settable rect (see
-canvas_mojo/buffer.mojo's push_clip docstring, and the roadmap item this
-came out of).
+first still can't draw outside the parent's region, because push_clip
+intersects with whatever is already active rather than replacing it --
+the point of a stack over a single settable rect (see
+canvas_mojo/buffer.mojo's push_clip).
 
 Run with:
     pixi run example
@@ -27,8 +26,8 @@ from canvas_mojo.io.png import write_png
 def main() raises:
     var c = Canvas(900, 600, Color(255, 255, 255))
 
-    # mark the plot area's boundary before clipping anything -- this
-    # itself is drawn unclipped, so it stays a crisp full rectangle
+    # mark the plot area's boundary before clipping anything; drawn
+    # unclipped, so it stays a crisp full rectangle
     draw_rect(c, 150, 150, 600, 300, Color(180, 180, 180))
 
     c.push_clip(150, 150, 600, 300)

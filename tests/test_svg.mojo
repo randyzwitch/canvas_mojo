@@ -1,12 +1,9 @@
-"""Tests for svg.mojo: SvgCanvas's own DrawTarget conformance and
-draw_text() -- string-content assertions (the markup itself, hand-
-derived the same rigor pixel-color assertions get elsewhere in this
-workspace) rather than pixel colors, since there's no raster buffer
-here to sample. No cairo needed -- SvgCanvas only touches
-canvas_mojo.text for FontWeight (a small, cairo-free struct with no
-fontconfig/FFI calls of its own -- see font_discovery.mojo's own
-docstring), never canvas_mojo.text.render itself (see svg.mojo's own
-docstring).
+"""Tests for svg.mojo: SvgCanvas's DrawTarget conformance and
+draw_text(). Assertions are against the markup itself, hand-derived
+with the rigor pixel-color assertions get elsewhere, since there's no
+raster buffer to sample. No font machinery involved -- SvgCanvas
+touches canvas_mojo.text only for FontWeight, a small struct with no
+fontconfig or FFI calls, never canvas_mojo.text.render.
 """
 
 from std.math import pi
@@ -30,12 +27,10 @@ def test_fill_rect_emits_expected_rect_element() raises:
 
 
 def test_fill_rect_gradient_emits_expected_lineargradient_and_rect() raises:
-    # x0/y0/x1/y1 pass straight through to x1/y1/x2/y2 on the SVG
-    # <linearGradient> element unchanged (userSpaceOnUse -- see
-    # fill_rect_gradient's own docstring for why no translation is
-    # needed), and each stop's own offset/color/alpha map directly to
-    # offset/stop-color/stop-opacity. First gradient in a fresh
-    # SvgCanvas, so its own id is "grad1".
+    # x0/y0/x1/y1 pass through to the <linearGradient> element's
+    # x1/y1/x2/y2 unchanged under userSpaceOnUse, and each stop's
+    # offset/color/alpha map to offset/stop-color/stop-opacity. First
+    # gradient in a fresh SvgCanvas, so its id is "grad1".
     var svg = SvgCanvas(100, 80)
     var g = LinearGradient(10.0, 0.0, 60.0, 0.0)
     g.add_stop(0.0, Color(255, 0, 0, 255))
@@ -57,10 +52,9 @@ def test_fill_rect_gradient_emits_expected_lineargradient_and_rect() raises:
 
 
 def test_fill_rect_gradient_mints_a_fresh_id_per_call() raises:
-    # Two gradients in the same document must not collide over the
-    # same <defs> id -- confirms _gradient_count actually increments
-    # (see that field's own docstring), not just that the first call
-    # alone looks right.
+    # Two gradients in one document must not collide over a <defs> id:
+    # _gradient_count has to increment, not just look right on the
+    # first call.
     var svg = SvgCanvas(100, 80)
     var g1 = LinearGradient(0.0, 0.0, 10.0, 0.0)
     g1.add_stop(0.0, Color(0, 0, 0))
@@ -80,20 +74,16 @@ def test_fill_rect_gradient_mints_a_fresh_id_per_call() raises:
 
 
 def test_fill_rect_gradient_sorts_descending_stops_into_ascending_offset_order() raises:
-    # Real bug, reported by dataviz_mojo: LinearGradient.add_stop's own
-    # docstring guarantees stops don't need to be added in offset
-    # order (the raster color_at scans for the bracketing pair
-    # regardless), but the SVG spec clamps each <stop>'s own offset to
-    # be no less than the previous sibling's -- so a gradient built
-    # with descending offsets (their own continuous color legend flips
-    # each stop to 1.0 - offset) used to emit every stop after the
-    # first at the *first* stop's own offset, collapsing the gradient
-    # to one flat color in every real SVG viewer while the identical
-    # raster fill still rendered correctly. Exact repro from their own
-    # report: three stops added 1.0, 0.5, 0.0, each with a distinct
-    # color, so a wrong sort (or none at all) would be visible as a
-    # color landing at the wrong offset, not just an ordering assertion
-    # that could pass by accident.
+    # add_stop guarantees insertion order doesn't matter, and the
+    # raster color_at honors that, but the SVG spec clamps each
+    # <stop>'s offset to be no less than the previous sibling's. So a
+    # gradient built with descending offsets -- a continuous color
+    # legend flipping each stop to 1.0 - offset -- collapses to one
+    # flat color in every viewer unless the stops are sorted before
+    # emission, while the identical raster fill renders correctly.
+    # Three stops added 1.0, 0.5, 0.0, each a distinct color, so a
+    # wrong sort shows up as a color at the wrong offset rather than
+    # an ordering assertion that could pass by accident.
     var svg = SvgCanvas(100, 100)
     var g = LinearGradient(0.0, 0.0, 0.0, 100.0)
     g.add_stop(1.0, Color(60, 110, 200))
@@ -109,14 +99,13 @@ def test_fill_rect_gradient_sorts_descending_stops_into_ascending_offset_order()
 
 
 def test_fill_rect_gradient_preserves_relative_order_of_stops_at_an_equal_offset() raises:
-    # A hard color transition (two stops at the identical offset -- no
-    # SVG-spec violation, since offsets are non-decreasing across
-    # them) depends on which of the two tied stops SVG treats as
-    # "before" vs "after" the seam: whichever was added first must
-    # stay emitted first. Confirms _stops_sorted_by_offset's own
-    # insertion sort is stable, not merely offset-correct -- an
-    # unstable sort could pass every ascending-order assertion while
-    # still silently swapping which color owns which side of the seam.
+    # A hard color transition is two stops at the same offset, which
+    # the spec allows since offsets stay non-decreasing. Which one SVG
+    # treats as before and after the seam depends on emission order, so
+    # whichever was added first must stay first:
+    # _stops_sorted_by_offset's insertion sort has to be stable, not
+    # merely offset-correct. An unstable sort passes every
+    # ascending-order assertion while swapping the seam's sides.
     var svg = SvgCanvas(100, 100)
     var g = LinearGradient(0.0, 0.0, 0.0, 100.0)
     g.add_stop(0.0, Color(255, 0, 0))
@@ -159,11 +148,10 @@ def test_fill_circle_aa_emits_expected_circle_element() raises:
 
 
 def test_fill_arc_aa_small_wedge_matches_hand_derived_endpoints() raises:
-    # cx=50, cy=60, radius=20, start=0, end=pi/2 -- endpoints hand-
-    # derived via python3 (cx + r*cos(theta), cy + r*sin(theta)):
-    # start -> (70.0, 60.0), end -> (50.0, 80.0). Span (pi/2) < pi, so
-    # large-arc-flag is 0; sweep-flag is always 1 (see fill_arc_aa's
-    # own docstring for why no sign flip is needed).
+    # cx=50, cy=60, radius=20, start=0, end=pi/2. Endpoints derived
+    # via python3 (cx + r*cos(theta), cy + r*sin(theta)): start ->
+    # (70.0, 60.0), end -> (50.0, 80.0). Span pi/2 < pi, so
+    # large-arc-flag is 0; sweep-flag is always 1.
     var svg = SvgCanvas(100, 100)
     svg.fill_arc_aa(50.0, 60.0, 20.0, 0.0, 1.5707963267948966, Color(0, 255, 0))
     assert_true(
@@ -174,12 +162,10 @@ def test_fill_arc_aa_small_wedge_matches_hand_derived_endpoints() raises:
 
 
 def test_fill_arc_aa_wide_wedge_sets_large_arc_flag() raises:
-    # Same center/radius, start=0, end=4.0 (span=4.0 > pi) -- endpoints
-    # hand-derived via python3 (36.92712758272776, 44.86395009384144),
-    # then rounded to _format_svg_float's own 3 decimal places (36.927,
-    # 44.864) -- see svg.mojo's own _format_svg_float docstring for why
-    # this rounding exists (a real 1-ULP cross-context float
-    # discrepancy this fixes, not just cosmetic). large-arc-flag 1.
+    # Same center/radius, start=0, end=4.0 (span > pi). Endpoints
+    # derived via python3 (36.92712758272776, 44.86395009384144), then
+    # rounded to _format_svg_float's 3 decimals (36.927, 44.864); see
+    # that function for why the rounding exists. large-arc-flag 1.
     var svg = SvgCanvas(100, 100)
     svg.fill_arc_aa(50.0, 60.0, 20.0, 0.0, 4.0, Color(0, 0, 255))
     assert_true(
@@ -190,14 +176,11 @@ def test_fill_arc_aa_wide_wedge_sets_large_arc_flag() raises:
 
 
 def test_fill_ring_sector_aa_quarter_wedge_matches_hand_derived_endpoints() raises:
-    # cx=100, cy=100, inner=25, outer=50, start=0, end=pi/2 -- all four
-    # corner points hand-derived via python3 (cx + r*cos(theta), cy +
-    # r*sin(theta)): outer_start (150.0, 100.0), outer_end (100.0,
-    # 150.0), inner_end (100.0, 125.0), inner_start (125.0, 100.0).
-    # Span pi/2 < pi, so large-arc-flag is 0 for both arcs; outer arc
-    # sweeps forward (1), inner arc sweeps backward (0) -- see this
-    # method's own docstring for why that traces the ring boundary
-    # correctly.
+    # cx=100, cy=100, inner=25, outer=50, start=0, end=pi/2. Four
+    # corners derived via python3: outer_start (150.0, 100.0),
+    # outer_end (100.0, 150.0), inner_end (100.0, 125.0), inner_start
+    # (125.0, 100.0). Span < pi, so large-arc-flag is 0 for both arcs;
+    # the outer sweeps forward (1), the inner backward (0).
     var svg = SvgCanvas(200, 200)
     svg.fill_ring_sector_aa(100.0, 100.0, 25.0, 50.0, 0.0, 1.5707963267948966, Color(255, 128, 0))
     assert_true(
@@ -208,14 +191,10 @@ def test_fill_ring_sector_aa_quarter_wedge_matches_hand_derived_endpoints() rais
 
 
 def test_fill_ring_sector_aa_wide_wedge_sets_large_arc_flag() raises:
-    # inner=15, outer=25 (inner < outer, a real ring), start=0, end=4.0
-    # (span=4.0 > pi) -- every endpoint independently computed via
-    # python3, cross-checked against a real Mojo run (an earlier draft
-    # of this exact test had inner/outer swapped, plus guessed rather
-    # than computed endpoint values -- caught by that cross-check, not
-    # shipped), then rounded to _format_svg_float's own 3 decimal
-    # places the same way the fill_arc_aa wide-wedge test's own
-    # endpoint is (see that test's own comment for why).
+    # inner=15, outer=25, start=0, end=4.0 (span > pi). Every endpoint
+    # computed via python3 and cross-checked against a real run, then
+    # rounded to _format_svg_float's 3 decimals as the fill_arc_aa
+    # wide-wedge test's endpoints are.
     var svg = SvgCanvas(200, 200)
     svg.fill_ring_sector_aa(50.0, 60.0, 15.0, 25.0, 0.0, 4.0, Color(0, 200, 100))
     assert_true(
@@ -254,13 +233,11 @@ def test_fill_path_aa_emits_closed_path_with_fill_color() raises:
 
 
 def test_fill_path_aa_handles_arc_to_command() raises:
-    # Same cx/cy/radius/start/end (and the identical hand-derived
-    # endpoints) as test_fill_arc_aa_small_wedge_matches_hand_derived_
-    # endpoints above -- arc_to is one segment inside a larger path, so
-    # unlike fill_arc_aa's own standalone wedge (M center L start A ...
-    # Z), there's no leading M/L to the arc's own start point here:
-    # just the bare A command, continuing from move_to's own point
-    # (arc_to's own docstring puts matching that point on the caller).
+    # The small-wedge test's cx/cy/radius/start/end and endpoints.
+    # arc_to is one segment inside a larger path, so unlike
+    # fill_arc_aa's standalone wedge (M center L start A ... Z) there's
+    # no leading M/L here -- just the A command, continuing from
+    # move_to's point, which arc_to leaves to the caller.
     var path = Path()
     path.move_to(70.0, 60.0)
     path.arc_to(50.0, 60.0, 20.0, 0.0, 1.5707963267948966)
@@ -274,9 +251,8 @@ def test_fill_path_aa_handles_arc_to_command() raises:
 
 
 def test_fill_path_aa_arc_to_wide_span_sets_large_arc_flag() raises:
-    # Same cx/cy/radius/start/end (and the identical hand-derived
-    # endpoint) as test_fill_arc_aa_wide_wedge_sets_large_arc_flag
-    # above.
+    # test_fill_arc_aa_wide_wedge_sets_large_arc_flag's parameters and
+    # endpoint.
     var path = Path()
     path.move_to(70.0, 60.0)
     path.arc_to(50.0, 60.0, 20.0, 0.0, 4.0)
@@ -336,10 +312,7 @@ def test_draw_text_escapes_xml_special_characters() raises:
 
 
 def test_draw_text_default_rotation_omits_transform_attribute() raises:
-    # rotation's own default (0.0) must reproduce the exact pre-
-    # existing no-transform output byte-for-byte -- the same "purely
-    # additive" bar every optional parameter added to an existing,
-    # already-depended-on method has to clear in this workspace.
+    # rotation's default (0.0) emits no transform attribute at all.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(
@@ -351,11 +324,9 @@ def test_draw_text_default_rotation_omits_transform_attribute() raises:
 
 
 def test_draw_text_rotation_emits_hand_derived_rotate_transform() raises:
-    # pi/2 radians -> exactly 90.0 degrees (90.000 through
-    # _format_svg_float's own 3-decimal formatting) -- no sign flip
-    # from canvas_mojo.text.draw_text's own Cairo-rotation convention,
-    # since both Cairo's user space and SVG's viewport space put y
-    # pointing down (see draw_text's own docstring).
+    # pi/2 radians -> exactly 90.0 degrees, 90.000 through
+    # _format_svg_float. No sign flip relative to raster draw_text,
+    # since raster space and SVG's viewport space both put y down.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=pi / 2.0)
     assert_true(
@@ -366,10 +337,8 @@ def test_draw_text_rotation_emits_hand_derived_rotate_transform() raises:
 
 
 def test_draw_text_default_family_is_sans_serif() raises:
-    # The actual bug fix: every pre-existing call (no `family` argument
-    # at all) must now emit a real font-family, not the historical
-    # "no attribute, viewer picks its own undefined default" gap --
-    # see draw_text's own docstring.
+    # A call with no `family` argument still emits a real font-family
+    # rather than leaving the viewer to its own undefined default.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true('font-family="sans-serif"' in svg.to_string(), "default family is sans-serif")
@@ -386,15 +355,12 @@ def test_draw_text_custom_family_is_emitted_verbatim() raises:
 
 def test_draw_text_family_containing_quotes_is_escaped() raises:
     # A real CSS font stack quotes any family name containing a space
-    # (`"Helvetica Neue", Arial, sans-serif`) -- family is the first
-    # caller-supplied string this module ever puts inside a quoted
-    # attribute value (every other attribute is either internally
-    # generated -- text-anchor, the hex color -- or, for label text
-    # itself, goes through _escape_xml_text into element *content*,
-    # not an attribute). A literal `"` reaching the output unescaped
-    # would prematurely close the attribute and corrupt the markup;
-    # confirms _escape_xml_attr actually gets used here, not just that
-    # it exists.
+    # (`"Helvetica Neue", Arial, sans-serif`), and `family` is the only
+    # caller-supplied string this module puts inside a quoted
+    # attribute -- everything else is internally generated, or goes
+    # through _escape_xml_text into element content. An unescaped `"`
+    # would close the attribute early and corrupt the markup, so this
+    # checks _escape_xml_attr is actually wired in.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, family='"Helvetica Neue", Arial')
     assert_true(
@@ -404,10 +370,8 @@ def test_draw_text_family_containing_quotes_is_escaped() raises:
 
 
 def test_draw_text_default_weight_omits_font_weight_attribute() raises:
-    # weight's own default (FontWeight.NORMAL) must reproduce the
-    # exact pre-existing markup byte-for-byte, same guarantee
-    # rotation's default already gets above -- see draw_text's own
-    # docstring.
+    # weight's default (FontWeight.NORMAL) emits no font-weight
+    # attribute, the same omit-at-default rotation gets above.
     var svg = SvgCanvas(100, 100)
     svg.draw_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
     assert_true(

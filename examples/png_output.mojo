@@ -1,11 +1,11 @@
 """Demo: write_png/read_png -- a second, stdlib-only image format
 alongside BMP (see canvas_mojo/io/png.mojo's module docstring for why
-PNG earns its place despite writing uncompressed DEFLATE "stored"
-blocks on the write side: same "trivial to verify byte-by-byte"
-tradeoff BMP made, but PNG previews well in essentially every viewer,
-not just ones with raw BMP support). Reading, by contrast, has to
-handle whatever a real encoder produced -- see canvas_mojo/io/deflate.mojo
-for the native DEFLATE decoder that makes that possible.
+PNG earns its place: it previews well in essentially every viewer, not
+just ones with raw BMP support, and its pixel data is really
+compressed rather than stored raw). Both directions go through
+canvas_mojo/io/deflate.mojo -- this package's own native LZ77 +
+fixed-Huffman encoder on the way out, and its own decoder on the way
+in, which has to handle whatever a real encoder produced.
 
 One scene, written out through both encoders from the same canvas, so
 comparing out_png_output.bmp against out_png_output.png (once

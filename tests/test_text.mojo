@@ -1,54 +1,33 @@
 """Tests for canvas_mojo/text/render.mojo.
 
-Unlike canvas_mojo.shapes' own tests, these can't assert exact pixel sets --
-real system-font rasterization (hinting, AA, glyph shapes) isn't
-something this repo can independently re-derive by hand the way
-Bresenham/midpoint-circle output can (see canvas_mojo/text/render.mojo's
-module docstring). What's tested instead are the properties this
-module's own code is actually responsible for, verified against this
-module's real behavior (via probe scripts, not assumption) before
-being locked in here:
+These can't assert exact pixel sets the way canvas_mojo.shapes' tests
+do: real system-font rasterization (hinting, AA, glyph shapes) isn't
+something this repo re-derives by hand the way Bresenham or
+midpoint-circle output is. What's tested instead are the properties
+this module is responsible for:
 
   - the early-exit edge cases (empty string, whitespace-only text,
     fully transparent color) are true no-ops
-  - the glyph-outline-to-Path-to-fill_path_aa pipeline actually places
-    ink where requested, in the requested color, for at least one
-    pixel a solid glyph interior guarantees full coverage on
-  - anti-aliasing is genuinely happening (mixed-coverage edge pixels
-    exist, not just pure background/pure foreground)
-  - every touched pixel obeys the src-over blend invariant (result is
-    a convex combination of background and foreground per channel,
-    never overshooting either) -- the same blend_over every other
-    filled primitive in this package already goes through, via
-    Canvas.set_pixel, not a text-specific mechanism
-  - two identical calls produce identical output (no hidden state
-    between calls -- each one resolves and loads its own font face
-    fresh)
+  - the glyph-outline-to-Path-to-fill_path_aa pipeline places ink where
+    requested, in the requested color, for at least one pixel a solid
+    glyph interior guarantees full coverage on
+  - anti-aliasing happens: mixed-coverage edge pixels exist, not just
+    pure background and pure foreground
+  - every touched pixel obeys the src-over blend invariant, staying a
+    convex combination of background and foreground per channel
+  - two identical calls produce identical output, so no state leaks
+    between them
 
-Confirmed by direct comparison, not assumed: this entire suite passed
-unchanged (structural checks, ink-bbox cross-checks, no-op edge cases,
-the lot) across two real rewrites -- first from wrapping Cairo to a
-native fontconfig+FreeType+fill_path_aa pipeline, later from that to
-fully native TrueType parsing (`ttf.mojo`, no FreeType either). The
-one exception both times was `test_measure_text_matches_known_glyph_
-extents`'s own hand-locked exact pixel values, which *did* need
-updating on the FreeType-removal rewrite specifically: FreeType's
-default hinting rounds thin stems (like "I"'s own single vertical
-stroke) to whole pixels for on-screen crispness, and `ttf.mojo`
-deliberately never hints (see that module's own docstring for why) --
-a real, understood, expected difference in the *exact* number, not a
-regression in what the pipeline actually does. Every other test here
-being insensitive to that same difference is exactly what "properties
-this module is responsible for, not exact rasterizer output" (see
-above) is supposed to buy.
+Only `test_measure_text_matches_known_glyph_extents` asserts exact
+values, which depend on `ttf.mojo`'s unhinted metrics: a hinting
+rasterizer rounds thin stems like "I"'s single stroke to whole pixels,
+and `ttf.mojo` never hints.
 
 Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
-alias) to run -- true of most Linux/macOS systems, but not guaranteed
-the way a checked-in fixture would be. The font-fallback tests need a
-second, more specific fact about this machine (the "Ubuntu" font
-lacking a snowman glyph "DejaVu Sans" has) -- see
-test_font_discovery.mojo's own docstring for the same dependency and
-why it's safe to assert here.
+alias), true of most Linux/macOS systems but not guaranteed the way a
+checked-in fixture would be. The font-fallback tests need a second
+machine-specific fact -- the "Ubuntu" font lacking a snowman glyph
+"DejaVu Sans" has -- see test_font_discovery.mojo.
 """
 
 from std.math import pi
@@ -72,10 +51,8 @@ def _assert_canvas_untouched(c: Canvas, bg: Color, label: String) raises:
 
 
 struct _InkBBox(ImplicitlyCopyable, Movable):
-    """Bounding box of every non-background pixel -- a small struct
-    instead of a 4-tuple purely so the fields have names at call
-    sites, matching this codebase's general aversion to positional
-    magic values (see e.g. geometry.mojo's Point).
+    """Bounding box of every non-background pixel; a struct rather than
+    a 4-tuple so the fields have names at call sites.
     """
 
     var min_x: Int
@@ -121,10 +98,9 @@ def test_empty_string_is_noop() raises:
 
 
 def test_whitespace_only_is_noop() raises:
-    # Confirmed via probe: Cairo's own text_extents(" ") reports
-    # width=0, height=0 -- no ink, just an advance -- so this hits the
-    # same early-return path as the empty string, not a 1-pixel-wide
-    # sliver.
+    # Measuring " " reports width=0, height=0 -- an advance with no
+    # ink -- so this takes the same early return as the empty string,
+    # not a 1-pixel-wide sliver.
     var c = Canvas(40, 40, BG)
     draw_text(c, 5, 20, "   ", FG, 24.0)
     _assert_canvas_untouched(c, BG, "whitespace-only drew something")
@@ -137,10 +113,10 @@ def test_alpha_zero_is_noop() raises:
 
 
 def test_opaque_glyph_has_an_exact_full_coverage_pixel() raises:
-    # A large enough solid vertical stroke has interior pixels far
-    # enough from any edge that Cairo's AA gives them full coverage
-    # (alpha == 255), which set_pixel writes through unblended -- so
-    # at least one pixel must equal FG exactly, not just "close to".
+    # A large solid vertical stroke has interior pixels far enough from
+    # any edge for full coverage (alpha == 255), which set_pixel writes
+    # unblended -- so at least one pixel must equal FG exactly, not
+    # merely come close.
     var c = Canvas(120, 120, BG)
     draw_text(c, 10, 90, "I", FG, 60.0)
 
@@ -154,8 +130,8 @@ def test_opaque_glyph_has_an_exact_full_coverage_pixel() raises:
 
 
 def test_opaque_glyph_has_antialiased_edge_pixels() raises:
-    # Same render as above: confirms this isn't a hard-edged fill --
-    # some pixels are neither pure background nor pure foreground.
+    # Same render as above: some pixels are neither pure background nor
+    # pure foreground, so the fill isn't hard-edged.
     var c = Canvas(120, 120, BG)
     draw_text(c, 10, 90, "I", FG, 60.0)
 
@@ -171,26 +147,21 @@ def test_opaque_glyph_has_antialiased_edge_pixels() raises:
 
 
 def test_translucent_text_stays_within_blend_bounds() raises:
-    # For src-over compositing, every touched pixel's channel must be
-    # close to a convex combination of background and foreground -- it
-    # can't end up meaningfully outside [min(bg, fg), max(bg, fg)].
-    # "Close to", with a 1-unit tolerance, not exactly: this module's
-    # pipeline floors twice in a row (unpremultiply's integer divide,
-    # then Canvas.set_pixel's own blend_over) wherever draw_text hands
-    # off a translucent, already-unpremultiplied color, so a
-    # continuous-math result exactly at (or within rounding of) the
-    # boundary can legitimately come out 1 unit past it -- confirmed
-    # by probe: real low-coverage AA edge pixels here, max deviation
-    # exactly 1, never more, across every touched pixel. A wider
-    # deviation would mean something more than rounding is wrong (e.g.
-    # unpremultiplying by the wrong alpha), which this still catches.
+    # Under src-over, every touched channel must stay within
+    # [min(bg, fg), max(bg, fg)] -- but within 1 unit, not exactly:
+    # the pipeline floors twice (unpremultiply's integer divide, then
+    # blend_over) for a translucent unpremultiplied color, so a result
+    # sitting on the boundary can land 1 past it. Measured max
+    # deviation across every touched pixel is exactly 1. A wider one
+    # would mean something beyond rounding -- unpremultiplying by the
+    # wrong alpha, say -- which this still catches.
     var bg = Color(30, 200, 60)
     var fg = Color(200, 20, 20, 130)
     var c = Canvas(120, 120, bg)
     draw_text(c, 10, 90, "I", fg, 60.0)
 
     # Int, not UInt8: a UInt8 lower bound of 0 minus a tolerance of 1
-    # would wrap around to 255 instead of going negative.
+    # wraps to 255 rather than going negative.
     comptime TOLERANCE = 1
     var lo_r = Int(min(bg.r, fg.r)) - TOLERANCE
     var hi_r = Int(max(bg.r, fg.r)) + TOLERANCE
@@ -223,15 +194,11 @@ def test_draw_text_is_deterministic() raises:
 
 
 def test_measure_text_matches_known_glyph_extents() raises:
-    # Locked-in values confirmed by probe against the native, unhinted
-    # ttf.mojo path specifically (see this file's own module docstring
-    # for why these differ from the old FreeType-hinted 3.0/18.0/~7.0):
-    # "I" in Sans at size 24 has ink width=2.3671875, height=
-    # 17.49609375, advance=7.078125 -- all exact (raw font-design-unit
-    # counts times a power-of-two-denominator fraction, the same
-    # "provably exact, not a tolerance" reasoning
-    # test_glyph_outline.mojo's own docstring gives for the identical
-    # glyph at a different size).
+    # "I" in Sans at size 24: ink width=2.3671875, height=17.49609375,
+    # advance=7.078125, measured against the unhinted ttf.mojo path.
+    # Exact rather than tolerance-based -- font-design-unit counts
+    # times a power-of-two-denominator fraction, the same reasoning
+    # test_glyph_outline.mojo gives for this glyph at another size.
     var m = measure_text("I", 24.0)
     assert_equal(m.width, 2.3671875)
     assert_equal(m.height, 17.49609375)
@@ -239,16 +206,10 @@ def test_measure_text_matches_known_glyph_extents() raises:
 
 
 def test_measure_text_long_string_is_not_empty() raises:
-    # Regression test for a real, confirmed bug (see text.mojo's own
-    # docstring): cairo_mojo's Context.text_extents(text: String)
-    # silently reports width=height=0 once a String crosses ~20 bytes
-    # -- but *only* for a runtime-constructed String, not a literal;
-    # a bare string literal passed directly (even a long one) never
-    # triggered it, which is exactly what made this bug so easy to
-    # miss originally. Building this one via concatenation, not typing
-    # it as one literal, is what actually exercises the bug -- a
-    # version of this test using a literal here would silently test
-    # nothing, the same mistake made (and caught) once already.
+    # A long runtime-constructed String, built by concatenation rather
+    # than typed as one literal, must measure nonzero. The two aren't
+    # interchangeable at the String-marshaling level, so a literal here
+    # would exercise less than it appears to.
     var built = String("jumps over") + String(" the lazy dog")
     var m = measure_text(built, 22.0)
     assert_true(m.width > 0.0)
@@ -257,11 +218,10 @@ def test_measure_text_long_string_is_not_empty() raises:
 
 
 def test_draw_text_long_single_line_renders_ink() raises:
-    # Same regression category as the measure_text one above, but for
-    # the draw_text/_show_text path specifically -- draw_text's own
-    # internal sizing pass uses exactly this length of string in its
-    # "any_ink" check, so a regression here would make the whole call
-    # silently no-op, not just mismeasure.
+    # The same long-runtime-String property, for the draw_text path:
+    # its internal sizing pass runs this length of string through the
+    # "any_ink" check, so a failure silently no-ops the whole call
+    # rather than just mismeasuring.
     var c = Canvas(320, 60, BG)
     draw_text(c, 10, 40, "jumps over the lazy dog", FG, 22.0)
     var bbox = _ink_bbox(c, BG)
@@ -276,10 +236,8 @@ def test_measure_text_empty_string_is_all_zero() raises:
 
 
 def test_rotation_zero_matches_omitting_the_argument() raises:
-    # Locks in the module docstring's claim directly: one code path
-    # for the rotated and unrotated cases, not two -- rotation=0.0
-    # explicitly must produce byte-identical output to not passing it
-    # at all, not just "close".
+    # One code path for rotated and unrotated: passing rotation=0.0
+    # explicitly must produce byte-identical output to omitting it.
     var c1 = Canvas(120, 120, BG)
     var c2 = Canvas(120, 120, BG)
     draw_text(c1, 10, 90, "Ag", FG, 40.0)
@@ -295,13 +253,11 @@ def test_rotation_zero_matches_omitting_the_argument() raises:
 
 
 def test_rotation_90_degrees_swaps_ink_bbox_dimensions() raises:
-    # "I" is a tall, narrow vertical stroke unrotated -- its ink bbox
-    # is much taller than wide. Rotated 90 degrees, that stroke should
-    # now lie on its side: much wider than tall, with the two
-    # dimensions roughly swapped (not identical -- AA fringe and
-    # integer rounding mean "roughly", but the tall/narrow vs.
-    # wide/short relationship must flip, a real geometric property,
-    # not just "the pixels moved somewhere").
+    # "I" unrotated is a tall narrow stroke, its ink bbox much taller
+    # than wide. Rotated 90 degrees it lies on its side: wider than
+    # tall, dimensions roughly swapped. Roughly, since AA fringe and
+    # integer rounding shift them -- but the tall/narrow vs. wide/short
+    # relationship must flip, not merely move.
     var c1 = Canvas(150, 150, BG)
     draw_text(c1, 60, 100, "I", FG, 60.0)
     var unrotated = _ink_bbox(c1, BG)
@@ -325,9 +281,8 @@ def test_multiline_produces_ink_in_separate_vertical_bands() raises:
     var bbox = _ink_bbox(c, BG)
     assert_true(bbox.found_any)
 
-    # A background row must exist strictly between the two lines'
-    # baselines -- if multi-line collapsed to one line (or overlapped
-    # instead of stacking), no such gap would exist anywhere in range.
+    # A background row must exist strictly between the two baselines:
+    # collapsed or overlapping lines would leave no such gap.
     var found_gap_row = False
     for y in range(bbox.min_y + 1, bbox.max_y):
         var row_all_bg = True
@@ -343,10 +298,9 @@ def test_multiline_produces_ink_in_separate_vertical_bands() raises:
 
 
 def test_multiline_blank_line_takes_space_but_draws_nothing() raises:
-    # "A\n\nB": three line slots, the middle one empty. The gap between
-    # A's ink and B's ink should span roughly two line heights, not
-    # one -- confirms the blank line was counted for vertical spacing
-    # (not skipped/collapsed) even though it contributed no ink itself.
+    # "A\n\nB": three line slots, the middle empty. The gap between A's
+    # ink and B's spans roughly two line heights, not one, so the blank
+    # line counted for spacing despite contributing no ink.
     var c_two_lines = Canvas(120, 200, BG)
     draw_text(c_two_lines, 10, 40, "A\nB", FG, 30.0)
     var two_line_bbox = _ink_bbox(c_two_lines, BG)
@@ -395,20 +349,13 @@ def test_align_center_ink_straddles_the_anchor() raises:
 
 
 def test_measure_text_block_matches_rendered_ink_unrotated() raises:
-    # Cross-check against draw_text's own actually-rendered ink bbox
-    # (via _ink_bbox, this file's existing tool) rather than a purely
-    # hand-derived number -- the property that actually matters for a
-    # layout caller is "does the prediction agree with what draw_text
-    # puts on the canvas", not just "is the math internally
-    # consistent". Locked-in numbers confirmed by probe (same
-    # methodology as test_measure_text_matches_known_glyph_extents
-    # above): a 60pt "I" at anchor (60, 100) actually renders ink at
-    # x=[65,72], y=[55,99]; measure_text_block predicts an
-    # anchor-relative box landing at the same position, off by at most
-    # a pixel or two from floor-rounding + AA fringe (the same slop
-    # draw_text's own pixel placement has relative to Cairo's ink
-    # extents), not because the shared layout math itself is
-    # approximate.
+    # Cross-checked against draw_text's rendered ink bbox (_ink_bbox)
+    # rather than a hand-derived number: what matters to a layout
+    # caller is whether the prediction agrees with what lands on the
+    # canvas, not whether the math is internally consistent. A 60pt "I"
+    # at anchor (60, 100) renders ink at x=[65,72], y=[55,99], and
+    # measure_text_block predicts the same position within a pixel or
+    # two of floor-rounding and AA fringe.
     var anchor_x = 60
     var anchor_y = 100
     var c = Canvas(150, 150, BG)
@@ -429,10 +376,9 @@ def test_measure_text_block_matches_rendered_ink_unrotated() raises:
 
 
 def test_measure_text_block_matches_rendered_ink_rotated() raises:
-    # Same cross-check, but rotated -- the case the shared
-    # _layout_block math actually exists for (an unrotated box is a
-    # much easier case to get right by accident). Same "I", same
-    # anchor, rotation=pi/2 this time.
+    # Same cross-check rotated -- the case _layout_block exists for,
+    # since an unrotated box is easy to get right by accident. Same
+    # "I", same anchor, rotation=pi/2.
     var anchor_x = 60
     var anchor_y = 100
     var c = Canvas(150, 150, BG)
@@ -451,10 +397,10 @@ def test_measure_text_block_matches_rendered_ink_rotated() raises:
     assert_true(pred_min_y > Float64(actual.min_y) - 2.0 and pred_min_y < Float64(actual.min_y) + 2.0)
     assert_true(pred_max_y > Float64(actual.max_y) - 2.0 and pred_max_y < Float64(actual.max_y) + 2.0)
 
-    # The same tall/narrow-vs-wide/short flip
+    # The tall/narrow-vs-wide/short flip
     # test_rotation_90_degrees_swaps_ink_bbox_dimensions confirms on
-    # actual pixels must also hold for the *predicted* box -- not just
-    # "close to the right position" but "the right shape".
+    # pixels must hold for the *predicted* box too: right shape, not
+    # just right position.
     assert_true(predicted.width > predicted.height)
 
 
@@ -479,9 +425,8 @@ def test_measure_text_block_empty_string_is_a_zero_box() raises:
 
 
 def test_measure_text_block_whitespace_only_is_a_zero_box() raises:
-    # Matches draw_text's own whitespace-only no-op -- see
-    # test_whitespace_only_is_noop above: no ink means no box, not a
-    # box sized by whitespace's own nonzero advance.
+    # Matches draw_text's whitespace-only no-op: no ink means no box,
+    # not a box sized by whitespace's nonzero advance.
     var b = measure_text_block("   ", 24.0)
     assert_equal(b.x, 0.0)
     assert_equal(b.y, 0.0)
@@ -499,9 +444,8 @@ def test_measure_text_block_rotation_zero_matches_omitting_the_argument() raises
 
 
 def test_hebrew_word_renders_ink() raises:
-    # "שלום" -- DejaVu Sans genuinely has Hebrew glyphs (confirmed via
-    # probe against the real font before writing this test), so this
-    # isn't measuring a fallback-to-.notdef box.
+    # "שלום" -- DejaVu Sans has real Hebrew glyphs, so this isn't
+    # measuring a fallback-to-.notdef box.
     var c = Canvas(150, 60, BG)
     draw_text(c, 20, 40, "שלום", FG, 30.0)
     var bbox = _ink_bbox(c, BG)
@@ -509,13 +453,10 @@ def test_hebrew_word_renders_ink() raises:
 
 
 def test_hebrew_measure_matches_rendered_ink() raises:
-    # Same cross-check methodology as
-    # test_measure_text_block_matches_rendered_ink_unrotated above,
-    # applied to a right-to-left script -- draw_text's render pass and
-    # measure_text's own measurement both go through bidi.visual_order
-    # (see text.mojo's own _visual_codepoints), so if that reordering
-    # were only applied on one side and not the other, this would be
-    # the test to catch it.
+    # The unrotated cross-check applied to a right-to-left script.
+    # draw_text's render pass and measure_text both go through
+    # bidi.visual_order via _visual_codepoints, so this catches the
+    # reordering being applied on one side only.
     var c = Canvas(150, 60, BG)
     draw_text(c, 20, 40, "שלום", FG, 30.0)
     var actual = _ink_bbox(c, BG)
@@ -528,20 +469,15 @@ def test_hebrew_measure_matches_rendered_ink() raises:
 
 
 def test_measure_and_draw_agree_on_bidi_reordering() raises:
-    # text.mojo's own _visual_codepoints is the one integration point
-    # both _measure_line (used by measure_text/measure_text_block) and
-    # draw_text's render pass go through -- calling it directly here
-    # (Mojo doesn't enforce leading-underscore privacy, same
-    # established pattern this codebase already relies on elsewhere,
-    # e.g. testing _is_dash_on directly) confirms the wiring itself,
-    # the thing most likely to drift if a future change touched one
-    # call site and not the other, distinct from bidi.mojo's own
-    # test_bidi.mojo, which tests the reordering algorithm in
-    # isolation.
+    # _visual_codepoints is the one integration point both
+    # _measure_line and draw_text's render pass go through. Calling it
+    # directly (Mojo doesn't enforce leading-underscore privacy, as
+    # test_dash.mojo already relies on) checks the wiring, which is
+    # what drifts if a change touches one call site and not the other.
+    # test_bidi.mojo covers the reordering algorithm itself.
     var out = _visual_codepoints("שלום 12")
-    # Digits stay in reading order (see test_bidi.mojo's own
-    # test_digit_run_inside_hebrew_stays_in_reading_order for the
-    # equivalent direct check against bidi.visual_order).
+    # Digits stay in reading order; test_bidi.mojo checks the same
+    # against bidi.visual_order directly.
     var one_idx = -1
     var two_idx = -1
     for i in range(len(out)):
@@ -554,15 +490,13 @@ def test_measure_and_draw_agree_on_bidi_reordering() raises:
 
 
 def test_draw_text_falls_back_to_a_font_with_the_glyph() raises:
-    # Real, end-to-end proof that draw_text's own font-fallback wiring
-    # (text.mojo's _resolve_glyph) actually reaches rendering, not
-    # just font_discovery.resolve_font_file_for_char in isolation
-    # (see test_font_discovery.mojo's own tests for that layer alone).
-    # "Ubuntu" (the font) has no snowman glyph (U+2603, confirmed via
-    # probe); if fallback works, drawing it anyway produces real ink,
-    # not nothing (a family that genuinely lacked *any* fallback would
-    # render this as an empty, zero-size .notdef with no ink at all,
-    # the same as any other glyph-less codepoint here would).
+    # End-to-end proof that draw_text's fallback wiring
+    # (_resolve_glyph) reaches rendering, not just
+    # resolve_font_file_for_char in isolation, which
+    # test_font_discovery.mojo covers. The "Ubuntu" font has no snowman
+    # glyph (U+2603), so with fallback working, drawing it produces
+    # real ink; without, it would render as an empty zero-size
+    # .notdef.
     var c = Canvas(60, 60, BG)
     draw_text(c, 10, 45, "☃", FG, 32.0, family="Ubuntu")
     var bbox = _ink_bbox(c, BG)
@@ -570,13 +504,11 @@ def test_draw_text_falls_back_to_a_font_with_the_glyph() raises:
 
 
 def test_measure_text_falls_back_to_a_font_with_the_glyph() raises:
-    # Same property as the render test above, for measure_text: a
-    # font that actually has the glyph reports real, non-zero ink
-    # dimensions -- not the same measurement a truly glyph-less
-    # character would (this file has no test asserting a specific
-    # numeric .notdef size, deliberately -- what matters here is that
-    # measurement and rendering agree fallback happened, not a second
-    # copy of glyph_outline.mojo's own locked-in font metrics).
+    # The same property for measure_text: a font that has the glyph
+    # reports non-zero ink dimensions. No specific .notdef size is
+    # asserted -- what matters is that measurement and rendering agree
+    # fallback happened, not a second copy of glyph_outline.mojo's
+    # locked-in metrics.
     var m = measure_text("☃", 32.0, family="Ubuntu")
     assert_true(m.width > 0.0)
     assert_true(m.height > 0.0)

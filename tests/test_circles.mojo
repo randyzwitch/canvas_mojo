@@ -1,9 +1,6 @@
 """Tests for canvas_mojo/shapes/circles.mojo: exact pixel sets for
 known inputs, verified against hand-traced runs of the same
-algorithms. Split out of the original monolithic test_primitives.mojo
-along with canvas_mojo/primitives.mojo's own split into
-canvas_mojo/shapes/ -- see that subpackage's own module docstrings for
-why.
+algorithms.
 """
 
 from std.testing import assert_equal, TestSuite
@@ -30,8 +27,9 @@ def test_draw_circle_radius_zero_plots_center() raises:
 
 
 def test_draw_circle_radius_three_matches_traced_points() raises:
-    # Hand-traced midpoint-circle run for radius=3, centered at (5,5)
-    # on an 11x11 canvas -- see the derivation in the PR/commit notes.
+    # Hand-traced midpoint-circle run for radius=3 at (5,5) on an
+    # 11x11 canvas; the 16 points below are that trace's output, not
+    # values read back from this function.
     var c = Canvas(11, 11, BG)
     draw_circle(c, 5, 5, 3, FG)
 
@@ -54,14 +52,10 @@ def test_draw_circle_radius_three_matches_traced_points() raises:
 
 
 def test_draw_circle_does_not_double_blend_degenerate_symmetry_points() raises:
-    # Regression test for a real bug caught while designing
-    # draw_ellipse: at y==0 (loop start) and x==y (wherever the loop
-    # crosses the diagonal), several of the 8 symmetric expressions
-    # collapse onto the same pixel. Plotting all 8 unconditionally
-    # blends a translucent color multiple times at exactly those 8
-    # points (4 axis, 4 diagonal) on a radius=4 circle. Confirmed via
-    # probe: the bug produced 150 (blending 200,0,0,alpha=128 TWICE
-    # over black) instead of the correct single-blend value 100.
+    # At y==0 and x==y, several of the 8 symmetric expressions collapse
+    # onto one pixel. Plotting all 8 unconditionally blends a
+    # translucent color twice at those points -- 4 axis, 4 diagonal on
+    # a radius=4 circle -- giving 150 instead of the single-blend 100.
     var c = Canvas(11, 11, Color(0, 0, 0))
     draw_circle(c, 5, 5, 4, Color(200, 0, 0, 128))
 
@@ -87,9 +81,8 @@ def test_fill_circle_radius_zero_plots_center() raises:
 
 
 def test_fill_circle_radius_three_matches_hand_traced_disk() raises:
-    # Hand-traced span-fill run for radius=3, centered at (4,4) on a
-    # 9x9 canvas -- row widths 1,5,5,7,5,5,1 top to bottom (see the
-    # derivation in conversation notes).
+    # Hand-traced span-fill run for radius=3 at (4,4) on a 9x9 canvas:
+    # row widths 1,5,5,7,5,5,1 top to bottom.
     var c = Canvas(9, 9, BG)
     fill_circle(c, 4, 4, 3, FG)
 
@@ -142,12 +135,11 @@ def test_fill_circle_aa_far_pixel_is_untouched() raises:
 
 
 def test_fill_circle_aa_partial_coverage_matches_hand_computed_values() raises:
-    # Hand-verified by independently summing the 4x4 sub-sample grid
-    # for radius=2 at cx=cy=3 (pixel (px,py) sampled as centered AT
-    # (px,py), matching the hard-edged convention): pixel (3,1) has
-    # 8/16 sub-samples inside the true circle, pixel (2,1) has 4/16.
-    # White-on-black makes the resulting gray value equal the
-    # coverage fraction exactly: round(n/16 * 255).
+    # Hand-summed 4x4 sub-sample grids for radius=2 at cx=cy=3, each
+    # pixel sampled as centered AT (px,py): pixel (3,1) has 8/16
+    # sub-samples inside the true circle, (2,1) has 4/16. White-on-black
+    # makes the gray value equal the coverage fraction exactly,
+    # round(n/16 * 255).
     var c = Canvas(7, 7, BG)
     fill_circle_aa(c, 3, 3, 2, FG)
 
@@ -163,20 +155,16 @@ def test_fill_circle_aa_partial_coverage_matches_hand_computed_values() raises:
 
 
 def test_fill_circle_aa_agrees_with_hard_edged_on_interior_pixels() raises:
-    # Regression test for a real bug caught during development: the
-    # AA sampling originally treated pixel (px,py) as a unit square
-    # with (px,py) at its TOP-LEFT CORNER, not centered AT (px,py) --
-    # so fill_circle_aa(c, cx, cy, r, ...) drew a circle shifted half
-    # a pixel from fill_circle(c, cx, cy, r, ...) given the exact same
-    # arguments.
+    # AA sampling treats pixel (px,py) as centered AT (px,py), not as a
+    # unit square with (px,py) at its corner: the corner convention
+    # draws a circle shifted half a pixel from fill_circle given
+    # identical arguments.
     #
-    # This checks only pixels deep in the interior, not the hard
-    # disk's extreme boundary points (like (3,1), the exact top of
-    # the circle) -- those legitimately get partial AA coverage, since
-    # their pixel *center* sits exactly on the true boundary while
-    # half their *area* falls outside it. That's correct
-    # antialiasing, not a bug; asserting full opacity there would be
-    # asserting something false about area coverage.
+    # Only deep-interior pixels are checked, not extreme boundary
+    # points like (3,1) at the exact top: their centers sit on the true
+    # boundary while half their area falls outside, so partial coverage
+    # there is correct, and asserting full opacity would assert
+    # something false about area.
     var c = Canvas(7, 7, BG)
     fill_circle_aa(c, 3, 3, 2, FG)
     _assert_pixel(c, 3, 3, FG, "center")
@@ -187,12 +175,11 @@ def test_fill_circle_aa_agrees_with_hard_edged_on_interior_pixels() raises:
 
 
 def test_fill_circle_aa_respects_translucent_input_color() raises:
-    # Regression test for a real bug caught during development: the
-    # coverage-to-alpha formula used a hardcoded 255 instead of the
-    # caller's color.a, so a fully-covered pixel with e.g. alpha=128
-    # rendered fully OPAQUE (raw color.r, no blending) instead of the
-    # requested translucency. Invisible in every prior test because
-    # they all used opaque colors, where coverage*255 == coverage*a.
+    # The coverage-to-alpha formula has to scale by the caller's
+    # color.a, not a hardcoded 255: with alpha=128 a fully-covered
+    # pixel must blend, not render as the raw opaque color. An
+    # opaque-color test can't catch this -- coverage*255 ==
+    # coverage*color.a there.
     var c = Canvas(7, 7, Color(0, 0, 0))
     fill_circle_aa(c, 3, 3, 2, Color(200, 0, 0, 128))
     var center = c.get_pixel(3, 3)  # fully covered
@@ -208,10 +195,9 @@ def test_draw_circle_aa_center_stays_background() raises:
 
 
 def test_draw_circle_aa_partial_coverage_matches_hand_computed_value() raises:
-    # Hand-verified (pixel centered AT (px,py), matching the
-    # hard-edged convention): for radius=3 at cx=cy=4, pixel (2,1)
-    # has 5/16 sub-samples inside the ring [2.5, 3.5), and pixel
-    # (4,1) is fully inside (16/16).
+    # Hand-summed, pixel centered AT (px,py): for radius=3 at cx=cy=4,
+    # pixel (2,1) has 5/16 sub-samples inside the ring [2.5, 3.5) and
+    # (4,1) is fully inside at 16/16.
     var c = Canvas(9, 9, BG)
     draw_circle_aa(c, 4, 4, 3, FG)
 
@@ -225,9 +211,9 @@ def test_draw_circle_aa_partial_coverage_matches_hand_computed_value() raises:
 
 
 def test_draw_circle_aa_respects_translucent_input_color() raises:
-    # Same regression category as fill_circle_aa's: a fully-covered
-    # ring pixel with a translucent input color must show the
-    # single-blend value, not the raw (unblended) color.
+    # Same property as fill_circle_aa's: a fully-covered ring pixel
+    # with a translucent input color must show the single-blend value,
+    # not the raw (unblended) color.
     var c = Canvas(9, 9, Color(0, 0, 0))
     draw_circle_aa(c, 4, 4, 3, Color(200, 0, 0, 128))
     var p = c.get_pixel(4, 1)  # fully inside the ring
