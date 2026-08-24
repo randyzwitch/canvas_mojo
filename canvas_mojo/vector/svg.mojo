@@ -6,7 +6,7 @@ displays at. Content drawn through this has no fixed pixel size to get
 wrong the way a raster target, which must pick a resolution up front,
 can when scaled after the fact.
 
-Minimal, matching `DrawTarget`'s six methods one for one. Not a
+Minimal, matching `DrawTarget`'s eight methods one for one. Not a
 general-purpose SVG builder: no gradients, no general groups or
 transforms, no clipping. `draw_text`'s `rotation` is the one exception,
 a per-`<text>` `transform="rotate(...)"` rather than a transform stack,

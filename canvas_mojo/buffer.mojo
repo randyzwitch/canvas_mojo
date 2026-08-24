@@ -47,7 +47,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     Alpha is used for blending on write but is not stored per-pixel; the
     backing buffer holds the composited RGB result.
 
-    Conforms to `DrawTarget` through the six methods below `fill`,
+    Conforms to `DrawTarget` through the eight methods below `fill`,
     each a thin delegation to the matching free function in
     `canvas_mojo.shapes`/`canvas_mojo.path`, so a caller can render
     generically through a `Canvas` as through an `SvgCanvas`. Calling
