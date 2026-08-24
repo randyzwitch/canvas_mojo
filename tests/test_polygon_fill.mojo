@@ -173,6 +173,47 @@ def test_fill_polygon_nonzero_agrees_with_even_odd_for_a_simple_polygon() raises
             assert_equal(p1.b, p2.b)
 
 
+def test_fill_polygon_aa_matches_the_reference_sample_by_sample() raises:
+    # fill_polygon_aa counts coverage by interval arithmetic: inside
+    # runs between crossings map to contiguous ranges of sub-sample
+    # indices, so a pixel wholly inside a run takes all `s` at once
+    # rather than being tested `s` times. That is only valid if it
+    # produces the identical count to testing each position, which is
+    # what this pins -- against `_point_in_polygon`, the naive
+    # per-sample reference the module docstring says this sweep "must
+    # agree with pixel for pixel".
+    #
+    # A shape with slanted and near-vertical edges, deliberately at
+    # fractional positions, so crossings land between sub-samples and
+    # occasionally on one.
+    var poly: List[Point] = [
+        Point(3, 2),
+        Point(17, 5),
+        Point(19, 14),
+        Point(11, 18),
+        Point(6, 11),
+    ]
+    var c = Canvas(24, 22, BG)
+    fill_polygon_aa(c, poly, FG)
+
+    comptime S = 4
+    var step = 1.0 / Float64(S)
+    for py in range(22):
+        for px in range(24):
+            var covered = 0
+            for sy in range(S):
+                var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+                for sx in range(S):
+                    var fx = Float64(px) + (Float64(sx) + 0.5) * step - 0.5
+                    if _point_in_polygon(poly, fx, fy, FillRule.EVEN_ODD):
+                        covered += 1
+            # white on black makes the gray value equal the alpha, and
+            # alpha is the same round-half-up of the coverage fraction
+            # fill_polygon_aa itself computes.
+            var expected = Int(Float64(covered) / Float64(S * S) * 255.0 + 0.5)
+            assert_equal(Int(c.get_pixel(px, py).r), expected)
+
+
 def test_point_in_polygon_matches_hand_derived_membership() raises:
     # Right triangle (0,0),(20,0),(0,20): the hypotenuse is x+y=20, so
     # membership is exactly "x>=0 and y>=0 and x+y<20".
