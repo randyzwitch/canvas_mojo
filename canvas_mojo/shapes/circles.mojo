@@ -1,7 +1,7 @@
 """Circle drawing: midpoint-algorithm hard-edged outline/fill
 (draw_circle/fill_circle) and supersampled analytic-coverage
 anti-aliased variants (draw_circle_aa/fill_circle_aa) -- see
-canvas_mojo.shapes.lines's own module docstring for the hard-edged
+canvas_mojo.shapes.lines for the hard-edged
 vs. `_aa` naming convention this follows.
 """
 
@@ -10,16 +10,14 @@ from canvas_mojo.buffer import Canvas
 
 
 def draw_circle(mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color):
-    """The midpoint circle algorithm -- integer-only, plots via 8-way
+    """The midpoint circle algorithm: integer-only, plotting via 8-way
     symmetry around the center.
 
-    At y==0 (the loop's first iteration) and x==y (wherever the loop
-    crosses the diagonal), several of the 8 symmetric expressions
-    collapse onto the same pixel -- e.g. (cx+y,cy+x) and (cx-y,cy+x)
-    both become (cx,cy+x) when y==0. Plotting all 8 unconditionally
-    would call set_pixel on that pixel more than once, double- (or
-    quadruple-) blending a translucent color. Found by tracing through
-    exactly this hazard while designing draw_ellipse's symmetry.
+    At y==0 (the first iteration) and x==y (the diagonal crossing),
+    several of the 8 symmetric expressions collapse onto one pixel --
+    (cx+y,cy+x) and (cx-y,cy+x) both become (cx,cy+x) when y==0.
+    Plotting all 8 unconditionally would set_pixel there more than
+    once, double- or quadruple-blending a translucent color.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -59,13 +57,12 @@ def draw_circle(mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color)
 
 
 def fill_circle(mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color):
-    """Fill a solid disk. One horizontal span per row -- each pixel is
-    set exactly once, so a translucent color never gets double-blended
-    (unlike a naive reuse of draw_circle's 8-way symmetry across rows,
-    which touches some rows twice near the diagonal octant boundary).
+    """Fill a solid disk, one horizontal span per row, so each pixel is
+    set exactly once and a translucent color never double-blends --
+    unlike reusing draw_circle's 8-way symmetry across rows, which
+    touches some rows twice near the diagonal octant boundary.
 
-    Hard-edged, like draw_circle -- see fill_circle_aa for a smooth
-    edge.
+    Hard-edged; see fill_circle_aa for a smooth edge.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -93,36 +90,25 @@ def fill_circle_aa(
     """Anti-aliased filled disk.
 
     For every pixel near the circle, samples an NxN sub-pixel grid and
-    tests each sub-sample analytically against the true (real-valued)
-    disk -- no temp canvas or rendered supersampling involved, just a
-    coverage fraction turned directly into that pixel's alpha. Each
-    output pixel is visited exactly once, so there's no double-blend
-    hazard the way there was with a naive fill via draw_circle's
-    symmetry.
+    tests each sub-sample analytically against the true real-valued
+    disk -- no temp canvas, just a coverage fraction turned into that
+    pixel's alpha. Each output pixel is visited exactly once.
 
-    Pixel (px, py) is treated as centered AT the point (px, py) --
-    same convention the hard-edged draw_circle/fill_circle use for
-    their integer distance test -- not as a unit square with (px, py)
-    at its corner. That's what makes supersample=1 degenerate to
-    exactly the same decision the hard-edged algorithms make, pixel
-    for pixel, and what keeps this circle centered on the same point
-    as draw_circle/fill_circle given identical (cx, cy, radius).
+    Pixel (px, py) is treated as centered AT (px, py), the convention
+    the hard-edged draw_circle/fill_circle use, not as a unit square
+    with (px, py) at its corner. That's what makes supersample=1
+    degenerate to the hard-edged decision pixel for pixel, and keeps
+    this circle centered on the same point given identical
+    (cx, cy, radius).
 
-    Before sampling a pixel at all, checks whether its own square
-    ([px-0.5, px+0.5] x [py-0.5, py+0.5], the same square every sample
-    point above is drawn from) is *provably* entirely inside or
-    entirely outside the disk, via the nearest/farthest point in that
-    square from the center -- standard point-to-AABB min/max distance.
-    Entirely outside means every one of the n*n samples would land
-    outside regardless of n (coverage 0, already skipped exactly like
-    this before); entirely inside means every sample would land inside
-    regardless of n (coverage total_samples, i.e. the pixel's full
-    alpha) -- both are the *same result* sampling would already reach,
-    computed without actually visiting the n*n grid to reach it. This
-    matters because most of a large circle's own bounding box is
-    interior pixels, not boundary ones: the expensive per-sample loop
-    now only ever runs for the O(radius) pixels actually straddling
-    the edge, not all O(radius^2) of them.
+    Before sampling, checks whether the pixel's square
+    ([px-0.5, px+0.5] x [py-0.5, py+0.5]) is provably entirely inside
+    or outside the disk, via that square's nearest and farthest points
+    from the center -- standard point-to-AABB min/max distance. Either
+    way every one of the n*n samples would agree, giving coverage 0 or
+    full alpha without visiting the grid. Most of a large circle's
+    bounding box is interior, so the per-sample loop then runs only for
+    the O(radius) pixels straddling the edge, not all O(radius^2).
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -146,8 +132,8 @@ def fill_circle_aa(
             var far_dx = dx + 0.5
             var far_dy = dy + 0.5
             if far_dx * far_dx + far_dy * far_dy <= r2:
-                # Whole pixel square is inside the disk -- the exact
-                # coverage/alpha every sample point would agree on.
+                # Whole pixel square is inside the disk: the coverage
+                # every sample would agree on.
                 canvas.set_pixel(px, py, color)
                 continue
 
@@ -175,22 +161,18 @@ def draw_circle_aa(
 ):
     """Anti-aliased circle outline, ~1px wide.
 
-    Same supersampled analytic-coverage technique as fill_circle_aa
-    (including the pixel-centered-at-(px,py) sampling convention that
-    keeps this centered on the same point as draw_circle given
-    identical cx, cy, radius), but tests each sub-sample against a
-    thin ring (radius +/- 0.5) instead of the filled disk.
+    fill_circle_aa's supersampled analytic-coverage technique,
+    including the pixel-centered-at-(px,py) convention, but testing
+    each sub-sample against a thin ring (radius +/- 0.5) rather than
+    the filled disk.
 
-    A ring this thin (exactly 1 unit wide) never has a pixel square
-    that's *provably fully inside* it the way fill_circle_aa's own
-    fast path finds for a filled disk -- there's no fill_circle_aa-
-    style skip to add here. But most of this loop's own bounding
-    square -- everything well inside the hole, or well outside the
-    outer edge, both far more area than the thin ring itself for any
-    real radius -- *is* provably fully outside, via the same AABB
-    nearest/farthest-point test fill_ring_sector_aa's own docstring
-    describes; skipping those pixels here is the real win for a large
-    circle outline.
+    A 1-unit-wide ring never has a pixel square provably fully
+    *inside* it, so fill_circle_aa's inside fast path has no analog
+    here. Most of the bounding square -- well inside the hole or well
+    outside the outer edge, both far larger than the ring itself at any
+    real radius -- is provably outside, through the same AABB
+    nearest/farthest-point test, and skipping those is the win for a
+    large outline.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)

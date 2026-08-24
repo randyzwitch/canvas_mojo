@@ -1,76 +1,43 @@
-"""Text rendering, natively implemented: font matching (fontconfig,
-`font_discovery.mojo`) is this module's only direct FFI dependency;
-glyph outlines/metrics come from this package's own TrueType parser
-(`ttf.mojo`, via `glyph_outline.mojo`) and rasterization from this
-package's own `fill_path_aa` (`path.mojo`). See font_discovery.mojo's
-own docstring for the three jobs (font discovery / glyph resolution &
-metrics / rasterization) this completes. The glyph path is unhinted --
-see ttf.mojo's own module docstring for what that means for exact
-glyph metrics.
+"""Text rendering. Font matching (fontconfig, `font_discovery.mojo`) is
+this module's only FFI dependency; glyph outlines and metrics come from
+`ttf.mojo` via `glyph_outline.mojo`, and rasterization from
+`fill_path_aa` (`path.mojo`). The glyph path is unhinted -- see
+ttf.mojo for what that means for exact metrics.
 
-Glyphs fill directly onto the target `Canvas` through the same
-`fill_path_aa` every other filled shape in this package uses, via the
-same `set_pixel()` blending path -- translucent text composites
-correctly for the same reason translucent fills do, not a
-text-specific mechanism.
+Glyphs fill onto the target `Canvas` through the same `fill_path_aa`
+every other filled shape uses, so translucent text composites through
+`set_pixel` like any other fill.
 
-`draw_text`'s (x, y) is the text baseline's left end for LEFT
-alignment -- matching every mainstream text API's own convention for
-"where text goes," rather than a top-left-corner convention like
-fill_rect's. CENTER/RIGHT shift each line's own horizontal position
-relative to that same anchor -- see TextAlign.
+`draw_text`'s (x, y) is the baseline's left end for LEFT alignment, not
+a top-left corner like fill_rect's. CENTER/RIGHT shift each line
+horizontally relative to that same anchor -- see TextAlign.
 
-Rotation and multi-line share one code path with the plain single-
-line case, not three: `_layout_block` (measurement) and draw_text's
-own render pass both walk each line's glyphs from a shared, anchor-
-relative local layout; every glyph's own local pen position (and its
-outline, via `glyph_outline.glyph_path`) gets rotated by the same
-angle around the shared `(x, y)` anchor and translated into place in
-one pass (`_place_glyph_path`), rather than setting a context-wide
-transform before drawing. With one line and rotation=0.0, cos=1/sin=0
-leaves every point unchanged, so this reduces exactly to what a
-simpler single-purpose implementation would do -- confirmed by direct
-comparison, not just argued (see tests/test_text.mojo).
+Rotation and multi-line share one code path with the plain single-line
+case. `_layout_block` (measurement) and draw_text's render pass both
+walk each line's glyphs from a shared anchor-relative local layout;
+each glyph's pen position and outline are rotated around `(x, y)` and
+translated into place in one pass (`_place_glyph_path`). At
+rotation=0.0 with one line, cos=1/sin=0 leaves every point unchanged.
 
-Each line's own codepoints go through `bidi.visual_order` before
-either measurement or drawing ever sees them (`_visual_codepoints`,
-the one shared call site both use) -- mixed Hebrew/Arabic/Latin/digit
-text lays out and renders in correct reading order (right-to-left
-words, embedded digit runs staying left-to-right, mirrored
-parens/brackets) without draw_text or _measure_line needing any
-direction-handling logic of their own. See bidi.mojo's own docstring
-for exactly what's covered (Hebrew renders fully correctly; Arabic
-gets correct ordering and mirroring but not contextual letter-shaping
--- a separate, larger feature not attempted here) and what's
-deliberately simplified relative to the full Unicode Bidirectional
-Algorithm.
+Each line's codepoints go through `bidi.visual_order` before
+measurement or drawing sees them (`_visual_codepoints`), so mixed
+Hebrew/Arabic/Latin/digit text lays out in reading order without
+draw_text or _measure_line handling direction themselves. bidi.mojo
+documents what's covered: Hebrew fully; Arabic ordering and mirroring
+but not contextual letter-shaping.
 
-Every glyph also goes through font *fallback*, not just the single
-family the caller requested (`_resolve_glyph`): if the requested
-family's face has no real glyph for a codepoint (`glyph_outline.
-has_glyph` -- distinguishing an actual glyph from the font's own
-".notdef" placeholder, TrueType glyph index 0), a different font is
-resolved for that one character via `font_discovery.
-resolve_font_file_for_char`, which constrains fontconfig's own match
-to a font that actually contains it -- the same real fallback
-mechanism system text stacks rely on, not a hand-rolled substitute.
-This matters concretely for a package with no bundled fonts of its
-own: a CJK/Cyrillic/symbol character requested under a Latin-only
-family renders via whatever font on the system actually has it, if one
-is installed, instead of the requested font's own generic empty-box
-placeholder -- confirmed directly via probe (a font missing a glyph
-falls back to one that has it; a font that already has the glyph is
-left alone; a character genuinely missing from every installed font
-degrades gracefully to fontconfig's own best-effort match, not an
-error). Resolved fallback faces are cached across calls the same as
-the primary face is -- see _resolve_glyph's and font_cache.mojo's own
-docstrings.
+Every glyph also goes through font fallback (`_resolve_glyph`). If the
+requested family has no real glyph for a codepoint (`has_glyph`
+distinguishes a real glyph from ".notdef", index 0), that one character
+resolves through `resolve_font_file_for_char`, which constrains
+fontconfig's match to a font containing it. This package bundles no
+fonts, so a CJK/Cyrillic/symbol character requested under a Latin-only
+family renders through whatever font on the system has it; a character
+missing everywhere degrades to fontconfig's best-effort match rather
+than an error. Fallback faces cache alongside the primary face.
 
-FontSlant/FontWeight are defined in font_discovery.mojo and
-re-exported here, so both `from canvas_mojo.text.font_discovery import
-FontSlant, FontWeight` and `from canvas_mojo.text.render import
-FontSlant, FontWeight` work -- the same re-export convenience
-TextAlign has for its home in text_align.mojo.
+FontSlant/FontWeight are defined in font_discovery.mojo and re-exported
+here, as TextAlign is from text_align.mojo.
 """
 
 from std.math import cos, sin
@@ -98,11 +65,9 @@ from canvas_mojo.text.text_align import TextAlign
 
 struct TextMetrics(ImplicitlyCopyable, Movable):
     """A single line's measured size. `width`/`height` are its tight
-    ink bounding box -- the same measurement draw_text itself sizes
-    its scratch surface from. `advance` is the logical cursor-advance
-    distance instead -- not the same number, since leading/trailing
-    whitespace has zero ink width but nonzero advance; TextAlign's
-    CENTER/RIGHT are computed from this, not from width.
+    ink bounding box; `advance` is the logical cursor-advance distance,
+    which differs whenever leading/trailing whitespace contributes
+    advance but no ink. TextAlign's CENTER/RIGHT use `advance`.
     """
 
     var width: Float64
@@ -116,10 +81,8 @@ struct TextMetrics(ImplicitlyCopyable, Movable):
 
 
 struct _LineLayout(ImplicitlyCopyable, Movable):
-    """One line's layout, computed once in draw_text's first pass and
-    reused in its second -- a small struct instead of several parallel
-    List[Float64]s (see geometry.mojo's own docstring for why: the
-    same "error-prone to keep in sync" problem Point exists to avoid).
+    """One line's layout, computed in draw_text's first pass and reused
+    in its second.
     """
 
     var text: String
@@ -153,15 +116,12 @@ struct _LineLayout(ImplicitlyCopyable, Movable):
 
 
 struct _BlockLayout(Movable):
-    """Every line's local layout plus the combined rotated bounding
-    box around the shared (x, y) anchor -- computed once by
-    _layout_block, shared by draw_text (which renders it) and
-    measure_text_block (which reports it without rendering), so the
-    two can never disagree about where a rotated block's footprint
-    actually is. Bounds are in the same local (unrotated-anchor-
-    relative, pre-rotation-applied) space _LineLayout's own x/y are:
-    already-rotated corner positions, but not yet translated into
-    canvas space.
+    """Every line's local layout plus the combined rotated bounding box
+    around the (x, y) anchor. Computed by _layout_block and shared by
+    draw_text (which renders it) and measure_text_block (which reports
+    it), so the two can't disagree about a rotated block's footprint.
+    Bounds are rotated corner positions in local anchor-relative space,
+    not yet translated into canvas space.
     """
 
     var lines: List[_LineLayout]
@@ -191,27 +151,20 @@ struct _BlockLayout(Movable):
 def _load_sized_face(
     family: String, slant: FontSlant, weight: FontWeight, size: Float64, mut cache: FontCache
 ) raises -> ArcPointer[TTFFace]:
-    """font_discovery.resolve_font_file (fontconfig, via `cache` -- see
-    font_cache.mojo's own docstring) -> ttf.TTFFace (native TrueType
-    parsing), sized to `size` pixels -- the one place every measuring/
-    drawing entry point below goes to get a ready-to-use face. Both the
-    resolved *path* and the parsed, sized face itself are cached (by
-    `cache`, across every call sharing it) -- see FontCache.resolve_face's
-    own docstring. Returns an `ArcPointer` rather than a `TTFFace`
-    directly so a cache hit is a refcount bump, not a copy of the
-    face's own multi-hundred-KB font-file buffer; every call site below
-    dereferences it with `[]` to get at the `TTFFace` itself.
+    """resolve_font_file -> TTFFace, sized to `size` pixels: the one
+    place every entry point below gets a ready-to-use face. Both the
+    resolved path and the parsed, sized face are cached by `cache` (see
+    font_cache.mojo). Returns an `ArcPointer` so a cache hit is a
+    refcount bump rather than a copy of the face's font-file buffer;
+    call sites dereference with `[]`.
     """
     return cache.resolve_face(family, slant, weight, size)
 
 
 struct _LineMetrics(ImplicitlyCopyable, Movable):
-    """One line's full measurement -- ink bearing/width/height plus
-    total cursor advance. `advance`, not `width`, is what TextAlign's CENTER/RIGHT actually
-    center/right-align against (see TextMetrics' own docstring) --
-    kept as its own field here rather than folded into _LineLayout,
-    since _LineLayout itself never needs to remember it past the
-    single x_offset computation that consumes it.
+    """One line's ink bearing/width/height plus total cursor advance.
+    TextAlign's CENTER/RIGHT align against `advance`, not `width` (see
+    TextMetrics).
     """
 
     var x_bearing: Float64
@@ -234,17 +187,12 @@ struct _LineMetrics(ImplicitlyCopyable, Movable):
 
 
 def _visual_codepoints(line_text: String) -> List[Int]:
-    """`line_text`'s own codepoints, reordered left-to-right-drawable
-    via `bidi.visual_order` -- both `_measure_line` and draw_text's
-    own render pass walk this instead of `line_text.codepoints()`
-    directly, so mixed Hebrew/Arabic/Latin/digit text lays out and
-    draws correctly without either of them needing their own
-    direction-handling logic (see bidi.mojo's own docstring for
-    exactly what this does and doesn't cover). A pure left-to-right
-    line's own bidi.visual_order call is a no-op (every codepoint
-    stays at the same even level, so `_reorder_indices` never
-    reverses anything) -- confirmed directly, not just argued (see
-    tests/test_bidi.mojo).
+    """`line_text`'s codepoints in left-to-right drawable order, via
+    `bidi.visual_order`. Both `_measure_line` and draw_text's render
+    pass walk this rather than `line_text.codepoints()`, so neither
+    needs direction-handling logic of its own. A pure left-to-right
+    line comes back unchanged: every codepoint sits at the same even
+    level, so nothing is reversed.
     """
     var codepoints = List[Int](capacity=line_text.byte_length())
     for cp in line_text.codepoints():
@@ -254,10 +202,8 @@ def _visual_codepoints(line_text: String) -> List[Int]:
 
 
 struct _PositionedGlyph(Movable):
-    """One glyph's own metrics plus its outline, already positioned at
-    the (pen_x, pen_y) it was resolved for -- see _resolve_glyph's own
-    docstring for why these two are bundled into one result instead of
-    two separate calls at each call site.
+    """One glyph's metrics plus its outline, positioned at the
+    (pen_x, pen_y) it was resolved for.
     """
 
     var metrics: GlyphMetrics
@@ -279,24 +225,17 @@ def _resolve_glyph(
     pen_y: Float64,
     mut cache: FontCache,
 ) raises -> _PositionedGlyph:
-    """This one character's metrics and outline, from `primary` if it
-    actually has a glyph for `codepoint`, or from a fallback font
-    otherwise (`font_discovery.resolve_font_file_for_char`, via
-    `cache` -- see that function's and font_cache.mojo's own
-    docstrings for how fontconfig's own charset-aware matching picks a
-    font that actually contains the character, e.g. CJK text requested
-    under a Latin-only family). Both the resolved fallback *path* and
-    the parsed fallback *face* are cached (by `cache`, across every
-    call sharing it), so a string with several fallback glyphs for the
-    same missing codepoint only asks fontconfig, and only parses that
-    fallback font file, once -- see FontCache.resolve_face_for_char's
-    own docstring.
+    """This character's metrics and outline, from `primary` if it has a
+    glyph for `codepoint`, otherwise from a fallback font resolved
+    through `resolve_font_file_for_char` (fontconfig's charset-aware
+    matching -- e.g. CJK text requested under a Latin-only family).
+    Both the fallback path and the parsed fallback face are cached by
+    `cache`, so several fallback glyphs for the same codepoint cost one
+    lookup and one parse.
 
-    Metrics and outline are resolved together, from the same face, in
-    one call -- not two separate has_glyph-gated calls at each of this
-    module's own two glyph-walking sites (_measure_line, draw_text's
-    render pass) -- so they can never disagree about which face's data
-    they came from.
+    Metrics and outline come back together, from the same face, so the
+    two glyph-walking sites (_measure_line, draw_text's render pass)
+    can't disagree about which face's data they used.
     """
     if has_glyph(primary, codepoint):
         return _PositionedGlyph(glyph_metrics(primary, codepoint), glyph_path(primary, codepoint, pen_x, pen_y))
@@ -317,13 +256,11 @@ def _measure_line(
     mut cache: FontCache,
 ) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
-    all zero for a blank/whitespace-only line) and total advance --
-    walks every Unicode codepoint (in bidi visual order -- see _visual_codepoints),
-    accumulating each glyph's own advance and combining every glyph
-    that actually has ink into one tight bbox. `family`/`slant`/
-    `weight`/`size`/`cache` are only needed for _resolve_glyph's own
-    font-fallback lookup (see its own docstring) -- `face` itself
-    already determines everything else.
+    all zero for a blank/whitespace-only line) and total advance.
+    Walks every codepoint in bidi visual order, accumulating advances
+    and combining inked glyphs into one tight bbox.
+    `family`/`slant`/`weight`/`size`/`cache` serve only
+    _resolve_glyph's fallback lookup; `face` determines the rest.
     """
     var pen_x = 0.0
     var min_x = 1.0e18
@@ -336,11 +273,10 @@ def _measure_line(
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
             var right = left + gm.width
-            # gm.bearing_y is positive *upward* from the baseline
-            # (TrueType's own y-up font-design-unit convention, see
-            # ttf.mojo); local layout space here is y-down (matching
-            # every other pixel-space convention in this package), so
-            # the ink's local top is the negated bearing.
+            # gm.bearing_y is positive upward from the baseline
+            # (TrueType's y-up design-unit convention); local layout
+            # space is y-down, so the ink's local top is the negated
+            # bearing.
             var top = -gm.bearing_y
             var bottom = top + gm.height
             if left < min_x:
@@ -369,16 +305,11 @@ def _layout_block(
     align: TextAlign,
     mut cache: FontCache,
 ) raises -> _BlockLayout:
-    """The "two passes" layout math draw_text's own docstring
-    describes: measure every "\\n"-separated line, compute each one's
-    local anchor-relative position, then rotate every line's 4 ink
-    corners around the shared anchor and combine into one bounding
-    box. Extracted so draw_text and measure_text_block share the exact
-    same math rather than one being a second, independently-
-    maintained copy of the other -- confirmed by draw_text's own
-    rotation/multi-line tests still passing unchanged once this
-    extraction happened (long before this module went native; that
-    property didn't change in the switch).
+    """The two-pass layout math: measure every "\\n"-separated line,
+    compute each line's local anchor-relative position, then rotate
+    every line's 4 ink corners around the anchor and combine them into
+    one bounding box. draw_text and measure_text_block both call this,
+    so neither carries its own copy.
     """
     var raw_lines = text.split("\n")
 
@@ -446,21 +377,15 @@ def measure_text(
     slant: FontSlant = FontSlant.NORMAL,
     weight: FontWeight = FontWeight.NORMAL,
 ) raises -> TextMetrics:
-    """Measure `text` at `size` points in `family` without drawing it
-    -- the same measurement draw_text uses internally to size its
-    scratch surface, exposed so a caller can lay text out (e.g. center
-    it against something else entirely) before committing to draw it.
+    """Measure `text` at `size` points in `family` without drawing it,
+    so a caller can lay text out before committing to draw it.
 
-    Treats `text` as a single line, matching TextAlign's own single-
-    line convention: no line-break handling for embedded "\\n". For a
-    multi-line string's own per-line metrics, split on "\\n" and call
-    this once per line yourself -- the same thing draw_text does
-    internally via _measure_line.
+    Treats `text` as a single line: embedded "\\n" gets no line-break
+    handling. For per-line metrics of a multi-line string, split on
+    "\\n" and call this per line.
 
-    Resolves its own font fresh every call (see font_cache.mojo's own
-    docstring on why that's real, measured cost, not a hypothetical
-    one) -- for repeated calls sharing a font, use the `cache=`
-    overload below instead, passing one `FontCache` you keep reusing.
+    Resolves its font fresh every call. For repeated calls sharing a
+    font, use the `cache=` overload below.
     """
     var cache = FontCache()
     return measure_text(text, size, family, slant, weight, cache=cache)
@@ -476,11 +401,9 @@ def measure_text(
     mut cache: FontCache,
 ) raises -> TextMetrics:
     """Like measure_text above, but resolving fonts through `cache`
-    (see font_cache.mojo's own docstring) instead of fresh every call
-    -- the call to reach for when measuring many strings that share a
-    font, e.g. every tick label on one chart axis. Pass the same
-    `FontCache` to every measure_text/draw_text/measure_text_block call
-    in the batch to actually get the reuse.
+    rather than fresh every call -- for measuring many strings that share a
+    font, e.g. every tick label on one axis. Pass the same `FontCache`
+    to every call in the batch.
     """
     var face = _load_sized_face(family, slant, weight, size, cache)
     var measured = _measure_line(face[], text, family, slant, weight, size, cache)
@@ -488,26 +411,16 @@ def measure_text(
 
 
 struct TextBlockBounds(ImplicitlyCopyable, Movable):
-    """The axis-aligned bounding box draw_text's rendered ink would
-    occupy for this exact text/rotation/align/font combination,
-    anchor-relative: `x`/`y` are the box's top-left corner relative to
-    draw_text's own `(x, y)` anchor (either can be negative -- e.g.
-    TextAlign.RIGHT-aligned text extends left of the anchor, and a
-    label rotated "upward" extends above it), `width`/`height` its
-    size. `x + width`/`y + height` is the box's bottom-right corner,
-    same anchor-relative convention.
+    """The axis-aligned bounding box draw_text's ink would occupy for a
+    given text/rotation/align/font, anchor-relative: `x`/`y` are the
+    top-left corner relative to draw_text's `(x, y)` anchor, and either
+    can be negative (RIGHT-aligned text extends left of the anchor; a
+    label rotated upward extends above it). `x + width`/`y + height` is
+    the bottom-right corner.
 
-    This is the exact rotated bounding box draw_text's own layout math
-    computes internally (via the shared _layout_block -- see its own
-    docstring for why that's shared rather than re-derived here), just
-    reported instead of rendered: for axis-label layout decisions --
-    how much margin a rotated tick label needs, whether it would
-    overlap a neighboring label or the plot area -- made before
-    committing to draw, the same "measure first" motivation
-    measure_text already exists for, generalized to account for
-    rotation and multi-line blocks, both of which change a text
-    block's footprint in ways a single line's own unrotated
-    width/height (TextMetrics) can't capture.
+    Rotation and multi-line change a block's footprint in ways a single
+    line's unrotated width/height (TextMetrics) can't capture, so this
+    reports the same box _layout_block computes for rendering.
     """
 
     var x: Float64
@@ -533,17 +446,14 @@ def measure_text_block(
 ) raises -> TextBlockBounds:
     """The bounding box draw_text(canvas, x, y, text, ..., rotation=
     rotation, align=align) would render into, anchor-relative and
-    without actually drawing -- see TextBlockBounds' own docstring.
+    without drawing -- see TextBlockBounds.
 
-    An empty string, or one that's every line whitespace-only, has no
-    ink at all -- returns a zero-sized box at the anchor (0, 0, 0, 0),
-    matching draw_text's own no-op behavior for the identical input
-    rather than reporting some nonzero "advance" box a caller might
-    mistake for real ink.
+    A string with no ink (empty, or every line whitespace-only) returns
+    a zero-sized box at the anchor, matching draw_text's no-op for the
+    same input rather than an "advance" box with no ink in it.
 
-    Resolves its own font fresh every call -- see measure_text's own
-    docstring on the `cache=` overload below for repeated calls
-    sharing a font.
+    Resolves its font fresh every call; see the `cache=` overload
+    below.
     """
     var cache = FontCache()
     return measure_text_block(text, size, family, slant, weight, rotation, align, cache=cache)
@@ -561,8 +471,7 @@ def measure_text_block(
     mut cache: FontCache,
 ) raises -> TextBlockBounds:
     """Like measure_text_block above, but resolving fonts through
-    `cache` (see font_cache.mojo's own docstring) instead of fresh
-    every call -- see measure_text's own `cache=` overload docstring.
+    `cache` rather than fresh every call.
     """
     if text == "":
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
@@ -586,15 +495,11 @@ def _rotate_translate_y(x: Float64, y: Float64, c: Float64, s: Float64, ty: Floa
 
 
 def _place_glyph_path(local_path: Path, c: Float64, s: Float64, anchor_x: Float64, anchor_y: Float64) raises -> Path:
-    """Rotate every point of `local_path` (built in glyph-local,
-    anchor-relative, unrotated space via glyph_outline.glyph_path) by
-    the block's own rotation and translate by draw_text's `(x, y)`
-    anchor -- composes the whole text block's rotation with its anchor
-    position in one pass (see this module's own docstring). Path has
-    no public "map every point" API and this is
-    the only place that needs one -- reaches into Path.commands
-    directly instead, the same established pattern svg.mojo's own SVG-
-    emission code already uses for the identical reason.
+    """Rotate every point of `local_path` (glyph-local, anchor-relative,
+    unrotated) by the block's rotation and translate by draw_text's
+    `(x, y)` anchor, in one pass. Path exposes no "map every point"
+    API, so this reads `Path.commands` directly, as svg.mojo's emitter
+    does.
     """
     var out = Path()
     for cmd in local_path.commands:
@@ -643,35 +548,25 @@ def draw_text(
     align: TextAlign = TextAlign.LEFT,
 ) raises:
     """Render `text` (one or more "\\n"-separated lines) anchored at
-    `(x, y)` in `family` at `size` points, compositing onto `canvas`
-    in `color` (including `color.a` -- fill_path_aa's own per-pixel AA
-    coverage combines with the requested color's own alpha through the
-    identical set_pixel() blend every other filled shape in this
-    package already uses, not a text-specific mechanism).
+    `(x, y)` in `family` at `size` points, compositing onto `canvas` in
+    `color`. AA coverage combines with `color.a` through the same
+    set_pixel() blend every other filled shape uses.
 
     `rotation` (radians) rotates the whole block -- every line
-    together, not each independently -- around the `(x, y)` anchor.
-    This is a different feature from Transform2D's own `rotation`
-    (see geometry.mojo): that tilts an entire data-to-pixel coordinate
-    mapping; this tilts one rendered text block around its own anchor,
-    e.g. for an angled axis-tick label, with everything else on the
-    canvas staying upright.
+    together -- around the `(x, y)` anchor, e.g. for an angled
+    axis-tick label. Transform2D's `rotation` (geometry.mojo) is a
+    different feature: that tilts a whole data-to-pixel mapping.
 
-    Two passes: _layout_block first measures every line's ink extents
-    and computes each one's local, anchor-relative baseline position
-    (line index * line_height apart) and horizontal offset (see
-    TextAlign) -- shared with measure_text_block so the two can never
-    disagree about where a block's footprint is. Then every line's own
-    glyphs are walked a second time, each one's outline built in local
-    space (glyph_outline.glyph_path) and placed into canvas space in
-    one rotate-plus-translate pass (_place_glyph_path) before filling
-    directly onto `canvas` via fill_path_aa -- no intermediate scratch
-    surface.
+    Two passes. _layout_block measures each line's ink extents and
+    computes its local baseline position (line index * line_height) and
+    horizontal offset (see TextAlign). Then each line's glyphs are
+    walked again, every outline built in local space
+    (glyph_outline.glyph_path), placed into canvas space by
+    _place_glyph_path, and filled onto `canvas` via fill_path_aa -- no
+    intermediate scratch surface.
 
-    Resolves its own font fresh, twice (once for each of the two
-    passes above) -- see measure_text's own docstring on the `cache=`
-    overload below, which also fixes that within-one-call duplication,
-    not just repeat calls.
+    Resolves its font fresh once per pass, so twice per call; the
+    `cache=` overload below collapses that to one.
     """
     var cache = FontCache()
     draw_text(canvas, x, y, text, color, size, family, slant, weight, rotation, align, cache=cache)
@@ -692,23 +587,18 @@ def draw_text(
     *,
     mut cache: FontCache,
 ) raises:
-    """Like draw_text above, but resolving fonts through `cache` (see
-    font_cache.mojo's own docstring) instead of fresh every call --
-    see measure_text's own `cache=` overload docstring for when to
-    reach for this. Also fixes a redundancy the uncached overload
-    still has even for one single call: draw_text's own two passes
-    (_layout_block's measuring pass, then the render pass below) each
-    resolve the same face -- with `cache` shared between them, the
-    second resolution is a cache hit instead of a second fontconfig
-    round-trip.
+    """Like draw_text above, but resolving fonts through `cache` rather
+    than fresh every call. This also collapses the two resolutions a
+    single call makes -- _layout_block's measuring pass and the render
+    pass below both want the same face -- into one lookup plus a cache
+    hit.
     """
     if text == "":
         return
 
-    # With exactly one line and rotation=0.0, cos=1/sin=0 leaves every
-    # corner unchanged inside _layout_block, so this reduces to that
-    # single line's own unrotated ink box -- one code path for both
-    # cases, not two.
+    # With one line and rotation=0.0, cos=1/sin=0 leaves every corner
+    # unchanged inside _layout_block, reducing to that line's
+    # unrotated ink box.
     var block = _layout_block(text, size, family, slant, weight, rotation, align, cache)
     if not block.any_ink:
         # Every line whitespace-only/empty -- nothing to draw.

@@ -1,32 +1,24 @@
-"""A general path type -- move/line/quadratic-curve/cubic-curve/
-arc-to/close, built up via chained calls, then flattened into
-straight-line segments and handed off to canvas_mojo.shapes' already-
-tested polyline/polygon/fill machinery, rather than reimplementing
-fill or stroke logic here.
+"""A general path type: move/line/quadratic-curve/cubic-curve/arc-to/
+close, built up through chained calls, then flattened into straight-
+line segments and handed to canvas_mojo.shapes' polyline/polygon/fill
+machinery rather than reimplementing fill or stroke here.
 
-Coordinates are Float64 (FPoint), not Point's integer pixels: a curve
-control point off by a fraction of a pixel changes the flattened
-curve's visible shape, unlike a straight line's endpoints, which only
-need whole pixels. Quad/cubic curve flattening uses a fixed step count
-per segment, not adaptive subdivision: good enough at the sizes this
-exists for, and adaptive subdivision is real, deferrable complexity
-with no concrete need yet. arc_to is the one exception: it reuses canvas_mojo.shapes.
-arcs' own _arc_points helper (radius-proportional step count), the
-same exact circle-math sampling draw_arc/fill_arc/fill_ring_sector
-already use -- a fixed step count doesn't generalize across a
-path-drawn arc's own much wider practical radius range the way it does
-for a Bezier control-point-driven curve, see _arc_points's own
-docstring.
+Coordinates are Float64 (FPoint), not Point's integer pixels: a control
+point off by a fraction of a pixel changes the flattened curve's shape,
+where a straight line's endpoints only need whole pixels. Quad/cubic
+flattening uses a fixed step count per segment rather than adaptive
+subdivision -- good enough at these sizes. arc_to is the exception: it
+reuses canvas_mojo.shapes.arcs' `_arc_points` (radius-proportional step
+count), the same sampling draw_arc/fill_arc/fill_ring_sector use, since
+a fixed count doesn't stretch across a path-drawn arc's much wider
+radius range.
 
 A path can hold multiple sub-paths (more than one move_to). fill_path
-combines every sub-path's scanline crossings together (even-odd), the
-same multi-contour technique TrueType glyphs' own counters need -- so
-an outer shape plus an inner "hole"
-sub-path correctly punches a hole, the same way 'o' or 'A' need their
-inner contour to combine with the outer one. stroke_path/stroke_path_aa
-instead draw each sub-path independently, closed (draw_polygon) or
-open (draw_polyline) depending on whether that sub-path's own close()
-was called.
+combines every sub-path's scanline crossings (even-odd), so an outer
+shape plus an inner sub-path punches a hole the way 'o' or 'A' need.
+stroke_path/stroke_path_aa instead draw each sub-path independently,
+closed (draw_polygon) or open (draw_polyline) depending on whether
+close() was called.
 """
 
 from std.math import cos, sin
@@ -48,15 +40,13 @@ comptime _CUBIC_TO = 3
 comptime _CLOSE = 4
 comptime _ARC_TO = 5
 
-# Fixed subdivision steps per curve segment when flattening -- see
-# this module's own docstring for why fixed, not adaptive.
+# Fixed subdivision steps per curve segment when flattening.
 comptime _CURVE_STEPS = 16
 
 
 struct FPoint(ImplicitlyCopyable, Movable):
-    """A floating-point 2D coordinate -- Path's own point type, kept
-    separate from geometry.Point (integer pixels only) for the reason
-    given in this module's docstring.
+    """A floating-point 2D coordinate: Path's point type, separate from
+    geometry.Point, which is integer pixels only.
     """
 
     var x: Float64
@@ -68,16 +58,16 @@ struct FPoint(ImplicitlyCopyable, Movable):
 
 
 struct _PathCommand(ImplicitlyCopyable, Movable):
-    """One path command. Which of p1/p2/p3 are meaningful depends on
-    `kind`: move_to/line_to use only p1 (the endpoint); quad_to uses
-    p1 (control) and p2 (endpoint); cubic_to uses all three (control1,
-    control2, endpoint); close uses none; arc_to packs its five plain
-    scalars (cx, cy, radius, start_angle, end_angle) across all three
-    points instead of a fourth field -- p1 = (cx, cy), p2 = (radius,
-    start_angle), p3.x = end_angle (p3.y unused). A tagged struct with
-    unused fields left zeroed, not a real union (Mojo doesn't have a
-    lightweight one) -- wastes a little space per command, irrelevant
-    at the command counts a chart-label-sized path ever reaches.
+    """One path command. Which of p1/p2/p3 matter depends on `kind`:
+    move_to/line_to use p1 (endpoint); quad_to uses p1 (control) and p2
+    (endpoint); cubic_to uses all three (control1, control2, endpoint);
+    close uses none; arc_to packs five scalars across the three points
+    -- p1 = (cx, cy), p2 = (radius, start_angle), p3.x = end_angle,
+    p3.y unused.
+
+    A tagged struct with unused fields zeroed rather than a union,
+    which Mojo has no lightweight form of. The wasted space per command
+    doesn't matter at the counts a path here reaches.
     """
 
     var kind: Int
@@ -94,16 +84,12 @@ struct _PathCommand(ImplicitlyCopyable, Movable):
 
 struct Path(Movable):
     """Build with move_to/line_to/quad_curve_to/cubic_curve_to/arc_to/
-    close, then hand to fill_path/stroke_path/stroke_path_aa. No chaining
-    (each call is `mut self` returning nothing) -- matches Canvas's
-    own builder-style methods (push_clip, set_pixel) rather than
-    inventing a fluent style just for this type.
+    close, then hand to fill_path/stroke_path/stroke_path_aa. No
+    chaining: each call is `mut self` returning nothing, like Canvas's
+    push_clip/set_pixel.
 
-    All coordinates are absolute, not relative-to-current-point (no
-    SVG/Cairo-style rel_line_to equivalents) -- narrower than either
-    of those APIs on purpose; relative variants are a thin convenience
-    layer that's easy to add later if something concrete needs it, not
-    load-bearing for anything this exists for yet.
+    All coordinates are absolute. There are no relative-to-current-
+    point variants (SVG/Cairo's rel_line_to and friends).
     """
 
     var commands: List[_PathCommand]
@@ -167,26 +153,17 @@ struct Path(Movable):
         mut self, cx: Float64, cy: Float64, radius: Float64, start_angle: Float64, end_angle: Float64
     ) raises:
         """A circular arc segment, center (cx, cy), from `start_angle`
-        to `end_angle` (radians, start_angle <= end_angle expected --
-        same convention as canvas_mojo.shapes.arcs' own draw_arc/
-        fill_arc/fill_ring_sector family, including which way increasing angle
-        sweeps on screen: see _arc_points's own docstring). Flattened
-        via that same _arc_points helper at build time (not Path's own
-        fixed-step quad/cubic subdivision, see this module's own
-        docstring for why fixed-step curve flattening is fine for
-        those but wouldn't be here) -- radius-proportional step count,
-        so a raster fill_path_aa/stroke_path_aa render of an arc_to
-        traces the identical curve a direct draw_arc/fill_arc call
-        would, not just a visually-similar one.
+        to `end_angle` (radians, start_angle <= end_angle) -- the same
+        convention as draw_arc/fill_arc/fill_ring_sector, including
+        which way increasing angle sweeps on screen. Flattened at build
+        time through that family's `_arc_points`, so a rendered
+        arc_to traces the identical curve a direct draw_arc call would.
 
-        Unlike Cairo's `arc()`, this does *not* insert a connecting
-        line from wherever the current point already is to the arc's
-        own start point -- matches every other Path method's absolute,
-        no-implicit-magic contract (see this struct's own docstring):
+        Unlike Cairo's `arc()`, this inserts no connecting line from
+        the current point to the arc's start. To join without a seam,
         call move_to(cx + radius*cos(start_angle), cy +
-        radius*sin(start_angle)) first (or arrange the previous
-        segment to already end exactly there) if the two need to
-        connect with no seam.
+        radius*sin(start_angle)) first, or end the previous segment
+        exactly there.
         """
         if not self._has_current_point:
             raise Error("Path.arc_to() called before any move_to() -- a path needs a starting point first")
@@ -197,12 +174,10 @@ struct Path(Movable):
         self._current_y = cy + radius * sin(end_angle)
 
     def close(mut self) raises:
-        """Draw a straight segment back to this sub-path's own
-        move_to and mark it closed -- stroke_path/stroke_path_aa draw
-        a closed sub-path as a polygon (draw_polygon), an unclosed one
-        as an open polyline (draw_polyline). Doesn't affect fill_path,
-        which treats every sub-path as implicitly closed regardless
-        (matching fill_polygon's own existing behavior).
+        """Draw a straight segment back to this sub-path's move_to and
+        mark it closed. stroke_path/stroke_path_aa then draw it as a
+        polygon rather than an open polyline. No effect on fill_path,
+        which treats every sub-path as implicitly closed.
         """
         if not self._has_current_point:
             raise Error("Path.close() called before any move_to() -- a path needs a starting point first")
@@ -232,10 +207,7 @@ def _cubic_point(p0: FPoint, c1: FPoint, c2: FPoint, p1: FPoint, t: Float64) -> 
 
 
 struct _Subpath(Movable):
-    """One flattened sub-path: its points, and whether it was close()d
-    -- a small struct instead of a second, parallel List[Bool] (see
-    geometry.mojo's own docstring for why parallel lists are avoided
-    here on principle, not just in that one file).
+    """One flattened sub-path: its points, and whether it was close()d.
     """
 
     var points: List[Point]
@@ -292,11 +264,10 @@ def _flatten(path: Path) -> List[_Subpath]:
             cur_y = cmd.p3.y
         elif cmd.kind == _ARC_TO:
             # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
-            # cmd.p3.x = end_angle -- see _PathCommand's own docstring
-            # for this packing. _arc_points includes the arc's own
-            # start point (index 0), which should already equal
-            # (cur_x, cur_y) per arc_to's own contract -- skipped here
-            # the same way the quad/cubic branches above skip t=0.
+            # cmd.p3.x = end_angle (see _PathCommand). _arc_points
+            # includes the arc's start point at index 0, which arc_to's
+            # contract puts at (cur_x, cur_y) already, so it's skipped
+            # the way the quad/cubic branches skip t=0.
             var arc_points = _arc_points(cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x)
             for i in range(1, len(arc_points)):
                 current.append(arc_points[i])
@@ -314,14 +285,11 @@ def _flatten(path: Path) -> List[_Subpath]:
 
 
 def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
-    """Every sub-path's edges' crossings of row y, combined into one
-    list -- shared by fill_path/fill_path_gradient. This is the
-    multi-sub-path analog of the single-loop crossing collection
-    fill_polygon does inline (see canvas_mojo.shapes.polygon_fill); combining across
-    ALL sub-paths here (not resetting per sub-path) is what makes
-    hole-punching and (with FillRule.NONZERO) union-filling work --
-    the same multi-contour technique TrueType glyphs' own counters
-    need.
+    """Every sub-path's edge crossings of row y, combined into one
+    list; shared by fill_path/fill_path_gradient. The multi-sub-path
+    analog of the crossing collection fill_polygon does inline.
+    Combining across all sub-paths, rather than resetting per sub-path,
+    is what makes hole-punching and NONZERO union-filling work.
     """
     var crossings = List[_Crossing]()
     for sp_idx in range(len(subpaths)):
@@ -349,25 +317,18 @@ def fill_path(
 ):
     """Fill a path's interior with the scanline algorithm, combining
     every sub-path's crossings per scanline into a signed winding
-    number (see canvas_mojo.shapes.polygon_fill's _spans_from_crossings, shared with
-    fill_polygon) -- see this module's own docstring for why combining
-    across sub-paths matters (hole-punching), and fill_rule.mojo for
-    what `fill_rule` (default EVEN_ODD, matching this function's
-    original and still-unchanged behavior when unspecified) actually
-    changes: with FillRule.NONZERO, two overlapping sub-paths wound
-    the same rotational direction fill as one solid union instead of
-    leaving a hole where they overlap.
+    number (via polygon_fill's `_spans_from_crossings`, shared with
+    fill_polygon). With `fill_rule` at its EVEN_ODD default, overlapping
+    sub-paths leave a hole where they overlap; with FillRule.NONZERO,
+    two sub-paths wound the same direction fill as one solid union.
 
-    Not fill_polygon generalized to take multiple sub-paths -- a new,
-    independent function, since fill_polygon's own single-polygon
-    contract is a real API guarantee, not something to silently
-    reinterpret.
+    Separate from fill_polygon rather than a generalization of it:
+    fill_polygon's single-polygon contract is an API guarantee.
 
     Same half-open Y-extent convention as fill_polygon
-    ([min(y0,y1), max(y0,y1))), for the identical reason: it's what
-    makes a vertex shared by two opposite-direction edges count once,
-    not twice, while a genuine local extremum counts zero net
-    crossings, not two.
+    ([min(y0,y1), max(y0,y1))), which makes a vertex shared by two
+    opposite-direction edges count once rather than twice, while a
+    local extremum contributes zero net crossings rather than two.
     """
     var subpaths = _flatten(path)
     if len(subpaths) == 0:
@@ -395,16 +356,12 @@ def fill_path(
 def _point_in_subpaths(
     subpaths: List[_Subpath], fx: Float64, fy: Float64, fill_rule: FillRule
 ) -> Bool:
-    """The continuous-point analog of _row_crossings + _is_inside,
-    combining every sub-path's edges into one signed winding number at
-    an arbitrary real-valued point -- the same relationship
-    canvas_mojo.shapes.polygon_fill's _point_in_polygon has to fill_polygon's own
-    integer-row crossing scan, generalized here to multiple sub-paths
-    the identical way _row_crossings already generalizes the discrete
-    version. This is what fill_path_aa's supersampling needs, and
-    (like _point_in_polygon) shares _is_inside with the discrete
-    fill_path, so a hard-edged and AA fill of the same path agree on
-    where the boundary is.
+    """The continuous-point analog of _row_crossings + _is_inside:
+    every sub-path's edges combined into one signed winding number at
+    an arbitrary real-valued point, which is what fill_path_aa's
+    supersampling needs. Shares `_is_inside` with the discrete
+    fill_path, so hard-edged and AA fills of one path agree on where
+    the boundary is.
     """
     var winding = 0
     for sp_idx in range(len(subpaths)):
@@ -430,11 +387,10 @@ def _point_in_subpaths(
 
 
 def _row_crossings_aa(subpaths: List[_Subpath], fy: Float64) -> List[_AACrossing]:
-    """_point_in_subpaths's own per-sample ray-cast, factored out to
-    run once per sub-scanline instead of once per sub-pixel sample --
-    every edge crossing y=fy, in no particular order (sorted separately,
-    see _sort_aa_crossings_by_x). See fill_path_aa's own docstring for
-    why this split is what makes the whole sweep sub-quadratic.
+    """_point_in_subpaths's per-sample ray-cast, hoisted to run once
+    per sub-scanline: every edge crossing y=fy, unordered (sorted by
+    _sort_aa_crossings_by_x). See fill_path_aa for why this split is
+    what keeps the sweep sub-quadratic.
     """
     var crossings = List[_AACrossing]()
     for sp_idx in range(len(subpaths)):
@@ -467,8 +423,8 @@ def fill_path_aa(
     supersample: Int = 4,
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
-    fill_polygon_aa is fill_polygon's (see that function's own
-    docstring in canvas_mojo.shapes.polygon_fill): for every pixel
+    fill_polygon_aa is fill_polygon's (see that function in
+    canvas_mojo.shapes.polygon_fill): for every pixel
     near the path's flattened outline, samples an NxN sub-pixel grid
     and turns the coverage fraction into that pixel's alpha. Each
     output pixel is visited exactly once.
@@ -479,36 +435,22 @@ def fill_path_aa(
     per-sub-path independently, for the identical reason fill_path's
     own docstring gives.
 
-    Swept per sub-scanline, not per sub-pixel sample: _point_in_subpaths
-    (this module's own naive per-sample membership test, still used
-    directly by _point_in_subpaths' own tests, and kept as a plain
-    reference implementation) would re-scan every one of a path's edges
-    for every one of a pixel's supersample^2 sub-samples -- O(pixels *
-    supersample^2 * edges) overall, fine for a small hand-drawn shape
-    but a genuine problem for a large, edge-dense one (a big arc_to-
-    built wedge or ribbon, say: arc_to's own point count scales with
-    radius, see its own docstring, so a large enough one starts costing
-    real seconds). Collecting a sub-scanline's crossings once (like
-    fill_path's own _row_crossings, generalized here to sub-pixel y)
-    instead of once per sample removes the `* edges` factor from the
-    per-sample cost entirely: sort the crossings by x once (
-    _sort_aa_crossings_by_x), precompute each one's own suffix winding
-    sum, then sweep every sub-sample's x -- strictly increasing across
-    the whole row, the same left-to-right pixel order the loop already
-    visits -- against that sorted list with a single forward-only
-    pointer, an O(1) amortized lookup per sample instead of O(edges).
-    Same math as _point_in_subpaths' own ray cast at every sample
-    point, just computed via a sweep instead of a fresh scan: every
-    existing fill_path_aa/stroke_path_aa/text-rendering test (this
-    package's own text rendering rasterizes through fill_path_aa, see
-    canvas_mojo/text/render.mojo) still passes byte-identical after
-    this rewrite, which is the real correctness bar here, not just the
-    complexity argument.
+    Swept per sub-scanline, not per sub-pixel sample. The naive
+    membership test (`_point_in_subpaths`, kept as a reference
+    implementation and still tested directly) rescans every edge for
+    every one of a pixel's supersample^2 sub-samples: O(pixels *
+    supersample^2 * edges), fine for a small shape but seconds of work
+    for a large edge-dense one, since arc_to's point count scales with
+    radius. Collecting a sub-scanline's crossings once removes the
+    `* edges` factor: sort by x (_sort_aa_crossings_by_x), precompute
+    each crossing's suffix winding sum, then sweep every sub-sample's x
+    -- strictly increasing across the row -- against that sorted list
+    with one forward-only pointer, an amortized O(1) lookup per sample.
+    The math per sample is _point_in_subpaths' ray cast either way.
 
-    Not fused with fill_path behind an `antialias: Bool` -- same
-    reasoning as every other hard/AA split in this codebase (see
-    canvas_mojo.shapes.lines's own module docstring): a real complexity-class
-    jump per pixel, not a free toggle.
+    Not fused with fill_path behind an `antialias: Bool`, for the
+    reason canvas_mojo.shapes.lines gives: a complexity-class jump per
+    pixel, not a free toggle.
     """
     var subpaths = _flatten(path)
     if len(subpaths) == 0:
@@ -547,25 +489,20 @@ def fill_path_aa(
             _sort_aa_crossings_by_x(crossings)
             var k = len(crossings)
 
-            # suffix[i] == the signed winding contributed by every
-            # crossing from index i to the end -- crossings[idx:]'s own
-            # combined direction, exactly what _point_in_subpaths' own
-            # `x > fx` ray cast sums fresh per sample; see this
-            # function's own docstring for why precomputing it here
-            # (once per sub-scanline) instead removes the `* edges`
-            # factor from the sweep below.
+            # suffix[i] is the signed winding contributed by every
+            # crossing from index i onward -- what _point_in_subpaths'
+            # `x > fx` ray cast sums fresh per sample. Precomputing it
+            # per sub-scanline is what removes the `* edges` factor.
             var suffix = List[Int](capacity=k + 1)
             for _ in range(k + 1):
                 suffix.append(0)
             for i in range(k - 1, -1, -1):
                 suffix[i] = suffix[i + 1] + crossings[i].direction
 
-            # fx is strictly increasing across this whole sweep (px
-            # ascending, and each px's own sx sub-samples span a
-            # narrower range than the gap to the next px -- see this
-            # function's own docstring), so `idx` only ever moves
-            # forward: an amortized O(1) lookup per sample, not a fresh
-            # O(k) rescan.
+            # fx increases strictly across the sweep: px ascends, and
+            # each px's sub-samples span less than the gap to the next
+            # px. So `idx` only moves forward -- amortized O(1) per
+            # sample, not an O(k) rescan.
             var idx = 0
             for pxi in range(row_width):
                 var px = row_first_px + pxi
@@ -592,14 +529,10 @@ def fill_path_gradient(
     gradient: LinearGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
 ):
-    """Fill a path's interior the same way fill_path does, but
-    sourcing each pixel's color from `gradient` (see gradient.mojo)
-    instead of one flat Color. Same scanline structure as fill_path,
-    kept as its own function rather than a shared core parameterized
-    over "how to get a color" -- matches this codebase's general
-    tolerance for a bit of duplication between near-identical
-    primitive pairs (e.g. fill_circle_aa/draw_circle_aa) over forcing
-    a premature shared abstraction for two call sites.
+    """Fill a path's interior as fill_path does, but sourcing each
+    pixel's color from `gradient` (gradient.mojo) rather than one flat
+    Color. Same scanline structure, duplicated rather than factored
+    behind a "how to get a color" parameter for two call sites.
     """
     var subpaths = _flatten(path)
     if len(subpaths) == 0:
@@ -630,11 +563,7 @@ def fill_path_radial_gradient(
     gradient: RadialGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
 ):
-    """Fill a path's interior the same way fill_path does, but
-    sourcing each pixel's color from `gradient` (a RadialGradient --
-    see gradient.mojo) instead of one flat Color. Same reasoning as
-    fill_path_gradient for staying its own function rather than a
-    shared core parameterized over "how to get a color".
+    """fill_path_gradient's RadialGradient counterpart (gradient.mojo).
     """
     var subpaths = _flatten(path)
     if len(subpaths) == 0:
@@ -666,8 +595,8 @@ def stroke_path(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
-    """Stroke every sub-path, hard-edged 1px -- closed ones
-    (close() was called) via draw_polygon, open ones via draw_polyline.
+    """Stroke every sub-path, hard-edged 1px: closed ones (close() was
+    called) via draw_polygon, open ones via draw_polyline.
     """
     var subpaths = _flatten(path)
     for sp_idx in range(len(subpaths)):

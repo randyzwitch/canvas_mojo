@@ -2,38 +2,30 @@
 (`ttf.mojo`) -- job 2 of the three text-rendering jobs (font discovery
 / glyph resolution & metrics / rasterization). `font_discovery.mojo`
 resolves a family/slant/weight to a file; `ttf.mojo` parses that
-file's own binary tables directly. This module is the thin adapter
+file's binary tables directly. This module is the thin adapter
 between the two: it exposes the `LineMetrics`/`GlyphMetrics`/
 `face_line_metrics`/`has_glyph`/`glyph_metrics`/`glyph_path` surface
-`render.mojo` calls, implemented against `ttf.mojo`'s own `TTFFace` --
+`render.mojo` calls, implemented against `ttf.mojo`'s `TTFFace` --
 no FFI, no C struct layouts, no linked library in this module at all.
 
-No hinting, by construction: `ttf.mojo` does not implement a hinting
-bytecode interpreter (a large, separate subsystem -- see that module's
-own docstring for why this is a deliberate scope decision, not an
-oversight). Every glyph renders through this package's own
-`fill_path_aa`'s supersampled coverage AA regardless, which is what
-makes unhinted outlines look correct at the sizes a chart actually
-uses -- confirmed directly against real values, not assumed.
+No hinting: `ttf.mojo` implements no hinting bytecode interpreter, a
+deliberate scope decision documented there. Every glyph renders
+through `fill_path_aa`'s supersampled coverage AA regardless, which is
+what keeps unhinted outlines correct at the sizes a chart uses.
 
-Verified against real font values: loading DejaVu Sans and reading
-`units_per_EM`/`num_glyphs`/`ascender`/`descender` gives
-2048/6253/1901/-483, and capital "I" decomposes to exactly 1 contour,
-4 points, all on-curve -- both facts confirmed via `ttf.mojo`'s own
-from-scratch Python-oracle cross-check (see that module's own
-docstring). Glyph metrics (advance/bearing/width/height) differ
-slightly from the values a hinting rasterizer such as FreeType
-produces for the same glyph at the same size -- a real, understood,
-expected difference (FreeType applies its own default hinting/rounding
-even without an explicit "no hinting" flag; this module deliberately
-never does) -- see tests/test_glyph_outline.mojo's own docstring for
-the exact numbers and how each was measured before being locked in.
+Locked-in font values: DejaVu Sans reads
+`units_per_EM`/`num_glyphs`/`ascender`/`descender` as
+2048/6253/1901/-483, and capital "I" decomposes to 1 contour, 4
+points, all on-curve -- both confirmed against `ttf.mojo`'s Python
+oracle. Glyph metrics (advance/bearing/width/height) differ slightly
+from what a hinting rasterizer such as FreeType reports for the same
+glyph at the same size, since hinting rounds and this never does; see
+tests/test_glyph_outline.mojo for the exact numbers.
 
-TrueType's own outline coordinate space has y increasing upward (the
-same PDF/PostScript/font-design convention geometry.mojo's own
-docstring describes for data space generally); `ttf.mojo`'s
-`outline_to_path` applies the y-flip converting to this package's own
-y-down raster convention, so this module doesn't repeat that logic.
+TrueType outline space has y increasing upward, the
+PDF/PostScript/font-design convention. `ttf.mojo`'s `outline_to_path`
+applies the y-flip into this package's y-down raster space, so this
+module doesn't repeat it.
 """
 
 from canvas_mojo.path import Path
@@ -42,10 +34,10 @@ from canvas_mojo.text.ttf import TTFFace, outline_to_path
 
 
 struct LineMetrics(ImplicitlyCopyable, Movable):
-    """This face's own current-size line metrics, in pixels.
-    `ascender`/`descender` are signed (descender negative, matching
-    `hhea`'s own convention); `line_height` is the recommended
-    baseline-to-baseline distance for stacked lines.
+    """This face's line metrics at its current size, in pixels.
+    `ascender`/`descender` are signed, descender negative per `hhea`'s
+    convention; `line_height` is the recommended baseline-to-baseline
+    distance for stacked lines.
     """
 
     var ascender: Float64
@@ -60,9 +52,8 @@ struct LineMetrics(ImplicitlyCopyable, Movable):
 
 def face_line_metrics(face: TTFFace) raises -> LineMetrics:
     """This face's line metrics at whatever pixel size
-    `TTFFace.set_pixel_size` last set -- raises if that was never
-    called (see `TTFFace.scale`'s own docstring for why this isn't
-    just trusting an unset size).
+    `TTFFace.set_pixel_size` last set; raises if it was never called
+    (see `TTFFace.scale`).
     """
     var scale = face.scale()
     var ascender = Float64(face.ascender) * scale
@@ -72,8 +63,8 @@ def face_line_metrics(face: TTFFace) raises -> LineMetrics:
 
 
 struct GlyphMetrics(ImplicitlyCopyable, Movable):
-    """One glyph's own layout-relevant measurements, in pixels, at
-    whatever size was last set.
+    """One glyph's layout-relevant measurements, in pixels, at whatever
+    size was last set.
     """
 
     var advance: Float64
@@ -93,21 +84,18 @@ struct GlyphMetrics(ImplicitlyCopyable, Movable):
 
 
 def has_glyph(mut face: TTFFace, codepoint: Int) raises -> Bool:
-    """Whether `face` has a real glyph for `codepoint` -- glyph index
-    0 is TrueType's own universal ".notdef" placeholder, returned by
-    `cmap` lookup itself for any codepoint the font doesn't map
-    (confirmed directly, not assumed -- see `ttf.mojo`'s own
-    `test_missing_codepoint_maps_to_notdef`). Cheaper than
-    `glyph_metrics`/`glyph_path` for a caller (`render.mojo`'s own
-    font-fallback logic) that just needs to know whether to keep using
-    this face or resolve a different one for this character, not load
-    the glyph itself -- a plain `cmap` lookup, no outline decode.
+    """Whether `face` has a real glyph for `codepoint`. Glyph index 0
+    is TrueType's ".notdef", what `cmap` returns for any codepoint the
+    font doesn't map. A plain `cmap` lookup with no outline decode, so
+    it's cheaper than `glyph_metrics`/`glyph_path` for
+    `render.mojo`'s fallback logic, which only needs to know whether to
+    keep this face or resolve another.
     """
     return face.glyph_index_for_codepoint(codepoint) != 0
 
 
 def glyph_metrics(mut face: TTFFace, codepoint: Int) raises -> GlyphMetrics:
-    """This one character's own advance/bearing/size, in pixels."""
+    """This character's advance/bearing/size, in pixels."""
     var scale = face.scale()
     var glyph_index = face.glyph_index_for_codepoint(codepoint)
     var advance = Float64(face.advance_width(glyph_index)) * scale
@@ -119,15 +107,13 @@ def glyph_metrics(mut face: TTFFace, codepoint: Int) raises -> GlyphMetrics:
     var x_max = bbox[2]
     var y_max = bbox[3]
 
-    # bearing_x/bearing_y/width/height follow FreeType's own
-    # FT_Glyph_Metrics convention exactly, which is what this module's
-    # own callers and tests are written against: bearing_x is the ink
-    # bounding box's own left edge, bearing_y its top edge
-    # (relative to the baseline, y-up font-design-space sign), width/
-    # height the bounding box's own extent -- all computed directly
-    # from the decoded outline's real points (see `RawGlyphOutline.
-    # bounding_box`'s own docstring for why that's used instead of the
-    # `glyf` header's stored bounding box fields).
+    # bearing_x/bearing_y/width/height follow FreeType's
+    # FT_Glyph_Metrics convention, which this module's callers and
+    # tests are written against: bearing_x is the ink bounding box's
+    # left edge, bearing_y its top edge (baseline-relative, y-up
+    # font-design sign), width/height its extent -- all from the
+    # decoded outline's points rather than the `glyf` header's stored
+    # bounding box (see `RawGlyphOutline.bounding_box`).
     return GlyphMetrics(
         advance,
         Float64(x_min) * scale,
@@ -138,18 +124,15 @@ def glyph_metrics(mut face: TTFFace, codepoint: Int) raises -> GlyphMetrics:
 
 
 def glyph_path(mut face: TTFFace, codepoint: Int, pen_x: Float64, pen_y: Float64) raises -> Path:
-    """One character's outline as a `Path`, positioned so its own
-    local (0, 0) -- the glyph origin -- lands at (pen_x, pen_y) in
-    pixel space. Advance the pen by this same call's own
-    `glyph_metrics(face, codepoint).advance` before laying out the next
-    character -- this function doesn't do that itself, matching
-    `Path`'s own "caller positions everything explicitly" convention
-    (see path.mojo's docstring).
+    """One character's outline as a `Path`, positioned so its local
+    (0, 0) -- the glyph origin -- lands at (pen_x, pen_y) in pixel
+    space. The caller advances the pen by
+    `glyph_metrics(face, codepoint).advance` before the next character;
+    this doesn't, matching Path's convention that the caller positions
+    everything explicitly.
 
-    A glyph with no outline at all (whitespace -- a real font maps it
-    to a valid glyph index with zero contours) returns an empty Path,
-    the same "nothing to draw, not an error" convention `draw_text`'s
-    own no-op cases already use.
+    A glyph with no outline (whitespace maps to a valid glyph index
+    with zero contours) returns an empty Path rather than an error.
     """
     var scale = face.scale()
     var glyph_index = face.glyph_index_for_codepoint(codepoint)

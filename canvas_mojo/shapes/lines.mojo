@@ -1,30 +1,23 @@
-"""Line, polyline, and polygon-*outline* drawing -- Bresenham hard-
-edged (draw_line/draw_polyline/draw_polygon) and supersampled
-analytic-coverage anti-aliased (draw_line_aa/draw_polyline_aa/
-draw_polygon_aa) variants, plus the dash-aware cores (_draw_line_core,
-_draw_polyline_core_aa) they share.
+"""Line, polyline, and polygon-*outline* drawing: Bresenham hard-edged
+(draw_line/draw_polyline/draw_polygon), supersampled analytic-coverage
+anti-aliased (draw_line_aa/draw_polyline_aa/draw_polygon_aa), and the
+dash-aware cores they share (_draw_line_core, _draw_polyline_core_aa).
 
-`draw_polygon`/`draw_polygon_aa` here are the *outline* only (this
-file's own line-drawing machinery, closed into a loop) -- not to be
-confused with `fill_polygon`/`fill_polygon_aa` in
-canvas_mojo.shapes.polygon_fill, which fill a polygon's *interior* via
-an entirely different (scanline) algorithm. Two genuinely different
-operations that happen to share half a name; kept in separate files
-precisely so that distinction stays visible in the module layout, not
-just in each docstring.
+`draw_polygon`/`draw_polygon_aa` here draw the *outline* only -- this
+file's line machinery closed into a loop. `fill_polygon`/
+`fill_polygon_aa` in canvas_mojo.shapes.polygon_fill fill the
+*interior* by an entirely different scanline algorithm. Two different
+operations sharing half a name, kept in separate files so the module
+layout says so.
 
-Naming convention, decided deliberately rather than by default, and
-followed by every file in canvas_mojo.shapes/: hard-edged and anti-
-aliased variants stay separate functions (draw_circle vs.
-draw_circle_aa), never merged behind an `antialias: Bool` flag on one
-function. A shared name with a hidden branch would also invite
-parameters that only mean something in one branch (draw_line_aa's
-`width` has no hard-edged equivalent -- Bresenham is definitionally
-1px), and would hide a real algorithmic-complexity jump (hard-edged
-circle drawing is O(radius); AA is O(radius^2 * supersample^2)) behind
-what looks like a boolean toggle. The `_aa` suffix keeps that visible
-at the call site. Apply the same split to future primitives rather
-than reopening this per shape.
+Naming convention, followed by every file in canvas_mojo.shapes/:
+hard-edged and anti-aliased variants stay separate functions
+(draw_circle vs. draw_circle_aa), never one function behind an
+`antialias: Bool`. A shared name invites parameters meaningful in only
+one branch (draw_line_aa's `width` has no hard-edged equivalent --
+Bresenham is definitionally 1px) and hides a complexity jump
+(hard-edged circle drawing is O(radius); AA is O(radius^2 *
+supersample^2)) behind what looks like a toggle.
 """
 
 from std.math import ceil, floor, sqrt
@@ -55,19 +48,15 @@ def _draw_line_core(
     omit a segment's shared endpoint with its neighbor, so a
     translucent color doesn't get blended twice at every joint.
 
-    Returns the total distance traveled (sum of per-step Euclidean
-    lengths -- 1.0 for an axis step, sqrt(2) for a diagonal one, since
-    Bresenham always moves by exactly one pixel in x and/or y per
-    step) so draw_polyline/draw_polygon can carry a dash pattern's
-    phase continuously across a joint into the next segment's
-    dash_start_distance, rather than each segment restarting the
-    pattern from 0 and creating a visible discontinuity at every
-    corner. This is the actual accumulated raster-walk distance, not
-    the segment's idealized straight-line length (sqrt(dx^2+dy^2)) --
-    the two are extremely close but not always bit-identical, and
-    using the real accumulated value keeps a dash pattern's phase
-    exactly consistent with what this function itself just drew,
-    rather than consistent with a slightly different idealized number.
+    Returns the total distance traveled -- the sum of per-step
+    Euclidean lengths, 1.0 for an axis step and sqrt(2) for a diagonal
+    one, since Bresenham moves exactly one pixel in x and/or y per step
+    -- so draw_polyline/draw_polygon can carry a dash pattern's phase
+    across a joint into the next segment's dash_start_distance instead
+    of restarting it at every corner. This is the accumulated
+    raster-walk distance, not the idealized sqrt(dx^2+dy^2): the two
+    are close but not bit-identical, and the accumulated one is
+    consistent with the pixels this call actually drew.
     """
     var dx = abs(x1 - x0)
     var dy = -abs(y1 - y0)
@@ -117,10 +106,9 @@ def draw_line(
     or direction.
 
     `dashes` is an optional alternating on/off length pattern (see
-    _is_dash_on) -- empty by default, a solid line, exactly the
-    original behavior. Measured in the same accumulated-raster-step
-    distance _draw_line_core's own docstring describes, not an
-    idealized straight-line distance.
+    _is_dash_on); empty by default, drawing solid. Measured in the
+    accumulated-raster-step distance _draw_line_core describes, not an
+    idealized straight-line one.
     """
     _ = _draw_line_core(canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0)
 
@@ -156,16 +144,13 @@ def draw_line_aa(
     where two line segments meet at an angle (relevant once polylines
     build on this).
 
-    `dashes` (see _is_dash_on) is measured along this segment's own
-    idealized straight-line length here, not the raster-step distance
-    _draw_line_core's hard-edged version uses -- there's no pixel walk
-    to measure steps along in a supersampled algorithm, and `t` (the
-    already-computed, already-clamped projection fraction along the
-    segment) times the segment's true length is the natural distance
-    measure available at each sample. A sample beyond either endpoint
-    (t clamped to 0 or 1) is measured as if it were exactly at that
-    endpoint, consistent with how the round-cap distance test already
-    treats those samples.
+    `dashes` (see _is_dash_on) is measured along this segment's
+    idealized straight-line length, not _draw_line_core's raster-step
+    distance: a supersampled algorithm has no pixel walk to count, and
+    `t` -- the already-clamped projection fraction -- times the true
+    length is the distance available at each sample. A sample past
+    either endpoint (t clamped to 0 or 1) measures as if it sat exactly
+    at that endpoint, as the round-cap test already treats it.
     """
     var half_width = width / 2.0
     var fx0 = Float64(x0)
@@ -232,10 +217,9 @@ def draw_polyline(
     start point), so a translucent color doesn't get blended twice
     where segments meet.
 
-    A dash pattern's phase carries continuously across joints -- each
-    segment starts where the previous one's accumulated distance left
-    off (see _draw_line_core's own docstring), not restarted at 0, so
-    dashes don't visibly reset or jump at a corner.
+    A dash pattern's phase carries across joints: each segment starts
+    where the previous one's accumulated distance left off, so dashes
+    don't reset at a corner.
     """
     if len(points) == 0:
         return
@@ -262,13 +246,10 @@ def draw_polygon(
     """Like draw_polyline, but closes the shape by connecting the
     last point back to the first.
 
-    The closing segment skips both its shared start point (already
-    drawn by the previous segment) and its shared end point (already
-    drawn as the very first pixel of the whole polygon), so every
-    vertex -- including the one where the shape closes -- is drawn
-    exactly once. A dash pattern's phase carries continuously all the
-    way around, including across the closing segment -- same as
-    draw_polyline's own joints.
+    The closing segment skips both its shared start point (drawn by
+    the previous segment) and its shared end point (drawn as the
+    polygon's first pixel), so every vertex is drawn exactly once. Dash
+    phase carries all the way around, closing segment included.
     """
     var n = len(points)
     if n == 0:
@@ -307,24 +288,20 @@ def _draw_polyline_core_aa(
 ):
     """Shared implementation for draw_polyline_aa/draw_polygon_aa.
 
-    Calling draw_line_aa once per segment would double-blend at every
-    joint -- unlike the hard-edged version, there's no "skip a pixel"
-    fix, since AA coverage isn't computed pixel-by-pixel-skip but by
-    sampling. The actual fix: for every sample, test its distance to
-    EVERY segment and keep the minimum, so a joint where two segments'
-    round-cap regions overlap still produces exactly one coverage
-    value -- and one set_pixel call -- per pixel.
+    Calling draw_line_aa per segment would double-blend at every
+    joint, and the hard-edged "skip a pixel" fix doesn't apply, since
+    AA coverage comes from sampling. Instead every sample tests its
+    distance to *every* segment and keeps the minimum, so overlapping
+    round-cap regions at a joint still yield one coverage value, and
+    one set_pixel call, per pixel.
 
-    Dashing composes with that same per-sample minimum, restructured
-    slightly to fit: a segment only counts as a coverage candidate at
-    all if the sample's projected point on it is both within
-    half_width AND inside an "on" dash region for that segment's own
-    (precomputed, joint-continuous) start distance. A sample near a
-    joint where one segment's dash state is "off" but a neighboring
-    segment's is "on" at that same physical point still gets covered,
-    correctly, because each segment's dash state is evaluated
-    independently before taking the minimum -- not by dashing some
-    single, already-collapsed "closest segment" answer.
+    Dashing composes with that minimum: a segment counts as a coverage
+    candidate only if the sample's projected point on it is within
+    half_width *and* inside an "on" region for that segment's
+    precomputed, joint-continuous start distance. Evaluating dash state
+    per segment before taking the minimum -- rather than dashing an
+    already-collapsed "closest segment" -- is what correctly covers a
+    sample where one segment is off but its neighbor is on.
     """
     var count = len(points)
     if count == 0:
@@ -341,12 +318,10 @@ def _draw_polyline_core_aa(
     var step = 1.0 / Float64(n)
     var pad = Int(half_width) + 2
 
-    # Each segment's start distance (cumulative length of every
-    # segment before it) and own length, precomputed once -- what
-    # lets a dash pattern's phase carry continuously across joints,
-    # the same idea as draw_polyline's own running `distance`, just
-    # precomputed here since this function's main loop iterates
-    # samples, not segments in path order.
+    # Each segment's start distance (cumulative length of everything
+    # before it) and length, precomputed so dash phase carries across
+    # joints. draw_polyline keeps the same running total, but this
+    # loop iterates samples rather than segments in path order.
     var seg_start_distance = List[Float64](capacity=num_segments)
     var seg_length = List[Float64](capacity=num_segments)
     var running_distance = 0.0
@@ -378,24 +353,15 @@ def _draw_polyline_core_aa(
     min_y -= pad
     max_y += pad
 
-    # Each segment's own bounding box, expanded by half_width (a
-    # sample outside this can never be within half_width of the
-    # segment -- its closest point always lies on the segment itself,
-    # which lies inside this box by construction) plus a flat 1.0
-    # margin (a pixel's own samples can land up to 0.5 away from its
-    # (px, py) center in either axis, so testing the pixel's own
-    # coordinate against a box shrunk by less than that never
-    # incorrectly excludes a segment some sample could still reach).
-    # Precomputed once here, then used below to skip a segment
-    # entirely for a whole pixel -- its full per-sample projection
-    # math -- without visiting a single one of its samples, rather
-    # than discovering per sample that it was never going to matter.
-    # This is the actual fix for what would otherwise be O(pixels *
-    # supersample^2 * segments) even for a polyline whose own points
-    # are spread across most of a chart's canvas (a real line chart's
-    # own shape, not a rare pathological case): most segments are
-    # nowhere near most pixels in that bounding box, and this is what
-    # lets the inner sample loop skip straight past them.
+    # Each segment's bounding box, expanded by half_width -- a sample
+    # outside it can't be within half_width of the segment, since its
+    # closest point lies on the segment, inside the box -- plus a flat
+    # 1.0 margin, since a pixel's samples land up to 0.5 from its
+    # center in either axis. Precomputed so a whole pixel can skip a
+    # segment without visiting any of its samples. Without this the
+    # sweep is O(pixels * supersample^2 * segments) even for an
+    # ordinary line chart spread across the canvas, where most
+    # segments are nowhere near most pixels.
     var seg_min_x = List[Float64](capacity=num_segments)
     var seg_max_x = List[Float64](capacity=num_segments)
     var seg_min_y = List[Float64](capacity=num_segments)
@@ -412,10 +378,9 @@ def _draw_polyline_core_aa(
         seg_min_y.append(min(ay, by) - half_width - 1.0)
         seg_max_y.append(max(ay, by) + half_width + 1.0)
 
-    # Per-column candidate buckets, indexed by `px - min_x`, reused
-    # (cleared, never reallocated) across every row -- see below for
-    # why this replaced a naive "rescan row_candidates for every
-    # pixel" filter. One-time O(width) setup, outside the row loop.
+    # Per-column candidate buckets, indexed by `px - min_x`, cleared
+    # and reused across rows rather than reallocated. One-time O(width)
+    # setup, outside the row loop.
     var col_candidates = List[List[Int]](capacity=max_x - min_x + 1)
     for _ in range(max_x - min_x + 1):
         col_candidates.append(List[Int]())
@@ -424,13 +389,10 @@ def _draw_polyline_core_aa(
     for py in range(min_y, max_y + 1):
         var fpy = Float64(py)
 
-        # Row-level pre-filter first (by y alone), before the per-
-        # pixel x check below: a row spans many pixels but this y-only
-        # test is the same for every one of them, so computing it once
-        # per row instead of once per (row, pixel) pair -- O(rows *
-        # segments) instead of O(pixels * segments) for this part --
-        # is a real cost cut on its own for a wide canvas, on top of
-        # the per-pixel candidate filtering this feeds into.
+        # Row-level pre-filter by y alone, before the per-pixel x
+        # check: the y test is identical for every pixel in the row, so
+        # computing it per row rather than per (row, pixel) makes this
+        # part O(rows * segments) instead of O(pixels * segments).
         row_candidates.clear()
         for seg in range(num_segments):
             if fpy >= seg_min_y[seg] and fpy <= seg_max_y[seg]:
@@ -439,23 +401,16 @@ def _draw_polyline_core_aa(
         if len(row_candidates) == 0:
             continue  # no segment reaches this row at all
 
-        # Bucket each row candidate into every column its own (already
-        # half-width-expanded) x-range actually covers, rather than
-        # rescanning the entire row_candidates list for every pixel
-        # column in [min_x, max_x]. Such a rescan would make a wide,
-        # densely-populated row (many
-        # segments, each near-vertical relative to pixel width -- a
-        # real, not pathological, shape for a noisy line-chart series
-        # sampled far denser than the canvas is wide) cost O(row_width
-        # * row_candidates) instead of what it's doing here: O(row_
-        # candidates * each segment's own column footprint) to fill the
-        # buckets, plus a flat O(row_width) to sweep them -- a segment
-        # spanning under a pixel in x (the common case once a path has
-        # more points than the canvas has columns) lands in one or two
-        # buckets, not compared against every other column on its row.
-        # Confirmed against dataviz_mojo's own benchmark (canvas_mojo
-        # PR discussion): this is what took a 3200-segment stroke from
-        # ~844ms to a small fraction of that, not a hypothetical win.
+        # Bucket each row candidate into the columns its
+        # half-width-expanded x-range covers, rather than rescanning
+        # the whole row_candidates list per pixel column. The rescan
+        # costs O(row_width * row_candidates) on a dense row -- many
+        # near-vertical segments, an ordinary noisy line series sampled
+        # denser than the canvas is wide. Bucketing costs
+        # O(row_candidates * each segment's column footprint) to fill
+        # plus O(row_width) to sweep, and a segment spanning under a
+        # pixel in x lands in one or two buckets. Measured on a
+        # 3200-segment stroke: ~844ms down to a small fraction of it.
         var row_min_px = max_x + 1
         var row_max_px = min_x - 1
         for ri in range(len(row_candidates)):
@@ -467,7 +422,7 @@ def _draw_polyline_core_aa(
             if hi > max_x:
                 hi = max_x
             if lo > hi:
-                continue  # this segment's own x-range is entirely outside the canvas-visible columns
+                continue  # this segment's x-range is entirely outside the visible columns
             if lo < row_min_px:
                 row_min_px = lo
             if hi > row_max_px:
@@ -476,7 +431,7 @@ def _draw_polyline_core_aa(
                 col_candidates[px - min_x].append(seg)
 
         if row_min_px > row_max_px:
-            continue  # every row candidate's own x-range clipped away entirely; nothing to sweep
+            continue  # every candidate's x-range clipped away; nothing to sweep
 
         for px in range(row_min_px, row_max_px + 1):
             ref candidates = col_candidates[px - min_x]
@@ -534,11 +489,9 @@ def _draw_polyline_core_aa(
                 )
                 canvas.set_pixel(px, py, Color(color.r, color.g, color.b, alpha))
 
-        # Empty every bucket this row actually touched, ready for the
-        # next row to reuse -- col_candidates itself (the outer List)
-        # is never reallocated across rows, only the small List[Int]s
-        # it holds get cleared, the same "reuse, don't reallocate"
-        # pattern row_candidates uses above.
+        # Empty every bucket this row touched, ready for the next row:
+        # the outer List is never reallocated, only the small
+        # List[Int]s inside it get cleared.
         for px in range(row_min_px, row_max_px + 1):
             col_candidates[px - min_x].clear()
 
@@ -552,10 +505,9 @@ def draw_polyline_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
-    """Anti-aliased polyline -- see draw_polyline for the hard-edged
-    version and _draw_polyline_core_aa for how joints avoid the
-    double-blend hazard, and (separately) how a dash pattern's phase
-    carries continuously across them.
+    """Anti-aliased polyline. See draw_polyline for the hard-edged
+    version, and _draw_polyline_core_aa for how joints avoid
+    double-blending and how dash phase carries across them.
     """
     _draw_polyline_core_aa(canvas, points, color, width, supersample, False, dashes, dash_offset)
 
@@ -569,11 +521,10 @@ def draw_polygon_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
-    """Anti-aliased polygon outline -- see draw_polygon for the
-    hard-edged version. The closing segment is included in every
-    sample's minimum-distance test, same as any other segment, so the
-    closing vertex gets no special-case handling here (unlike
-    draw_polygon's skip_first/skip_last) -- and a dash pattern's phase
-    carries continuously across it too, same as every other joint.
+    """Anti-aliased polygon outline; see draw_polygon for the
+    hard-edged version. The closing segment joins every sample's
+    minimum-distance test like any other, so the closing vertex needs
+    no special case (unlike draw_polygon's skip_first/skip_last), and
+    dash phase carries across it too.
     """
     _draw_polyline_core_aa(canvas, points, color, width, supersample, True, dashes, dash_offset)

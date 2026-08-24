@@ -1,56 +1,37 @@
-"""Read and write PNG files -- stdlib-only, no zlib/libpng dependency,
-matching this package's approach to every binary format it handles
+"""Read and write PNG files, stdlib-only, with no zlib/libpng
+dependency -- this package's approach to every binary format it handles
 (BMP here, TrueType/sfnt in `canvas_mojo/text/ttf.mojo`).
 
-PNG's image data is always wrapped in a zlib stream (RFC 1950), which
-in turn wraps a DEFLATE stream (RFC 1951) -- LZ77 + Huffman coding,
-real compression. Both directions go through
-`canvas_mojo/io/deflate.mojo`: `write_png` compresses via its LZ77 +
-fixed-Huffman `deflate()`, and `read_png` decompresses via `inflate()`
-(a reader has to handle whatever real-world encoder actually produced
-the file, stored blocks or genuine compression alike) -- see that
-module's own docstring for how each side is built and verified. PNG
-earns its place alongside BMP because decent viewers preview it well
-and it's the format someone downstream would expect to receive, and it
-gets there with real compression and no external compression tool,
-matching the "own the whole pipeline in Mojo" stance behind every
-other binary format this package reads or writes.
+PNG's image data is wrapped in a zlib stream (RFC 1950) around a
+DEFLATE stream (RFC 1951). Both directions go through
+`canvas_mojo/io/deflate.mojo`: `write_png` compresses through its LZ77
++ fixed-Huffman `deflate()`, `read_png` decompresses through
+`inflate()`, which has to handle whatever a real encoder produced.
 
-Two checksum algorithms, hand-rolled per their public specs
-(PNG spec Appendix D for CRC-32; RFC 1950 section 9 for Adler-32),
-each independently verified against zlib's own `crc32`/`adler32` on
-the same byte sequences before being trusted. `read_png` verifies both
-checksums against every real file it reads too (chunk CRC-32s, and the
-decompressed data's own Adler-32 against the zlib trailer) -- not just
-trusting that decoding "worked" because it produced *some* output.
+Two checksums, hand-rolled from their public specs (PNG spec Appendix D
+for CRC-32, RFC 1950 section 9 for Adler-32) and verified against
+zlib's `crc32`/`adler32` on the same byte sequences. `read_png` checks
+both against every file it reads -- chunk CRC-32s, and the decompressed
+data's Adler-32 against the zlib trailer -- rather than trusting that
+decoding produced *some* output.
 
-Two byte orders in play, worth being explicit about since getting
-this wrong is a classic mistake: PNG's own chunk framing (length,
-CRC-32) and the zlib wrapper's Adler-32 trailer are big-endian: but
-DEFLATE's stored-block LEN/NLEN fields are little-endian -- a real
-RFC 1951 detail, not a typo, confirmed against zlib's own output.
+Two byte orders are in play, which is a classic place to go wrong:
+PNG's chunk framing (length, CRC-32) and the zlib Adler-32 trailer are
+big-endian, but DEFLATE's stored-block LEN/NLEN fields are
+little-endian.
 
-`write_png` only ever emits color type 2 (truecolor, no alpha), 8-bit
-depth: matches Canvas's own storage (RGB, no per-pixel alpha -- see
-buffer.mojo's docstring). `read_png` accepts more of what real
-encoders actually produce -- color types 0/2/4/6 (grayscale,
-truecolor, grayscale+alpha, truecolor+alpha) at 8-bit depth, non-
-interlaced -- but not all of PNG's own full breadth: indexed/palette
-color (type 3), bit depths other than 8, and Adam7 interlacing all
-raise a clear, specific error rather than silently misreading pixels.
-That's a deliberate v1 scope, not an oversight: 8-bit RGB/RGBA/
-grayscale (with or without alpha), non-interlaced, is what the
-overwhelming majority of real-world PNGs (including every one this
-package's own `write_png` produces) actually are; the rest is real,
-addressable scope if a concrete file needs it, not attempted
-speculatively ahead of one. A PNG with an alpha channel loses that
-alpha on read -- `read_png` composites each pixel through `Canvas.
-set_pixel`'s own existing blend_over, same as every other draw
-operation, flattening onto the fresh canvas's own white background,
-because `Canvas` itself has no per-pixel alpha channel to preserve it
-in (see buffer.mojo's own docstring) -- this is that same, already-
-documented architectural fact showing up here, not a new limitation
-`read_png` introduces.
+`write_png` emits only color type 2 (truecolor, no alpha) at 8-bit
+depth, matching Canvas's RGB storage. `read_png` accepts color types
+0/2/4/6 (grayscale, truecolor, grayscale+alpha, truecolor+alpha) at
+8-bit depth, non-interlaced. Indexed/palette color (type 3), other bit
+depths, and Adam7 interlacing raise a clear error rather than
+misreading pixels -- a deliberate scope limit covering what the
+overwhelming majority of real PNGs are.
+
+A PNG with an alpha channel loses that alpha on read: `read_png`
+composites each pixel through `Canvas.set_pixel`'s blend_over onto the
+fresh canvas's white background, because `Canvas` has no per-pixel
+alpha channel to keep it in (see buffer.mojo).
 """
 
 from canvas_mojo.buffer import Canvas
@@ -76,12 +57,11 @@ def _append_u32_be(mut buf: List[UInt8], value: UInt32):
 
 
 def _crc32_table() -> List[UInt32]:
-    """Standard CRC-32 (IEEE 802.3 / zlib / PNG) table, built from the
-    polynomial 0xEDB88320 -- the reversed-bit-order form of the
-    canonical 0x04C11DB7 polynomial, used because both PNG and zlib
-    process bits/bytes least-significant-first. Straight from the PNG
-    spec's own sample code (Appendix D), independently re-typed and
-    verified against zlib's own crc32 rather than trusted on sight.
+    """Standard CRC-32 (IEEE 802.3 / zlib / PNG) table from the
+    polynomial 0xEDB88320, the reversed-bit-order form of the canonical
+    0x04C11DB7, since PNG and zlib both process bits
+    least-significant-first. From the PNG spec's sample code (Appendix
+    D), verified against zlib's crc32.
     """
     var table = List[UInt32](capacity=256)
     for n in range(256):
@@ -103,12 +83,10 @@ def _crc32(data: List[UInt8], table: List[UInt32]) -> UInt32:
 
 
 def _adler32(data: List[UInt8]) -> UInt32:
-    """RFC 1950's checksum for the zlib stream trailer -- a simpler
-    running sum than CRC-32, not a table-driven algorithm. `% BASE`
-    every byte rather than the batched-mod-every-N-bytes trick real
-    zlib implementations use for speed: correct either way, and this
-    is the version that reads as an unmodified transcription of the
-    spec's own definition.
+    """RFC 1950's checksum for the zlib stream trailer: a running sum,
+    not a table-driven algorithm. `% BASE` per byte rather than the
+    batched-mod trick real zlib implementations use -- correct either
+    way, and this reads as a direct transcription of the spec.
     """
     comptime BASE = UInt32(65521)
     var s1 = UInt32(1)
@@ -123,12 +101,10 @@ def _write_chunk(mut buf: List[UInt8], table: List[UInt32], chunk_type: String, 
     """Append one PNG chunk: length(4, data only) + type(4 ASCII) +
     data + CRC-32(4, over type+data, NOT length) -- all big-endian.
 
-    Builds `type_and_data` once (needed as its own buffer regardless,
-    since _crc32 must see type+data combined), then *moves* it into
-    `buf` instead of copying it there byte-by-byte -- for IDAT (the
-    entire deflate-compressed image, the one chunk here actually large
-    enough for this to matter), that's the difference between one real
-    copy of the payload and two.
+    Builds `type_and_data` once -- needed as its own buffer anyway,
+    since _crc32 must see type and data combined -- then *moves* it
+    into `buf` rather than copying byte by byte. For IDAT, the whole
+    compressed image, that's one copy of the payload instead of two.
     """
     _append_u32_be(buf, UInt32(len(data)))
 
@@ -163,20 +139,15 @@ def write_png(canvas: Canvas, path: String) raises:
     ihdr.append(0)  # interlace method: none
     _write_chunk(file_buf, crc_table, "IHDR", ihdr)
 
-    # Raw scanlines: a filter-type byte (0 = None -- no per-pixel
-    # prediction; deflate()'s own LZ77 already finds the same
-    # horizontal-run redundancy a predictor filter targets, and this
-    # package's own images are dominated by large flat-color regions
-    # where that already compresses extremely well, see deflate.mojo's
-    # own module docstring) followed by that row's RGB bytes, one row
-    # after another.
-    # Each row copied in one bulk slice, not pixel-by-pixel through
-    # get_pixel -- canvas.pixels is already exactly RGB, row-major, the
-    # identical layout a filter-type-0 scanline wants for its own RGB
-    # bytes, so there's no per-pixel transformation to justify paying
-    # for get_pixel's own in_bounds check and Color construction (both
-    # pure overhead here: every (x, y) below is already known
-    # in-bounds) w * h times over.
+    # Raw scanlines: a filter-type byte, then that row's RGB bytes.
+    # Filter type 0 (None, no per-pixel prediction) because deflate()'s
+    # LZ77 already finds the horizontal-run redundancy a predictor
+    # targets, and these images are dominated by flat-color regions.
+    #
+    # Each row is one bulk slice copy rather than a get_pixel walk:
+    # canvas.pixels is already RGB row-major, exactly what a
+    # filter-type-0 scanline wants, so there's no transformation to
+    # justify w * h in_bounds checks and Color constructions.
     var raw = List[UInt8](capacity=h * (1 + w * 3))
     for y in range(h):
         raw.append(0)
@@ -184,13 +155,10 @@ def write_png(canvas: Canvas, path: String) raises:
         raw.extend(canvas.pixels[row_start : row_start + w * 3])
 
     var zlib_stream = List[UInt8]()
-    # zlib header (RFC 1950 section 2.2): CMF=0x78 (deflate, 32K
-    # window), FLG=0x01 (FLEVEL=0/"fastest", matching deflate()'s own
-    # single-fixed-Huffman-block, bounded-search-depth scope -- real
-    # compression, not the maximal effort a slower encoder could reach
-    # for the same bytes, see deflate.mojo's own module docstring) --
-    # and (0x78*256 + 0x01) % 31 == 0, the header's required self-
-    # check, confirmed not just assumed.
+    # zlib header (RFC 1950 2.2): CMF=0x78 (deflate, 32K window),
+    # FLG=0x01 (FLEVEL=0/"fastest", matching deflate()'s single-block,
+    # bounded-search scope). (0x78*256 + 0x01) % 31 == 0, the header's
+    # required self-check.
     zlib_stream.append(0x78)
     zlib_stream.append(0x01)
     var compressed = deflate(raw)
@@ -212,10 +180,9 @@ def _read_u32_be(data: List[UInt8], pos: Int) raises -> Int:
 
 
 def _paeth_predictor(a: Int, b: Int, c: Int) -> Int:
-    """PNG spec section 9.4 -- picks whichever of the left (a), above
-    (b), or upper-left (c) neighbor is closest to `a + b - c`, in that
-    exact tie-breaking order (the spec is explicit that the comparison
-    order is load-bearing, not arbitrary).
+    """PNG spec 9.4: whichever of the left (a), above (b), or
+    upper-left (c) neighbor is closest to `a + b - c`, in that
+    tie-breaking order, which the spec makes load-bearing.
     """
     var p = a + b - c
     var pa = abs(p - a)
@@ -230,10 +197,8 @@ def _paeth_predictor(a: Int, b: Int, c: Int) -> Int:
 
 
 def _bytes_per_pixel(color_type: Int) raises -> Int:
-    """8-bit-depth-only byte width per pixel, by color type -- see
-    this file's own module docstring for which color types `read_png`
-    actually accepts (0/2/4/6) and why (3, indexed/palette, is a real,
-    deliberately out-of-scope gap, not covered here).
+    """Byte width per pixel at 8-bit depth, by color type. `read_png`
+    accepts 0/2/4/6; type 3 (indexed/palette) is out of scope.
     """
     if color_type == 0:
         return 1  # grayscale
@@ -247,17 +212,15 @@ def _bytes_per_pixel(color_type: Int) raises -> Int:
 
 
 def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) raises -> List[UInt8]:
-    """Reverses PNG's own per-scanline filtering (spec section 9) --
-    `raw` is `inflate`'s own output: one filter-type byte followed by
-    `width * bpp` filtered bytes, repeated `height` times. Reconstructs
-    each row using the row directly above it (already reconstructed,
-    never the still-filtered version) and the current row's own
-    already-reconstructed bytes to the left -- exactly the dependency
-    order the spec's own reconstruction formulas assume. Bytes "to the
-    left of" the first pixel, and the entire row above the first
-    scanline, are treated as zero (the spec's own stated convention),
-    not a special case this code has to detect separately -- `a`/`c`
-    default to 0 when `x < bpp`, and `prev_row` starts zeroed.
+    """Reverses PNG's per-scanline filtering (spec section 9). `raw` is
+    `inflate`'s output: a filter-type byte plus `width * bpp` filtered
+    bytes, repeated `height` times. Each row reconstructs from the
+    already-reconstructed row above it and its own already-
+    reconstructed bytes to the left, the dependency order the spec's
+    formulas assume. Bytes left of the first pixel, and the row above
+    the first scanline, are zero per the spec -- no special case
+    needed, since `a`/`c` default to 0 when `x < bpp` and `prev_row`
+    starts zeroed.
     """
     var row_bytes = width * bpp
     var out = List[UInt8](capacity=height * row_bytes)
@@ -297,9 +260,8 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
             cur_row.append(UInt8(recon & 0xFF))
 
         pos += row_bytes
-        # A copy, not a move -- cur_row is also what becomes prev_row
-        # for the next iteration right below, so out still needs its
-        # own independent bytes -- one bulk .copy(), not a per-byte
+        # A copy, not a move: cur_row becomes prev_row just below, so
+        # `out` needs its own bytes. One bulk .copy(), not a per-byte
         # append loop.
         out.extend(cur_row.copy())
         prev_row = cur_row^
@@ -309,16 +271,14 @@ def _unfilter_scanlines(raw: List[UInt8], width: Int, height: Int, bpp: Int) rai
 
 def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, color_type: Int) raises -> Canvas:
     """Converts already-unfiltered scanline bytes into a Canvas,
-    compositing every pixel through `write_pixel`'s own existing
-    blend_over -- see this file's own module docstring for why a PNG
-    with an alpha channel loses it here (Canvas has no per-pixel alpha
-    of its own to preserve it in), not a gap specific to this function.
+    compositing every pixel through `write_pixel`'s blend_over. An
+    alpha channel is flattened here, for the reason this module's
+    docstring gives.
 
-    write_pixel, not set_pixel: every (x, y) below is already known
-    in-bounds (the loop ranges come straight from width/height) on a
-    freshly constructed canvas with no clip pushed, so set_pixel's own
-    in_bounds/in_clip checks would only ever confirm what's already
-    guaranteed -- see buffer.mojo's own write_pixel docstring.
+    write_pixel, not set_pixel: the loop ranges come from
+    width/height on a fresh canvas with no clip pushed, so
+    set_pixel's in_bounds/in_clip checks could only confirm what's
+    already guaranteed.
     """
     var canvas = Canvas(width, height)
     var bpp = _bytes_per_pixel(color_type)
@@ -343,17 +303,14 @@ def _canvas_from_scanlines(unfiltered: List[UInt8], width: Int, height: Int, col
 
 
 def read_png(path: String) raises -> Canvas:
-    """Read a PNG file into a Canvas -- see this file's own module
-    docstring for exactly which PNGs this handles (8-bit depth,
-    color types 0/2/4/6, non-interlaced) and what it deliberately
-    doesn't (indexed color, other bit depths, Adam7 interlacing --
-    all raise a clear, specific error rather than misreading pixels).
+    """Read a PNG file into a Canvas. Handles 8-bit depth, color types
+    0/2/4/6, non-interlaced; anything else raises (see this module's
+    docstring).
 
-    Every chunk's CRC-32 is checked against the file's own trailing
-    4 bytes, and the fully-decompressed image data's Adler-32 is
-    checked against the zlib stream's own trailing 4 bytes -- a
-    corrupted or truncated file is rejected explicitly, not silently
-    misdecoded into a plausible-looking wrong image.
+    Every chunk's CRC-32 is checked against its trailing 4 bytes, and
+    the decompressed data's Adler-32 against the zlib stream's, so a
+    corrupted or truncated file is rejected rather than misdecoded into
+    a plausible-looking wrong image.
     """
     var f = open(path, "r")
     var data = f.read_bytes()
@@ -431,11 +388,10 @@ def read_png(path: String) raises -> Canvas:
                 idat.append(data[pos + i])
         elif chunk_type == "IEND":
             seen_iend = True
-        # Any other chunk type (PLTE, ancillary chunks like tEXt/pHYs/
-        # gAMA/...) is safely skipped -- read_png doesn't need them for
-        # any color type it supports (see this file's own module
-        # docstring: palette/indexed color is explicitly out of scope,
-        # so PLTE is never actually required here).
+        # Any other chunk type (PLTE, or ancillary ones like
+        # tEXt/pHYs/gAMA) is skipped: no supported color type needs
+        # them, and palette color is out of scope, so PLTE never
+        # matters here.
 
         pos += length + 4
 

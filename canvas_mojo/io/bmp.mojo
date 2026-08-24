@@ -50,17 +50,13 @@ def write_bmp(canvas: Canvas, path: String) raises:
     _append_u32_le(buf, 0)  # colors in palette (n/a)
     _append_u32_le(buf, 0)  # important colors (n/a)
 
-    # Pixel data: stored bottom-up, channel order BGR, rows padded to
-    # a 4-byte boundary. Reads straight from canvas.pixels by index
-    # rather than through canvas.get_pixel -- every (x, y) here is
-    # already known in-bounds (the loop ranges come straight from
-    # canvas.width/height), so get_pixel's own in_bounds check and the
-    # Color it constructs just to immediately destructure back into
-    # three bytes are both pure overhead a whole-image write pays once
-    # per pixel for nothing. Can't bulk-copy a whole row the way
-    # png.mojo's own write_png does (RGB source, BGR destination --
-    # every pixel's own byte order has to actually flip), but this
-    # still drops the per-pixel bounds check and struct-construction.
+    # Pixel data: bottom-up, BGR channel order, rows padded to a
+    # 4-byte boundary. Reads canvas.pixels by index rather than through
+    # get_pixel: the loop ranges come from canvas.width/height, so
+    # get_pixel's in_bounds check and the Color it builds only to be
+    # destructured again are per-pixel overhead. No bulk row copy like
+    # write_png's -- RGB source, BGR destination, so every pixel's byte
+    # order flips -- but the per-pixel check and construction go.
     var pad = row_size - w * 3
     for y in range(h - 1, -1, -1):
         var row_start = y * w * 3

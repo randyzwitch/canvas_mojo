@@ -23,11 +23,9 @@ def _round_to_int(value: Float64) -> Int:
     so negative values need the opposite offset from positive ones to
     round correctly (e.g. -2.5 must become -3, not -2).
 
-    Reused (imported, not re-derived) by path.mojo and canvas_mojo.
-    shapes (arcs.mojo) for the same rounding need -- a leading underscore here means
-    "not part of the public canvas API," not "private to this file";
-    Mojo doesn't restrict cross-module imports by name the way
-    Python's convention-only privacy might suggest.
+    Imported by path.mojo and canvas_mojo.shapes.arcs for the same
+    rounding need: the leading underscore means "not part of the public
+    API," not "private to this file."
     """
     if value >= 0.0:
         return Int(value + 0.5)
@@ -40,15 +38,11 @@ struct Transform2D(ImplicitlyCopyable, Movable):
 
         pixel = rotate(data * scale, rotation) + translate
 
-    Deliberately minimal beyond that one fixed pipeline: no general
-    matrix composition, and no "map this data range onto this pixel
-    range" convenience constructor. That domain/range awareness
-    belongs one layer up, in whatever scale types a higher-level
-    charting layer eventually provides (a linear scale and friends),
-    which would compute a Transform2D's scale/translate from a domain
-    and a range; this type only knows the raw affine math, matching
-    canvas's low-level "no hidden state,
-    no chart concepts" scope.
+    Minimal beyond that fixed pipeline: no general matrix composition
+    and no "map this data range onto this pixel range" constructor.
+    Domain/range awareness belongs a layer up, in a charting layer's
+    scale types, which would compute a Transform2D's scale/translate
+    from a domain and a range. This type knows only the affine math.
 
     scale_y is commonly negative in practice: pixel-space y increases
     downward while data-space y conventionally increases upward, so
@@ -56,24 +50,15 @@ struct Transform2D(ImplicitlyCopyable, Movable):
     scale_y (with a matching translate_y) does.
 
     `rotation` is radians, applied around the origin of the *scaled*
-    data space -- before translation, not around wherever translate_x/
-    translate_y ends up placing that origin in pixel space. To rotate
-    around a different pivot, shift the data coordinates (or
-    translate_x/translate_y) the same way composing an extra
-    translate-before-rotate-translate-back step would with a general
-    matrix; this type doesn't take a separate pivot parameter, since
-    nothing built on it has needed one yet. Defaults to 0.0 (no
-    rotation), so a call site passing only the 4 translate/scale
-    arguments gets an unrotated mapping.
+    data space -- before translation, not around wherever
+    translate_x/translate_y places that origin in pixel space. There's
+    no pivot parameter; to rotate around another point, shift the data
+    coordinates or the translation the way a
+    translate-rotate-translate-back composition would. Defaults to 0.0.
 
-    This is a different feature from rotating a single rendered
-    primitive (e.g. an angled axis-tick label) around its own anchor
-    point -- that's draw_text's own `rotation` parameter (see
-    canvas_mojo/text/render.mojo), unrelated to this data-to-pixel
-    mapping. This type's
-    rotation tilts the whole coordinate frame every data point passes
-    through, useful for a rotated plot layout generally, not for
-    angling one label while keeping everything else upright.
+    Distinct from draw_text's `rotation`, which angles one rendered
+    label around its own anchor. This tilts the whole coordinate frame
+    every data point passes through.
     """
 
     var scale_x: Float64
@@ -81,15 +66,10 @@ struct Transform2D(ImplicitlyCopyable, Movable):
     var translate_x: Float64
     var translate_y: Float64
     var rotation: Float64
-    # cos(rotation)/sin(rotation), cached once here instead of
-    # recomputed by to_pixel on every call: rotation is fixed for a
-    # Transform2D's whole lifetime (nothing in this codebase mutates
-    # it after construction -- confirmed directly, not assumed), while
-    # to_pixel itself is the one function meant to be called once per
-    # data point -- thousands of times over, for a real scatter plot
-    # (see examples/transform.mojo's own to_pixel-in-a-loop usage) --
-    # so recomputing two trig calls per point for a value that never
-    # changes was pure waste multiplied by every point plotted.
+    # cos(rotation)/sin(rotation), cached rather than recomputed per
+    # to_pixel call: rotation is fixed for a Transform2D's lifetime,
+    # and to_pixel runs once per data point -- thousands of times for a
+    # scatter plot.
     var _cos_rotation: Float64
     var _sin_rotation: Float64
 

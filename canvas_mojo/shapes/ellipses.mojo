@@ -2,8 +2,8 @@
 (draw_ellipse/fill_ellipse, independent-x/y-radii generalizations of
 canvas_mojo.shapes.circles' draw_circle/fill_circle) and supersampled
 analytic-coverage anti-aliased variants (draw_ellipse_aa/
-fill_ellipse_aa) -- see canvas_mojo.shapes.lines's own module
-docstring for the hard-edged vs. `_aa` naming convention this follows.
+fill_ellipse_aa) -- see canvas_mojo.shapes.lines for the hard-edged
+vs. `_aa` naming convention this follows.
 """
 
 from canvas_mojo.color import Color
@@ -12,15 +12,12 @@ from canvas_mojo.buffer import Canvas
 
 def _plot_ellipse_points(mut canvas: Canvas, cx: Int, cy: Int, x: Int, y: Int, color: Color):
     """Plot draw_ellipse's 4-way symmetric points at offset (x, y),
-    guarding the two cases where mirrored points collapse onto the
-    same pixel: x==0 (top/bottom, where left and right mirrors
-    coincide) and y==0 (left/right, where top and bottom mirrors
-    coincide). Both are real, reachable cases here -- unlike
-    draw_circle's loop, which starts at x==radius and never returns
-    to x==0, draw_ellipse's region 1 *starts* at x==0, and region 2
-    ends at y==0. Without this guard a translucent color would get
-    blended twice at all 4 of the ellipse's axis extremes -- the same
-    category of bug draw_circle had at its own degenerate points.
+    guarding the two cases where mirrored points collapse onto one
+    pixel: x==0, where the left and right mirrors coincide, and y==0,
+    where top and bottom do. Both are reachable here -- region 1
+    *starts* at x==0 and region 2 ends at y==0, unlike draw_circle's
+    loop, which starts at x==radius and never returns to x==0. Without
+    the guard a translucent color blends twice at all 4 axis extremes.
     """
     if x == 0 and y == 0:
         canvas.set_pixel(cx, cy, color)
@@ -42,17 +39,16 @@ def draw_ellipse(mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: 
     to independent x/y radii.
 
     Two regions, split where the boundary's slope magnitude crosses 1
-    (region 1: shallow, steps x; region 2: steep, steps y), each with
-    its own decision parameter -- unlike the circle, unequal radii
-    mean there's no single symmetric stepping rule that covers the
-    whole curve. 4-way symmetry, not the circle's 8-way: swapping x
-    and y doesn't preserve the ellipse equation unless rx == ry.
+    (region 1 shallow, stepping x; region 2 steep, stepping y), each
+    with its own decision parameter: unequal radii leave no single
+    symmetric stepping rule covering the whole curve. 4-way symmetry
+    rather than the circle's 8-way, since swapping x and y preserves
+    the ellipse equation only when rx == ry.
 
-    Integer-only: the decision parameters are scaled by 4 throughout
-    to absorb the 0.25 fractional term the derivation produces
-    (evaluating the ellipse equation at a half-pixel-offset midpoint),
-    the same way circle/line algorithms stay in Int by construction
-    rather than rounding floats.
+    Integer-only: the decision parameters are scaled by 4 throughout to
+    absorb the 0.25 term the derivation produces when evaluating the
+    ellipse equation at a half-pixel-offset midpoint, the way the
+    circle and line algorithms stay in Int rather than rounding floats.
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -75,9 +71,9 @@ def draw_ellipse(mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: 
             y -= 1
             q1 += 8 * ry2 * x - 8 * rx2 * y + 4 * ry2
 
-    # Region 2: steep slope, step y. Decision parameter is
-    # re-evaluated fresh at the (x, y) region 1 left off at, not
-    # carried over incrementally -- it's a different function of x, y.
+    # Region 2: steep slope, step y. The decision parameter is
+    # re-evaluated at the (x, y) region 1 left off at rather than
+    # carried over: it's a different function of x, y.
     var q2 = (
         4 * ry2 * (x * x)
         + 4 * ry2 * x
@@ -96,18 +92,15 @@ def draw_ellipse(mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: 
 
 
 def fill_ellipse(mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: Color):
-    """Fill a solid ellipse -- fill_circle's generalization to
-    independent x/y radii, same span-fill-per-row technique (each
-    pixel set exactly once, so a translucent color is never double-
-    blended). The half-width per row shrinks monotonically as |dy|
-    grows from 0 to ry, so `dx` only ever needs to decrease, never
-    reset -- same trick fill_circle uses. The per-row bound is the
-    ellipse equation multiplied through by rx^2 * ry^2 to stay
-    integer-exact rather than involve a sqrt: `dx^2*ry^2 + dy^2*rx^2
-    <= rx^2*ry^2`.
+    """Fill a solid ellipse: fill_circle generalized to independent x/y
+    radii, same span-per-row technique, each pixel set exactly once.
+    The half-width per row shrinks monotonically as |dy| grows from 0
+    to ry, so `dx` only decreases and never resets. The per-row bound
+    is the ellipse equation multiplied through by rx^2 * ry^2 to stay
+    integer-exact instead of taking a sqrt: `dx^2*ry^2 + dy^2*rx^2 <=
+    rx^2*ry^2`.
 
-    Hard-edged, like draw_ellipse -- see fill_ellipse_aa for a smooth
-    edge.
+    Hard-edged; see fill_ellipse_aa for a smooth edge.
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -135,24 +128,19 @@ def fill_ellipse_aa(
     color: Color,
     supersample: Int = 4,
 ):
-    """Anti-aliased filled ellipse -- fill_circle_aa's generalization
-    to independent x/y radii, same per-pixel supersampled analytic
-    coverage technique (each output pixel visited exactly once, no
-    double-blend hazard).
+    """Anti-aliased filled ellipse: fill_circle_aa generalized to
+    independent x/y radii, same per-pixel supersampled analytic
+    coverage, each output pixel visited once.
 
     Generalized by normalizing each sample's offset by (rx, ry) before
     testing against the unit circle: `(dx/rx)^2 + (dy/ry)^2 <= 1` is
-    the ellipse equation in normalized form, exactly equivalent to
-    testing against the true ellipse boundary -- and reduces to
-    fill_circle_aa's own `dx^2 + dy^2 <= r^2` test when rx == ry
-    (dividing both terms by the same r first).
+    the ellipse equation in normalized form, and reduces to
+    fill_circle_aa's `dx^2 + dy^2 <= r^2` when rx == ry.
 
-    Same provably-inside/provably-outside fast path fill_circle_aa's
-    own docstring describes -- here in the identical normalized (rx,
-    ry) space the sample test itself uses, so a pixel square's nearest
-    and farthest normalized corners are just its raw nearest/farthest
-    corners (the same 0.5-away-from-center AABB fill_circle_aa
-    computes) each divided by rx/ry before squaring.
+    Same provably-inside/provably-outside fast path fill_circle_aa
+    uses, in that normalized space: a pixel square's nearest and
+    farthest normalized corners are its raw nearest/farthest corners,
+    each divided by rx/ry before squaring.
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -208,14 +196,13 @@ def draw_ellipse_aa(
     """Anti-aliased ellipse outline, ~1px wide -- draw_circle_aa's
     generalization to independent x/y radii.
 
-    Unlike the circle case, there's no single distance value an inner
-    and outer boundary can both be compared against: draw_circle_aa
-    tests one `d2` against `inner2`/`outer2` because a circle's inner
-    and outer rings are concentric offsets of the *same* curve, but an
-    ellipse's `(rx-0.5, ry-0.5)` and `(rx+0.5, ry+0.5)` rings are two
-    genuinely different ellipses. So this tests each sample against
-    both independently, in their own normalized space -- strictly
-    inside the outer ellipse and not strictly inside the inner one:
+    Unlike the circle case, no single distance value serves both
+    boundaries: draw_circle_aa tests one `d2` against `inner2`/`outer2`
+    because a circle's inner and outer rings are concentric offsets of
+    the same curve, but an ellipse's `(rx-0.5, ry-0.5)` and
+    `(rx+0.5, ry+0.5)` rings are two different ellipses. So each sample
+    is tested against both, in their own normalized space -- strictly
+    inside the outer, not strictly inside the inner:
 
         (dx/outer_rx)^2 + (dy/outer_ry)^2 <  1   (strictly inside outer)
         (dx/inner_rx)^2 + (dy/inner_ry)^2 >= 1   (on or outside inner)
@@ -253,12 +240,10 @@ def draw_ellipse_aa(
             var dx = abs(Float64(px - cx))
             var dy = abs(Float64(py - cy))
 
-            # Same "provably fully outside the ring band" skip
-            # draw_circle_aa's own docstring describes, generalized to
-            # the two independent outer-/inner-ellipse normalized-space
-            # tests this function already uses -- no single shared
-            # distance to test against here either, so both directions
-            # get their own nearest/farthest check.
+            # draw_circle_aa's "provably fully outside the ring band"
+            # skip, generalized to the two independent normalized-space
+            # tests above: no shared distance here either, so each
+            # direction gets its own nearest/farthest check.
             var near_onx = max(0.0, dx - 0.5) / outer_rx
             var near_ony = max(0.0, dy - 0.5) / outer_ry
             if near_onx * near_onx + near_ony * near_ony >= 1.0:

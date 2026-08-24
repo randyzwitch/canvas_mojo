@@ -11,9 +11,8 @@ from canvas_mojo.shapes.rects import fill_rect, fill_rect_gradient
 
 
 struct _ClipRect(ImplicitlyCopyable, Movable):
-    """A clip rectangle -- private to this module. Not the same type
-    as canvas_mojo.geometry.Point/anything public; this is purely an
-    implementation detail of Canvas's clip stack.
+    """A clip rectangle, private to this module: an implementation
+    detail of Canvas's clip stack, unrelated to any public type.
     """
 
     var x: Int
@@ -29,13 +28,11 @@ struct _ClipRect(ImplicitlyCopyable, Movable):
 
 
 def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
-    """The overlapping region of two clip rects. A nested clip can
-    only ever shrink the drawable region, never escape an ancestor's
-    -- this is what makes that true: pushing a rect that extends past
-    the current clip gets cut down to the overlap, not applied as-is.
-    Disjoint rects produce a zero-size result (clamped, not negative),
-    which in_clip's half-open bounds check then correctly treats as
-    "nothing is inside this clip."
+    """The overlapping region of two clip rects. This is what keeps a
+    nested clip from escaping an ancestor's: a rect extending past the
+    current clip is cut down to the overlap. Disjoint rects give a
+    zero-size result, clamped rather than negative, which in_clip's
+    half-open check reads as "nothing is inside this clip."
     """
     var left = max(a.x, b.x)
     var top = max(a.y, b.y)
@@ -50,23 +47,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
     Alpha is used for blending on write but is not stored per-pixel; the
     backing buffer holds the composited RGB result.
 
-    Conforms to `DrawTarget` (see that trait's own docstring) via the
-    six methods just below `fill` -- each a thin delegation to the
-    matching free function in `canvas_mojo.shapes`/`canvas_mojo.path` (the
-    exact functions every existing call site already calls directly,
-    e.g. `draw_line_aa(canvas, ...)`, unchanged) so a caller can render
-    generically through a `Canvas` the same way it can through an
-    `SvgCanvas` (see `DrawTarget`, `canvas_mojo/vector/draw_target.mojo`).
-    Free-function call sites keep working exactly as before -- these
-    methods are additive, not a replacement.
+    Conforms to `DrawTarget` through the six methods below `fill`,
+    each a thin delegation to the matching free function in
+    `canvas_mojo.shapes`/`canvas_mojo.path`, so a caller can render
+    generically through a `Canvas` as through an `SvgCanvas`. Calling
+    those free functions directly works the same; the methods are
+    additive.
 
-    Deliberately does *not* include a `draw_text` method (`DrawTarget`
-    itself has none either -- see that trait's own docstring for the
-    current reasoning: raster and vector backends draw text through
-    fundamentally different mechanisms, not a shared operation like
-    this trait's other six methods). Use
-    `canvas_mojo.text.draw_text(canvas, ...)` directly, exactly as every
-    existing call site already does.
+    No `draw_text` method, since `DrawTarget` has none -- raster and
+    vector backends draw text through different mechanisms (see that
+    trait). Call `canvas_mojo.text.draw_text(canvas, ...)` directly.
     """
 
     var width: Int
@@ -86,21 +76,17 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.clip_stack = List[_ClipRect]()
 
     def __init__(out self, width: Int, height: Int, var pixels: List[UInt8]) raises:
-        """Wrap an already-built RGB pixel buffer directly, skipping the
-        solid-fill loop the (width, height, fill) constructor above
-        always pays for. For a caller that's about to write every pixel
-        itself anyway -- downsample() in canvas_mojo/resize.mojo is the
-        concrete case this exists for, where every output pixel is
-        computed and appended before the canvas is ever handed back --
-        filling the buffer with a placeholder color first, only to
-        immediately overwrite every pixel, would double the total
-        pixel-write cost of the call for no benefit.
+        """Wrap an already-built RGB pixel buffer, skipping the
+        solid-fill loop the (width, height, fill) constructor pays for.
+        For a caller about to write every pixel itself -- downsample()
+        in canvas_mojo/resize.mojo, which computes and appends every
+        output pixel before handing the canvas back -- filling first
+        would double the call's pixel-write cost.
 
-        Raises if `pixels` isn't exactly width * height * 3 bytes (3
-        bytes -- RGB -- per pixel, row-major, the same layout get_pixel/
-        set_pixel assume): a caller handing over the wrong size is a
-        caller bug, not something to silently wrap anyway and corrupt
-        every later index into a mismatched buffer.
+        Raises unless `pixels` is exactly width * height * 3 bytes
+        (RGB, row-major, the layout get_pixel/set_pixel assume). A
+        wrong size is a caller bug, and wrapping it anyway would
+        corrupt every later index.
         """
         if len(pixels) != width * height * 3:
             raise Error(
@@ -122,20 +108,18 @@ struct Canvas(Copyable, DrawTarget, Movable):
         return x >= 0 and x < self.width and y >= 0 and y < self.height
 
     def push_clip(mut self, x: Int, y: Int, width: Int, height: Int):
-        """Restrict subsequent drawing to this sub-rectangle -- every
-        primitive gets this for free with no changes of its own, since
-        they all write through set_pixel.
+        """Restrict subsequent drawing to this sub-rectangle. Every
+        primitive gets this for free, since they all write through
+        set_pixel.
 
-        Intersects with the current effective clip (the whole canvas,
-        if nothing's been pushed yet) rather than replacing it, and
-        pushes the *intersected* result -- so nested clips compose:
-        a sub-plot's clip can restrict drawing further than its parent
-        plot's, but can never let drawing escape the parent's region,
-        even if the sub-plot's own rectangle extends past it. Pair
-        with pop_clip() to remove exactly this level when done.
+        Intersects with the current effective clip rather than
+        replacing it, and pushes the intersected result, so nested
+        clips compose: a sub-plot can restrict drawing further than its
+        parent but never escape the parent's region, even if its own
+        rectangle extends past it. Pair with pop_clip().
 
-        A clip rectangle extending past the canvas's own bounds is
-        fine; in_bounds still rejects anything outside the canvas.
+        A clip rectangle extending past the canvas bounds is fine;
+        in_bounds still rejects anything outside the canvas.
         """
         var new_rect = _ClipRect(x, y, width, height)
         if len(self.clip_stack) > 0:
@@ -143,15 +127,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.clip_stack.append(new_rect)
 
     def pop_clip(mut self):
-        """Remove the most recently pushed clip, reverting to whatever
-        was active before it -- a parent clip if one exists, or no
-        clip (the whole canvas) if this was the only one pushed.
+        """Remove the most recently pushed clip, reverting to the parent
+        clip if one exists or to the whole canvas if not.
 
-        A no-op on an empty stack, not an error: matches in_bounds'
-        existing philosophy elsewhere in this struct of failing safe
-        on an out-of-range request rather than raising, since an
-        unbalanced pop is a caller bug this can't distinguish from
-        "nothing to undo" without more state than a stack alone gives.
+        A no-op on an empty stack rather than an error, matching
+        in_bounds' fail-safe handling of out-of-range requests: a stack
+        alone can't distinguish an unbalanced pop from "nothing to
+        undo".
         """
         if len(self.clip_stack) > 0:
             _ = self.clip_stack.pop()
@@ -175,16 +157,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.write_pixel(x, y, color)
 
     def write_pixel(mut self, x: Int, y: Int, color: Color):
-        """Write `color` at (x, y) *without* the in_bounds/in_clip
-        checks set_pixel does -- the caller must already know (x, y)
-        is inside both the canvas and the active clip, typically
-        because it came from a range effective_fill_rect (below)
-        already intersected against both. set_pixel remains the safe,
-        checked entry point every single-pixel-at-a-time primitive
-        (draw_line_aa, fill_circle_aa, ...) still uses -- those can't
-        cheaply precompute one valid region up front the way a
-        rectangular fill can, so there's no per-pixel check to hoist
-        out of them.
+        """Write `color` at (x, y) *without* set_pixel's in_bounds/
+        in_clip checks. The caller must already know (x, y) is inside
+        both the canvas and the active clip, typically from a range
+        effective_fill_rect (below) intersected against both.
+
+        set_pixel stays the checked entry point for pixel-at-a-time
+        primitives (draw_line_aa, fill_circle_aa, ...), which have no
+        single valid region to precompute the way a rectangular fill
+        does.
         """
         var idx = (y * self.width + x) * 3
         if color.a == 255:
@@ -201,23 +182,17 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def effective_fill_rect(
         self, x: Int, y: Int, width: Int, height: Int
     ) -> Tuple[Int, Int, Int, Int]:
-        """The actual (x, y, width, height) a rectangular fill covering
-        [x, x+width) x [y, y+height) is allowed to touch: intersected
-        against both the canvas's own bounds and whatever clip is
-        currently active -- the identical intersection in_bounds/
-        in_clip already enforce, one pixel at a time, inside set_pixel.
-        Computed once here instead, for a caller that's about to loop
-        over a whole rectangular region itself (fill_rect/
-        fill_rect_gradient/fill() below): every pixel in that loop
-        would otherwise re-check itself against exactly the same,
-        unchanging-for-the-whole-loop bounds. Pair with write_pixel
-        (above) to skip straight to the write once inside the
-        returned range.
+        """The (x, y, width, height) a rectangular fill covering
+        [x, x+width) x [y, y+height) may actually touch, intersected
+        against the canvas bounds and the active clip -- the same
+        intersection set_pixel enforces one pixel at a time, computed
+        once for a caller about to loop over the whole region
+        (fill_rect/fill_rect_gradient/fill below). Pair with
+        write_pixel to skip straight to the write.
 
         A returned width/height of 0 means nothing in the requested
-        rectangle is actually drawable (fully outside the canvas
-        and/or the active clip) -- looping `range(0)` is already a
-        no-op, so callers don't need a separate check for this.
+        rectangle is drawable. `range(0)` is already a no-op, so
+        callers need no separate check.
         """
         var left = max(0, x)
         var top = max(0, y)
