@@ -5,11 +5,20 @@ it holds. A vector backend has no fixed pixel resolution, so nothing
 rendered through it deals in supersampling.
 
 Narrow by design: the shape primitives a chart-rendering core needs
-(`fill_rect`, `draw_line_aa`, `fill_circle_aa`, `fill_arc_aa`,
-`fill_ring_sector_aa`, `stroke_path_aa`, `fill_path_aa`,
-`fill_rect_gradient`), not `canvas_mojo.shapes`'s full surface -- no
-`draw_ellipse`, `fill_polygon`, dashes, clipping, radial gradients, or
-path-shaped gradients. `fill_rect_gradient` (linear only) is here
+(`fill_rect`, `draw_line_aa`, `fill_circle_aa`, `fill_ellipse_aa`,
+`fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa`,
+`fill_path_aa`, `fill_rect_gradient`), not `canvas_mojo.shapes`'s full
+surface -- no `fill_polygon`, dashes, clipping, radial gradients, or
+path-shaped gradients.
+
+`fill_ellipse_aa` is here for a reason worth stating, since every other
+shape absent from this trait is absent because `fill_path_aa` already
+covers it: an ellipse is the one case where that escape hatch fails.
+`Path.arc_to` takes a single `radius`, so it builds circular arcs only,
+and an ellipse can therefore only be *approximated* through `Path`,
+with cubics. Without this method a trait-targeting caller cannot draw
+one exactly -- which error ellipses and confidence regions on a scatter
+plot need. `fill_rect_gradient` (linear only) is here
 because a continuous color legend needs a real gradient bar rather
 than a discrete color-strip approximation; the rest of
 `canvas_mojo.gradient` has no caller through this interface.
@@ -72,6 +81,11 @@ trait DrawTarget:
         ...
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
+        ...
+
+    def fill_ellipse_aa(
+        mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
+    ):
         ...
 
     def fill_arc_aa(
