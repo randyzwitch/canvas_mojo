@@ -79,7 +79,9 @@ system-font text rendering: `libfontconfig` (font matching —
 resolving a family/style name to an actual installed font file --
 `canvas_mojo/text/font_discovery.mojo`), a typical,
 near-universally-installed system library, not a new requirement
-this package introduces. Font *parsing* (glyph outlines, metrics,
+this package introduces. 
+
+Font *parsing* (glyph outlines, metrics,
 `canvas_mojo/text/ttf.mojo`) and rasterization (this package's own
 `fill_path_aa`) are both native Mojo -- no FreeType, no Cairo, no
 other third-party rendering/font engine anywhere in the pipeline.
