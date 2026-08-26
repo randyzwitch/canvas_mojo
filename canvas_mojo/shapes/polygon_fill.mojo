@@ -232,6 +232,19 @@ def _polygon_row_crossings_aa(
     what keeps fill_polygon_aa's sweep sub-quadratic.
     """
     var crossings = List[_AACrossing]()
+    _polygon_row_crossings_aa_into(points, fy, crossings)
+    return crossings^
+
+
+def _polygon_row_crossings_aa_into(
+    points: List[Point], fy: Float64, mut crossings: List[_AACrossing]
+) -> None:
+    """`_polygon_row_crossings_aa` writing into a caller-owned list,
+    so the sweep allocates once rather than once per sub-scanline --
+    see `fill_path_aa` (path.mojo), which this mirrors.
+    """
+    crossings.clear()
+
     var n = len(points)
     for i in range(n):
         var p0 = points[i]
@@ -247,7 +260,6 @@ def _polygon_row_crossings_aa(
             var x = Float64(p0.x) + t * Float64(p1.x - p0.x)
             var direction = 1 if y1 > y0 else -1
             crossings.append(_AACrossing(x, direction))
-    return crossings^
 
 
 def fill_polygon_aa(
@@ -302,20 +314,28 @@ def fill_polygon_aa(
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px
 
+    # Allocated once for the whole sweep rather than per row and per
+    # sub-scanline -- see fill_path_aa (path.mojo) for the measurement
+    # that motivated it.
+    var row_covered = List[Int](capacity=row_width)
+    for _ in range(row_width):
+        row_covered.append(0)
+    var crossings = List[_AACrossing]()
+    var suffix = List[Int]()
+
     for py in range(min_y - 1, max_y + 2):
-        var row_covered = List[Int](capacity=row_width)
-        for _ in range(row_width):
-            row_covered.append(0)
+        for pxi in range(row_width):
+            row_covered[pxi] = 0
 
         for sy in range(s):
             var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-            var crossings = _polygon_row_crossings_aa(points, fy)
+            _polygon_row_crossings_aa_into(points, fy, crossings)
             _sort_aa_crossings_by_x(crossings)
             var k = len(crossings)
 
-            var suffix = List[Int](capacity=k + 1)
-            for _ in range(k + 1):
+            while len(suffix) < k + 1:
                 suffix.append(0)
+            suffix[k] = 0
             for i in range(k - 1, -1, -1):
                 suffix[i] = suffix[i + 1] + crossings[i].direction
 
