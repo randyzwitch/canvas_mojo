@@ -109,8 +109,8 @@ def glyph_metrics(mut face: TTFFace, codepoint: Int) raises -> GlyphMetrics:
     var glyph_index = face.glyph_index_for_codepoint(codepoint)
     var advance = Float64(face.advance_width(glyph_index)) * scale
 
-    var outline = face.glyph_outline(glyph_index)
-    var bbox = outline.bounding_box()
+    var outline = face.glyph_outline_shared(glyph_index)
+    var bbox = outline[].bounding_box()
     var x_min = bbox[0]
     var y_min = bbox[1]
     var x_max = bbox[2]
@@ -147,5 +147,5 @@ def glyph_path(
     """
     var scale = face.scale()
     var glyph_index = face.glyph_index_for_codepoint(codepoint)
-    var outline = face.glyph_outline(glyph_index)
-    return outline_to_path(outline, pen_x, pen_y, scale)
+    var outline = face.glyph_outline_shared(glyph_index)
+    return outline_to_path(outline[], pen_x, pen_y, scale)

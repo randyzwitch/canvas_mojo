@@ -194,3 +194,45 @@ def test_cff_font_raises_a_clear_error() raises:
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+def test_cached_outline_is_shared_but_the_owned_copy_is_independent() raises:
+    # `glyph_outline_shared` hands back the cached outline itself, so a
+    # second call for the same glyph must see identical data rather
+    # than re-decoding. `glyph_outline` returns an owned copy of that
+    # same cached value: were it an alias, a caller mutating what it
+    # got back would corrupt the cache for every later lookup.
+    #
+    # Mojo already rules that out -- `List` is not ImplicitlyCopyable,
+    # so writing the alias is a compile error, confirmed by trying it.
+    # This documents the contract and would catch a future `copied()`
+    # that copies some fields and not others, which does compile.
+    var face = _sans_face()
+    var gid = face.glyph_index_for_codepoint(0x4F)  # 'O'
+
+    var first = face.glyph_outline_shared(gid)
+    var second = face.glyph_outline_shared(gid)
+    assert_equal(len(first[].points_x), len(second[].points_x))
+    assert_equal(first[].points_x[0], second[].points_x[0])
+
+    var owned = face.glyph_outline(gid)
+    assert_equal(len(owned.points_x), len(first[].points_x))
+    var before = first[].points_x[0]
+    owned.points_x[0] = before + 9999
+    assert_equal(face.glyph_outline_shared(gid)[].points_x[0], before)
+
+
+def test_cmap_lookup_is_memoized_without_changing_answers() raises:
+    # The codepoint -> glyph index memo has to be transparent: repeated
+    # lookups, and a codepoint the font does not map, must give what an
+    # uncached scan gives.
+    var face = _sans_face()
+    for _ in range(3):
+        assert_equal(
+            face.glyph_index_for_codepoint(0x49),
+            face.glyph_index_for_codepoint(0x49),
+        )
+    assert_true(face.glyph_index_for_codepoint(0x49) != 0)
+    # unmapped codepoint stays .notdef on every call
+    assert_equal(face.glyph_index_for_codepoint(0x10FFFE), 0)
+    assert_equal(face.glyph_index_for_codepoint(0x10FFFE), 0)

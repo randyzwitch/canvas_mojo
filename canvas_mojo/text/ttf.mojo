@@ -36,6 +36,8 @@ Locked in by this module's tests: parsing DejaVu Sans gives
 the same values a Python oracle reads from the same bytes.
 """
 
+from std.memory import ArcPointer
+
 from canvas_mojo.path import Path
 
 comptime _SFNT_VERSION_TRUETYPE = 0x00010000
@@ -118,6 +120,15 @@ struct RawGlyphOutline(Movable):
         self.on_curve = List[Bool]()
         self.contour_ends = List[Int]()
 
+    def copied(self) -> RawGlyphOutline:
+        """An independent copy of this outline's point lists."""
+        var out = RawGlyphOutline()
+        out.points_x = self.points_x.copy()
+        out.points_y = self.points_y.copy()
+        out.on_curve = self.on_curve.copy()
+        out.contour_ends = self.contour_ends.copy()
+        return out^
+
     def bounding_box(self) -> Tuple[Int, Int, Int, Int]:
         """(xMin, yMin, xMax, yMax) across every point, computed from
         the point coordinate data the way the OpenType spec defines a
@@ -166,6 +177,24 @@ struct TTFFace(Movable):
     var _glyf_offset: Int
     var _loca_offset: Int
     var _hmtx_offset: Int
+    var _glyph_cache: Dict[Int, ArcPointer[RawGlyphOutline]]
+    """Decoded outlines, keyed by glyph index.
+
+    `glyph_outline` walks `loca`, decodes contours, points and flags,
+    and recurses through composite components -- work that depends only
+    on the glyph, not on the size it is drawn at, since a
+    `RawGlyphOutline` is in font design units and only scaled later.
+    Text repeats characters, so without this a page of labels decodes
+    the same handful of glyphs hundreds of times.
+
+    `ArcPointer` for the same reason `FontCache` holds faces that way:
+    `RawGlyphOutline` owns its point lists and is Movable only, so a
+    hit returns a refcount bump rather than a copy of the contours.
+    """
+
+    var _cmap_cache: Dict[Int, Int]
+    """Codepoint -> glyph index, memoizing the `cmap` subtable scan."""
+
     var _pixel_size: Int
     """-1 until `set_pixel_size` is called -- deliberately not a valid
     size by default. A rasterizer that defaults an unset size doesn't
@@ -254,6 +283,8 @@ struct TTFFace(Movable):
         self._glyf_offset = glyf_off
         self._loca_offset = loca_off
         self._hmtx_offset = hmtx_off
+        self._glyph_cache = Dict[Int, ArcPointer[RawGlyphOutline]]()
+        self._cmap_cache = Dict[Int, Int]()
         self._pixel_size = -1
         self.data = data^
 
@@ -286,14 +317,24 @@ struct TTFFace(Movable):
         )
         return _u16(self.data, self._hmtx_offset + index * 4)
 
-    def glyph_index_for_codepoint(self, codepoint: Int) raises -> Int:
+    def glyph_index_for_codepoint(mut self, codepoint: Int) raises -> Int:
         """Look up `codepoint` in the `cmap` table, preferring a
         full-Unicode format 12 subtable (which covers supplementary
         planes: emoji, some CJK) over a BMP-only format 4 one, the
         encoding-record priority real text stacks use. Returns 0
         (".notdef") when no subtable maps the codepoint, `cmap`'s
         not-found convention.
+
+        Memoized: text repeats characters, and the subtable scan below
+        is the same work every time for a given codepoint.
         """
+        if codepoint in self._cmap_cache:
+            return self._cmap_cache[codepoint]
+        var result = self._glyph_index_uncached(codepoint)
+        self._cmap_cache[codepoint] = result
+        return result
+
+    def _glyph_index_uncached(self, codepoint: Int) raises -> Int:
         var cmap_off = self._cmap_offset
         var num_tables = _u16(self.data, cmap_off + 2)
 
@@ -408,8 +449,34 @@ struct TTFFace(Movable):
             var end = _u32(self.data, self._loca_offset + (glyph_index + 1) * 4)
             return (start, end)
 
-    def glyph_outline(self, glyph_index: Int) raises -> RawGlyphOutline:
-        return self._glyph_outline_impl(glyph_index, 0)
+    def glyph_outline(mut self, glyph_index: Int) raises -> RawGlyphOutline:
+        """This glyph's decoded outline, in font design units.
+
+        Returns an owned outline, so it copies the cached one's point
+        lists. `glyph_outline_shared` avoids that and is what the
+        rendering path uses; this stays for callers that want a value
+        of their own.
+        """
+        return self.glyph_outline_shared(glyph_index)[].copied()
+
+    def glyph_outline_shared(
+        mut self, glyph_index: Int
+    ) raises -> ArcPointer[RawGlyphOutline]:
+        """This glyph's decoded outline, shared rather than copied.
+
+        Decoding walks `loca`, reads contours, points and flags, and
+        recurses through composite components -- work that depends only
+        on the glyph, not the size, since the result is in font design
+        units and scaled later. Text repeats characters, so a page of
+        labels would otherwise decode the same handful of glyphs
+        hundreds of times.
+        """
+        if glyph_index in self._glyph_cache:
+            return self._glyph_cache[glyph_index]
+        var outline = self._glyph_outline_impl(glyph_index, 0)
+        var shared = ArcPointer(outline^)
+        self._glyph_cache[glyph_index] = shared
+        return shared
 
     def _glyph_outline_impl(
         self, glyph_index: Int, depth: Int
