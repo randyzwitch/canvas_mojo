@@ -176,6 +176,108 @@ def _angle_in_span(
     return a <= end_angle
 
 
+struct _AngleSpan(ImplicitlyCopyable, Movable):
+    """`_angle_in_span` precomputed for one wedge, so a sample's
+    membership is decided by sign tests instead of `atan2`.
+
+    The old form asked for a sample's angle and then normalized it into
+    the span's own 2*pi window. That needs `atan2` per sub-sample --
+    5.8 million of them for a single radius-300 wedge at the default
+    supersample -- for a question that never actually needs the angle,
+    only which side of the two boundary rays the sample falls on.
+
+    Rotating the sample into the frame where the span starts at 0 turns
+    that into cross products. With `theta` the sample's angle in that
+    frame, membership is `theta <= span`, and:
+
+    - a span of at most pi is the intersection of two half-planes:
+      counterclockwise of the start ray (`ry >= 0`) and clockwise of
+      the end ray (`cross_span >= 0`);
+    - a wider span is the complement of the gap it leaves, which is
+      itself narrower than pi, so the same test runs on the gap and the
+      answer is negated.
+
+    All multiplies and compares -- the only trigonometry is the four
+    values computed once per wedge here.
+    """
+
+    var cos_start: Float64
+    var sin_start: Float64
+    var cos_end: Float64
+    var sin_end: Float64
+    var start_angle: Float64
+    var end_angle: Float64
+    var near_full_turn: Bool
+    var always_inside: Bool
+    var always_outside: Bool
+    var wide: Bool
+    var center_inside: Bool
+
+    def __init__(out self, start_angle: Float64, end_angle: Float64):
+        var span = end_angle - start_angle
+        self.cos_start = cos(start_angle)
+        self.sin_start = sin(start_angle)
+        self.cos_end = cos(end_angle)
+        self.sin_end = sin(end_angle)
+        self.start_angle = start_angle
+        self.end_angle = end_angle
+        # A span within rounding of a full turn is the one place the
+        # cross-product form and the angle form can genuinely disagree:
+        # `end - start` can round to exactly 2*pi while `end` itself
+        # still sits a few ULP below the sample's own normalized angle,
+        # so the angle form excludes a sliver that a "full turn is
+        # always inside" shortcut would include. Handed to the exact
+        # form rather than reasoned about -- a full-circle wedge is
+        # `fill_circle_aa`'s job anyway, so nothing hot pays for it.
+        self.near_full_turn = (
+            span > _TWO_PI - 1.0e-9 and span < _TWO_PI + 1.0e-9
+        )
+        self.always_inside = span >= _TWO_PI and not self.near_full_turn
+        self.always_outside = span < 0.0
+        self.wide = span > _PI
+        # A sample exactly on the center has no angle to speak of, and
+        # `atan2(0, 0)` is 0 -- which is inside this span only for some
+        # start/end pairs. Decided once here rather than reasoned about
+        # per sample, so the degenerate case matches the old form
+        # exactly instead of falling out of the cross products.
+        self.center_inside = _angle_in_span(0.0, start_angle, end_angle)
+
+    def contains(self, fx: Float64, fy: Float64) -> Bool:
+        """Is the offset `(fx, fy)` from the wedge's center inside the
+        span? `(0, 0)` is answered by `center_inside`.
+        """
+        if self.near_full_turn:
+            return _angle_in_span(
+                atan2(fy, fx), self.start_angle, self.end_angle
+            )
+        if self.always_inside:
+            return True
+        if self.always_outside:
+            return False
+        if fx == 0.0 and fy == 0.0:
+            return self.center_inside
+
+        # Which side of each boundary ray the sample falls on.
+        var cross_start = self.cos_start * fy - self.sin_start * fx
+        var cross_end = fx * self.sin_end - fy * self.cos_end
+
+        # A sample sitting exactly on a boundary ray puts a cross
+        # product at zero, where the sign that decides membership is
+        # whatever the rounding produced. Rare enough to be worth
+        # answering exactly rather than approximately: fall back to the
+        # angle form for those, so the result matches it everywhere and
+        # the fast path carries every sample that is not on an edge.
+        var scale = (fx * fx + fy * fy) * 1.0e-12
+        if cross_start * cross_start <= scale or cross_end * cross_end <= scale:
+            return _angle_in_span(
+                atan2(fy, fx), self.start_angle, self.end_angle
+            )
+
+        if self.wide:
+            return not (cross_start < 0.0 and cross_end < 0.0)
+        return cross_start > 0.0 and cross_end > 0.0
+
+
 def draw_arc(
     mut canvas: Canvas,
     cx: Float64,
@@ -272,6 +374,10 @@ def fill_arc_aa(
     var min_py = _round_to_int(bounds[1]) - 1
     var max_py = _round_to_int(bounds[3]) + 1
 
+    # One rotation's worth of trigonometry per wedge, replacing an
+    # `atan2` per sub-sample -- see `_AngleSpan`.
+    var span = _AngleSpan(start_angle, end_angle)
+
     for py in range(min_py, max_py + 1):
         for px in range(min_px, max_px + 1):
             # A rigorous "whole pixel square is provably inside" test
@@ -294,8 +400,7 @@ def fill_arc_aa(
                 for sx in range(n):
                     var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
                     if fx * fx + fy * fy <= r2:
-                        var angle = atan2(fy, fx)
-                        if _angle_in_span(angle, start_angle, end_angle):
+                        if span.contains(fx, fy):
                             covered += 1
             if covered > 0:
                 var alpha = UInt8(
@@ -384,6 +489,10 @@ def fill_ring_sector_aa(
     var min_py = _round_to_int(bounds[1]) - 1
     var max_py = _round_to_int(bounds[3]) + 1
 
+    # One rotation's worth of trigonometry per wedge, replacing an
+    # `atan2` per sub-sample -- see `_AngleSpan`.
+    var span = _AngleSpan(start_angle, end_angle)
+
     for py in range(min_py, max_py + 1):
         for px in range(min_px, max_px + 1):
             # fill_arc_aa's radius-only fast-outside skip, applied at
@@ -408,8 +517,7 @@ def fill_ring_sector_aa(
                     var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
                     var d2 = fx * fx + fy * fy
                     if d2 <= outer_r2 and d2 >= inner_r2:
-                        var angle = atan2(fy, fx)
-                        if _angle_in_span(angle, start_angle, end_angle):
+                        if span.contains(fx, fy):
                             covered += 1
             if covered > 0:
                 var alpha = UInt8(

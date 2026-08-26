@@ -3,18 +3,19 @@ inputs, verified against hand-traced runs of the same algorithms.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
-from std.math import pi
+from std.math import atan2, cos, pi, sin
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.shapes.arcs import (
+    _AngleSpan,
+    _angle_in_span,
+    _arc_points,
     draw_arc,
     fill_arc,
     fill_arc_aa,
     fill_ring_sector,
     fill_ring_sector_aa,
-    _arc_points,
-    _angle_in_span,
 )
 
 comptime BG = Color(0, 0, 0)
@@ -191,3 +192,40 @@ def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+def test_angle_span_matches_the_atan2_form_everywhere() raises:
+    # `_AngleSpan` replaces a per-sub-sample `atan2` with cross-product
+    # sign tests. That is only worth doing if it agrees with the angle
+    # form it replaced, so this sweeps the whole space the renderer can
+    # hand it: start angles right around the atan2 discontinuity, spans
+    # from negative through past a full turn, and sample directions at
+    # half-degree steps -- which lands samples exactly on boundary rays,
+    # the case where a cross product sits at zero and its sign is
+    # whatever the rounding produced.
+    #
+    # ~390k combinations. Deliberately not a spot check: a mismatch
+    # here is a wrongly lit or unlit sub-sample, and the cases most
+    # likely to break are precisely the degenerate ones a hand-picked
+    # set would skip.
+    var mismatches = 0
+    for si in range(-8, 9):
+        var start = Float64(si) * 0.7853981633974483
+        for spi in range(-2, 30):
+            var end = start + Float64(spi) * 0.2617993877991494
+            var span = _AngleSpan(start, end)
+            for ai in range(0, 720):
+                var a = Float64(ai) * 0.008726646259971648
+                var fx = cos(a) * 7.0
+                var fy = sin(a) * 7.0
+                if span.contains(fx, fy) != _angle_in_span(
+                    atan2(fy, fx), start, end
+                ):
+                    mismatches += 1
+            # the center, where atan2(0, 0) is 0 and there is no
+            # meaningful direction to take a cross product against
+            if span.contains(0.0, 0.0) != _angle_in_span(
+                atan2(0.0, 0.0), start, end
+            ):
+                mismatches += 1
+    assert_equal(mismatches, 0)
