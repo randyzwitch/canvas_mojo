@@ -283,6 +283,15 @@ def draw_arc(
     """The arc's curved boundary only, no radii back to center:
     hard-edged, ~1px, via draw_polyline over _arc_points' samples. For
     a solid wedge see fill_arc; for a ring segment, fill_ring_sector.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x.
+        cy: Center y.
+        radius: Arc radius in pixels.
+        start_angle: Sweep start, radians, 0 pointing along +x.
+        end_angle: Sweep end, radians. Must be >= start_angle.
+        color: Outline color.
     """
     if radius <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
@@ -302,7 +311,20 @@ def draw_arc_aa(
     width: Float64 = 1.0,
     supersample: Int = 4,
 ):
-    """Anti-aliased version of draw_arc -- see draw_polyline_aa."""
+    """Anti-aliased version of draw_arc -- see draw_polyline_aa.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x.
+        cy: Center y.
+        radius: Arc radius in pixels.
+        start_angle: Sweep start, radians, 0 pointing along +x.
+        end_angle: Sweep end, radians. Must be >= start_angle.
+        color: Outline color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+    """
     if radius <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
         return
@@ -324,6 +346,15 @@ def fill_arc(
     center point to close the shape, and hands it to fill_polygon --
     the same "sample a curve into a polygon" approach path.mojo takes
     for Bezier curves.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        radius: Wedge radius in pixels.
+        start_angle: Sweep start, radians, 0 pointing along +x.
+        end_angle: Sweep end, radians. Must be >= start_angle.
+        color: Fill color.
     """
     if radius <= 0.0:
         return
@@ -352,6 +383,17 @@ def fill_arc_aa(
     margin, not the full circumscribing square. That's the dominant
     cost for anything but a near-full pie, since a thin slice covers a
     small fraction of that square.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        radius: Wedge radius in pixels.
+        start_angle: Sweep start, radians, 0 pointing along +x.
+        end_angle: Sweep end, radians. Must be >= start_angle.
+        color: Fill color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
     """
     if radius <= 0.0:
         return
@@ -424,6 +466,17 @@ def fill_ring_sector(
     the outer arc forward and the inner arc backward, so the combined
     points trace the ring's boundary as one continuous loop, then
     fill_polygon.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        inner_radius: Ring's inner edge, in pixels.
+        outer_radius: Ring's outer edge, in pixels. Must exceed
+            inner_radius.
+        start_angle: Sweep start, radians, 0 pointing along +x.
+        end_angle: Sweep end, radians. Must be >= start_angle.
+        color: Fill color.
     """
     if (
         outer_radius <= 0.0
@@ -456,6 +509,19 @@ def fill_ring_sector_aa(
     Scans the union of `_arc_bounds`' boxes for the outer and inner
     radii, both with no center point; see that function for why the
     outer radius alone isn't enough.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        inner_radius: Ring's inner edge, in pixels.
+        outer_radius: Ring's outer edge, in pixels. Must exceed
+            inner_radius.
+        start_angle: Sweep start, radians, 0 pointing along +x.
+        end_angle: Sweep end, radians. Must be >= start_angle.
+        color: Fill color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
     """
     if (
         outer_radius <= 0.0

@@ -124,6 +124,15 @@ struct LinearGradient(Movable):
     var _highest: _GradientStop
 
     def __init__(out self, x0: Float64, y0: Float64, x1: Float64, y1: Float64):
+        """A gradient with no stops yet -- add at least one with
+        add_stop() before calling color_at().
+
+        Args:
+            x0: Axis start x, offset 0.0.
+            y0: Axis start y, offset 0.0.
+            x1: Axis end x, offset 1.0.
+            y1: Axis end y, offset 1.0.
+        """
         self.x0 = x0
         self.y0 = y0
         self.x1 = x1
@@ -139,7 +148,13 @@ struct LinearGradient(Movable):
         self._highest = self._lowest
 
     def add_stop(mut self, offset: Float64, color: Color):
-        """Add a color stop at `offset` (0.0 to 1.0 along the axis)."""
+        """Add a color stop at `offset` (0.0 to 1.0 along the axis).
+
+        Args:
+            offset: Position along the axis, 0.0 at (x0, y0), 1.0 at
+                (x1, y1). Stops need not be added in offset order.
+            color: This stop's color.
+        """
         var stop = _GradientStop(offset, color)
         if len(self.stops) == 0 or offset < self._lowest.offset:
             self._lowest = stop
@@ -151,6 +166,14 @@ struct LinearGradient(Movable):
         """The gradient's color at (x, y): project onto the axis, clamp
         to [0, 1] ("pad" extend), then interpolate between the two
         stops bracketing that position.
+
+        Args:
+            x: Point x.
+            y: Point y.
+
+        Returns:
+            The interpolated color, transparent black if no stops have
+            been added yet.
         """
         var t = 0.0
         if self._len2 != 0.0:
@@ -186,6 +209,14 @@ struct RadialGradient(Movable):
     var _highest: _GradientStop
 
     def __init__(out self, cx: Float64, cy: Float64, radius: Float64):
+        """A gradient with no stops yet -- add at least one with
+        add_stop() before calling color_at().
+
+        Args:
+            cx: Center x, offset 0.0.
+            cy: Center y, offset 0.0.
+            radius: Distance at which offset reaches 1.0.
+        """
         self.cx = cx
         self.cy = cy
         self.radius = radius
@@ -197,7 +228,13 @@ struct RadialGradient(Movable):
 
     def add_stop(mut self, offset: Float64, color: Color):
         """Add a color stop at `offset` (0.0 at the center, 1.0 at
-        `radius`)."""
+        `radius`).
+
+        Args:
+            offset: Position from the center, 0.0 to 1.0. Stops need
+                not be added in offset order.
+            color: This stop's color.
+        """
         var stop = _GradientStop(offset, color)
         if len(self.stops) == 0 or offset < self._lowest.offset:
             self._lowest = stop
@@ -216,6 +253,14 @@ struct RadialGradient(Movable):
         fill of the highest-offset stop's color -- just as a
         LinearGradient with coincident endpoints (len2 == 0.0) resolves
         to t=0.0's stop.
+
+        Args:
+            x: Point x.
+            y: Point y.
+
+        Returns:
+            The interpolated color, transparent black if no stops have
+            been added yet.
         """
         var dx = x - self.cx
         var dy = y - self.cy

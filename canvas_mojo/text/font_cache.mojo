@@ -105,6 +105,17 @@ struct FontCache(Movable):
         """Cached resolve_font_file: fontconfig is asked once per
         distinct (family, slant, weight), and every later call for that
         combination reads the path from the Dict.
+
+        Args:
+            family: Font family name or generic alias.
+            slant: Requested upright/italic/oblique style.
+            weight: Requested normal/bold weight.
+
+        Returns:
+            The matched font's absolute file path.
+
+        Raises:
+            Error: libfontconfig can't be loaded, or no font matches.
         """
         var key = _cache_key(family, slant, weight)
         if key in self._paths:
@@ -124,6 +135,19 @@ struct FontCache(Movable):
         `codepoint`, since a charset-constrained match can return a
         different font than the unconstrained one. Repeated fallback
         glyphs for one missing codepoint cost fontconfig once.
+
+        Args:
+            family: Font family name or generic alias.
+            slant: Requested upright/italic/oblique style.
+            weight: Requested normal/bold weight.
+            codepoint: Unicode codepoint the matched font should
+                contain.
+
+        Returns:
+            The matched font's absolute file path.
+
+        Raises:
+            Error: libfontconfig can't be loaded, or no font matches.
         """
         var key = _cache_key(family, slant, weight) + "|" + String(codepoint)
         if key in self._paths_for_char:
@@ -144,6 +168,20 @@ struct FontCache(Movable):
         twice per invocation -- _layout_block's measuring pass, then the
         render pass -- so with a shared `cache` the second is a hit
         rather than a second parse of the same file.
+
+        Args:
+            family: Font family name or generic alias.
+            slant: Requested upright/italic/oblique style.
+            weight: Requested normal/bold weight.
+            size: Pixel size to rasterize glyphs at.
+
+        Returns:
+            The resolved, sized font face, shared across every caller
+            requesting the same (path, size).
+
+        Raises:
+            Error: libfontconfig can't be loaded, no font matches, or
+                the resolved file can't be parsed.
         """
         var path = self.resolve(family, slant, weight)
         return self._face_for_path(path, size)
@@ -156,10 +194,26 @@ struct FontCache(Movable):
         codepoint: Int,
         size: Float64,
     ) raises -> ArcPointer[TTFFace]:
-        """resolve_face's fallback-glyph counterpart, for
+        """`resolve_face`'s fallback-glyph counterpart, for
         `render.mojo`'s `_resolve_glyph`. `resolve_for_char` already
         deduplicates the fontconfig lookup for repeated fallback
         glyphs; this stops each from re-parsing the fallback file too.
+
+        Args:
+            family: Font family name or generic alias.
+            slant: Requested upright/italic/oblique style.
+            weight: Requested normal/bold weight.
+            codepoint: Unicode codepoint the matched font should
+                contain.
+            size: Pixel size to rasterize glyphs at.
+
+        Returns:
+            The resolved, sized font face, shared across every caller
+            requesting the same (path, size).
+
+        Raises:
+            Error: libfontconfig can't be loaded, no font matches, or
+                the resolved file can't be parsed.
         """
         var path = self.resolve_for_char(family, slant, weight, codepoint)
         return self._face_for_path(path, size)

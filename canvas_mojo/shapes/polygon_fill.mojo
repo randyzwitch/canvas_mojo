@@ -156,6 +156,12 @@ def fill_polygon(
     rule every pixel gets exactly one set_pixel call per row, including
     at the intersection itself -- see _spans_from_crossings on the
     span-merge step that guarantees it.
+
+    Args:
+        canvas: Canvas to fill into.
+        points: Polygon vertices, in order. Implicitly closed.
+        color: Fill color.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
     """
     var n = len(points)
     if n < 3:
@@ -290,6 +296,14 @@ def fill_polygon_aa(
 
     Not fused with fill_polygon behind an `antialias: Bool`, for the
     reason canvas_mojo.shapes.lines gives.
+
+    Args:
+        canvas: Canvas to fill into.
+        points: Polygon vertices, in order. Implicitly closed.
+        color: Fill color.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
     """
     var n = len(points)
     if n < 3:

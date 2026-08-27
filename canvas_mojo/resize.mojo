@@ -22,6 +22,19 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     Each output pixel is the *rounded* mean (see the `+ n // 2` below)
     of its `factor x factor` source block, per r/g/b channel. Alpha
     isn't involved: Canvas stores none per pixel.
+
+    Args:
+        source: Canvas to shrink.
+        factor: Integer shrink factor; must evenly divide both
+            `source.width` and `source.height`.
+
+    Returns:
+        A new canvas, `source.width // factor` by
+        `source.height // factor`.
+
+    Raises:
+        Error: `factor` isn't positive, or doesn't evenly divide
+            `source`'s dimensions.
     """
     if factor <= 0:
         raise Error(

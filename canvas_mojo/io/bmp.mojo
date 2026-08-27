@@ -24,6 +24,15 @@ def _put_u32(mut buf: List[UInt8], offset: Int, value: UInt32):
 
 
 def write_bmp(canvas: Canvas, path: String) raises:
+    """Write `canvas` to `path` as an uncompressed 24-bit BMP.
+
+    Args:
+        canvas: Canvas to write.
+        path: File path to write to.
+
+    Raises:
+        Error: `path` can't be opened for writing.
+    """
     var w = canvas.width
     var h = canvas.height
     var row_size = ((w * 3 + 3) // 4) * 4  # rows padded to 4-byte multiples

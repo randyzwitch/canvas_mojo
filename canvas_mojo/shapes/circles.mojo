@@ -20,6 +20,13 @@ def draw_circle(
     (cx+y,cy+x) and (cx-y,cy+x) both become (cx,cy+x) when y==0.
     Plotting all 8 unconditionally would set_pixel there more than
     once, double- or quadruple-blending a translucent color.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x.
+        cy: Center y.
+        radius: Circle radius in pixels.
+        color: Outline color.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -67,6 +74,13 @@ def fill_circle(
     touches some rows twice near the diagonal octant boundary.
 
     Hard-edged; see fill_circle_aa for a smooth edge.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        radius: Circle radius in pixels.
+        color: Fill color.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -113,6 +127,15 @@ def fill_circle_aa(
     full alpha without visiting the grid. Most of a large circle's
     bounding box is interior, so the per-sample loop then runs only for
     the O(radius) pixels straddling the edge, not all O(radius^2).
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        radius: Circle radius in pixels.
+        color: Fill color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -184,6 +207,15 @@ def draw_circle_aa(
     real radius -- is provably outside, through the same AABB
     nearest/farthest-point test, and skipping those is the win for a
     large outline.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x.
+        cy: Center y.
+        radius: Circle radius in pixels.
+        color: Outline color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)

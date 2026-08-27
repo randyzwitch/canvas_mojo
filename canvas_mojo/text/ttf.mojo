@@ -200,6 +200,16 @@ struct TTFFace(Movable):
     """
 
     def __init__(out self, path: String) raises:
+        """Parse a TrueType (`glyf`-outline) font file.
+
+        Args:
+            path: Path to a `.ttf` file.
+
+        Raises:
+            Error: `path` can't be read, isn't a TrueType font (a
+                CFF/OpenType-CFF `.otf` included), or is missing a
+                required table.
+        """
         var f = open(path, "r")
         var data = f.read_bytes()
         f.close()
@@ -293,6 +303,9 @@ struct TTFFace(Movable):
     def set_pixel_size(mut self, pixel_size: Int):
         """Set this face's active rasterization size in pixels. Must
         precede `scale()` or any pixel-space metric or outline query.
+
+        Args:
+            pixel_size: Rasterization size in pixels.
         """
         self._pixel_size = pixel_size
 
@@ -312,6 +325,12 @@ struct TTFFace(Movable):
         """`hmtx`'s rule that when there are fewer hMetrics entries
         than glyphs, the last entry's advance width repeats for the
         rest -- the spec's optimization for monospace and large fonts.
+
+        Args:
+            glyph_index: Glyph to look up.
+
+        Returns:
+            The glyph's advance width, in font design units.
         """
         var index = (
             glyph_index if glyph_index
@@ -329,6 +348,12 @@ struct TTFFace(Movable):
 
         Memoized: text repeats characters, and the subtable scan below
         is the same work every time for a given codepoint.
+
+        Args:
+            codepoint: Unicode codepoint to look up.
+
+        Returns:
+            The mapped glyph index, or 0 (".notdef") if unmapped.
         """
         if codepoint in self._cmap_cache:
             return self._cmap_cache[codepoint]
@@ -458,6 +483,12 @@ struct TTFFace(Movable):
         lists. `glyph_outline_shared` avoids that and is what the
         rendering path uses; this stays for callers that want a value
         of their own.
+
+        Args:
+            glyph_index: Glyph to decode.
+
+        Returns:
+            The glyph's contours/points, in font design units.
         """
         return self.glyph_outline_shared(glyph_index)[].copied()
 
@@ -472,6 +503,13 @@ struct TTFFace(Movable):
         units and scaled later. Text repeats characters, so a page of
         labels would otherwise decode the same handful of glyphs
         hundreds of times.
+
+        Args:
+            glyph_index: Glyph to decode.
+
+        Returns:
+            The glyph's contours/points, in font design units, shared
+            with every other caller decoding the same glyph index.
         """
         if glyph_index in self._glyph_cache:
             return self._glyph_cache[glyph_index]
@@ -787,6 +825,15 @@ def outline_to_path(
     `glyph_outline.glyph_path` uses. `scale` converts font-design-units
     on this font's `units_per_em` grid to pixels, typically
     `pixel_size / face.units_per_em`.
+
+    Args:
+        outline: Decoded glyph outline, in font design units.
+        pen_x: Glyph origin x, in pixel space.
+        pen_y: Glyph origin y, in pixel space.
+        scale: Font-design-units -> pixels conversion factor.
+
+    Returns:
+        The glyph's outline as a Path, positioned at (pen_x, pen_y).
     """
     var path = Path()
     var last = -1

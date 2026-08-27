@@ -68,6 +68,15 @@ trait DrawTarget:
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
     ):
+        """Fill a solid rectangle (x, y is the top-left corner).
+
+        Args:
+            x: Rectangle's left edge.
+            y: Rectangle's top edge.
+            width: Rectangle's width.
+            height: Rectangle's height.
+            color: Fill color.
+        """
         ...
 
     def fill_rect_gradient(
@@ -78,6 +87,16 @@ trait DrawTarget:
         height: Int,
         gradient: LinearGradient,
     ):
+        """Fill a rectangle, sourcing each point's color from
+        `gradient` rather than one flat color.
+
+        Args:
+            x: Rectangle's left edge.
+            y: Rectangle's top edge.
+            width: Rectangle's width.
+            height: Rectangle's height.
+            gradient: Fill source, projected across the rectangle.
+        """
         ...
 
     def draw_line_aa(
@@ -89,19 +108,55 @@ trait DrawTarget:
         color: Color,
         width: Float64 = 1.0,
     ):
+        """An anti-aliased line with round end caps.
+
+        Args:
+            x0: Start point x.
+            y0: Start point y.
+            x1: End point x.
+            y1: End point y.
+            color: Line color.
+            width: Stroke width in pixels.
+        """
         ...
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
+        """An anti-aliased filled disk.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Circle radius in pixels.
+            color: Fill color.
+        """
         ...
 
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
+        """An anti-aliased filled ellipse.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Fill color.
+        """
         ...
 
     def draw_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
+        """An anti-aliased ellipse outline, ~1px wide.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Outline color.
+        """
         ...
 
     def fill_arc_aa(
@@ -113,6 +168,16 @@ trait DrawTarget:
         end_angle: Float64,
         color: Color,
     ):
+        """An anti-aliased filled pie-slice wedge.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Wedge radius in pixels.
+            start_angle: Sweep start, radians, 0 pointing along +x.
+            end_angle: Sweep end, radians. Must be >= start_angle.
+            color: Fill color.
+        """
         ...
 
     def fill_ring_sector_aa(
@@ -125,12 +190,37 @@ trait DrawTarget:
         end_angle: Float64,
         color: Color,
     ):
+        """An anti-aliased filled ring/donut segment.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            inner_radius: Ring's inner edge, in pixels.
+            outer_radius: Ring's outer edge, in pixels. Must exceed
+                inner_radius.
+            start_angle: Sweep start, radians, 0 pointing along +x.
+            end_angle: Sweep end, radians. Must be >= start_angle.
+            color: Fill color.
+        """
         ...
 
     def stroke_path_aa(
         mut self, path: Path, color: Color, width: Float64 = 1.0
     ):
+        """An anti-aliased stroke of a Path's outline.
+
+        Args:
+            path: Path to stroke.
+            color: Stroke color.
+            width: Stroke width in pixels.
+        """
         ...
 
     def fill_path_aa(mut self, path: Path, color: Color):
+        """An anti-aliased fill of a Path's interior.
+
+        Args:
+            path: Path to fill.
+            color: Fill color.
+        """
         ...

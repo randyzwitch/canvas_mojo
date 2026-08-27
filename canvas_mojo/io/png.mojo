@@ -148,6 +148,16 @@ def _write_chunk(
 
 
 def write_png(canvas: Canvas, path: String) raises:
+    """Write `canvas` to `path` as a truecolor (color type 2), 8-bit,
+    non-interlaced PNG.
+
+    Args:
+        canvas: Canvas to write.
+        path: File path to write to.
+
+    Raises:
+        Error: `path` can't be opened for writing.
+    """
     var w = canvas.width
     var h = canvas.height
     var crc_table = _crc32_table()
@@ -384,6 +394,18 @@ def read_png(path: String) raises -> Canvas:
     the decompressed data's Adler-32 against the zlib stream's, so a
     corrupted or truncated file is rejected rather than misdecoded into
     a plausible-looking wrong image.
+
+    Args:
+        path: File path to read.
+
+    Returns:
+        The decoded image as a Canvas (alpha, if any, composited onto
+        white -- see this module's docstring).
+
+    Raises:
+        Error: `path` can't be read, isn't a valid PNG, uses an
+            unsupported color type/bit depth/interlacing, or fails a
+            checksum.
     """
     var f = open(path, "r")
     var data = f.read_bytes()

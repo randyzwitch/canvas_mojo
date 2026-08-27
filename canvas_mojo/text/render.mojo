@@ -81,6 +81,13 @@ struct TextMetrics(ImplicitlyCopyable, Movable):
     var advance: Float64
 
     def __init__(out self, width: Float64, height: Float64, advance: Float64):
+        """A single line's measured size.
+
+        Args:
+            width: Ink bounding box width.
+            height: Ink bounding box height.
+            advance: Logical cursor-advance distance.
+        """
         self.width = width
         self.height = height
         self.advance = advance
@@ -423,6 +430,16 @@ def measure_text(
 
     Resolves its font fresh every call. For repeated calls sharing a
     font, use the `cache=` overload below.
+
+    Args:
+        text: Text to measure, treated as a single line.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+
+    Returns:
+        `text`'s width/height/advance at that size.
     """
     var cache = FontCache()
     return measure_text(text, size, family, slant, weight, cache=cache)
@@ -441,6 +458,17 @@ def measure_text(
     rather than fresh every call -- for measuring many strings that share a
     font, e.g. every tick label on one axis. Pass the same `FontCache`
     to every call in the batch.
+
+    Args:
+        text: Text to measure, treated as a single line.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        cache: Shared cache for font resolution and parsed faces.
+
+    Returns:
+        `text`'s width/height/advance at that size.
     """
     var face = _load_sized_face(family, slant, weight, size, cache)
     var measured = _measure_line(
@@ -470,6 +498,17 @@ struct TextBlockBounds(ImplicitlyCopyable, Movable):
     def __init__(
         out self, x: Float64, y: Float64, width: Float64, height: Float64
     ):
+        """The bounding box draw_text's ink would occupy, anchor-
+        relative -- see the struct docstring above.
+
+        Args:
+            x: Top-left corner x, relative to draw_text's anchor. Can
+                be negative.
+            y: Top-left corner y, relative to draw_text's anchor. Can
+                be negative.
+            width: Bounding box width.
+            height: Bounding box height.
+        """
         self.x = x
         self.y = y
         self.width = width
@@ -495,6 +534,18 @@ def measure_text_block(
 
     Resolves its font fresh every call; see the `cache=` overload
     below.
+
+    Args:
+        text: Text to lay out, "\\n"-separated lines.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+
+    Returns:
+        The block's anchor-relative bounding box.
     """
     var cache = FontCache()
     return measure_text_block(
@@ -515,6 +566,19 @@ def measure_text_block(
 ) raises -> TextBlockBounds:
     """Like measure_text_block above, but resolving fonts through
     `cache` rather than fresh every call.
+
+    Args:
+        text: Text to lay out, "\\n"-separated lines.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+        cache: Shared cache for font resolution and parsed faces.
+
+    Returns:
+        The block's anchor-relative bounding box.
     """
     if text == "":
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
@@ -622,6 +686,19 @@ def draw_text(
 
     Resolves its font fresh once per pass, so twice per call; the
     `cache=` overload below collapses that to one.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Anchor x -- baseline left end for LEFT alignment.
+        y: Anchor y -- baseline.
+        text: Text to draw, "\\n"-separated lines.
+        color: Text color.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
     """
     var cache = FontCache()
     draw_text(
@@ -660,6 +737,20 @@ def draw_text(
     single call makes -- _layout_block's measuring pass and the render
     pass below both want the same face -- into one lookup plus a cache
     hit.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Anchor x -- baseline left end for LEFT alignment.
+        y: Anchor y -- baseline.
+        text: Text to draw, "\\n"-separated lines.
+        color: Text color.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+        cache: Shared cache for font resolution and parsed faces.
     """
     if text == "":
         return

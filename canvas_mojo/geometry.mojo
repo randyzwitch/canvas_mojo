@@ -14,6 +14,12 @@ struct Point(ImplicitlyCopyable, Movable):
     var y: Int
 
     def __init__(out self, x: Int, y: Int):
+        """An integer 2D coordinate.
+
+        Args:
+            x: Column.
+            y: Row.
+        """
         self.x = x
         self.y = y
 
@@ -81,6 +87,19 @@ struct Transform2D(ImplicitlyCopyable, Movable):
         translate_y: Float64,
         rotation: Float64 = 0.0,
     ):
+        """Scale, then rotate, then translate -- see the struct
+        docstring above for the full pipeline.
+
+        Args:
+            scale_x: Horizontal scale applied before rotation.
+            scale_y: Vertical scale applied before rotation. Commonly
+                negative to flip a data-space y axis that increases
+                upward into pixel-space y, which increases downward.
+            translate_x: Horizontal offset applied after rotation.
+            translate_y: Vertical offset applied after rotation.
+            rotation: Radians, applied around the scaled space's
+                origin, before translation.
+        """
         self.scale_x = scale_x
         self.scale_y = scale_y
         self.translate_x = translate_x
@@ -90,7 +109,15 @@ struct Transform2D(ImplicitlyCopyable, Movable):
         self._sin_rotation = sin(rotation)
 
     def to_pixel(self, x: Float64, y: Float64) -> Point:
-        """Map a data-space point to the nearest integer pixel."""
+        """Map a data-space point to the nearest integer pixel.
+
+        Args:
+            x: Data-space x.
+            y: Data-space y.
+
+        Returns:
+            The transformed point, rounded to the nearest pixel.
+        """
         var sx = x * self.scale_x
         var sy = y * self.scale_y
 

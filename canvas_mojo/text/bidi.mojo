@@ -90,6 +90,12 @@ def detect_base_level(codepoints: List[Int]) -> Int:
     strongly-directional codepoint is STRONG_R, LTR (0) otherwise
     (including the case where every codepoint is weak -- an all-digit
     or all-punctuation line has no basis to be anything but LTR).
+
+    Args:
+        codepoints: A line's Unicode codepoints, in logical order.
+
+    Returns:
+        0 for LTR, 1 for RTL.
     """
     for cp in codepoints:
         var cls = _codepoint_class(cp)
@@ -270,6 +276,15 @@ def visual_order(codepoints: List[Int], base_level: Int) -> List[Int]:
     paired character left at an odd (RTL) level. The result is a
     sequence a caller walks strictly left to right, accumulating glyph
     advances rightward, exactly as it walks a plain LTR line.
+
+    Args:
+        codepoints: A line's Unicode codepoints, in logical order.
+        base_level: The paragraph's base embedding level -- 0 for LTR,
+            1 for RTL, typically from detect_base_level.
+
+    Returns:
+        The codepoints in visual order, mirrored where an RTL level
+        requires it.
     """
     var levels = _resolve_levels(codepoints, base_level)
     var order = _reorder_indices(levels)

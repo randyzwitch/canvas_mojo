@@ -53,6 +53,14 @@ def draw_ellipse(
     absorb the 0.25 term the derivation produces when evaluating the
     ellipse equation at a half-pixel-offset midpoint, the way the
     circle and line algorithms stay in Int rather than rounding floats.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x.
+        cy: Center y.
+        rx: Horizontal radius in pixels.
+        ry: Vertical radius in pixels.
+        color: Outline color.
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -107,6 +115,14 @@ def fill_ellipse(
     rx^2*ry^2`.
 
     Hard-edged; see fill_ellipse_aa for a smooth edge.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        rx: Horizontal radius in pixels.
+        ry: Vertical radius in pixels.
+        color: Fill color.
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -147,6 +163,16 @@ def fill_ellipse_aa(
     uses, in that normalized space: a pixel square's nearest and
     farthest normalized corners are its raw nearest/farthest corners,
     each divided by rx/ry before squaring.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x.
+        cy: Center y.
+        rx: Horizontal radius in pixels.
+        ry: Vertical radius in pixels.
+        color: Fill color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -248,6 +274,16 @@ def draw_ellipse_aa(
     the circle's ring. Good enough for a ~1px hairline outline; a
     normal-offset ring would need the ellipse's actual perimeter
     parameterization, unjustified complexity for what this is for.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x.
+        cy: Center y.
+        rx: Horizontal radius in pixels.
+        ry: Vertical radius in pixels.
+        color: Outline color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)

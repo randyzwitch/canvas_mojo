@@ -46,6 +46,12 @@ struct FontSlant(Copyable, ImplicitlyCopyable, Movable):
     comptime OBLIQUE = Self(2)
 
     def __init__(out self, value: Int):
+        """Prefer the `NORMAL`/`ITALIC`/`OBLIQUE` comptime constants
+        over constructing one directly.
+
+        Args:
+            value: 0 for NORMAL, 1 for ITALIC, 2 for OBLIQUE.
+        """
         self._value = value
 
     def __eq__(self, other: Self) -> Bool:
@@ -63,6 +69,12 @@ struct FontWeight(Copyable, ImplicitlyCopyable, Movable):
     comptime BOLD = Self(1)
 
     def __init__(out self, value: Int):
+        """Prefer the `NORMAL`/`BOLD` comptime constants over
+        constructing one directly.
+
+        Args:
+            value: 0 for NORMAL, 1 for BOLD.
+        """
         self._value = value
 
     def __eq__(self, other: Self) -> Bool:
@@ -322,6 +334,17 @@ def resolve_font_file(
     generic "sans-serif"/"serif"/"monospace" aliases and per-system
     default substitution make a true no-match rare, though possible on
     a font-less system.
+
+    Args:
+        family: Font family name or generic alias (e.g. "sans-serif").
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+
+    Returns:
+        The matched font's absolute file path.
+
+    Raises:
+        Error: libfontconfig can't be loaded, or no font matches.
     """
     return _resolve_font_file_impl(family, slant, weight, -1)
 
@@ -345,6 +368,18 @@ def resolve_font_file_for_char(
     that must distinguish "found a font with the glyph" from
     "fontconfig gave up" checks the result with
     `glyph_outline.has_glyph` rather than trusting the return value.
+
+    Args:
+        family: Font family name or generic alias (e.g. "sans-serif").
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        codepoint: Unicode codepoint the matched font should contain.
+
+    Returns:
+        The matched font's absolute file path.
+
+    Raises:
+        Error: libfontconfig can't be loaded, or no font matches.
     """
     return _resolve_font_file_impl(family, slant, weight, codepoint)
 

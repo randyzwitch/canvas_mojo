@@ -60,9 +60,10 @@ out as a real BMP file.
 - **[Examples](examples/)** — the same pattern applied to lines,
   shapes, curves, gradients, dashes, transforms, clipping, text, and
   PNG/BMP image I/O, source next to its actual rendered output.
-- **[`canvas_mojo` package reference](canvas_mojo/)** — the full API
-  surface, across buffer/color/primitives/path/gradient/text/io,
-  generated from this repo's own docstrings.
+- **[API reference](api-guide/)** — the package grouped by what you're
+  trying to do (canvas & color, shapes, paths, gradients, text,
+  vector, image I/O), each entry linking to its full generated
+  reference, straight from this repo's own docstrings.
 - **[Wiki](https://github.com/randyzwitch/canvas_mojo/wiki)** — what's
   built
   ([Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog))

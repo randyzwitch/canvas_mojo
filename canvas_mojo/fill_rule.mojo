@@ -28,6 +28,12 @@ struct FillRule(Copyable, ImplicitlyCopyable, Movable):
     comptime NONZERO = Self(1)
 
     def __init__(out self, value: Int):
+        """Prefer the `EVEN_ODD`/`NONZERO` comptime constants over
+        constructing one directly.
+
+        Args:
+            value: 0 for EVEN_ODD, 1 for NONZERO.
+        """
         self._value = value
 
     def __eq__(self, other: Self) -> Bool:

@@ -68,6 +68,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def __init__(
         out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)
     ):
+        """Allocate a `width x height` canvas, every pixel set to `fill`.
+
+        Args:
+            width: Canvas width in pixels.
+            height: Canvas height in pixels.
+            fill: Initial color for every pixel.
+        """
         self.width = width
         self.height = height
         self.pixels = List[UInt8](capacity=width * height * 3)
@@ -92,6 +99,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         (RGB, row-major, the layout get_pixel/set_pixel assume). A
         wrong size is a caller bug, and wrapping it anyway would
         corrupt every later index.
+
+        Args:
+            width: Canvas width in pixels.
+            height: Canvas height in pixels.
+            pixels: Row-major RGB bytes, exactly width * height * 3
+                long.
+
+        Raises:
+            Error: `pixels`' length isn't width * height * 3.
         """
         if len(pixels) != width * height * 3:
             raise Error(
@@ -110,6 +126,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.clip_stack = List[_ClipRect]()
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
+        """Whether (x, y) is a real pixel on this canvas.
+
+        Args:
+            x: Column to check.
+            y: Row to check.
+
+        Returns:
+            True if 0 <= x < width and 0 <= y < height.
+        """
         return x >= 0 and x < self.width and y >= 0 and y < self.height
 
     def push_clip(mut self, x: Int, y: Int, width: Int, height: Int):
@@ -125,6 +150,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
         A clip rectangle extending past the canvas bounds is fine;
         in_bounds still rejects anything outside the canvas.
+
+        Args:
+            x: Clip rectangle's left edge.
+            y: Clip rectangle's top edge.
+            width: Clip rectangle's width.
+            height: Clip rectangle's height.
         """
         var new_rect = _ClipRect(x, y, width, height)
         if len(self.clip_stack) > 0:
@@ -146,6 +177,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
             _ = self.clip_stack.pop()
 
     def in_clip(self, x: Int, y: Int) -> Bool:
+        """Whether (x, y) is inside the active clip region.
+
+        Args:
+            x: Column to check.
+            y: Row to check.
+
+        Returns:
+            True if no clip is active, or (x, y) is inside the
+            innermost pushed clip rectangle.
+        """
         if len(self.clip_stack) == 0:
             return True
         var top = self.clip_stack[len(self.clip_stack) - 1]
@@ -157,6 +198,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         )
 
     def set_pixel(mut self, x: Int, y: Int, color: Color):
+        """Write `color` at (x, y), a no-op if it's off-canvas or
+        outside the active clip.
+
+        Args:
+            x: Column to write.
+            y: Row to write.
+            color: Color to write, blended over the existing pixel if
+                translucent.
+        """
         if not self.in_bounds(x, y):
             return
         if not self.in_clip(x, y):
@@ -189,6 +239,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
         same pointer instead of going through `get_pixel`, which would
         recompute the identical index and build a `Color` only to have
         it immediately destructured.
+
+        Args:
+            x: Column to write. Must already be known in-bounds.
+            y: Row to write. Must already be known in-bounds.
+            color: Color to write, blended over the existing pixel if
+                translucent.
         """
         var idx = (y * self.width + x) * 3
         var p = self.pixels.unsafe_ptr()
@@ -221,6 +277,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
         A returned width/height of 0 means nothing in the requested
         rectangle is drawable. `range(0)` is already a no-op, so
         callers need no separate check.
+
+        Args:
+            x: Requested rectangle's left edge.
+            y: Requested rectangle's top edge.
+            width: Requested rectangle's width.
+            height: Requested rectangle's height.
+
+        Returns:
+            (x, y, width, height) of the sub-rectangle actually
+            touchable, clamped to the canvas and the active clip.
         """
         var left = max(0, x)
         var top = max(0, y)
@@ -235,6 +301,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         return (left, top, max(0, right - left), max(0, bottom - top))
 
     def get_pixel(self, x: Int, y: Int) -> Color:
+        """Read the color at (x, y).
+
+        Args:
+            x: Column to read.
+            y: Row to read.
+
+        Returns:
+            The pixel's color, or opaque black if (x, y) is off-canvas.
+        """
         if not self.in_bounds(x, y):
             return Color(0, 0, 0)
         var idx = (y * self.width + x) * 3
@@ -254,6 +329,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
         derive every coordinate from the canvas's own dimensions, so
         the check re-establishes what the loop already guarantees, and
         at three bytes a pixel it is most of what such a pass costs.
+
+        Args:
+            x: Column to read. Must already be known in-bounds.
+            y: Row to read. Must already be known in-bounds.
+
+        Returns:
+            The pixel's color.
         """
         var idx = (y * self.width + x) * 3
         var p = self.pixels.unsafe_ptr()
@@ -264,6 +346,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
         )
 
     def fill(mut self, color: Color):
+        """Fill the whole canvas (or the active clip region, if any)
+        with `color`.
+
+        Args:
+            color: Color to fill with, blended over existing pixels if
+                translucent.
+        """
         var region = self.effective_fill_rect(0, 0, self.width, self.height)
         var rx = region[0]
         var ry = region[1]
@@ -276,6 +365,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
     ):
+        """Same as `canvas_mojo.shapes.rects.fill_rect`, callable as a
+        method.
+
+        Args:
+            x: Rectangle's left edge.
+            y: Rectangle's top edge.
+            width: Rectangle's width.
+            height: Rectangle's height.
+            color: Fill color.
+        """
         fill_rect(self, x, y, width, height, color)
 
     def fill_rect_gradient(
@@ -286,6 +385,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
         height: Int,
         gradient: LinearGradient,
     ):
+        """Same as `canvas_mojo.shapes.rects.fill_rect_gradient`,
+        callable as a method.
+
+        Args:
+            x: Rectangle's left edge.
+            y: Rectangle's top edge.
+            width: Rectangle's width.
+            height: Rectangle's height.
+            gradient: Fill source, projected across the rectangle.
+        """
         fill_rect_gradient(self, x, y, width, height, gradient)
 
     def draw_line_aa(
@@ -297,19 +406,59 @@ struct Canvas(Copyable, DrawTarget, Movable):
         color: Color,
         width: Float64 = 1.0,
     ):
+        """Same as `canvas_mojo.shapes.lines.draw_line_aa`, callable as
+        a method.
+
+        Args:
+            x0: Start point's x.
+            y0: Start point's y.
+            x1: End point's x.
+            y1: End point's y.
+            color: Stroke color.
+            width: Stroke width in pixels.
+        """
         draw_line_aa(self, x0, y0, x1, y1, color, width=width)
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
+        """Same as `canvas_mojo.shapes.circles.fill_circle_aa`,
+        callable as a method.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Circle radius in pixels.
+            color: Fill color.
+        """
         fill_circle_aa(self, cx, cy, radius, color)
 
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
+        """Same as `canvas_mojo.shapes.ellipses.fill_ellipse_aa`,
+        callable as a method.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Fill color.
+        """
         fill_ellipse_aa(self, cx, cy, rx, ry, color)
 
     def draw_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
+        """Same as `canvas_mojo.shapes.ellipses.draw_ellipse_aa`,
+        callable as a method.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Outline color.
+        """
         draw_ellipse_aa(self, cx, cy, rx, ry, color)
 
     def fill_arc_aa(
@@ -321,6 +470,17 @@ struct Canvas(Copyable, DrawTarget, Movable):
         end_angle: Float64,
         color: Color,
     ):
+        """Same as `canvas_mojo.shapes.arcs.fill_arc_aa`, callable as a
+        method.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Wedge radius in pixels.
+            start_angle: Sweep start, radians, 0 pointing along +x.
+            end_angle: Sweep end, radians.
+            color: Fill color.
+        """
         fill_arc_aa(self, cx, cy, radius, start_angle, end_angle, color)
 
     def fill_ring_sector_aa(
@@ -333,6 +493,18 @@ struct Canvas(Copyable, DrawTarget, Movable):
         end_angle: Float64,
         color: Color,
     ):
+        """Same as `canvas_mojo.shapes.arcs.fill_ring_sector_aa`,
+        callable as a method.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            inner_radius: Ring's inner edge, in pixels.
+            outer_radius: Ring's outer edge, in pixels.
+            start_angle: Sweep start, radians, 0 pointing along +x.
+            end_angle: Sweep end, radians.
+            color: Fill color.
+        """
         fill_ring_sector_aa(
             self,
             cx,
@@ -347,7 +519,22 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def stroke_path_aa(
         mut self, path: Path, color: Color, width: Float64 = 1.0
     ):
+        """Same as `canvas_mojo.path.stroke_path_aa`, callable as a
+        method.
+
+        Args:
+            path: Path to stroke.
+            color: Stroke color.
+            width: Stroke width in pixels.
+        """
         stroke_path_aa(self, path, color, width=width)
 
     def fill_path_aa(mut self, path: Path, color: Color):
+        """Same as `canvas_mojo.path.fill_path_aa`, callable as a
+        method.
+
+        Args:
+            path: Path to fill.
+            color: Fill color.
+        """
         fill_path_aa(self, path, color)

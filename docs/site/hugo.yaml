@@ -22,7 +22,7 @@ menu:
       url: "/examples/"
     - name: API Reference
       weight: 2
-      url: "/canvas_mojo/"
+      url: "/api-guide/"
     - name: Search
       weight: 3
       params:

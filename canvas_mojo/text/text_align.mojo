@@ -26,6 +26,12 @@ struct TextAlign(Copyable, ImplicitlyCopyable, Movable):
     comptime RIGHT = Self(2)
 
     def __init__(out self, value: Int):
+        """Prefer the `LEFT`/`CENTER`/`RIGHT` comptime constants over
+        constructing one directly.
+
+        Args:
+            value: 0 for LEFT, 1 for CENTER, 2 for RIGHT.
+        """
         self._value = value
 
     def __eq__(self, other: Self) -> Bool:
