@@ -20,6 +20,7 @@ from canvas_mojo.geometry import Point
 from canvas_mojo.fill_rule import FillRule
 from canvas_mojo.aa_crossing import (
     _AACrossing,
+    _EdgeTable,
     _sample_x,
     _sort_aa_crossings_by_x,
 )
@@ -322,6 +323,12 @@ def fill_polygon_aa(
         row_covered.append(0)
     var crossings = List[_AACrossing]()
     var suffix = List[Int]()
+    var edges = _EdgeTable()
+    var pn = len(points)
+    for i in range(pn):
+        var a = points[i]
+        var b = points[(i + 1) % pn]
+        edges.add_edge(Float64(a.x), Float64(a.y), Float64(b.x), Float64(b.y))
 
     for py in range(min_y - 1, max_y + 2):
         for pxi in range(row_width):
@@ -329,7 +336,7 @@ def fill_polygon_aa(
 
         for sy in range(s):
             var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-            _polygon_row_crossings_aa_into(points, fy, crossings)
+            edges.crossings_at(fy, crossings)
             _sort_aa_crossings_by_x(crossings)
             var k = len(crossings)
 
