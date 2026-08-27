@@ -30,6 +30,7 @@ from canvas_mojo.gradient import LinearGradient, RadialGradient
 from canvas_mojo.fill_rule import FillRule
 from canvas_mojo.aa_crossing import (
     _AACrossing,
+    _EdgeTable,
     _sample_x,
     _sort_aa_crossings_by_x,
 )
@@ -460,91 +461,6 @@ def _point_in_subpaths(
     return _is_inside(winding, fill_rule)
 
 
-struct _EdgeTable(Movable):
-    """Every non-horizontal edge of a flattened path, as flat arrays.
-
-    The AA sweep asks each sub-scanline which edges cross it, and at
-    the default supersample that is four questions per pixel row. Asked
-    against the sub-path point lists directly, each edge costs two
-    bounds-checked reads, a modulo to wrap the closing edge, and two
-    integer-to-float conversions -- before the y-range test that
-    usually rejects it. None of that varies with the row.
-
-    Built once per fill instead. The stored values are exactly the ones
-    the crossing computation already used, so the arithmetic that
-    produces a crossing is unchanged and so is its result; only the
-    work of rediscovering the edge each time is gone.
-    """
-
-    var y_lo: List[Float64]
-    var y_hi: List[Float64]
-    var x0: List[Float64]
-    var y0: List[Float64]
-    var dx: List[Float64]
-    var dy: List[Float64]
-    var direction: List[Int]
-
-    def __init__(out self, subpaths: List[_Subpath]):
-        self.y_lo = List[Float64]()
-        self.y_hi = List[Float64]()
-        self.x0 = List[Float64]()
-        self.y0 = List[Float64]()
-        self.dx = List[Float64]()
-        self.dy = List[Float64]()
-        self.direction = List[Int]()
-        for sp_idx in range(len(subpaths)):
-            ref sp = subpaths[sp_idx]
-            var n = len(sp.points)
-            if n < 2:
-                continue
-            for i in range(n):
-                var p0 = sp.points[i]
-                var p1 = sp.points[(i + 1) % n]
-                var a = Float64(p0.y)
-                var b = Float64(p1.y)
-                if a == b:
-                    continue  # horizontal edges never cross a scanline
-                self.y_lo.append(min(a, b))
-                self.y_hi.append(max(a, b))
-                self.x0.append(Float64(p0.x))
-                self.y0.append(a)
-                self.dx.append(Float64(p1.x - p0.x))
-                self.dy.append(b - a)
-                self.direction.append(1 if b > a else -1)
-
-
-def _row_crossings_aa_table(
-    edges: _EdgeTable, fy: Float64, mut crossings: List[_AACrossing]
-) -> None:
-    """`_row_crossings_aa_into` against a prebuilt `_EdgeTable`.
-
-    Read through pointers: the arrays are built once per fill and never
-    resized while the sweep runs, and every index is bounded by the
-    same `count` the loop iterates. Checked reads would defeat the
-    point -- the table exists to make the per-edge test cheap, and
-    seven bounds checks per edge is more work than the two the point
-    lists cost, not less.
-    """
-    crossings.clear()
-    var count = len(edges.y_lo)
-    var ylo = edges.y_lo.unsafe_ptr()
-    var yhi = edges.y_hi.unsafe_ptr()
-    var ex0 = edges.x0.unsafe_ptr()
-    var ey0 = edges.y0.unsafe_ptr()
-    var edx = edges.dx.unsafe_ptr()
-    var edy = edges.dy.unsafe_ptr()
-    var edir = edges.direction.unsafe_ptr()
-    for i in range(count):
-        if fy >= ylo[unsafe_offset=i] and fy < yhi[unsafe_offset=i]:
-            var t = (fy - ey0[unsafe_offset=i]) / edy[unsafe_offset=i]
-            crossings.append(
-                _AACrossing(
-                    ex0[unsafe_offset=i] + t * edx[unsafe_offset=i],
-                    edir[unsafe_offset=i],
-                )
-            )
-
-
 def _row_crossings_aa(
     subpaths: List[_Subpath], fy: Float64
 ) -> List[_AACrossing]:
@@ -669,7 +585,18 @@ def fill_path_aa(
         row_covered.append(0)
     var crossings = List[_AACrossing]()
     var suffix = List[Int]()
-    var edges = _EdgeTable(subpaths)
+    var edges = _EdgeTable()
+    for sp_idx in range(len(subpaths)):
+        ref sp = subpaths[sp_idx]
+        var pn = len(sp.points)
+        if pn < 2:
+            continue
+        for i in range(pn):
+            var a = sp.points[i]
+            var b = sp.points[(i + 1) % pn]
+            edges.add_edge(
+                Float64(a.x), Float64(a.y), Float64(b.x), Float64(b.y)
+            )
 
     for py in range(min_y - 1, max_y + 2):
         for pxi in range(row_width):
@@ -677,7 +604,7 @@ def fill_path_aa(
 
         for sy in range(s):
             var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-            _row_crossings_aa_table(edges, fy, crossings)
+            edges.crossings_at(fy, crossings)
             _sort_aa_crossings_by_x(crossings)
             var k = len(crossings)
 
