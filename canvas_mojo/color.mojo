@@ -10,13 +10,28 @@ struct Color(ImplicitlyCopyable, Movable):
     var a: UInt8
 
     def __init__(out self, r: UInt8, g: UInt8, b: UInt8, a: UInt8 = 255):
+        """An 8-bit-per-channel RGBA color.
+
+        Args:
+            r: Red channel, 0-255.
+            g: Green channel, 0-255.
+            b: Blue channel, 0-255.
+            a: Alpha channel, 0-255, 255 fully opaque.
+        """
         self.r = r
         self.g = g
         self.b = b
         self.a = a
 
     def blend_over(self, bg: Color) -> Color:
-        """Alpha-composite self over bg (src-over compositing)."""
+        """Alpha-composite self over bg (src-over compositing).
+
+        Args:
+            bg: Background color self is composited onto.
+
+        Returns:
+            The composited color.
+        """
         if self.a == 255:
             return self
         if self.a == 0:

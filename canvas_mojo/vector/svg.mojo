@@ -256,6 +256,12 @@ struct SvgCanvas(DrawTarget, Movable):
     var _gradient_count: Int
 
     def __init__(out self, width: Int, height: Int):
+        """An empty `width x height` SVG document.
+
+        Args:
+            width: Document width in pixels.
+            height: Document height in pixels.
+        """
         self.width = width
         self.height = height
         self._body = ""
@@ -264,6 +270,15 @@ struct SvgCanvas(DrawTarget, Movable):
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
     ):
+        """Emit a `<rect>` element.
+
+        Args:
+            x: Rectangle's left edge.
+            y: Rectangle's top edge.
+            width: Rectangle's width.
+            height: Rectangle's height.
+            color: Fill color.
+        """
         self._body += (
             '<rect x="'
             + String(x)
@@ -303,6 +318,13 @@ struct SvgCanvas(DrawTarget, Movable):
 
         `<stop>` elements come out in ascending-offset order regardless
         of insertion order -- see _stops_sorted_by_offset.
+
+        Args:
+            x: Rectangle's left edge.
+            y: Rectangle's top edge.
+            width: Rectangle's width.
+            height: Rectangle's height.
+            gradient: Fill source, projected across the rectangle.
         """
         self._gradient_count += 1
         var gid = "grad" + String(self._gradient_count)
@@ -354,6 +376,16 @@ struct SvgCanvas(DrawTarget, Movable):
         color: Color,
         width: Float64 = 1.0,
     ):
+        """Emit a `<line>` element with round end caps.
+
+        Args:
+            x0: Start point x.
+            y0: Start point y.
+            x1: End point x.
+            y1: End point y.
+            color: Line color.
+            width: Stroke width in pixels.
+        """
         self._body += (
             '<line x1="'
             + String(x0)
@@ -373,6 +405,14 @@ struct SvgCanvas(DrawTarget, Movable):
         )
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
+        """Emit a `<circle>` element.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Circle radius in pixels.
+            color: Fill color.
+        """
         self._body += (
             '<circle cx="'
             + String(cx)
@@ -390,6 +430,15 @@ struct SvgCanvas(DrawTarget, Movable):
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
+        """Emit an `<ellipse>` element.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Fill color.
+        """
         self._body += (
             '<ellipse cx="'
             + String(cx)
@@ -409,6 +458,15 @@ struct SvgCanvas(DrawTarget, Movable):
     def draw_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
+        """Emit an unfilled `<ellipse>` element, ~1px stroke.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Outline color.
+        """
         # stroke-width 1 to match the raster primitive, which draws a
         # fixed ~1px outline and takes no width (see DrawTarget).
         self._body += (
@@ -442,6 +500,14 @@ struct SvgCanvas(DrawTarget, Movable):
         `sweep_flag=1` with no sign flip, since SVG's space is y-down
         like the raster canvas's and increasing angle sweeps clockwise
         in both.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Wedge radius in pixels.
+            start_angle: Sweep start, radians, 0 pointing along +x.
+            end_angle: Sweep end, radians. Must be >= start_angle.
+            color: Fill color.
         """
         var x0 = cx + radius * cos(start_angle)
         var y0 = cy + radius * sin(start_angle)
@@ -493,6 +559,16 @@ struct SvgCanvas(DrawTarget, Movable):
         back to the start angle, closing the ring in one loop -- the
         boundary `fill_ring_sector` builds from two point-sampled
         polylines, expressed as two SVG arc commands.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            inner_radius: Ring's inner edge, in pixels.
+            outer_radius: Ring's outer edge, in pixels. Must exceed
+                inner_radius.
+            start_angle: Sweep start, radians, 0 pointing along +x.
+            end_angle: Sweep end, radians. Must be >= start_angle.
+            color: Fill color.
         """
         var outer_x0 = cx + outer_radius * cos(start_angle)
         var outer_y0 = cy + outer_radius * sin(start_angle)
@@ -544,6 +620,13 @@ struct SvgCanvas(DrawTarget, Movable):
     def stroke_path_aa(
         mut self, path: Path, color: Color, width: Float64 = 1.0
     ):
+        """Emit a `<path>` element, stroked only.
+
+        Args:
+            path: Path to stroke.
+            color: Stroke color.
+            width: Stroke width in pixels.
+        """
         self._body += (
             '<path d="'
             + _path_d(path)
@@ -557,6 +640,12 @@ struct SvgCanvas(DrawTarget, Movable):
         )
 
     def fill_path_aa(mut self, path: Path, color: Color):
+        """Emit a `<path>` element, filled only.
+
+        Args:
+            path: Path to fill.
+            color: Fill color.
+        """
         self._body += (
             '<path d="'
             + _path_d(path)
@@ -615,6 +704,21 @@ struct SvgCanvas(DrawTarget, Movable):
         drive both backends. Emits `font-weight="bold"` for
         FontWeight.BOLD (SVG/CSS's two-value keyword; `FontWeight`
         distinguishes nothing finer), omitted at `NORMAL`.
+
+        Args:
+            x: Anchor x -- baseline left end for TextAlign.LEFT.
+            y: Anchor y -- baseline.
+            text: Text to draw. No line-break handling for embedded
+                "\\n".
+            color: Text color.
+            size: Font size in pixels.
+            align: Horizontal alignment relative to (x, y).
+            family: A literal CSS `font-family` value (keyword, face
+                name, or comma-separated stack), not a fontconfig
+                query.
+            rotation: Radians, rotating the whole `<text>` element
+                around (x, y).
+            weight: Normal/bold weight.
         """
         var escaped_family = _escape_xml_attr(family)
         var anchor = "start"
@@ -680,6 +784,13 @@ struct SvgCanvas(DrawTarget, Movable):
 def write_svg(svg: SvgCanvas, path: String) raises:
     """Write `svg`'s accumulated markup to `path`, the SVG counterpart
     to `write_bmp`/`write_png`.
+
+    Args:
+        svg: Document to write.
+        path: File path to write to.
+
+    Raises:
+        Error: `path` can't be opened for writing.
     """
     var f = open(path, "w")
     f.write(svg.to_string())

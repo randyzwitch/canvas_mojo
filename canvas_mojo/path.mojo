@@ -66,6 +66,12 @@ struct FPoint(ImplicitlyCopyable, Movable):
     var y: Float64
 
     def __init__(out self, x: Float64, y: Float64):
+        """A floating-point 2D coordinate.
+
+        Args:
+            x: Column, sub-pixel precision.
+            y: Row, sub-pixel precision.
+        """
         self.x = x
         self.y = y
 
@@ -124,6 +130,10 @@ struct Path(Movable):
         """Start a new sub-path at (x, y). Ends whatever sub-path was
         being built before (if any) without closing it -- call close()
         first if a closed shape was intended.
+
+        Args:
+            x: New sub-path's starting point x.
+            y: New sub-path's starting point y.
         """
         self.commands.append(
             _PathCommand(
@@ -137,7 +147,15 @@ struct Path(Movable):
         self._has_current_point = True
 
     def line_to(mut self, x: Float64, y: Float64) raises:
-        """A straight segment from the current point to (x, y)."""
+        """A straight segment from the current point to (x, y).
+
+        Args:
+            x: Endpoint x.
+            y: Endpoint y.
+
+        Raises:
+            Error: No move_to() has been called yet on this path.
+        """
         if not self._has_current_point:
             raise Error(
                 "Path.line_to() called before any move_to() -- a path needs a"
@@ -156,6 +174,15 @@ struct Path(Movable):
     ) raises:
         """A quadratic Bezier from the current point to (x, y), pulled
         toward control point (cx, cy).
+
+        Args:
+            cx: Control point x.
+            cy: Control point y.
+            x: Endpoint x.
+            y: Endpoint y.
+
+        Raises:
+            Error: No move_to() has been called yet on this path.
         """
         if not self._has_current_point:
             raise Error(
@@ -181,6 +208,17 @@ struct Path(Movable):
     ) raises:
         """A cubic Bezier from the current point to (x, y), pulled
         toward control points (c1x, c1y) and (c2x, c2y).
+
+        Args:
+            c1x: First control point x.
+            c1y: First control point y.
+            c2x: Second control point x.
+            c2y: Second control point y.
+            x: Endpoint x.
+            y: Endpoint y.
+
+        Raises:
+            Error: No move_to() has been called yet on this path.
         """
         if not self._has_current_point:
             raise Error(
@@ -215,6 +253,16 @@ struct Path(Movable):
         call move_to(cx + radius*cos(start_angle), cy +
         radius*sin(start_angle)) first, or end the previous segment
         exactly there.
+
+        Args:
+            cx: Arc's center x.
+            cy: Arc's center y.
+            radius: Arc's radius in pixels.
+            start_angle: Sweep start, radians, 0 pointing along +x.
+            end_angle: Sweep end, radians. Must be >= start_angle.
+
+        Raises:
+            Error: No move_to() has been called yet on this path.
         """
         if not self._has_current_point:
             raise Error(
@@ -410,6 +458,13 @@ def fill_path(
     ([min(y0,y1), max(y0,y1))), which makes a vertex shared by two
     opposite-direction edges count once rather than twice, while a
     local extremum contributes zero net crossings rather than two.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        color: Fill color.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        curve_steps: Straight-line segments per quad/cubic Bezier.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -555,6 +610,15 @@ def fill_path_aa(
 
     `curve_steps` is fill_path's same per-segment flattening knob --
     see its docstring.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        color: Fill color.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -721,6 +785,13 @@ def fill_path_gradient(
 
     `curve_steps` is fill_path's same per-segment flattening knob --
     see its docstring.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        gradient: Fill source, queried per pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        curve_steps: Straight-line segments per quad/cubic Bezier.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -754,7 +825,15 @@ def fill_path_radial_gradient(
     fill_rule: FillRule = FillRule.EVEN_ODD,
     curve_steps: Int = 16,
 ):
-    """fill_path_gradient's RadialGradient counterpart (gradient.mojo)."""
+    """Like fill_path_gradient, but for a RadialGradient (gradient.mojo).
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        gradient: Fill source, queried per pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        curve_steps: Straight-line segments per quad/cubic Bezier.
+    """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return
@@ -793,6 +872,16 @@ def stroke_path(
 
     `curve_steps` is fill_path's same per-segment flattening knob --
     see its docstring.
+
+    Args:
+        canvas: Canvas to stroke into.
+        path: Path to stroke.
+        color: Stroke color.
+        curve_steps: Straight-line segments per quad/cubic Bezier.
+        dashes: On/off segment lengths in pixels, cycled along the
+            stroke. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the stroke starts
+            at.
     """
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
@@ -818,6 +907,19 @@ def stroke_path_aa(
 
     `curve_steps` is fill_path's same per-segment flattening knob --
     see its docstring.
+
+    Args:
+        canvas: Canvas to stroke into.
+        path: Path to stroke.
+        color: Stroke color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier.
+        dashes: On/off segment lengths in pixels, cycled along the
+            stroke. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the stroke starts
+            at.
     """
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):

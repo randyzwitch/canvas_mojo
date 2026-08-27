@@ -18,6 +18,14 @@ def draw_rect(
     Draws each edge exactly once: the left/right edges stop short of
     the corners the top/bottom edges already cover, so a translucent
     color never blends twice.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Rectangle's left edge.
+        y: Rectangle's top edge.
+        width: Rectangle's width.
+        height: Rectangle's height.
+        color: Outline color.
     """
     if width <= 0 or height <= 0:
         return
@@ -43,6 +51,14 @@ def fill_rect(
     Clamps to the canvas bounds and active clip once up front through
     `Canvas.effective_fill_rect`, rather than per pixel through
     set_pixel: every pixel in the loop shares the same bounds check.
+
+    Args:
+        canvas: Canvas to fill into.
+        x: Rectangle's left edge.
+        y: Rectangle's top edge.
+        width: Rectangle's width.
+        height: Rectangle's height.
+        color: Fill color.
     """
     if width <= 0 or height <= 0:
         return
@@ -68,6 +84,14 @@ def fill_rect_gradient(
     """Fill a rectangle as fill_rect does, sourcing each pixel's color
     from `gradient` (gradient.mojo) rather than one flat Color. Same
     once-up-front clamp as fill_rect.
+
+    Args:
+        canvas: Canvas to fill into.
+        x: Rectangle's left edge.
+        y: Rectangle's top edge.
+        width: Rectangle's width.
+        height: Rectangle's height.
+        gradient: Fill source, projected across the rectangle.
     """
     if width <= 0 or height <= 0:
         return
@@ -92,10 +116,18 @@ def fill_rect_radial_gradient(
     height: Int,
     gradient: RadialGradient,
 ):
-    """fill_rect_gradient's RadialGradient counterpart. A rectangle
+    """Like fill_rect_gradient, but for a RadialGradient. A rectangle
     isn't the usual shape for a radial gradient, but a rectangular
     legend swatch or background panel wanting a radial highlight needs
     no circle primitive involved. Same once-up-front clamp as fill_rect.
+
+    Args:
+        canvas: Canvas to fill into.
+        x: Rectangle's left edge.
+        y: Rectangle's top edge.
+        width: Rectangle's width.
+        height: Rectangle's height.
+        gradient: Fill source, projected across the rectangle.
     """
     if width <= 0 or height <= 0:
         return

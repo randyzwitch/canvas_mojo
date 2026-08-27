@@ -116,6 +116,17 @@ def draw_line(
     _is_dash_on); empty by default, drawing solid. Measured in the
     accumulated-raster-step distance _draw_line_core describes, not an
     idealized straight-line one.
+
+    Args:
+        canvas: Canvas to draw into.
+        x0: Start point x.
+        y0: Start point y.
+        x1: End point x.
+        y1: End point y.
+        color: Line color.
+        dashes: On/off segment lengths in pixels, cycled along the
+            line. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the line starts at.
     """
     _ = _draw_line_core(
         canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0
@@ -150,6 +161,20 @@ def draw_line_aa(
     switch: the coverage test is the same minimum-distance-to-segment
     with the same round caps, since a single segment has no joint for
     the core's minimum to do anything different with.
+
+    Args:
+        canvas: Canvas to draw into.
+        x0: Start point x.
+        y0: Start point y.
+        x1: End point x.
+        y1: End point y.
+        color: Line color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        dashes: On/off segment lengths in pixels, cycled along the
+            line. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the line starts at.
     """
     var points: List[Point] = [Point(x0, y0), Point(x1, y1)]
     _draw_polyline_core_aa(
@@ -174,6 +199,15 @@ def draw_polyline(
     A dash pattern's phase carries across joints: each segment starts
     where the previous one's accumulated distance left off, so dashes
     don't reset at a corner.
+
+    Args:
+        canvas: Canvas to draw into.
+        points: Vertices to connect, in order.
+        color: Line color.
+        dashes: On/off segment lengths in pixels, cycled along the
+            whole polyline. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the polyline
+            starts at.
     """
     if len(points) == 0:
         return
@@ -214,6 +248,15 @@ def draw_polygon(
     the previous segment) and its shared end point (drawn as the
     polygon's first pixel), so every vertex is drawn exactly once. Dash
     phase carries all the way around, closing segment included.
+
+    Args:
+        canvas: Canvas to draw into.
+        points: Vertices to connect, in order.
+        color: Line color.
+        dashes: On/off segment lengths in pixels, cycled all the way
+            around the polygon. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the polygon starts
+            at.
     """
     var n = len(points)
     if n == 0:
@@ -637,6 +680,18 @@ def draw_polyline_aa(
     """Anti-aliased polyline. See draw_polyline for the hard-edged
     version, and _draw_polyline_core_aa for how joints avoid
     double-blending and how dash phase carries across them.
+
+    Args:
+        canvas: Canvas to draw into.
+        points: Vertices to connect, in order.
+        color: Line color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        dashes: On/off segment lengths in pixels, cycled along the
+            whole polyline. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the polyline
+            starts at.
     """
     _draw_polyline_core_aa(
         canvas, points, color, width, supersample, False, dashes, dash_offset
@@ -657,6 +712,18 @@ def draw_polygon_aa(
     minimum-distance test like any other, so the closing vertex needs
     no special case (unlike draw_polygon's skip_first/skip_last), and
     dash phase carries across it too.
+
+    Args:
+        canvas: Canvas to draw into.
+        points: Vertices to connect, in order.
+        color: Line color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        dashes: On/off segment lengths in pixels, cycled all the way
+            around the polygon. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the polygon starts
+            at.
     """
     _draw_polyline_core_aa(
         canvas, points, color, width, supersample, True, dashes, dash_offset

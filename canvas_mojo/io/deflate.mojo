@@ -568,6 +568,15 @@ def inflate(var compressed: List[UInt8]) raises -> List[UInt8]:
     Takes ownership of `compressed`, moving it into the bit reader
     rather than copying: `List[UInt8]` isn't cheaply copyable and no
     caller needs the buffer back.
+
+    Args:
+        compressed: Raw DEFLATE bytes, no zlib wrapper.
+
+    Returns:
+        The decompressed bytes.
+
+    Raises:
+        Error: `compressed` is truncated or malformed.
     """
     var reader = _BitReader(compressed^)
     var out = List[UInt8]()
@@ -814,6 +823,12 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     Always one block (BFINAL=1 from the start). RFC 1951 caps a stored
     block at 65535 bytes but puts no upper bound on a compressed one,
     so chart-sized images never need splitting.
+
+    Args:
+        data: Bytes to compress.
+
+    Returns:
+        The compressed bytes, no zlib wrapper.
     """
     var writer = _BitWriter()
     writer.write_bits(1, 1)  # BFINAL = 1 -- the only block
