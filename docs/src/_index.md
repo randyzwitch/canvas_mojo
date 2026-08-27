@@ -4,22 +4,73 @@ type: docs
 weight: 100
 ---
 
-A Mojo raster/drawing engine — pixel buffer, colors, primitives
-(lines, shapes, curves, gradients), text, and image I/O.
+A 2D drawing engine written entirely in Mojo: pixel buffers, shape and
+path primitives, gradients, real system-font text, and PNG/BMP/SVG
+output — no Cairo, no FreeType, no other C rendering library anywhere
+in the pipeline.
 
-Please note that this is heavily Claude-influenced, so I do not
-guarantee consistency, logic, mapping to Cairo concepts, or design
-decisions matching any particular reference library. If you know what
-you're doing and want to contribute, let's chat!
+## Why canvas_mojo?
 
-**Start here:** [Examples](examples/) shows every primitive this
-package can draw, source code next to its actual rendered output. For
-the full API surface (every function `canvas_mojo` exposes, across
-buffer/color/primitives/path/gradient/text/io), see the [`canvas_mojo`
-package reference](canvas_mojo/). For what's built vs. still open and
-why, see the [wiki](https://github.com/randyzwitch/canvas_mojo/wiki)
-([Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog)
-/ [Backlog](https://github.com/randyzwitch/canvas_mojo/wiki/Backlog)).
+Drawing shapes and text to an image is usually a job you hand to a C
+library — Cairo, Skia, FreeType — from whatever language you're
+actually working in. canvas_mojo asks what that same job looks like
+kept entirely in Mojo instead: one language, top to bottom, so the
+whole rasterizer is readable and hackable rather than a thin wrapper
+around someone else's binary. `Canvas` (raster) and `SvgCanvas`
+(vector) both implement the same `DrawTarget` trait, so code written
+against that trait — a chart library's own rendering core, say — works
+against either backend without knowing which one it's drawing into.
+
+This is an early-stage, heavily Claude-influenced personal project, so
+don't expect polish or a clean mapping onto Cairo's concepts. If you
+know what you're doing and want to contribute, let's chat.
+
+## Quickstart
+
+Add `canvas_mojo` as a git dependency in your own `pixi.toml`:
+
+```toml
+[workspace]
+preview = ["pixi-build"]  # git-source pixi dependencies are still a preview feature
+
+[dependencies]
+canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", branch = "main" }
+```
+
+`pixi install`/`pixi run` builds `canvas_mojo` from that git ref and
+installs the resulting precompiled package into your own workspace's
+pixi environment — Mojo's own toolchain finds it there automatically,
+no `-I` flag needed. Then draw something:
+
+```mojo
+from canvas_mojo import Canvas, Color, fill_circle_aa
+from canvas_mojo.io.bmp import write_bmp
+
+def main() raises:
+    var c = Canvas(200, 200, Color(255, 255, 255))
+    fill_circle_aa(c, 100, 100, 80, Color(40, 100, 200))
+    write_bmp(c, "out.bmp")
+```
+
+That's a filled, anti-aliased circle on a white background, written
+out as a real BMP file.
+
+## Where to next
+
+- **[Examples](examples/)** — the same pattern applied to lines,
+  shapes, curves, gradients, dashes, transforms, clipping, text, and
+  PNG/BMP image I/O, source next to its actual rendered output.
+- **[`canvas_mojo` package reference](canvas_mojo/)** — the full API
+  surface, across buffer/color/primitives/path/gradient/text/io,
+  generated from this repo's own docstrings.
+- **[Wiki](https://github.com/randyzwitch/canvas_mojo/wiki)** — what's
+  built
+  ([Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog))
+  vs. still open
+  ([Backlog](https://github.com/randyzwitch/canvas_mojo/wiki/Backlog)),
+  plus an [Architecture](https://github.com/randyzwitch/canvas_mojo/wiki/Architecture)
+  walkthrough of how a drawing call moves through `Canvas`/`SvgCanvas`,
+  `Path`, and text rendering.
 
 ## Status
 
@@ -33,37 +84,6 @@ library, not a new requirement this package introduces. Font *parsing*
 rasterization (this package's own `fill_path_aa`) are both native
 Mojo -- no FreeType, no Cairo, no other third-party rendering/font
 engine anywhere in the pipeline.
-
-## Install
-
-```toml
-[workspace]
-preview = ["pixi-build"]  # git-source pixi dependencies are still a preview feature
-
-[dependencies]
-canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", branch = "main" }
-```
-
-`pixi install`/`pixi run` builds `canvas_mojo` from that git ref and
-installs the resulting precompiled package into your own workspace's
-pixi environment — Mojo's own toolchain finds it there automatically,
-no `-I` flag needed.
-
-## A first drawing
-
-```mojo
-from canvas_mojo import Canvas, Color, fill_circle_aa
-from canvas_mojo.io.bmp import write_bmp
-
-def main() raises:
-    var c = Canvas(200, 200, Color(255, 255, 255))
-    fill_circle_aa(c, 100, 100, 80, Color(40, 100, 200))
-    write_bmp(c, "out.bmp")
-```
-
-See [Examples](examples/) for the same pattern applied to lines,
-shapes, curves, gradients, dashes, transforms, clipping, text, and
-PNG/BMP image I/O.
 
 ## Development
 
