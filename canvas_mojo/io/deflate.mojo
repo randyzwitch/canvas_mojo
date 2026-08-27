@@ -758,6 +758,14 @@ def _find_match(
     var best_length = 0
     var best_distance = 0
     var max_possible = min(_MAX_MATCH, n - pos)
+    # The comparison loop below is where this function spends its time
+    # -- deflate's cost scales with _MAX_CHAIN precisely because each
+    # candidate is compared byte by byte -- and a checked List read
+    # costs several times the compare it guards. Both indices stay
+    # inside `data`: `pos + length` is bounded by `max_possible`, which
+    # is at most `n - pos`, and `candidate + length` is smaller still
+    # since `candidate < pos`.
+    var d = data.unsafe_ptr()
     ref chain = chains[key]
     var j = len(chain) - 1
     while j >= 0:
@@ -768,7 +776,8 @@ def _find_match(
         var length = 0
         while (
             length < max_possible
-            and data[candidate + length] == data[pos + length]
+            and d[unsafe_offset=candidate + length]
+            == d[unsafe_offset=pos + length]
         ):
             length += 1
         if length > best_length:

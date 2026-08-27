@@ -193,15 +193,19 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var idx = (y * self.width + x) * 3
         var p = self.pixels.unsafe_ptr()
         if color.a == 255:
-            p[idx] = color.r
-            p[idx + 1] = color.g
-            p[idx + 2] = color.b
+            p[unsafe_offset=idx] = color.r
+            p[unsafe_offset=idx + 1] = color.g
+            p[unsafe_offset=idx + 2] = color.b
         else:
-            var bg = Color(p[idx], p[idx + 1], p[idx + 2])
+            var bg = Color(
+                p[unsafe_offset=idx],
+                p[unsafe_offset=idx + 1],
+                p[unsafe_offset=idx + 2],
+            )
             var blended = color.blend_over(bg)
-            p[idx] = blended.r
-            p[idx + 1] = blended.g
-            p[idx + 2] = blended.b
+            p[unsafe_offset=idx] = blended.r
+            p[unsafe_offset=idx + 1] = blended.g
+            p[unsafe_offset=idx + 2] = blended.b
 
     def effective_fill_rect(
         self, x: Int, y: Int, width: Int, height: Int
@@ -236,6 +240,27 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var idx = (y * self.width + x) * 3
         return Color(
             self.pixels[idx], self.pixels[idx + 1], self.pixels[idx + 2]
+        )
+
+    def read_pixel(self, x: Int, y: Int) -> Color:
+        """Read (x, y) *without* `get_pixel`'s in_bounds check, the
+        counterpart to `write_pixel` and subject to the same contract:
+        the caller must already know the coordinate is on the canvas,
+        typically because the loop bounds came from `width`/`height`.
+
+        `get_pixel` stays the checked entry point, and returns opaque
+        black off-canvas rather than reading out of range. This exists
+        because whole-image passes -- downsampling, encoding a file --
+        derive every coordinate from the canvas's own dimensions, so
+        the check re-establishes what the loop already guarantees, and
+        at three bytes a pixel it is most of what such a pass costs.
+        """
+        var idx = (y * self.width + x) * 3
+        var p = self.pixels.unsafe_ptr()
+        return Color(
+            p[unsafe_offset=idx],
+            p[unsafe_offset=idx + 1],
+            p[unsafe_offset=idx + 2],
         )
 
     def fill(mut self, color: Color):
