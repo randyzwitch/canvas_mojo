@@ -469,6 +469,24 @@ def _row_crossings_aa(
     what keeps the sweep sub-quadratic.
     """
     var crossings = List[_AACrossing]()
+    _row_crossings_aa_into(subpaths, fy, crossings)
+    return crossings^
+
+
+def _row_crossings_aa_into(
+    subpaths: List[_Subpath], fy: Float64, mut crossings: List[_AACrossing]
+) -> None:
+    """`_row_crossings_aa` writing into a caller-owned list.
+
+    The sweep calls this once per sub-scanline, so returning a fresh
+    list would allocate once per sub-scanline -- for a glyph-sized
+    path that is most of the work, since the shape is small enough
+    that allocation outweighs the sampling. Reusing one buffer across
+    the whole sweep is what `_draw_polyline_core_aa` already does
+    with its own per-row buffers, for the same reason.
+    """
+    crossings.clear()
+
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         var n = len(sp.points)
@@ -488,7 +506,6 @@ def _row_crossings_aa(
                 var x = Float64(p0.x) + t * Float64(p1.x - p0.x)
                 var direction = 1 if y1 > y0 else -1
                 crossings.append(_AACrossing(x, direction))
-    return crossings^
 
 
 def fill_path_aa(
@@ -556,14 +573,25 @@ def fill_path_aa(
         max_x + 2
     ) - row_first_px  # px range length, see the loop below
 
+    # Buffers for the whole sweep, not per row and per sub-scanline.
+    # A glyph-sized path is small enough that allocating a crossing
+    # list, a suffix list and a coverage row for every sub-scanline
+    # costs more than the sampling does -- measured at roughly 5x the
+    # per-pixel cost of a large shape. `_draw_polyline_core_aa` already
+    # reuses its per-row buffers this way; these now match it.
+    var row_covered = List[Int](capacity=row_width)
+    for _ in range(row_width):
+        row_covered.append(0)
+    var crossings = List[_AACrossing]()
+    var suffix = List[Int]()
+
     for py in range(min_y - 1, max_y + 2):
-        var row_covered = List[Int](capacity=row_width)
-        for _ in range(row_width):
-            row_covered.append(0)
+        for pxi in range(row_width):
+            row_covered[pxi] = 0
 
         for sy in range(s):
             var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-            var crossings = _row_crossings_aa(subpaths, fy)
+            _row_crossings_aa_into(subpaths, fy, crossings)
             _sort_aa_crossings_by_x(crossings)
             var k = len(crossings)
 
@@ -571,9 +599,11 @@ def fill_path_aa(
             # crossing from index i onward -- what _point_in_subpaths'
             # `x > fx` ray cast sums fresh per sample. Precomputing it
             # per sub-scanline is what removes the `* edges` factor.
-            var suffix = List[Int](capacity=k + 1)
-            for _ in range(k + 1):
+            # Grown to fit, never shrunk, so a later sub-scanline with
+            # fewer crossings reuses the same storage.
+            while len(suffix) < k + 1:
                 suffix.append(0)
+            suffix[k] = 0
             for i in range(k - 1, -1, -1):
                 suffix[i] = suffix[i + 1] + crossings[i].direction
 
