@@ -1,15 +1,21 @@
-<!-- README.md's hero image -- a committed copy of examples/out_vector.svg
-     (examples/*.svg is gitignored: generated output, not source). Every
-     other image in this repo's docs is generated fresh at build/CI time,
-     but README.md is rendered straight from repository content by
-     GitHub with no build step, so it needs a real, checked-in file to
-     point at. docs/src/_index.md's own hero uses the generated file
-     directly, since the docs site's CI does run `pixi run example`
-     first.
+<!-- README.md's hero image: a committed copy of examples/out_vector.svg
+     (examples/*.svg is gitignored, since it's generated output, not
+     source). Every other image in this repo's docs is generated fresh
+     at build/CI time, but README.md is rendered straight from
+     repository content by GitHub with no build step, so it needs a
+     real, checked-in file to point at. docs/src/_index.md's own hero
+     uses the generated file directly, since the docs site's CI does
+     run `pixi run example` first.
 
      Regenerate by running `pixi run mojo run -I . examples/vector.mojo`
-     and copying its examples/out_vector.svg here, whenever vector.mojo's
-     draw_scene() changes. -->
+     and copying its examples/out_vector.svg here, whenever
+     vector.mojo's draw_scene() changes.
+
+     No literal double hyphen anywhere above: XML comments may not
+     contain "- -" (unspaced), which a raw SVG file hits and a Mojo
+     source file never would, since mojo format's own comment style
+     uses that exact sequence as a dash. Two of them broke this image
+     entirely on GitHub the first time; keep it that way. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
 <rect x="0" y="0" width="800" height="500" fill="#fafafc"/>
 <line x1="60" y1="420" x2="740" y2="420" stroke="#787882" stroke-width="2.000" stroke-linecap="round"/>
