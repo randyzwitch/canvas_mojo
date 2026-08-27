@@ -84,16 +84,39 @@ def _crc32(data: List[UInt8], table: List[UInt32]) -> UInt32:
 
 def _adler32(data: List[UInt8]) -> UInt32:
     """RFC 1950's checksum for the zlib stream trailer: a running sum,
-    not a table-driven algorithm. `% BASE` per byte rather than the
-    batched-mod trick real zlib implementations use -- correct either
-    way, and this reads as a direct transcription of the spec.
+    not a table-driven algorithm.
+
+    The modulo is deferred rather than taken per byte. `% BASE` is a
+    ring homomorphism for addition, so reducing once at the end of a
+    block gives the same value as reducing every step, provided the
+    accumulators cannot overflow in between. NMAX is the standard bound
+    for that in 32 bits: the largest n with
+    255*n*(n+1)/2 + (n+1)*(BASE-1) < 2^32, so a block of that length
+    cannot carry s2 past the end of the type. Same answer, proven
+    rather than measured, and the reason every real zlib does it.
+
+    Bytes are read through `unsafe_ptr` because the loop bound is
+    `len(data)` itself, so the index cannot leave the buffer, and a
+    checked read costs several times what the arithmetic does at this
+    size -- this runs over every raw byte of the image.
     """
     comptime BASE = UInt32(65521)
+    comptime NMAX = 5552
     var s1 = UInt32(1)
     var s2 = UInt32(0)
-    for byte in data:
-        s1 = (s1 + UInt32(byte)) % BASE
-        s2 = (s2 + s1) % BASE
+    var n = len(data)
+    var p = data.unsafe_ptr()
+    var i = 0
+    while i < n:
+        var block = NMAX
+        if n - i < block:
+            block = n - i
+        for j in range(i, i + block):
+            s1 += UInt32(p[j])
+            s2 += s1
+        s1 %= BASE
+        s2 %= BASE
+        i += block
     return (s2 << 16) | s1
 
 
