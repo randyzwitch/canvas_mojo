@@ -16,6 +16,14 @@ Raster blends per pixel through `set_pixel`; vector emits a
 `fill-opacity` attribute and leaves the compositing to whatever renders
 the markup.
 
+A title and tagline are drawn after draw_scene() returns, once per
+backend, rather than from inside it: text is deliberately excluded
+from `DrawTarget` (see that trait's own docstring), so there is no
+generic call `draw_scene` could make. This is that exclusion's other
+side -- a caller that knows which concrete backend it holds calls
+`canvas_mojo.text.draw_text` or `SvgCanvas.draw_text` directly, exactly
+as documented.
+
 Run with:
     pixi run example
 """
@@ -26,6 +34,8 @@ from canvas_mojo.buffer import Canvas
 from canvas_mojo.vector.draw_target import DrawTarget
 from canvas_mojo.vector.svg import SvgCanvas, write_svg
 from canvas_mojo.io.png import write_png
+from canvas_mojo.text.render import draw_text, TextAlign
+from canvas_mojo.text.font_discovery import FontWeight
 
 
 def draw_scene[T: DrawTarget](mut target: T) raises:
@@ -74,10 +84,39 @@ def draw_scene[T: DrawTarget](mut target: T) raises:
 def main() raises:
     var canvas = Canvas(800, 500, Color(255, 255, 255))
     draw_scene(canvas)
+    draw_text(
+        canvas,
+        60,
+        50,
+        "canvas_mojo",
+        Color(35, 38, 46),
+        36.0,
+        weight=FontWeight.BOLD,
+    )
+    draw_text(
+        canvas, 60, 82, "2D drawing, pure Mojo", Color(120, 120, 130), 18.0
+    )
     write_png(canvas, "examples/out_vector.png")
 
     var svg = SvgCanvas(800, 500)
     draw_scene(svg)
+    svg.draw_text(
+        60,
+        50,
+        "canvas_mojo",
+        Color(35, 38, 46),
+        36.0,
+        TextAlign.LEFT,
+        weight=FontWeight.BOLD,
+    )
+    svg.draw_text(
+        60,
+        82,
+        "2D drawing, pure Mojo",
+        Color(120, 120, 130),
+        18.0,
+        TextAlign.LEFT,
+    )
     write_svg(svg, "examples/out_vector.svg")
 
     print("wrote examples/out_vector.png and .svg")

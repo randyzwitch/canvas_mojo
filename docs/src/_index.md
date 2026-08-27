@@ -4,6 +4,8 @@ type: docs
 weight: 100
 ---
 
+![A bar chart, pie wedge, donut segment, scatter plot with an error ellipse, and a filled area shape, all drawn by canvas_mojo itself](examples/out_vector.svg)
+
 A 2D drawing engine written entirely in Mojo: pixel buffers, shape and
 path primitives, gradients, real system-font text, and PNG/BMP/SVG
 output — no Cairo, no FreeType, no other C rendering library anywhere
