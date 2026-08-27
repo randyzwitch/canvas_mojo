@@ -112,7 +112,7 @@ def _adler32(data: List[UInt8]) -> UInt32:
         if n - i < block:
             block = n - i
         for j in range(i, i + block):
-            s1 += UInt32(p[j])
+            s1 += UInt32(p[unsafe_offset=j])
             s2 += s1
         s1 %= BASE
         s2 %= BASE
@@ -265,9 +265,17 @@ def _unfilter_scanlines(
     """
     var row_bytes = width * bpp
     var out = List[UInt8](capacity=height * row_bytes)
+    # Both row buffers are sized up front and written by index, never
+    # appended to. That matters because the unfilter loop below holds
+    # raw pointers into them: appending can reallocate, which would
+    # move the buffer and leave those pointers dangling. Sizing them
+    # here makes that impossible rather than merely unlikely, and
+    # reuses them across scanlines instead of allocating per row.
     var prev_row = List[UInt8](capacity=row_bytes)
+    var cur_row = List[UInt8](capacity=row_bytes)
     for _ in range(row_bytes):
         prev_row.append(0)
+        cur_row.append(0)
 
     var pos = 0
     for _ in range(height):
@@ -281,12 +289,19 @@ def _unfilter_scanlines(
         if pos + row_bytes > len(raw):
             raise Error("png: truncated scanline data (row cut short)")
 
-        var cur_row = List[UInt8](capacity=row_bytes)
+        # Four reads per byte of the image, all at indices the loop
+        # bounds already constrain: `pos + x` stays inside `raw`
+        # because the row was length-checked just above, and the
+        # `x >= bpp` guards keep the back-references inside the two row
+        # buffers, which are `row_bytes` long by construction.
+        var rp = raw.unsafe_ptr()
+        var cp = cur_row.unsafe_ptr()
+        var pp = prev_row.unsafe_ptr()
         for x in range(row_bytes):
-            var filt_x = Int(raw[pos + x])
-            var a = Int(cur_row[x - bpp]) if x >= bpp else 0
-            var b = Int(prev_row[x])
-            var c = Int(prev_row[x - bpp]) if x >= bpp else 0
+            var filt_x = Int(rp[unsafe_offset=pos + x])
+            var a = Int(cp[unsafe_offset=x - bpp]) if x >= bpp else 0
+            var b = Int(pp[unsafe_offset=x])
+            var c = Int(pp[unsafe_offset=x - bpp]) if x >= bpp else 0
 
             var recon: Int
             if filter_type == 0:
@@ -301,14 +316,19 @@ def _unfilter_scanlines(
                 recon = filt_x + _paeth_predictor(a, b, c)
             else:
                 raise Error(String("png: invalid filter type ", filter_type))
-            cur_row.append(UInt8(recon & 0xFF))
+            cp[unsafe_offset=x] = UInt8(recon & 0xFF)
 
         pos += row_bytes
         # A copy, not a move: cur_row becomes prev_row just below, so
         # `out` needs its own bytes. One bulk .copy(), not a per-byte
         # append loop.
         out.extend(cur_row.copy())
+        # Swap roles rather than move: both buffers must stay alive and
+        # allocated for the next row, since the pointers above are
+        # taken fresh each iteration but the storage is reused.
+        var spare = prev_row^
         prev_row = cur_row^
+        cur_row = spare^
 
     return out^
 

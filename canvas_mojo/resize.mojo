@@ -49,6 +49,9 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     # the (width, height, pixels) constructor skips the solid fill a
     # plain Canvas() would immediately overwrite.
     var pixels = List[UInt8](capacity=out_width * out_height * 3)
+    # Every coordinate below comes from out_width/out_height times
+    # `factor`, which is how the output dimensions were derived, so
+    # each read is on-canvas by construction -- see Canvas.read_pixel.
     for oy in range(out_height):
         for ox in range(out_width):
             var r_sum = 0
@@ -56,7 +59,9 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
             var b_sum = 0
             for dy in range(factor):
                 for dx in range(factor):
-                    var p = source.get_pixel(ox * factor + dx, oy * factor + dy)
+                    var p = source.read_pixel(
+                        ox * factor + dx, oy * factor + dy
+                    )
                     r_sum += Int(p.r)
                     g_sum += Int(p.g)
                     b_sum += Int(p.b)
