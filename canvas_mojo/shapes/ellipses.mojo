@@ -158,30 +158,43 @@ def fill_ellipse_aa(
     var total_samples = n * n
     var step = 1.0 / Float64(n)
 
+    # The membership test is (x/rx)^2 + (y/ry)^2 <= 1, multiplied
+    # through by (rx*ry)^2 to give x^2*ry^2 + y^2*rx^2 <= (rx*ry)^2.
+    # Two reasons, and exactness is the first: every term here is a
+    # product of values that are exact in Float64 -- radii are whole
+    # pixels, offsets are whole pixels plus a multiple of 1/supersample
+    # -- and stays far below 2^53 at any canvas size, so the comparison
+    # carries no rounding at all, where the divided form rounds four
+    # times per pixel. The second is speed: this ran four divisions per
+    # pixel in the bounds test and two more per sub-sample, and
+    # division is an order of magnitude more expensive than multiply.
+    var rx2 = rx_f * rx_f
+    var ry2 = ry_f * ry_f
+    var limit = rx2 * ry2
+
     for py in range(cy - ry - 1, cy + ry + 2):
         for px in range(cx - rx - 1, cx + rx + 2):
             var dx = abs(Float64(px - cx))
             var dy = abs(Float64(py - cy))
 
-            var near_nx = max(0.0, dx - 0.5) / rx_f
-            var near_ny = max(0.0, dy - 0.5) / ry_f
-            if near_nx * near_nx + near_ny * near_ny > 1.0:
+            var near_x = max(0.0, dx - 0.5)
+            var near_y = max(0.0, dy - 0.5)
+            if near_x * near_x * ry2 + near_y * near_y * rx2 > limit:
                 continue  # whole pixel square is outside the ellipse
 
-            var far_nx = (dx + 0.5) / rx_f
-            var far_ny = (dy + 0.5) / ry_f
-            if far_nx * far_nx + far_ny * far_ny <= 1.0:
+            var far_x = dx + 0.5
+            var far_y = dy + 0.5
+            if far_x * far_x * ry2 + far_y * far_y * rx2 <= limit:
                 canvas.set_pixel(px, py, color)  # whole pixel square is inside
                 continue
 
             var covered = 0
             for sy in range(n):
                 var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
+                var fy_term = fy * fy * rx2
                 for sx in range(n):
                     var fx = Float64(px - cx) + (Float64(sx) + 0.5) * step - 0.5
-                    var nx = fx / rx_f
-                    var ny = fy / ry_f
-                    if nx * nx + ny * ny <= 1.0:
+                    if fx * fx * ry2 + fy_term <= limit:
                         covered += 1
             if covered > 0:
                 var alpha = UInt8(
