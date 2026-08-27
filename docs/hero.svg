@@ -1,0 +1,33 @@
+<!-- README.md's hero image -- a committed copy of examples/out_vector.svg
+     (examples/*.svg is gitignored: generated output, not source). Every
+     other image in this repo's docs is generated fresh at build/CI time,
+     but README.md is rendered straight from repository content by
+     GitHub with no build step, so it needs a real, checked-in file to
+     point at. docs/src/_index.md's own hero uses the generated file
+     directly, since the docs site's CI does run `pixi run example`
+     first.
+
+     Regenerate by running `pixi run mojo run -I . examples/vector.mojo`
+     and copying its examples/out_vector.svg here, whenever vector.mojo's
+     draw_scene() changes. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+<rect x="0" y="0" width="800" height="500" fill="#fafafc"/>
+<line x1="60" y1="420" x2="740" y2="420" stroke="#787882" stroke-width="2.000" stroke-linecap="round"/>
+<rect x="100" y="240" width="120" height="180" fill="#2864c8" fill-opacity="0.745"/>
+<rect x="180" y="300" width="120" height="120" fill="#dc3c78" fill-opacity="0.745"/>
+<path d="M430.000,150.000 L427.956,80.030 A70.000,70.000 0 0,1 487.773,189.525 Z" fill="#50aa78"/>
+<path d="M617.956,80.030 A70.000,70.000 0 0,1 631.898,218.981 L625.779,183.505 A34.000,34.000 0 0,0 619.007,116.014 Z" fill="#f0a028"/>
+<ellipse cx="300" cy="150" rx="90" ry="45" fill="#2864c8" fill-opacity="0.235"/>
+<ellipse cx="300" cy="150" rx="90" ry="45" fill="none" stroke="#2864c8" stroke-width="1"/>
+<circle cx="240" cy="130" r="5" fill="#2864c8" fill-opacity="0.863"/>
+<circle cx="260" cy="143" r="5" fill="#2864c8" fill-opacity="0.863"/>
+<circle cx="280" cy="156" r="5" fill="#2864c8" fill-opacity="0.863"/>
+<circle cx="300" cy="169" r="5" fill="#2864c8" fill-opacity="0.863"/>
+<circle cx="320" cy="141" r="5" fill="#2864c8" fill-opacity="0.863"/>
+<circle cx="340" cy="154" r="5" fill="#2864c8" fill-opacity="0.863"/>
+<circle cx="360" cy="167" r="5" fill="#2864c8" fill-opacity="0.863"/>
+<path d="M400.000,420.000 L460.000,350.000 Q540.000,300.000 600.000,360.000 L660.000,330.000 L660.000,420.000 Z" fill="#50aa78" fill-opacity="0.471"/>
+<path d="M400.000,420.000 L460.000,350.000 Q540.000,300.000 600.000,360.000 L660.000,330.000 L660.000,420.000 Z" fill="none" stroke="#327850" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="60" y="50" font-size="36.000" font-family="sans-serif" font-weight="bold" fill="#23262e" text-anchor="start">canvas_mojo</text>
+<text x="60" y="82" font-size="18.000" font-family="sans-serif" fill="#787882" text-anchor="start">2D drawing, pure Mojo</text>
+</svg>

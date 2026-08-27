@@ -1,0 +1,38 @@
+{{/* Project-level override of Hextra's docs/list.html, for the home
+     page only (Hugo's template lookup ranks layouts/docs/home.html
+     above layouts/docs/list.html for Kind=home specifically, so every
+     other `type: docs` section index -- Examples, API Reference, the
+     generated canvas_mojo package reference -- still gets the theme's
+     own template, breadcrumb and heading included).
+
+     Identical to that template except for two deletions: the
+     breadcrumb partial (on the home page it has no ancestors to show,
+     so it renders nothing but "canvas_mojo" again) and the <h1> title
+     block. The hero image in docs/src/_index.md's own content already
+     renders "canvas_mojo" as real text via the library's own
+     draw_text, so both would otherwise repeat the title a second and
+     third time on the one page that least needs it.
+
+     Must stay a Go-template comment, not a raw HTML one: anything
+     outside {{ define "main" }} becomes this file's own top-level
+     template body, which Hugo then renders standalone instead of
+     pairing "main" with baseof.html -- an empty page, no navbar, no
+     sidebar, nothing. Confirmed the hard way. */}}
+{{ define "main" }}
+  <div class='hx:mx-auto hx:flex hextra-max-page-width'>
+    {{ partial "sidebar.html" (dict "context" .) }}
+    {{ partial "toc.html" . }}
+    <article class="hx:w-full hx:break-words hx:flex hx:min-h-[calc(100vh-var(--navbar-height))] hx:min-w-0 hx:justify-center hx:pb-8 hx:pr-[calc(env(safe-area-inset-right)-1.5rem)]">
+      <main id="content" class="hx:w-full hx:min-w-0 hextra-max-content-width hx:px-6 hx:pt-4 hx:md:px-12">
+        <div class="content">
+          {{ .Content }}
+        </div>
+        {{ partial "components/last-updated.html" . }}
+        {{- if (site.Params.page.displayPagination | default true) -}}
+          {{- partial "components/pager.html" . -}}
+        {{- end -}}
+        {{ partial "components/comments.html" . }}
+      </main>
+    </article>
+  </div>
+{{ end }}

@@ -64,7 +64,11 @@ fmt = "mojo format canvas_mojo/ tests/ examples/ scripts/"
 # anything. vector.mojo's own out_vector.svg gets the same treatment,
 # copied alongside the pngs -- it's docs/src/_index.md's hero image,
 # the one example whose vector output (not just its raster one) is
-# ever referenced from a hand-written page. The trailing `sed` patches
+# ever referenced from a hand-written page. README.md's own hero is a
+# *separately* committed copy, docs/hero.svg (see that file's own
+# comment): GitHub renders READMEs straight from repository content
+# with no build step, so unlike docs/src/_index.md it can't point at
+# anything this task generates. The trailing `sed` patches
 # modo's own generated canvas_mojo/_index.md front matter: modo always emits
 # `weight: 400` for a package's own root section, with no config flag
 # to change it (`modo build --help` has nothing for it, and there's no
