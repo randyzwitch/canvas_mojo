@@ -69,30 +69,14 @@ struct FontWeight(Copyable, ImplicitlyCopyable, Movable):
         return self._value == other._value
 
 
-# fontconfig's <fontconfig/fontconfig.h> integer scale for the
-# "slant"/"weight" pattern properties -- its own numbering, unrelated
-# to this module's FontSlant/FontWeight. FC_WEIGHT_REGULAR/
-# FC_WEIGHT_BOLD, not the 100-900 OpenType scale fontconfig also
-# accepts via FcWeightFromOpenType, since only NORMAL/BOLD are
-# exposed.
-comptime _FC_SLANT_ROMAN = c_int(0)
-comptime _FC_SLANT_ITALIC = c_int(100)
-comptime _FC_SLANT_OBLIQUE = c_int(110)
-
-comptime _FC_WEIGHT_REGULAR = c_int(80)
-comptime _FC_WEIGHT_BOLD = c_int(200)
-
-# FcMatchKind: only FcMatchPattern (0) is used, FcConfigSubstitute's
-# "substitute for a pattern being matched against available fonts".
-comptime _FC_MATCH_PATTERN = c_int(0)
-
-# FcResult: only FcResultMatch (0) counts as success. NoMatch/
-# TypeMismatch/NoId/OutOfMemory all fail alike, since none leave a
-# usable "file" property.
-comptime _FC_RESULT_MATCH = c_int(0)
-
-
 def _fc_slant_value(slant: FontSlant) -> c_int:
+    # fontconfig's <fontconfig/fontconfig.h> integer scale for the
+    # "slant" pattern property -- its own numbering, unrelated to this
+    # module's FontSlant.
+    comptime _FC_SLANT_ROMAN = c_int(0)
+    comptime _FC_SLANT_ITALIC = c_int(100)
+    comptime _FC_SLANT_OBLIQUE = c_int(110)
+
     if slant == FontSlant.ITALIC:
         return _FC_SLANT_ITALIC
     if slant == FontSlant.OBLIQUE:
@@ -101,6 +85,13 @@ def _fc_slant_value(slant: FontSlant) -> c_int:
 
 
 def _fc_weight_value(weight: FontWeight) -> c_int:
+    # fontconfig's integer scale for the "weight" pattern property --
+    # FC_WEIGHT_REGULAR/FC_WEIGHT_BOLD, not the 100-900 OpenType scale
+    # fontconfig also accepts via FcWeightFromOpenType, since only
+    # NORMAL/BOLD are exposed.
+    comptime _FC_WEIGHT_REGULAR = c_int(80)
+    comptime _FC_WEIGHT_BOLD = c_int(200)
+
     if weight == FontWeight.BOLD:
         return _FC_WEIGHT_BOLD
     return _FC_WEIGHT_REGULAR
@@ -369,6 +360,15 @@ def _resolve_font_file_impl(
     family/slant/weight matching; any other value adds an `FC_CHARSET`
     holding that one codepoint before matching.
     """
+    # FcMatchKind: only FcMatchPattern (0) is used, FcConfigSubstitute's
+    # "substitute for a pattern being matched against available fonts".
+    comptime _FC_MATCH_PATTERN = c_int(0)
+
+    # FcResult: only FcResultMatch (0) counts as success. NoMatch/
+    # TypeMismatch/NoId/OutOfMemory all fail alike, since none leave a
+    # usable "file" property.
+    comptime _FC_RESULT_MATCH = c_int(0)
+
     var handle = _open_fontconfig_library()
 
     var init_ok = handle.call["FcInit", c_int]()

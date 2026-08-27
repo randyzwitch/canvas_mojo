@@ -6,8 +6,10 @@ machinery rather than reimplementing fill or stroke here.
 Coordinates are Float64 (FPoint), not Point's integer pixels: a control
 point off by a fraction of a pixel changes the flattened curve's shape,
 where a straight line's endpoints only need whole pixels. Quad/cubic
-flattening uses a fixed step count per segment rather than adaptive
-subdivision -- good enough at these sizes. arc_to is the exception: it
+flattening uses a fixed step count per segment (`curve_steps`, default
+16) rather than adaptive subdivision -- good enough at these sizes for
+the default, and callers with an unusually large or highly curved path
+can raise it. arc_to is the exception: it
 reuses canvas_mojo.shapes.arcs' `_arc_points` (radius-proportional step
 count), the same sampling draw_arc/fill_arc/fill_ring_sector use, since
 a fixed count doesn't stretch across a path-drawn arc's much wider
@@ -53,9 +55,6 @@ comptime _QUAD_TO = 2
 comptime _CUBIC_TO = 3
 comptime _CLOSE = 4
 comptime _ARC_TO = 5
-
-# Fixed subdivision steps per curve segment when flattening.
-comptime _CURVE_STEPS = 16
 
 
 struct FPoint(ImplicitlyCopyable, Movable):
@@ -288,10 +287,11 @@ struct _Subpath(Movable):
         self.closed = closed
 
 
-def _flatten(path: Path) -> List[_Subpath]:
+def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
     """Walk a Path's commands, flattening curves into straight-line
-    steps, and split into one List[Point] per sub-path (a new one
-    starting at each move_to after the first).
+    steps (`curve_steps` per quad/cubic segment), and split into one
+    List[Point] per sub-path (a new one starting at each move_to after
+    the first).
     """
     var subpaths = List[_Subpath]()
     var current = List[Point]()
@@ -318,16 +318,16 @@ def _flatten(path: Path) -> List[_Subpath]:
             current.append(Point(_round_to_int(cur_x), _round_to_int(cur_y)))
         elif cmd.kind == _QUAD_TO:
             var p0 = FPoint(cur_x, cur_y)
-            for step in range(1, _CURVE_STEPS + 1):
-                var t = Float64(step) / Float64(_CURVE_STEPS)
+            for step in range(1, curve_steps + 1):
+                var t = Float64(step) / Float64(curve_steps)
                 var p = _quad_point(p0, cmd.p1, cmd.p2, t)
                 current.append(Point(_round_to_int(p.x), _round_to_int(p.y)))
             cur_x = cmd.p2.x
             cur_y = cmd.p2.y
         elif cmd.kind == _CUBIC_TO:
             var p0 = FPoint(cur_x, cur_y)
-            for step in range(1, _CURVE_STEPS + 1):
-                var t = Float64(step) / Float64(_CURVE_STEPS)
+            for step in range(1, curve_steps + 1):
+                var t = Float64(step) / Float64(curve_steps)
                 var p = _cubic_point(p0, cmd.p1, cmd.p2, cmd.p3, t)
                 current.append(Point(_round_to_int(p.x), _round_to_int(p.y)))
             cur_x = cmd.p3.x
@@ -389,6 +389,7 @@ def fill_path(
     path: Path,
     color: Color,
     fill_rule: FillRule = FillRule.EVEN_ODD,
+    curve_steps: Int = 16,
 ):
     """Fill a path's interior with the scanline algorithm, combining
     every sub-path's crossings per scanline into a signed winding
@@ -396,6 +397,11 @@ def fill_path(
     fill_polygon). With `fill_rule` at its EVEN_ODD default, overlapping
     sub-paths leave a hole where they overlap; with FillRule.NONZERO,
     two sub-paths wound the same direction fill as one solid union.
+
+    `curve_steps` is how many straight-line segments each quad/cubic
+    Bezier in the path flattens into (see _flatten) -- raise it for an
+    unusually large or highly curved path where 16 segments start to
+    look faceted.
 
     Separate from fill_polygon rather than a generalization of it:
     fill_polygon's single-polygon contract is an API guarantee.
@@ -405,7 +411,7 @@ def fill_path(
     opposite-direction edges count once rather than twice, while a
     local extremum contributes zero net crossings rather than two.
     """
-    var subpaths = _flatten(path)
+    var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return
 
@@ -515,6 +521,7 @@ def fill_path_aa(
     color: Color,
     fill_rule: FillRule = FillRule.EVEN_ODD,
     supersample: Int = 4,
+    curve_steps: Int = 16,
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
     fill_polygon_aa is fill_polygon's (see that function in
@@ -545,8 +552,11 @@ def fill_path_aa(
     Not fused with fill_path behind an `antialias: Bool`, for the
     reason canvas_mojo.shapes.lines gives: a complexity-class jump per
     pixel, not a free toggle.
+
+    `curve_steps` is fill_path's same per-segment flattening knob --
+    see its docstring.
     """
-    var subpaths = _flatten(path)
+    var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return
 
@@ -702,13 +712,17 @@ def fill_path_gradient(
     path: Path,
     gradient: LinearGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
+    curve_steps: Int = 16,
 ):
     """Fill a path's interior as fill_path does, but sourcing each
     pixel's color from `gradient` (gradient.mojo) rather than one flat
     Color. Same scanline structure, duplicated rather than factored
     behind a "how to get a color" parameter for two call sites.
+
+    `curve_steps` is fill_path's same per-segment flattening knob --
+    see its docstring.
     """
-    var subpaths = _flatten(path)
+    var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return
 
@@ -738,9 +752,10 @@ def fill_path_radial_gradient(
     path: Path,
     gradient: RadialGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
+    curve_steps: Int = 16,
 ):
     """fill_path_gradient's RadialGradient counterpart (gradient.mojo)."""
-    var subpaths = _flatten(path)
+    var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return
 
@@ -769,13 +784,17 @@ def stroke_path(
     mut canvas: Canvas,
     path: Path,
     color: Color,
+    curve_steps: Int = 16,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
     """Stroke every sub-path, hard-edged 1px: closed ones (close() was
     called) via draw_polygon, open ones via draw_polyline.
+
+    `curve_steps` is fill_path's same per-segment flattening knob --
+    see its docstring.
     """
-    var subpaths = _flatten(path)
+    var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         if sp.closed:
@@ -790,13 +809,17 @@ def stroke_path_aa(
     color: Color,
     width: Float64 = 1.0,
     supersample: Int = 4,
+    curve_steps: Int = 16,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
     """Anti-aliased version of stroke_path -- see draw_polyline_aa/
     draw_polygon_aa.
+
+    `curve_steps` is fill_path's same per-segment flattening knob --
+    see its docstring.
     """
-    var subpaths = _flatten(path)
+    var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         if sp.closed:

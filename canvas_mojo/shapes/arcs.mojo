@@ -12,18 +12,13 @@ _angle_in_span, _arc_bounds, _union_bounds, _extend_bounds) every
 function above builds on.
 """
 
-from std.math import atan2, cos, sin
+from std.math import atan2, cos, pi, sin
 
 from canvas_mojo.color import Color
 from canvas_mojo.buffer import Canvas
 from canvas_mojo.geometry import Point, _round_to_int
 from canvas_mojo.shapes.lines import draw_polyline, draw_polyline_aa
 from canvas_mojo.shapes.polygon_fill import fill_polygon
-
-comptime _TWO_PI = 6.283185307179586
-comptime _HALF_PI = 1.5707963267948966
-comptime _PI = 3.141592653589793
-comptime _THREE_HALF_PI = 4.71238898038469
 
 
 def _extend_bounds(
@@ -107,11 +102,11 @@ def _arc_bounds(
 
     if _angle_in_span(0.0, start_angle, end_angle):
         _extend_bounds(min_x, min_y, max_x, max_y, cx + radius, cy)
-    if _angle_in_span(_HALF_PI, start_angle, end_angle):
+    if _angle_in_span(pi / 2, start_angle, end_angle):
         _extend_bounds(min_x, min_y, max_x, max_y, cx, cy + radius)
-    if _angle_in_span(_PI, start_angle, end_angle):
+    if _angle_in_span(pi, start_angle, end_angle):
         _extend_bounds(min_x, min_y, max_x, max_y, cx - radius, cy)
-    if _angle_in_span(_THREE_HALF_PI, start_angle, end_angle):
+    if _angle_in_span(3 * pi / 2, start_angle, end_angle):
         _extend_bounds(min_x, min_y, max_x, max_y, cx, cy - radius)
 
     return (min_x, min_y, max_x, max_y)
@@ -170,9 +165,9 @@ def _angle_in_span(
     """
     var a = angle
     while a < start_angle:
-        a += _TWO_PI
-    while a >= start_angle + _TWO_PI:
-        a -= _TWO_PI
+        a += 2 * pi
+    while a >= start_angle + 2 * pi:
+        a -= 2 * pi
     return a <= end_angle
 
 
@@ -229,12 +224,10 @@ struct _AngleSpan(ImplicitlyCopyable, Movable):
         # always inside" shortcut would include. Handed to the exact
         # form rather than reasoned about -- a full-circle wedge is
         # `fill_circle_aa`'s job anyway, so nothing hot pays for it.
-        self.near_full_turn = (
-            span > _TWO_PI - 1.0e-9 and span < _TWO_PI + 1.0e-9
-        )
-        self.always_inside = span >= _TWO_PI and not self.near_full_turn
+        self.near_full_turn = span > 2 * pi - 1.0e-9 and span < 2 * pi + 1.0e-9
+        self.always_inside = span >= 2 * pi and not self.near_full_turn
         self.always_outside = span < 0.0
-        self.wide = span > _PI
+        self.wide = span > pi
         # A sample exactly on the center has no angle to speak of, and
         # `atan2(0, 0)` is 0 -- which is inside this span only for some
         # start/end pairs. Decided once here rather than reasoned about
