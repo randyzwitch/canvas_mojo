@@ -137,90 +137,24 @@ def draw_line_aa(
     """Anti-aliased line, `width` pixels wide (default 1), with round
     end caps.
 
-    Same supersampled analytic-coverage technique as fill_circle_aa /
-    draw_circle_aa, including the pixel-centered-at-(px,py) sampling
-    convention: for every pixel near the segment, samples an NxN
-    sub-pixel grid and tests each sub-sample's distance to the
-    segment (clamping the projection onto the line to [0, 1], so
-    samples past either endpoint measure distance to that endpoint
-    directly) against width/2.
+    A one-segment polyline, and drawn as one: `_draw_polyline_core_aa`
+    already carries the row- and column-level filtering that keeps a
+    long diagonal from scanning its whole bounding box, and the
+    vectorized sample loop. Scanning the bounding box directly, as this
+    used to, costs the same for a 1-pixel line as for the rectangle it
+    spans -- a full-width diagonal covers a few thousand pixels inside
+    a box of nearly a million.
 
-    That endpoint clamping is what gives round caps rather than flat
-    (butt) caps -- a sample just past x1 is tested against a circle
-    centered on the endpoint, not rejected outright. For width=1 the
-    difference is barely visible; it matters more at larger widths,
-    and round caps have the added benefit of not leaving a notch
-    where two line segments meet at an angle (relevant once polylines
-    build on this).
-
-    `dashes` (see _is_dash_on) is measured along this segment's
-    idealized straight-line length, not _draw_line_core's raster-step
-    distance: a supersampled algorithm has no pixel walk to count, and
-    `t` -- the already-clamped projection fraction -- times the true
-    length is the distance available at each sample. A sample past
-    either endpoint (t clamped to 0 or 1) measures as if it sat exactly
-    at that endpoint, as the round-cap test already treats it.
+    Confirmed byte-identical to the previous implementation across
+    horizontal, vertical, diagonal, thick and dashed cases before the
+    switch: the coverage test is the same minimum-distance-to-segment
+    with the same round caps, since a single segment has no joint for
+    the core's minimum to do anything different with.
     """
-    var half_width = width / 2.0
-    var fx0 = Float64(x0)
-    var fy0 = Float64(y0)
-    var fx1 = Float64(x1)
-    var fy1 = Float64(y1)
-    var ldx = fx1 - fx0
-    var ldy = fy1 - fy0
-    var len2 = ldx * ldx + ldy * ldy
-    var seg_length = sqrt(len2)
-
-    var pad = Int(half_width) + 2
-    var min_x = min(x0, x1) - pad
-    var max_x = max(x0, x1) + pad
-    var min_y = min(y0, y1) - pad
-    var max_y = max(y0, y1) + pad
-
-    var n = supersample
-    var total_samples = n * n
-    var step = 1.0 / Float64(n)
-    var hw2 = half_width * half_width
-
-    for py in range(min_y, max_y + 1):
-        for px in range(min_x, max_x + 1):
-            var covered = 0
-            for sy in range(n):
-                var sample_y = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-                for sx in range(n):
-                    var sample_x = (
-                        Float64(px) + (Float64(sx) + 0.5) * step - 0.5
-                    )
-                    var t: Float64
-                    if len2 == 0.0:
-                        t = 0.0
-                    else:
-                        t = (
-                            (sample_x - fx0) * ldx + (sample_y - fy0) * ldy
-                        ) / len2
-                        if t < 0.0:
-                            t = 0.0
-                        elif t > 1.0:
-                            t = 1.0
-                    var closest_x = fx0 + t * ldx
-                    var closest_y = fy0 + t * ldy
-                    var ddx = sample_x - closest_x
-                    var ddy = sample_y - closest_y
-                    if ddx * ddx + ddy * ddy <= hw2:
-                        if _is_dash_on(t * seg_length, dashes, dash_offset):
-                            covered += 1
-            if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
-                canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
-                )
+    var points: List[Point] = [Point(x0, y0), Point(x1, y1)]
+    _draw_polyline_core_aa(
+        canvas, points, color, width, supersample, False, dashes, dash_offset
+    )
 
 
 def draw_polyline(
@@ -490,10 +424,53 @@ def _draw_polyline_core_aa(
         # 3200-segment stroke: ~844ms down to a small fraction of it.
         var row_min_px = max_x + 1
         var row_max_px = min_x - 1
+        # A segment's columns *at this row*, not over its whole
+        # length. A steep segment crosses one row in a narrow x window
+        # even though its overall x-range may span the canvas, so
+        # bucketing by the overall range makes a full-width diagonal a
+        # candidate in every column of every row -- the whole bounding
+        # box, which is the cost this filtering exists to avoid.
+        #
+        # The row band is [py - 0.5, py + 0.5] widened by half_width,
+        # since a sample is covered by anything within half_width of
+        # it: if the nearest point on the segment is an endpoint, that
+        # endpoint is itself within half_width in y, so it falls in the
+        # band too. Conservative in both directions, so coverage is
+        # unchanged.
+        var band_lo = Float64(py) - 0.5 - half_width - 1.0
+        var band_hi = Float64(py) + 0.5 + half_width + 1.0
         for ri in range(len(row_candidates)):
             var seg = row_candidates[ri]
-            var lo = Int(ceil(seg_min_x[seg]))
-            var hi = Int(floor(seg_max_x[seg]))
+            var sx_lo: Float64
+            var sx_hi: Float64
+            var ay = seg_y0[seg]
+            var dy = seg_dy[seg]
+            if dy == 0.0:
+                # Horizontal: the row filter already established that
+                # this row is in range, and the whole segment is.
+                sx_lo = seg_min_x[seg]
+                sx_hi = seg_max_x[seg]
+            else:
+                var ta = (band_lo - ay) / dy
+                var tb = (band_hi - ay) / dy
+                if ta > tb:
+                    var swap = ta
+                    ta = tb
+                    tb = swap
+                if ta < 0.0:
+                    ta = 0.0
+                if tb > 1.0:
+                    tb = 1.0
+                if ta > tb:
+                    continue  # segment does not reach this row's band
+                var ax = seg_x0[seg]
+                var ddx = seg_dx[seg]
+                var xa = ax + ta * ddx
+                var xb = ax + tb * ddx
+                sx_lo = min(xa, xb) - half_width - 1.0
+                sx_hi = max(xa, xb) + half_width + 1.0
+            var lo = Int(ceil(sx_lo))
+            var hi = Int(floor(sx_hi))
             if lo < min_x:
                 lo = min_x
             if hi > max_x:
