@@ -31,14 +31,10 @@ from canvas_mojo.path import (
 from canvas_mojo.text.font_discovery import FontWeight
 from canvas_mojo.text.text_align import TextAlign
 
-comptime _HEX_DIGITS = "0123456789abcdef"
-
-# Decimal places every Float64 coordinate/width/size is formatted to;
-# see _format_svg_float for why this rounding exists.
-comptime _SVG_DECIMALS = 3
-
 
 def _hex_byte(value: UInt8) -> String:
+    comptime _HEX_DIGITS = "0123456789abcdef"
+
     var v = Int(value)
     # `_HEX_DIGITS` is a fixed, pure-ASCII literal, so a raw UTF-8 byte
     # index (`[byte=...]`) is exactly the character it looks like.
@@ -57,6 +53,10 @@ def _format_svg_float(value: Float64) -> String:
     -- far finer than a display resolves -- collapses the two. See the
     wiki for the full case.
     """
+    # Decimal places every Float64 coordinate/width/size is formatted
+    # to.
+    comptime _SVG_DECIMALS = 3
+
     var scale = 1000.0  # 10 ** _SVG_DECIMALS
     var scaled = _round_to_int(value * scale)
     var sign = "-" if scaled < 0 else ""

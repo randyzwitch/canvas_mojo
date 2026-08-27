@@ -40,10 +40,6 @@ from std.memory import ArcPointer
 
 from canvas_mojo.path import Path
 
-comptime _SFNT_VERSION_TRUETYPE = 0x00010000
-comptime _SFNT_VERSION_TRUETYPE_APPLE = 0x74727565  # 'true', Apple's own legacy TrueType tag, also valid
-comptime _SFNT_VERSION_OTTO = 0x4F54544F  # 'OTTO' -- CFF/OpenType-CFF outlines, not supported
-
 
 def _u8(data: List[UInt8], pos: Int) raises -> Int:
     if pos < 0 or pos >= len(data):
@@ -210,6 +206,12 @@ struct TTFFace(Movable):
 
         if len(data) < 12:
             raise Error("ttf: file too short to be a TrueType font")
+
+        comptime _SFNT_VERSION_TRUETYPE = 0x00010000
+        # 'true', Apple's own legacy TrueType tag, also valid
+        comptime _SFNT_VERSION_TRUETYPE_APPLE = 0x74727565
+        # 'OTTO' -- CFF/OpenType-CFF outlines, not supported
+        comptime _SFNT_VERSION_OTTO = 0x4F54544F
 
         var sfnt_version = _u32(data, 0)
         if sfnt_version == _SFNT_VERSION_OTTO:
