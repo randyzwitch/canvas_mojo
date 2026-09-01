@@ -1,6 +1,6 @@
 """Tests for canvas_mojo/text/glyph_outline.mojo.
 
-Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
+Needs a "Sans"-resolvable system font (the generic sans-serif
 alias), the same real-machine dependency test_text.mojo and
 test_font_discovery.mojo document.
 

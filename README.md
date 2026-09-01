@@ -77,7 +77,7 @@ flowchart LR
         direction TB
         Prim["Shape primitives<br/>fill_circle_aa, fill_rect,<br/>fill_arc_aa, draw_line_aa …"]
         PathAPI["Path<br/>move_to → line_to / curve_to / arc_to<br/>→ fill_path_aa / stroke_path_aa"]
-        Text["draw_text<br/>(fontconfig → native TTF parser<br/>→ fill_path_aa)"]
+        Text["draw_text<br/>(native font discovery → native TTF parser<br/>→ fill_path_aa)"]
         Grad["LinearGradient / RadialGradient<br/>(fill source for either above)"]
 
         Text --> PathAPI
@@ -108,18 +108,19 @@ page for a walkthrough of each path with runnable examples.
 
 ## Status
 
-Mojo-only, plus one small direct FFI dependency on a system library
-`canvas_mojo/text/render.mojo` links against for real system-font text
-rendering: `libfontconfig` (font matching — resolving a family/style
-name to an actual installed font file —
-`canvas_mojo/text/font_discovery.mojo`), a typical,
-near-universally-installed system library, not a new requirement this
-package introduces.
+Mojo-only, with no FFI and no linked libraries at all. The three jobs
+real system-font text rendering needs are each native Mojo here: font
+discovery (matching a family/style name against the fonts installed on
+the machine — `canvas_mojo/text/font_discovery.mojo`, which reads each
+font's own `name`/`OS/2` tables rather than linking `libfontconfig`),
+font parsing (glyph outlines and metrics —
+`canvas_mojo/text/ttf.mojo`), and rasterization (this package's own
+`fill_path_aa`). No FreeType, no Cairo, no fontconfig, no other
+third-party rendering/font engine anywhere in the pipeline.
 
-Font *parsing* (glyph outlines, metrics, `canvas_mojo/text/ttf.mojo`)
-and rasterization (this package's own `fill_path_aa`) are both native
-Mojo — no FreeType, no Cairo, no other third-party rendering/font
-engine anywhere in the pipeline.
+Text rendering still needs *fonts* installed on the machine, the same
+way any text stack does — it just no longer needs a library to find
+them.
 
 ## Development
 

@@ -23,7 +23,7 @@ values, which depend on `ttf.mojo`'s unhinted metrics: a hinting
 rasterizer rounds thin stems like "I"'s single stroke to whole pixels,
 and `ttf.mojo` never hints.
 
-Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
+Needs a "Sans"-resolvable system font (the generic sans-serif
 alias), true of most Linux/macOS systems but not guaranteed the way a
 checked-in fixture would be. The font-fallback tests need a second
 machine-specific fact -- the "Ubuntu" font lacking a snowman glyph

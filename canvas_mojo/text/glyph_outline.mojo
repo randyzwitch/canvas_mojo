@@ -6,7 +6,7 @@ file's binary tables directly. This module is the thin adapter
 between the two: it exposes the `LineMetrics`/`GlyphMetrics`/
 `face_line_metrics`/`has_glyph`/`glyph_metrics`/`glyph_path` surface
 `render.mojo` calls, implemented against `ttf.mojo`'s `TTFFace` --
-no FFI, no C struct layouts, no linked library in this module at all.
+no linked library in this module, or anywhere else in this package.
 
 No hinting: `ttf.mojo` implements no hinting bytecode interpreter, a
 deliberate scope decision documented there. Every glyph renders

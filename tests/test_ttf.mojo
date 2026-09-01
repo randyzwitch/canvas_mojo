@@ -1,6 +1,6 @@
 """Tests for canvas_mojo/text/ttf.mojo.
 
-Needs a "Sans"-resolvable system font (fontconfig's generic sans-serif
+Needs a "Sans"-resolvable system font (the generic sans-serif
 alias, DejaVu Sans on this machine), the same real-machine dependency
 test_glyph_outline.mojo and test_font_discovery.mojo document.
 

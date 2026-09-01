@@ -2,8 +2,8 @@
 draw_text(). Assertions are against the markup itself, hand-derived
 with the rigor pixel-color assertions get elsewhere, since there's no
 raster buffer to sample. No font machinery involved -- SvgCanvas
-touches canvas_mojo.text only for FontWeight, a small struct with no
-fontconfig or FFI calls, never canvas_mojo.text.render.
+touches canvas_mojo.text only for FontWeight, a small struct that
+reads no font files, never canvas_mojo.text.render.
 """
 
 from std.math import pi

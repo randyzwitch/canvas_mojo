@@ -2,7 +2,7 @@
 it can be referenced (by `canvas_mojo.vector.draw_target`, and
 transitively by `canvas_mojo.buffer`'s `Canvas` -- see that trait for
 why) without pulling in render.mojo's heavier
-FFI-touching imports (font_discovery.mojo/ttf.mojo/glyph_outline.mojo/
+font-touching imports (font_discovery.mojo/ttf.mojo/glyph_outline.mojo/
 bidi.mojo). `from canvas_mojo.text.render import TextAlign` also works
 -- render.mojo re-exports this same type.
 """

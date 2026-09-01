@@ -1,6 +1,7 @@
 """Demo: draw_text() rendering real system-font text -- font matching
-via fontconfig, glyph outlines/metrics via this package's own native
-TrueType parser (ttf.mojo), rasterization via this package's own
+via this package's own native font discovery (font_discovery.mojo),
+glyph outlines/metrics via its own native TrueType parser (ttf.mojo),
+rasterization via its own
 fill_path_aa (see canvas_mojo/text/render.mojo's module
 docstring) -- composited onto a Canvas the same way every other
 primitive is: through set_pixel.
@@ -163,7 +164,7 @@ def main() raises:
     draw_text(c, 60, 1590, "mixed: Hello שלום World", Color(60, 70, 90), 66.0)
 
     # Font fallback (_resolve_glyph, via resolve_font_file_for_char):
-    # the requested "Ubuntu" family has no snowman glyph, so fontconfig
+    # the requested "Ubuntu" family has no snowman glyph, so matching
     # resolves a different installed font for that one character rather
     # than falling through to an empty box.
     draw_text(

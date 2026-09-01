@@ -1,8 +1,9 @@
-"""Text rendering. Font matching (fontconfig, `font_discovery.mojo`) is
-this module's only FFI dependency; glyph outlines and metrics come from
-`ttf.mojo` via `glyph_outline.mojo`, and rasterization from
-`fill_path_aa` (`path.mojo`). The glyph path is unhinted -- see
-ttf.mojo for what that means for exact metrics.
+"""Text rendering, native the whole way down: font matching from
+`font_discovery.mojo`, glyph outlines and metrics from `ttf.mojo` via
+`glyph_outline.mojo`, and rasterization from `fill_path_aa`
+(`path.mojo`). No FFI, in this module or anywhere below it. The glyph
+path is unhinted -- see ttf.mojo for what that means for exact
+metrics.
 
 Glyphs fill onto the target `Canvas` through the same `fill_path_aa`
 every other filled shape uses, so translucent text composites through
@@ -29,12 +30,12 @@ but not contextual letter-shaping.
 Every glyph also goes through font fallback (`_resolve_glyph`). If the
 requested family has no real glyph for a codepoint (`has_glyph`
 distinguishes a real glyph from ".notdef", index 0), that one character
-resolves through `resolve_font_file_for_char`, which constrains
-fontconfig's match to a font containing it. This package bundles no
-fonts, so a CJK/Cyrillic/symbol character requested under a Latin-only
-family renders through whatever font on the system has it; a character
-missing everywhere degrades to fontconfig's best-effort match rather
-than an error. Fallback faces cache alongside the primary face.
+resolves through `resolve_font_file_for_char`, which ranks a font
+whose `cmap` actually maps that codepoint above every other matching
+term. This package bundles no fonts, so a CJK/Cyrillic/symbol character
+requested under a Latin-only family renders through whatever font on
+the system has it; a character missing everywhere degrades to the
+unconstrained best match rather than an error. Fallback faces cache alongside the primary face.
 
 FontSlant/FontWeight are defined in font_discovery.mojo and re-exported
 here, as TextAlign is from text_align.mojo.
@@ -168,7 +169,7 @@ def _load_sized_face(
     size: Float64,
     mut cache: FontCache,
 ) raises -> ArcPointer[TTFFace]:
-    """resolve_font_file -> TTFFace, sized to `size` pixels: the one
+    """Font match -> TTFFace, sized to `size` pixels: the one
     place every entry point below gets a ready-to-use face. Both the
     resolved path and the parsed, sized face are cached by `cache` (see
     font_cache.mojo). Returns an `ArcPointer` so a cache hit is a
@@ -249,7 +250,7 @@ def _resolve_glyph(
 ) raises -> _PositionedGlyph:
     """This character's metrics and outline, from `primary` if it has a
     glyph for `codepoint`, otherwise from a fallback font resolved
-    through `resolve_font_file_for_char` (fontconfig's charset-aware
+    through `resolve_font_file_for_char` (codepoint-constrained
     matching -- e.g. CJK text requested under a Latin-only family).
     Both the fallback path and the parsed fallback face are cached by
     `cache`, so several fallback glyphs for the same codepoint cost one
