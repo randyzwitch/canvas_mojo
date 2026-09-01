@@ -23,6 +23,13 @@ has; if a future image's Ubuntu font gains it, the fallback assertion
 needs a different missing character rather than the mechanism being
 broken.
 
+What is deliberately *not* assumed is which *style* files a family
+ships beyond those: fonts-dejavu-core includes DejaVuSans-Oblique.ttf
+on a GitHub runner and not on every desktop install, so a slant request
+for DejaVu Sans lands on a different file depending on the image. Tests
+that would otherwise encode that read the matched face's family back
+out of the FontDatabase (`_matched_face_answers_to`) instead.
+
 That third fact needs the "Ubuntu" font family actually installed.
 Without it, "Ubuntu" resolves through the default sans list like any
 other unknown family, collapsing the "falls back to a different font"
@@ -57,6 +64,25 @@ def _looks_like_a_font_file(path: String) -> Bool:
 def _is_readable_file(path: String) raises -> Bool:
     with open(path, "r") as f:
         return f.read(4).byte_length() > 0
+
+
+def _matched_face_answers_to(
+    database: FontDatabase, path: String, family_key: String
+) -> Bool:
+    """Whether the face `database` resolved to lists `family_key` among
+    the normalized names it answers to.
+
+    An assertion about *which family* matched, rather than about a
+    filename: which file within a family a style request lands on is an
+    image difference (fonts-dejavu-core ships DejaVuSans-Oblique.ttf on
+    a GitHub runner and not on every desktop install), while which
+    family it lands on is the thing under test. Any face sharing the
+    path counts, since a .ttc holds several.
+    """
+    for face in database.faces:
+        if face.path == path and family_key in face.names:
+            return True
+    return False
 
 
 def test_resolves_sans_to_an_existing_font_file() raises:
@@ -121,22 +147,27 @@ def test_bold_weight_resolves_to_a_different_file_than_normal() raises:
 
 def test_oblique_slant_resolves_to_the_oblique_face() raises:
     # DejaVu Sans Mono ships Book/Bold/Oblique/BoldOblique as separate
-    # files, so the slant term is observable there where it isn't for
-    # DejaVu Sans (which ships no italic at all).
+    # files everywhere this runs, which is what makes the slant term
+    # observable as a different *file* rather than only a different
+    # face.
     var upright = resolve_font_file("Monospace", slant=FontSlant.NORMAL)
     var oblique = resolve_font_file("Monospace", slant=FontSlant.OBLIQUE)
     assert_true(not (upright == oblique))
     assert_true(oblique.lower().endswith("oblique.ttf"))
 
 
-def test_a_slant_with_no_matching_face_stays_in_the_family() raises:
-    # DejaVu Sans has no italic face. Slant is scored below family, so
-    # asking for one must return DejaVu Sans upright rather than
-    # promoting some other family that happens to have an italic.
-    assert_equal(
-        resolve_font_file("Sans", slant=FontSlant.ITALIC),
-        resolve_font_file("Sans", slant=FontSlant.NORMAL),
-    )
+def test_a_slant_request_stays_inside_the_requested_family() raises:
+    # Slant is scored below family, so asking for an italic must stay
+    # in the requested family rather than promoting some other family
+    # that happens to ship one. Whether it lands on that family's
+    # oblique face (italic and oblique are near-substitutes, penalty 1)
+    # or falls back to its upright one (penalty 3) depends on what the
+    # image installed, which is exactly why this asserts on the family
+    # and not on the file.
+    var database = FontDatabase()
+    for slant in [FontSlant.NORMAL, FontSlant.ITALIC, FontSlant.OBLIQUE]:
+        var path = database.resolve("DejaVu Sans", slant=slant)
+        assert_true(_matched_face_answers_to(database, path, "dejavusans"))
 
 
 def test_default_weight_matches_explicit_normal() raises:
