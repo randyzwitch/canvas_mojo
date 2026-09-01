@@ -9,7 +9,7 @@ with finer edges baked into the file rather than left to whatever
 displays it.
 """
 
-from canvas_mojo.buffer import Canvas
+from canvas.buffer import Canvas
 
 
 def downsample(source: Canvas, factor: Int) raises -> Canvas:

@@ -11,17 +11,17 @@ Run with:
 
 from std.math import cos, pi, sin
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point
-from canvas_mojo.shapes.lines import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point
+from canvas.shapes.lines import (
     draw_line,
     draw_line_aa,
     draw_polygon,
     draw_polygon_aa,
 )
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def main() raises:

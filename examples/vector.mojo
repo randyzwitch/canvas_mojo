@@ -21,21 +21,21 @@ backend, rather than from inside it: text is deliberately excluded
 from `DrawTarget` (see that trait's own docstring), so there is no
 generic call `draw_scene` could make. This is that exclusion's other
 side -- a caller that knows which concrete backend it holds calls
-`canvas_mojo.text.draw_text` or `SvgCanvas.draw_text` directly, exactly
+`canvas.text.draw_text` or `SvgCanvas.draw_text` directly, exactly
 as documented.
 
 Run with:
     pixi run example
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.path import Path
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.vector.draw_target import DrawTarget
-from canvas_mojo.vector.svg import SvgCanvas, write_svg
-from canvas_mojo.io.png import write_png
-from canvas_mojo.text.render import draw_text, TextAlign
-from canvas_mojo.text.font_discovery import FontWeight
+from canvas.color import Color
+from canvas.path import Path
+from canvas.buffer import Canvas
+from canvas.vector.draw_target import DrawTarget
+from canvas.vector.svg import SvgCanvas, write_svg
+from canvas.io.png import write_png
+from canvas.text.render import draw_text, TextAlign
+from canvas.text.font_discovery import FontWeight
 
 
 def draw_scene[T: DrawTarget](mut target: T) raises:

@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/text/font_cache.mojo.
+"""Tests for canvas/text/font_cache.mojo.
 
 Needs the same "Sans"-resolvable system font
 tests/test_font_discovery.mojo documents.
@@ -23,16 +23,16 @@ and CI load; font_cache.mojo documents the measured cost instead.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
-from canvas_mojo.text.font_cache import FontCache
-from canvas_mojo.text.font_discovery import (
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import (
     FontSlant,
     FontWeight,
     resolve_font_file,
     resolve_font_file_for_char,
 )
-from canvas_mojo.text.render import (
+from canvas.text.render import (
     draw_text,
     measure_text,
     measure_text_block,

@@ -1,13 +1,13 @@
-"""Tests for canvas_mojo/shapes/rects.mojo: exact pixel sets for known
+"""Tests for canvas/shapes/rects.mojo: exact pixel sets for known
 inputs, verified against hand-traced runs of the same algorithms.
 """
 
 from std.testing import assert_equal, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.gradient import LinearGradient, RadialGradient
-from canvas_mojo.shapes.rects import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.gradient import LinearGradient, RadialGradient
+from canvas.shapes.rects import (
     draw_rect,
     fill_rect,
     fill_rect_gradient,

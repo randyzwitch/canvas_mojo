@@ -10,16 +10,16 @@ Run with:
     pixi run example
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.gradient import LinearGradient, RadialGradient
-from canvas_mojo.path import Path, fill_path_gradient, fill_path_radial_gradient
-from canvas_mojo.shapes.rects import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.gradient import LinearGradient, RadialGradient
+from canvas.path import Path, fill_path_gradient, fill_path_radial_gradient
+from canvas.shapes.rects import (
     fill_rect_gradient,
     fill_rect_radial_gradient,
 )
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def main() raises:

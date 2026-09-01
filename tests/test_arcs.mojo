@@ -1,13 +1,13 @@
-"""Tests for canvas_mojo/shapes/arcs.mojo: exact pixel sets for known
+"""Tests for canvas/shapes/arcs.mojo: exact pixel sets for known
 inputs, verified against hand-traced runs of the same algorithms.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
 from std.math import atan2, cos, pi, sin
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.arcs import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.shapes.arcs import (
     _AngleSpan,
     _angle_in_span,
     _arc_points,

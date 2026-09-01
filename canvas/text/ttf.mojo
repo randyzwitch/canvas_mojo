@@ -38,7 +38,7 @@ the same values a Python oracle reads from the same bytes.
 
 from std.memory import ArcPointer
 
-from canvas_mojo.path import Path
+from canvas.path import Path
 
 
 def _u8(data: List[UInt8], pos: Int) raises -> Int:

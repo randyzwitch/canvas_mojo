@@ -1,6 +1,6 @@
 """A general path type: move/line/quadratic-curve/cubic-curve/arc-to/
 close, built up through chained calls, then flattened into straight-
-line segments and handed to canvas_mojo.shapes' polyline/polygon/fill
+line segments and handed to canvas.shapes' polyline/polygon/fill
 machinery rather than reimplementing fill or stroke here.
 
 Coordinates are Float64 (FPoint), not Point's integer pixels: a control
@@ -10,7 +10,7 @@ flattening uses a fixed step count per segment (`curve_steps`, default
 16) rather than adaptive subdivision -- good enough at these sizes for
 the default, and callers with an unusually large or highly curved path
 can raise it. arc_to is the exception: it
-reuses canvas_mojo.shapes.arcs' `_arc_points` (radius-proportional step
+reuses canvas.shapes.arcs' `_arc_points` (radius-proportional step
 count), the same sampling draw_arc/fill_arc/fill_ring_sector use, since
 a fixed count doesn't stretch across a path-drawn arc's much wider
 radius range.
@@ -25,29 +25,29 @@ close() was called.
 
 from std.math import ceil, cos, sin
 
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
-from canvas_mojo.geometry import Point, _round_to_int
-from canvas_mojo.gradient import LinearGradient, RadialGradient
-from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.aa_crossing import (
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.geometry import Point, _round_to_int
+from canvas.gradient import LinearGradient, RadialGradient
+from canvas.fill_rule import FillRule
+from canvas.aa_crossing import (
     _AACrossing,
     _EdgeTable,
     _sample_x,
     _sort_aa_crossings_by_x,
 )
-from canvas_mojo.shapes.lines import (
+from canvas.shapes.lines import (
     draw_polyline,
     draw_polygon,
     draw_polyline_aa,
     draw_polygon_aa,
 )
-from canvas_mojo.shapes.polygon_fill import (
+from canvas.shapes.polygon_fill import (
     _Crossing,
     _spans_from_crossings,
     _is_inside,
 )
-from canvas_mojo.shapes.arcs import _arc_points
+from canvas.shapes.arcs import _arc_points
 
 comptime _MOVE_TO = 0
 comptime _LINE_TO = 1
@@ -580,7 +580,7 @@ def fill_path_aa(
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
     fill_polygon_aa is fill_polygon's (see that function in
-    canvas_mojo.shapes.polygon_fill): for every pixel
+    canvas.shapes.polygon_fill): for every pixel
     near the path's flattened outline, samples an NxN sub-pixel grid
     and turns the coverage fraction into that pixel's alpha. Each
     output pixel is visited exactly once.
@@ -605,7 +605,7 @@ def fill_path_aa(
     The math per sample is _point_in_subpaths' ray cast either way.
 
     Not fused with fill_path behind an `antialias: Bool`, for the
-    reason canvas_mojo.shapes.lines gives: a complexity-class jump per
+    reason canvas.shapes.lines gives: a complexity-class jump per
     pixel, not a free toggle.
 
     `curve_steps` is fill_path's same per-segment flattening knob --

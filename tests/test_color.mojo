@@ -2,7 +2,7 @@
 
 from std.testing import assert_equal, TestSuite
 
-from canvas_mojo.color import Color
+from canvas.color import Color
 
 
 def test_opaque_blend_passes_src_through() raises:

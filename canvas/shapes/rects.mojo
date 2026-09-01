@@ -1,13 +1,13 @@
 """Rectangle drawing: stroked outline (draw_rect, via
-canvas_mojo.shapes.lines.draw_line), solid fill (fill_rect), and
+canvas.shapes.lines.draw_line), solid fill (fill_rect), and
 gradient-sourced fill (fill_rect_gradient/fill_rect_radial_gradient --
 see gradient.mojo).
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.gradient import LinearGradient, RadialGradient
-from canvas_mojo.shapes.lines import draw_line
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.gradient import LinearGradient, RadialGradient
+from canvas.shapes.lines import draw_line
 
 
 def draw_rect(

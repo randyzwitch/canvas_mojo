@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/text/glyph_outline.mojo.
+"""Tests for canvas/text/glyph_outline.mojo.
 
 Needs a "Sans"-resolvable system font (the generic sans-serif
 alias), the same real-machine dependency test_text.mojo and
@@ -19,17 +19,17 @@ integer `raw_units`, since 2048 is a power of two.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
-from canvas_mojo.text.font_discovery import resolve_font_file
-from canvas_mojo.text.glyph_outline import (
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.text.font_discovery import resolve_font_file
+from canvas.text.glyph_outline import (
     face_line_metrics,
     glyph_metrics,
     glyph_path,
     has_glyph,
 )
-from canvas_mojo.text.ttf import TTFFace
-from canvas_mojo.path import fill_path_aa
+from canvas.text.ttf import TTFFace
+from canvas.path import fill_path_aa
 
 comptime BG = Color(255, 255, 255)
 comptime FG = Color(0, 0, 0)

@@ -4,7 +4,7 @@ consumers here (`fill_polygon`, `fill_polygon_aa`), and
 `_point_in_polygon`/`_polygon_row_crossings_aa`, the real-valued
 membership tests `fill_polygon_aa`'s supersampling needs.
 
-Not `draw_polygon`/`draw_polygon_aa` in canvas_mojo.shapes.lines, which
+Not `draw_polygon`/`draw_polygon_aa` in canvas.shapes.lines, which
 stroke a polygon's *outline* through a different algorithm entirely.
 
 path.mojo imports `_Crossing`/`_spans_from_crossings`/`_is_inside` for
@@ -14,11 +14,11 @@ row's crossings, not in how those crossings become spans.
 
 from std.math import ceil
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point
-from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.aa_crossing import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point
+from canvas.fill_rule import FillRule
+from canvas.aa_crossing import (
     _AACrossing,
     _EdgeTable,
     _sample_x,
@@ -295,7 +295,7 @@ def fill_polygon_aa(
     sweep's output must match pixel for pixel.
 
     Not fused with fill_polygon behind an `antialias: Bool`, for the
-    reason canvas_mojo.shapes.lines gives.
+    reason canvas.shapes.lines gives.
 
     Args:
         canvas: Canvas to fill into.

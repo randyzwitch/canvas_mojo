@@ -64,11 +64,11 @@ once, not once per pass. A caller drawing many labels passes one
 `FontCache` to all of them and pays ~3.3ms in total; a caller that
 draws one label per FontCache pays it per label.
 
-This module imports nothing from `canvas_mojo.text`, and that
+This module imports nothing from `canvas.text`, and that
 independence is why `FontSlant`/`FontWeight` and the small binary
 readers below live here rather than being imported from a module that
 uses them -- a struct's method surface (and whatever it imports)
-resolves eagerly, not lazily, the same lesson `canvas_mojo/vector/
+resolves eagerly, not lazily, the same lesson `canvas/vector/
 draw_target.mojo` documents for `DrawTarget` excluding `draw_text`. It
 is also why `_face_covers_codepoint` walks a `cmap` here rather than
 calling `ttf.mojo`'s: this one answers "is this codepoint mapped" from a
@@ -96,7 +96,7 @@ don't cover a machine.
 
 struct FontSlant(Copyable, ImplicitlyCopyable, Movable):
     """A font's upright/italic/oblique style. Defined here to keep this
-    module independent of `canvas_mojo.text`; `render.mojo` re-exports
+    module independent of `canvas.text`; `render.mojo` re-exports
     it.
     """
 

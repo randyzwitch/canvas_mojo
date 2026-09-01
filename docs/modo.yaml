@@ -1,7 +1,7 @@
 # Modo config -- generates docs/site/content (a Hugo site, built by
 # `hugo -s docs/site` into docs/site/public, then deployed straight to
 # GitHub Pages via Actions -- neither ever committed, see pixi.toml's
-# own `docs` task and .github/workflows/docs.yml) from canvas_mojo/'s
+# own `docs` task and .github/workflows/docs.yml) from canvas/'s
 # own docstrings (via `mojo doc`) plus the hand-written pages in
 # docs/src/. Hugo format specifically (not plain markdown) because
 # GitHub's Actions-based Pages deployment -- needed to avoid committing
@@ -20,10 +20,15 @@
 # content` here are `docs/src/`/`docs/site/content` from the repo
 # root (what the prose above, and every other file in this repo,
 # calls them).
+#
+# `source-url`'s key is the *package* name (`canvas`, the importable
+# `canvas/` dir), not the project name (`canvas_mojo`, still the repo
+# itself) -- it has to match what `mojo doc` emits for modo to link
+# each symbol back to its source.
 input:
   - src/
 source-url:
-  canvas_mojo: https://github.com/randyzwitch/canvas_mojo/blob/main/canvas_mojo
+  canvas: https://github.com/randyzwitch/canvas_mojo/blob/main/canvas
 output: site/content
 tests: ""
 format: hugo

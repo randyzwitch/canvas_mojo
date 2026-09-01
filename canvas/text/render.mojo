@@ -44,20 +44,20 @@ here, as TextAlign is from text_align.mojo.
 from std.math import cos, sin
 from std.memory import ArcPointer
 
-from canvas_mojo.text.bidi import detect_base_level, visual_order
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
-from canvas_mojo.text.font_cache import FontCache
-from canvas_mojo.text.font_discovery import FontSlant, FontWeight
-from canvas_mojo.text.glyph_outline import (
+from canvas.text.bidi import detect_base_level, visual_order
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
+from canvas.text.glyph_outline import (
     face_line_metrics,
     glyph_metrics,
     glyph_path,
     has_glyph,
     GlyphMetrics,
 )
-from canvas_mojo.text.ttf import TTFFace
-from canvas_mojo.path import (
+from canvas.text.ttf import TTFFace
+from canvas.path import (
     fill_path_aa,
     FPoint,
     Path,
@@ -67,7 +67,7 @@ from canvas_mojo.path import (
     _MOVE_TO,
     _QUAD_TO,
 )
-from canvas_mojo.text.text_align import TextAlign
+from canvas.text.text_align import TextAlign
 
 
 struct TextMetrics(ImplicitlyCopyable, Movable):

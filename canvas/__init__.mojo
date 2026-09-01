@@ -1,9 +1,9 @@
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point, Transform2D
-from canvas_mojo.gradient import LinearGradient, RadialGradient
-from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.shapes.lines import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point, Transform2D
+from canvas.gradient import LinearGradient, RadialGradient
+from canvas.fill_rule import FillRule
+from canvas.shapes.lines import (
     draw_line,
     draw_line_aa,
     draw_polyline,
@@ -11,26 +11,26 @@ from canvas_mojo.shapes.lines import (
     draw_polyline_aa,
     draw_polygon_aa,
 )
-from canvas_mojo.shapes.polygon_fill import fill_polygon, fill_polygon_aa
-from canvas_mojo.shapes.rects import (
+from canvas.shapes.polygon_fill import fill_polygon, fill_polygon_aa
+from canvas.shapes.rects import (
     draw_rect,
     fill_rect,
     fill_rect_gradient,
     fill_rect_radial_gradient,
 )
-from canvas_mojo.shapes.circles import (
+from canvas.shapes.circles import (
     draw_circle,
     fill_circle,
     fill_circle_aa,
     draw_circle_aa,
 )
-from canvas_mojo.shapes.ellipses import (
+from canvas.shapes.ellipses import (
     draw_ellipse,
     fill_ellipse,
     fill_ellipse_aa,
     draw_ellipse_aa,
 )
-from canvas_mojo.shapes.arcs import (
+from canvas.shapes.arcs import (
     draw_arc,
     draw_arc_aa,
     fill_arc,
@@ -38,7 +38,7 @@ from canvas_mojo.shapes.arcs import (
     fill_ring_sector,
     fill_ring_sector_aa,
 )
-from canvas_mojo.text.render import (
+from canvas.text.render import (
     draw_text,
     measure_text,
     measure_text_block,
@@ -46,7 +46,7 @@ from canvas_mojo.text.render import (
     TextMetrics,
     TextBlockBounds,
 )
-from canvas_mojo.path import (
+from canvas.path import (
     Path,
     FPoint,
     fill_path,

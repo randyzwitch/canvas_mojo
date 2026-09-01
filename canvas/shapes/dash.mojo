@@ -1,8 +1,8 @@
 """Dash-pattern phase logic -- shared by every stroked shape in
-canvas_mojo.shapes (lines, polylines/polygons, and indirectly arcs via
+canvas.shapes (lines, polylines/polygons, and indirectly arcs via
 draw_polyline/draw_polyline_aa). Split into its own file since it has
 no dependency on Canvas or any shape's geometry, unlike every other
-file in this subpackage -- see canvas_mojo.shapes.lines for the
+file in this subpackage -- see canvas.shapes.lines for the
 hard-edged vs. `_aa` naming convention every file here follows.
 """
 

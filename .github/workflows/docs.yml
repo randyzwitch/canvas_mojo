@@ -11,7 +11,7 @@ name: Docs
 # mean something.
 #
 # Triggers whenever something that actually feeds the site changes --
-# canvas_mojo/'s own docstrings, examples/ (both the code and its
+# canvas/'s own docstrings, examples/ (both the code and its
 # rendered output, which `docs` copies rather than re-rendering), the
 # hand-written pages in docs/src/, the Hugo project itself
 # (docs/site/*.yaml, go.mod/go.sum), or the doc-generation config/
@@ -23,7 +23,7 @@ name: Docs
 on:
   pull_request:
     paths:
-      - "canvas_mojo/**"
+      - "canvas/**"
       - "examples/**"
       - "docs/src/**"
       - "docs/site/hugo.yaml"

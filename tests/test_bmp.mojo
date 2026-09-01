@@ -14,9 +14,9 @@ boundary (64*3=192, say) would never reach that code at all.
 
 from std.testing import assert_equal, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.io.bmp import write_bmp
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.io.bmp import write_bmp
 
 comptime TMP_PATH = "tests/_test_bmp_output.bmp"
 

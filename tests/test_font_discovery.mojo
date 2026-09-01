@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/text/font_discovery.mojo.
+"""Tests for canvas/text/font_discovery.mojo.
 
 Needs a "Sans"-resolvable system font (the generic sans-serif alias),
 the same real-machine dependency tests/test_text.mojo documents.
@@ -39,7 +39,7 @@ assertion for reasons unrelated to the code under test -- see
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.text.font_discovery import (
+from canvas.text.font_discovery import (
     FontDatabase,
     FontSlant,
     FontWeight,

@@ -5,8 +5,8 @@ isolation -- this exercises the buffer indexing math too).
 
 from std.testing import assert_equal, assert_true, assert_false, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
+from canvas.color import Color
+from canvas.buffer import Canvas
 
 
 def test_constructor_fills_every_pixel() raises:
@@ -131,7 +131,7 @@ def test_nested_push_clip_intersects_with_parent() raises:
 def test_fill_respects_the_active_clip() raises:
     # Canvas.fill() loops over the whole canvas through set_pixel, so
     # clipping composes with Canvas's own methods, not just the free
-    # functions in canvas_mojo.shapes.
+    # functions in canvas.shapes.
     var c = Canvas(6, 6, Color(0, 0, 0))
     c.push_clip(2, 2, 2, 2)  # x in [2,4), y in [2,4)
     c.fill(Color(255, 255, 255))

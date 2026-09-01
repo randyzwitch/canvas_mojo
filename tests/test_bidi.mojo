@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/text/bidi.mojo.
+"""Tests for canvas/text/bidi.mojo.
 
 Locked-in values below are hand-derived and cross-checked, not just
 asserted against the code's own output: the Hebrew+digit case was
@@ -13,7 +13,7 @@ for exactly which parts of the real algorithm are simplified.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.text.bidi import detect_base_level, visual_order
+from canvas.text.bidi import detect_base_level, visual_order
 
 
 def _codepoints_of(s: String) -> List[Int]:

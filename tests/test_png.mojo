@@ -20,9 +20,9 @@ misrender it.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.io.png import read_png, write_png
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.io.png import read_png, write_png
 
 comptime TMP_PATH = "tests/_test_png_output.png"
 

@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/io/deflate.mojo: inflate() and deflate().
+"""Tests for canvas/io/deflate.mojo: inflate() and deflate().
 
 inflate(): every compressed byte sequence below is real
 `zlib.compress()` output, not hand-built -- the streams a real encoder
@@ -18,7 +18,7 @@ would pass every round-trip test here.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.io.deflate import deflate, inflate
+from canvas.io.deflate import deflate, inflate
 
 
 def _assert_inflates_to(

@@ -1,8 +1,8 @@
-"""Tests for canvas_mojo/shapes/dash.mojo."""
+"""Tests for canvas/shapes/dash.mojo."""
 
 from std.testing import assert_true, TestSuite
 
-from canvas_mojo.shapes.dash import _is_dash_on
+from canvas.shapes.dash import _is_dash_on
 
 
 def test_is_dash_on_empty_pattern_is_always_on() raises:

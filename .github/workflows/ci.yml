@@ -27,11 +27,11 @@ jobs:
       - uses: actions/checkout@v7
 
       # Font *files*, and nothing else: this package links no library
-      # at all any more. canvas_mojo/text/font_discovery.mojo used to
+      # at all any more. canvas/text/font_discovery.mojo used to
       # dlopen libfontconfig to resolve a family name to an installed
       # file, and now walks the platform's font directories and reads
       # each font's own name/OS/2 tables itself, the same way
-      # canvas_mojo/text/ttf.mojo has always parsed outlines natively.
+      # canvas/text/ttf.mojo has always parsed outlines natively.
       # What that does not remove is the need for fonts to actually be
       # installed -- a bare runner image ships almost none, so these
       # packages are a real test dependency rather than a cosmetic

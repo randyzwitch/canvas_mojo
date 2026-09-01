@@ -1,12 +1,12 @@
 """Circle drawing: midpoint-algorithm hard-edged outline/fill
 (draw_circle/fill_circle) and supersampled analytic-coverage
 anti-aliased variants (draw_circle_aa/fill_circle_aa) -- see
-canvas_mojo.shapes.lines for the hard-edged
+canvas.shapes.lines for the hard-edged
 vs. `_aa` naming convention this follows.
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
+from canvas.color import Color
+from canvas.buffer import Canvas
 
 
 def draw_circle(

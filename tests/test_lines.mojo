@@ -1,15 +1,15 @@
-"""Tests for canvas_mojo/shapes/lines.mojo: exact pixel sets for known
+"""Tests for canvas/shapes/lines.mojo: exact pixel sets for known
 inputs, verified against hand-traced runs of the same algorithms.
 """
 
 from std.testing import assert_equal, TestSuite
 from std.math import sqrt
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point
-from canvas_mojo.shapes.dash import _is_dash_on
-from canvas_mojo.shapes.lines import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point
+from canvas.shapes.dash import _is_dash_on
+from canvas.shapes.lines import (
     draw_line,
     draw_line_aa,
     draw_polyline,

@@ -52,8 +52,8 @@ environment — Mojo's own toolchain finds it there automatically, no
 `-I` flag needed. Then:
 
 ```mojo
-from canvas_mojo import Canvas, Color, fill_circle_aa
-from canvas_mojo.io.bmp import write_bmp
+from canvas import Canvas, Color, fill_circle_aa
+from canvas.io.bmp import write_bmp
 
 def main() raises:
     var c = Canvas(200, 200, Color(255, 255, 255))
@@ -65,7 +65,7 @@ def main() raises:
 
 ```mermaid
 flowchart LR
-    Start(["canvas_mojo"]) --> Pick{"Pixels or markup?"}
+    Start(["canvas"]) --> Pick{"Pixels or markup?"}
 
     Pick -->|"raster"| Canvas["Canvas(width, height, fill)"]
     Pick -->|"vector"| Svg["SvgCanvas(width, height)"]
@@ -97,7 +97,7 @@ page for a walkthrough of each path with runnable examples.
 
 - **[Docs & examples](https://randyzwitch.com/canvas_mojo/)** — every
   example's source next to its actual rendered output, plus the full
-  `canvas_mojo` API reference, generated from this repo's own
+  `canvas` API reference, generated from this repo's own
   docstrings via [modo](https://github.com/mlange-42/modo) (see
   `docs/modo.yaml`/`pixi run docs`).
 - **[Wiki](https://github.com/randyzwitch/canvas_mojo/wiki)** — what's
@@ -111,10 +111,10 @@ page for a walkthrough of each path with runnable examples.
 Mojo-only, with no FFI and no linked libraries at all. The three jobs
 real system-font text rendering needs are each native Mojo here: font
 discovery (matching a family/style name against the fonts installed on
-the machine — `canvas_mojo/text/font_discovery.mojo`, which reads each
+the machine — `canvas/text/font_discovery.mojo`, which reads each
 font's own `name`/`OS/2` tables rather than linking `libfontconfig`),
 font parsing (glyph outlines and metrics —
-`canvas_mojo/text/ttf.mojo`), and rasterization (this package's own
+`canvas/text/ttf.mojo`), and rasterization (this package's own
 `fill_path_aa`). No FreeType, no Cairo, no fontconfig, no other
 third-party rendering/font engine anywhere in the pipeline.
 
@@ -132,7 +132,7 @@ pixi run docs      # regenerates docs/ (served via GitHub Pages) -- run `example
 
 `docs/` also rebuilds and deploys automatically
 (`.github/workflows/docs-deploy.yml`) on every push to `main` that
-touches `canvas_mojo/`, `examples/`, or `docs/` -- manual `pixi run
+touches `canvas/`, `examples/`, or `docs/` -- manual `pixi run
 docs`/`pixi run docs-serve` are for previewing locally before you
 push, not required to keep the site in sync. A pull request runs the
 same build (`.github/workflows/docs.yml`) as a status check, without

@@ -39,12 +39,12 @@ keyword-only overloads. Callers that don't get per-call resolution.
 from std.math import ceil
 from std.memory import ArcPointer
 
-from canvas_mojo.text.font_discovery import (
+from canvas.text.font_discovery import (
     FontDatabase,
     FontSlant,
     FontWeight,
 )
-from canvas_mojo.text.ttf import TTFFace
+from canvas.text.ttf import TTFFace
 
 
 def _slant_key(slant: FontSlant) -> String:

@@ -19,12 +19,12 @@ Run with:
     pixi run example
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.path import Path, fill_path
-from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.path import Path, fill_path
+from canvas.fill_rule import FillRule
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def _square(

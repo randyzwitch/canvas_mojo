@@ -1,7 +1,7 @@
 """Demo: the general Path API -- quadratic and cubic Bezier curves,
 arc-to segments, multi-sub-path hole punching, and hard-edged vs. AA
 stroking and filling, none of which the discrete shape functions in
-canvas_mojo.shapes can do on their own (they're what fill_path/stroke_path
+canvas.shapes can do on their own (they're what fill_path/stroke_path
 actually call once a Path is flattened -- see path.mojo's own
 docstring).
 
@@ -11,17 +11,17 @@ Run with:
 
 from std.math import cos, pi, sin
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.path import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.path import (
     Path,
     fill_path,
     fill_path_aa,
     stroke_path,
     stroke_path_aa,
 )
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def main() raises:
@@ -115,7 +115,7 @@ def main() raises:
     fill_path_aa(c, leaf_aa, Color(40, 130, 90))
 
     # A pie-slice wedge, built directly from arc_to instead of
-    # canvas_mojo.shapes.arcs' own discrete fill_arc -- arc_to's own
+    # canvas.shapes.arcs' own discrete fill_arc -- arc_to's own
     # flattening reuses that same function's _arc_points helper (see
     # path.mojo's own docstring), so move_to(arc's own start) ->
     # arc_to(...) -> line_to(center) -> close() traces the identical

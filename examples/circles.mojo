@@ -8,16 +8,16 @@ Run with:
     pixi run example
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.circles import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.shapes.circles import (
     draw_circle,
     draw_circle_aa,
     fill_circle,
     fill_circle_aa,
 )
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def main() raises:

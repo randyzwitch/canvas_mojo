@@ -2,7 +2,7 @@
 via this package's own native font discovery (font_discovery.mojo),
 glyph outlines/metrics via its own native TrueType parser (ttf.mojo),
 rasterization via its own
-fill_path_aa (see canvas_mojo/text/render.mojo's module
+fill_path_aa (see canvas/text/render.mojo's module
 docstring) -- composited onto a Canvas the same way every other
 primitive is: through set_pixel.
 
@@ -12,14 +12,14 @@ Run with:
 
 from std.math import pi
 
-from canvas_mojo.text.font_discovery import FontSlant, FontWeight
+from canvas.text.font_discovery import FontSlant, FontWeight
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.text.render import draw_text, measure_text_block, TextAlign
-from canvas_mojo.shapes.rects import draw_rect
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.text.render import draw_text, measure_text_block, TextAlign
+from canvas.shapes.rects import draw_rect
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def main() raises:
