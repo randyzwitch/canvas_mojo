@@ -43,6 +43,7 @@ from canvas_mojo.text.font_discovery import (
     FontDatabase,
     FontSlant,
     FontWeight,
+    _normalize_family,
     resolve_font_file,
     resolve_font_file_for_char,
 )
@@ -126,6 +127,35 @@ def test_family_matching_ignores_case_and_blanks() raises:
     assert_equal(resolve_font_file("dejavu sans"), canonical)
     assert_equal(resolve_font_file("DEJAVUSANS"), canonical)
     assert_equal(resolve_font_file("  DejaVu   Sans  "), canonical)
+
+
+def test_normalizing_a_family_name_drops_case_and_blanks() raises:
+    # The normal form itself, rather than a resolution through it:
+    # fontconfig's FcStrCmpIgnoreBlanksAndCase, as a key both a request
+    # and an installed face get reduced to.
+    assert_equal(_normalize_family("DejaVu Sans"), "dejavusans")
+    assert_equal(_normalize_family("  DEJAVU   SANS "), "dejavusans")
+    assert_equal(_normalize_family("DejaVu Sans Mono"), "dejavusansmono")
+    # Distinct families must not collide once the blanks are gone.
+    assert_true(
+        not (
+            _normalize_family("DejaVu Sans")
+            == _normalize_family("DejaVu Serif")
+        )
+    )
+
+
+def test_normalizing_a_non_ascii_family_name_keeps_it_readable() raises:
+    # Walking bytes instead of codepoints would still *match* correctly
+    # -- both sides go through this same function -- but would turn
+    # every non-ASCII name into mojibake on the way. Asserting the text
+    # rather than only the round-trip is what catches that.
+    assert_equal(_normalize_family("Grøtesk Ærial"), "grøteskærial")
+    assert_equal(_normalize_family("源ノ角ゴシック"), "源ノ角ゴシック")
+    # Still case- and blank-insensitive with non-ASCII in the name.
+    assert_equal(
+        _normalize_family("Grøtesk Ærial"), _normalize_family("grøteskærial")
+    )
 
 
 def test_a_family_request_beats_the_default_sans_list() raises:

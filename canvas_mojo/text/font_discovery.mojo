@@ -34,6 +34,17 @@ for them: fontconfig's XML rule engine, its `~/.cache/fontconfig` binary
 cache, per-language coverage matching, and named-instance expansion of
 variable fonts (a variable font is matched as its default instance).
 
+Where it looks: each platform's usual font directories -- on Linux the
+user's `~/.local/share/fonts` and `~/.fonts` plus `/usr/share/fonts`,
+`/usr/local/share/fonts` and `/usr/share/X11/fonts`; on macOS
+`~/Library/Fonts`, `/Library/Fonts`, `/System/Library/Fonts` (and its
+`Supplemental`) plus Homebrew's font prefixes. Set
+**`CANVAS_MOJO_FONT_PATH`** (colon-separated directories) to add font
+trees in a nonstandard prefix -- a container image, a test fixture, a
+font vendored beside an application. Those are searched ahead of the
+platform defaults. Fonts still have to be installed for text to
+render; this package bundles none.
+
 Cost, measured on this machine (51 installed faces, warm page cache):
 a scan is ~3.3ms, two thirds of it the directory walk rather than the
 font files -- each file is read a few hundred bytes at a time (a table
@@ -220,12 +231,19 @@ def _normalize_family(name: String) -> String:
     `FcStrCmpIgnoreBlanksAndCase` comparison reduced to a normal form:
     "DejaVu Sans", "dejavu sans" and "DejaVuSans" all collide, while
     "DejaVu Sans Mono" stays distinct.
+
+    Walks codepoints, not bytes. Both sides of a comparison go through
+    this same function, so a byte walk would still match correctly --
+    it would just mangle every non-ASCII family name into mojibake
+    along the way ("Grotesk" with an o-slash coming back as two Latin-1
+    characters), which is a trap for anything that later reads a key
+    rather than only comparing two.
     """
     var out = String()
-    for byte in name.lower().as_bytes():
-        var code = Int(byte)
-        if code != ord(" ") and code != ord("\t"):
-            out += chr(code)
+    for codepoint in name.lower().codepoints():
+        var value = Int(codepoint.to_u32())
+        if value != ord(" ") and value != ord("\t"):
+            out += String(codepoint)
     return out^
 
 
