@@ -55,8 +55,22 @@ jobs:
       - name: Build docs site
         run: pixi run docs
 
-      - uses: actions/configure-pages@v5
+      # The same "built against Node.js 20" story as ci.yml's own
+      # actions/checkout@v7 pin, for the two Pages actions: v5 of
+      # configure-pages and v3 of upload-pages-artifact both run on
+      # Node 20, which runners now force onto Node 24 with a visible
+      # deprecation annotation on every run. v6 and v5 respectively are
+      # built against Node 24 natively -- upload-pages-artifact by way
+      # of the actions/upload-artifact@v7 it wraps, since it is a
+      # composite action with no runtime of its own.
+      #
+      # upload-pages-artifact v4 dropped hidden files from the artifact
+      # and v5 added an `include-hidden-files` input to put them back.
+      # Neither matters here: `pixi run docs` produces no dotfiles at
+      # all under docs/site/public (checked against a real local build,
+      # not assumed), and a Pages artifact deploy needs no .nojekyll.
+      - uses: actions/configure-pages@v6
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/site/public

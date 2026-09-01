@@ -49,5 +49,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # v5, not v4: v4 runs on Node.js 20 and is what actually raised
+      # the "Node.js 20 is deprecated" annotation on this workflow. See
+      # docs-build.yml's own comment on the matching Pages-action pins.
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
