@@ -85,10 +85,15 @@ shape.
   `resolve_font_file`/`resolve_font_file_for_char`, `FontDatabase`,
   `FontSlant`, `FontWeight`: family/style name → installed font file,
   by scanning the machine's font directories and matching each font's
-  own `name`/`OS/2` tables.
+  own `name`/`OS/2` tables. Set `CANVAS_MOJO_FONT_PATH`
+  (colon-separated directories) to search font trees outside the
+  platform's usual locations.
 - [`text.font_cache`](../canvas_mojo/text/font_cache/) — `FontCache`:
   reuses a resolved font file/parsed face across repeated draws
-  instead of re-resolving and re-parsing each call.
+  instead of re-resolving and re-parsing each call. Worth passing
+  `cache=` for anything drawing more than a handful of labels: it
+  scans the installed fonts once, at construction, and every later
+  lookup reads from that.
 - [`text.ttf`](../canvas_mojo/text/ttf/) — `TTFFace`: the native
   TrueType parser (glyph outlines, metrics) underneath `text.render`.
 - [`text.glyph_outline`](../canvas_mojo/text/glyph_outline/) — a
