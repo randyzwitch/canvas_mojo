@@ -21,7 +21,7 @@ go = ">=1.26.6,<2"
 # this), so concurrent execution is safe, not just fast.
 #
 # `test`'s own file order is deliberately NOT alphabetical: the five
-# fontconfig/glyph-heavy files (test_text.mojo alone dwarfs every other
+# font-scanning/glyph-heavy files (test_text.mojo alone dwarfs every other
 # file combined) are listed first so they occupy CPU slots from the
 # very start on a CPU-constrained CI runner -- the same "longest job
 # first" scheduling heuristic real parallel build systems use. Matters
@@ -117,8 +117,6 @@ path = "canvas_mojo"
 
 [package.host-dependencies]
 mojo = ">=1.0.0,<2"
-fontconfig = ">=2.13"
 
 [package.run-dependencies]
 mojo = ">=1.0.0,<2"
-fontconfig = ">=2.13"

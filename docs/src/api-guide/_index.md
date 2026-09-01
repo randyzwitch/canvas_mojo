@@ -73,17 +73,19 @@ function above.
 
 ## Text
 
-Real system-font rendering: fontconfig resolves a family/style to a
-file, this package's own parser reads it, and the result feeds
-`fill_path_aa` like any other shape.
+Real system-font rendering, all of it native: this package's own font
+discovery resolves a family/style to an installed file, its own parser
+reads that file, and the result feeds `fill_path_aa` like any other
+shape.
 
 - [`text.render`](../canvas_mojo/text/render/) — `draw_text` and
   `measure_text`/`measure_text_block`, the entry points most callers
   need.
 - [`text.font_discovery`](../canvas_mojo/text/font_discovery/) —
-  `resolve_font_file`/`resolve_font_file_for_char`, `FontSlant`,
-  `FontWeight`: family/style name → installed font file, via
-  fontconfig.
+  `resolve_font_file`/`resolve_font_file_for_char`, `FontDatabase`,
+  `FontSlant`, `FontWeight`: family/style name → installed font file,
+  by scanning the machine's font directories and matching each font's
+  own `name`/`OS/2` tables.
 - [`text.font_cache`](../canvas_mojo/text/font_cache/) — `FontCache`:
   reuses a resolved font file/parsed face across repeated draws
   instead of re-resolving and re-parsing each call.

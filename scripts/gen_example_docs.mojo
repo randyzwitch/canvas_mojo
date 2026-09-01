@@ -106,7 +106,7 @@ def _categories() -> List[Category]:
         Category(
             "Text",
             (
-                "Real system-font text rendering -- fontconfig matching, native"
+                "Real system-font text rendering -- native font matching,"
                 " TrueType parsing, bidi."
             ),
             ["text"],

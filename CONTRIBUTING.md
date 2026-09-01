@@ -26,12 +26,15 @@ its own `main()` and runs standalone, so you can also run one directly:
 pixi run mojo run -I . tests/test_circles.mojo
 ```
 
-The only external dependency is `libfontconfig`, used for font matching
-and nothing else. Text tests need a `Sans`-resolvable system font; the
-font-fallback tests additionally need the `Ubuntu` and `DejaVu Sans`
-families installed, since they turn on one having a glyph the other
-lacks. See `.github/workflows/ci.yml` for the exact packages CI
-installs.
+There are no external library dependencies — nothing is linked, and
+nothing is dlopen'd. There is still an external *data* dependency:
+installed font files. Text tests need a `Sans`-resolvable system font,
+and the font-fallback tests additionally need the `Ubuntu` and `DejaVu
+Sans` families installed, since they turn on one having a glyph the
+other lacks. See `.github/workflows/ci.yml` for the exact font packages
+CI installs. Point `CANVAS_MOJO_FONT_PATH` (colon-separated
+directories) at a font tree in a nonstandard prefix if the platform
+defaults in `text/font_discovery.mojo` do not cover yours.
 
 ## The DrawTarget trait, and why the package works
 
@@ -189,15 +192,22 @@ def measure_text(..., *, mut cache: FontCache) raises -> TextMetrics:
 Anything that would be a module-level singleton elsewhere has to be
 constructed by the caller and passed down here.
 
-### FFI, in exactly one place
+### No FFI anywhere
 
-`text/font_discovery.mojo` is the only file that touches FFI, and it
-links `libfontconfig` and nothing else. If you work in it: build C
-strings byte by byte into a NUL-terminated buffer (`_c_string`) rather
-than relying on String marshaling, and read them back by walking bytes
-(`_string_from_c_string`) — `String(ptr)` formats the pointer's address
-rather than decoding the pointee. Opaque C structs are declared as empty
-structs used only as pointer targets.
+Nothing in this package links or dlopens a library. `text/
+font_discovery.mojo` turns a family name into a font file path by
+reading the installed fonts' own `name`/`OS/2`/`head`/`post` tables,
+the job `libfontconfig` would otherwise do. Keep it that way: a new
+external dependency needs a reason that survives "could this be a few
+hundred lines of table parsing instead?".
+
+If you work in `font_discovery.mojo`, the two things worth knowing are
+that matching is a score, never a filter (an unmatched family falls
+through the default sans list rather than raising, so a typo renders in
+the default font), and that every scoring term is packed into one Int
+as the digits of a mixed-radix number, so comparing two candidates with
+`<` is a lexicographic comparison of the terms in fontconfig's own
+priority order.
 
 ### String indexing
 

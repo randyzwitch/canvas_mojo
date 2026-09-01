@@ -675,13 +675,14 @@ struct SvgCanvas(DrawTarget, Movable):
         `family` becomes a literal `font-family` attribute, always
         emitted: without one, a viewer falls back to its own undefined
         default (some pick a serif face), which reads as inconsistent
-        with the raster `draw_text`, where fontconfig always resolves a
+        with the raster `draw_text`, where matching always resolves a
         real font. Defaults to `"sans-serif"`, a generic CSS keyword
         every viewer supports.
 
         This `family` is a different kind of value from raster
         draw_text's, despite the shared name and position: raster's is
-        a fontconfig alias resolved to one concrete font *file*; this
+        a family or generic alias resolved to one concrete font
+        *file*; this
         is a literal CSS `font-family` -- keyword, face name, or
         comma-separated stack -- interpreted by whatever renders the
         SVG. A caller driving both backends needs its own mapping
@@ -714,7 +715,7 @@ struct SvgCanvas(DrawTarget, Movable):
             size: Font size in pixels.
             align: Horizontal alignment relative to (x, y).
             family: A literal CSS `font-family` value (keyword, face
-                name, or comma-separated stack), not a fontconfig
+                name, or comma-separated stack), not a font-matching
                 query.
             rotation: Radians, rotating the whole `<text>` element
                 around (x, y).

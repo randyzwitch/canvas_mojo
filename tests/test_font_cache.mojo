@@ -6,8 +6,8 @@ tests/test_font_discovery.mojo documents.
 What's tested: FontCache.resolve/resolve_for_char return the path a
 cache miss would, and resolve_face/resolve_face_for_char render and
 measure identically to an uncached call. The cache must never change
-*what* gets resolved, only how often fontconfig is asked and how often
-a file is parsed.
+*what* gets resolved, only how often the installed fonts get scanned
+and how often a file is parsed.
 
 Special attention to the failure mode a face cache invites that a
 path-only cache can't: `set_pixel_size` mutates a `TTFFace` in place,
@@ -16,7 +16,7 @@ sizes and silently corrupt whichever lost the race. The two
 interleaved-size tests below exist for that, deliberately alternating
 sizes rather than testing each in isolation.
 
-Not tested: the fontconfig round-trip and TTFFace-parse time this cache
+Not tested: the font-directory scan and TTFFace-parse time this cache
 exists to avoid. A wall-clock assertion would be flaky across machines
 and CI load; font_cache.mojo documents the measured cost instead.
 """
@@ -52,7 +52,7 @@ def test_resolve_matches_an_uncached_lookup() raises:
 def test_resolve_is_stable_across_repeated_calls_on_the_same_cache() raises:
     # The point of the cache: a second call for the same (family,
     # slant, weight) must return exactly what a fresh resolution
-    # would, once it comes from the Dict rather than fontconfig.
+    # would, once it comes from the Dict rather than the database.
     var cache = FontCache()
     var first = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
     var second = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
@@ -64,7 +64,7 @@ def test_resolve_distinguishes_different_slant_weight_combinations() raises:
     # entry, so BOLD and NORMAL must be separate keys -- resting on the
     # machine-specific fact
     # test_bold_weight_resolves_to_a_different_file_than_normal
-    # establishes against fontconfig directly.
+    # establishes against an uncached lookup directly.
     var cache = FontCache()
     var normal = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.NORMAL)
     var bold = cache.resolve("Sans", FontSlant.NORMAL, FontWeight.BOLD)
