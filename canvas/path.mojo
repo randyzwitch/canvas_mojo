@@ -47,7 +47,7 @@ from std.math import ceil, cos, floor, pi, sin, sqrt
 
 from canvas.buffer import Canvas
 from canvas.color import Color
-from canvas.geometry import Point, FPoint, _round_to_int
+from canvas.geometry import Point, FPoint, Transform2D, _round_to_int
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import (
@@ -428,6 +428,102 @@ struct Path(Movable):
         self.cubic_curve_to(cx - rx, cy - oy, cx - ox, cy - ry, cx, cy - ry)
         self.cubic_curve_to(cx + ox, cy - ry, cx + rx, cy - oy, cx + rx, cy)
         self.close()
+
+    def transformed(self, transform: Transform2D) raises -> Path:
+        """This path mapped through `transform`, as a new path.
+
+        Returns a new path rather than mutating in place, unlike every
+        other method here. That is deliberate: `Path` is not copyable,
+        so a mutating version would give a caller no way to draw one
+        shape at several positions -- which is the main reason to want
+        this at all.
+
+        Bezier control points map directly: an affine transform of a
+        Bezier is the Bezier of the transformed control points, so
+        `quad_curve_to` and `cubic_curve_to` come through exactly.
+
+        `arc_to` is the one that cannot always. It describes a
+        *circular* arc by centre, radius and angles, and only a
+        transform that maps circles to circles can be folded back into
+        those five numbers:
+
+        - Equal scale magnitudes, same sign: exact. The centre maps,
+          the radius scales, and the angles shift by the transform's
+          rotation.
+        - A reflection (the axis scales differing in sign, as a y-flip
+          does): flattened. The image is still a circular arc, but the
+          sweep runs backwards, and `arc_to` only expresses increasing
+          angles -- so re-emitting it as an arc would silently reverse
+          its endpoints and detach it from the current point.
+        - Unequal magnitudes: flattened. The arc becomes an
+          *elliptical* arc, which `arc_to` cannot express and no
+          primitive here draws.
+
+        Flattening goes through the same `_arc_fpoints` the renderer
+        would have used anyway, so the drawn result is unchanged. What
+        is lost is the ability to transform the result again exactly,
+        not fidelity.
+
+        Args:
+            transform: Mapping applied to every point.
+
+        Returns:
+            A new path in the transformed space.
+
+        Raises:
+            Error: Never in practice -- every call below follows this
+                path's own commands, which were already well-formed.
+        """
+        var out = Path()
+
+        # Equal magnitudes mean circles stay circles; the sign
+        # difference is a reflection, handled by mirroring the angles.
+        var sx = abs(transform.scale_x)
+        var sy = abs(transform.scale_y)
+        var uniform = sx == sy
+        var reflected = (transform.scale_x < 0.0) != (transform.scale_y < 0.0)
+
+        for cmd in self.commands:
+            if cmd.kind == _MOVE_TO:
+                var p = transform.to_point(cmd.p1.x, cmd.p1.y)
+                out.move_to(p.x, p.y)
+            elif cmd.kind == _LINE_TO:
+                var p = transform.to_point(cmd.p1.x, cmd.p1.y)
+                out.line_to(p.x, p.y)
+            elif cmd.kind == _QUAD_TO:
+                var c = transform.to_point(cmd.p1.x, cmd.p1.y)
+                var e = transform.to_point(cmd.p2.x, cmd.p2.y)
+                out.quad_curve_to(c.x, c.y, e.x, e.y)
+            elif cmd.kind == _CUBIC_TO:
+                var c1 = transform.to_point(cmd.p1.x, cmd.p1.y)
+                var c2 = transform.to_point(cmd.p2.x, cmd.p2.y)
+                var e = transform.to_point(cmd.p3.x, cmd.p3.y)
+                out.cubic_curve_to(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
+            elif cmd.kind == _ARC_TO:
+                # p1 = (cx, cy), p2 = (radius, start_angle),
+                # p3.x = end_angle -- see _PathCommand.
+                if uniform and not reflected:
+                    var centre = transform.to_point(cmd.p1.x, cmd.p1.y)
+                    out.arc_to(
+                        centre.x,
+                        centre.y,
+                        cmd.p2.x * sx,
+                        cmd.p2.y + transform.rotation,
+                        cmd.p3.x + transform.rotation,
+                    )
+                else:
+                    var arc = _arc_fpoints(
+                        cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x
+                    )
+                    # From index 1, matching `_flatten`: index 0 is the
+                    # arc's own start, which arc_to's contract already
+                    # places at the current point.
+                    for i in range(1, len(arc)):
+                        var p = transform.to_point(arc[i].x, arc[i].y)
+                        out.line_to(p.x, p.y)
+            else:  # _CLOSE
+                out.close()
+        return out^
 
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's move_to and

@@ -13,7 +13,7 @@ from std.testing import (
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import Point
+from canvas.geometry import Point, FPoint, Transform2D
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule
 from canvas.shapes.arcs import fill_arc
@@ -960,6 +960,168 @@ def test_explicit_curve_steps_still_overrides() raises:
         9,
         "an explicit count wins over the automatic one",
     )
+
+
+def _flat_points(p: Path) raises -> List[FPoint]:
+    var subs = _flatten(p)
+    var out = List[FPoint]()
+    for i in range(len(subs)):
+        for q in subs[i].points:
+            out.append(q)
+    return out^
+
+
+def test_transformed_maps_lines_like_to_point_does() raises:
+    # The straightforward case: a transformed path's points must equal
+    # the transform applied to the original's points.
+    var t = Transform2D(2.0, -1.5, 40.0, 90.0, rotation=0.4)
+    var p = Path()
+    p.move_to(3.0, 5.0)
+    p.line_to(11.0, -2.0)
+    p.line_to(7.0, 8.0)
+
+    var moved = p.transformed(t)
+    var got = _flat_points(moved)
+    var src: List[FPoint] = [
+        FPoint(3.0, 5.0),
+        FPoint(11.0, -2.0),
+        FPoint(7.0, 8.0),
+    ]
+    assert_equal(len(got), 3)
+    for i in range(3):
+        var want = t.to_point(src[i].x, src[i].y)
+        assert_equal(got[i].x, want.x, "transformed x matches to_point")
+        assert_equal(got[i].y, want.y, "transformed y matches to_point")
+
+
+def test_transformed_maps_curves_by_their_control_points() raises:
+    # An affine transform of a Bezier is the Bezier of the transformed
+    # control points, so this checks the emitted command directly.
+    #
+    # Deliberately not by comparing flattened points: flattening picks
+    # its step count from curvature (see _auto_steps), so a scaled-up
+    # curve is sampled more finely and the two point lists do not even
+    # have the same length. That is correct behaviour, and it is why
+    # the contract lives at the control points rather than the samples.
+    var t = Transform2D(1.7, 2.3, -12.0, 30.0, rotation=-0.9)
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.cubic_curve_to(4.0, 10.0, 16.0, -6.0, 20.0, 3.0)
+
+    var moved = p.transformed(t)
+    assert_equal(len(moved.commands), 2, "move_to then cubic_curve_to")
+
+    var c1 = t.to_point(4.0, 10.0)
+    var c2 = t.to_point(16.0, -6.0)
+    var end = t.to_point(20.0, 3.0)
+    # A tolerance rather than exact equality: the same expression
+    # evaluated at two call sites can differ in the last bit or two
+    # when the compiler contracts a multiply-add at one and not the
+    # other. 1e-12 is far below anything geometrically meaningful and
+    # far above that noise.
+    ref cmd = moved.commands[1]
+    assert_almost_equal(cmd.p1.x, c1.x, atol=1e-12, msg="control 1 x")
+    assert_almost_equal(cmd.p1.y, c1.y, atol=1e-12, msg="control 1 y")
+    assert_almost_equal(cmd.p2.x, c2.x, atol=1e-12, msg="control 2 x")
+    assert_almost_equal(cmd.p2.y, c2.y, atol=1e-12, msg="control 2 y")
+    assert_almost_equal(cmd.p3.x, end.x, atol=1e-12, msg="endpoint x")
+    assert_almost_equal(cmd.p3.y, end.y, atol=1e-12, msg="endpoint y")
+
+
+def test_transformed_keeps_a_uniformly_scaled_arc_exact() raises:
+    # Equal scale magnitudes map a circle to a circle, so the arc stays
+    # an arc: same point count as the original, every point on the new
+    # circle at the new radius.
+    var t = Transform2D(3.0, 3.0, 25.0, 40.0, rotation=0.3)
+    var p = Path()
+    p.move_to(10.0, 0.0)
+    p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
+
+    var moved = p.transformed(t)
+    var pts = _flat_points(moved)
+    var centre = t.to_point(0.0, 0.0)
+    for i in range(len(pts)):
+        var dx = pts[i].x - centre.x
+        var dy = pts[i].y - centre.y
+        assert_true(
+            abs(sqrt(dx * dx + dy * dy) - 30.0) < 1.0e-9,
+            "every point sits on the scaled circle of radius 30",
+        )
+
+
+def test_transformed_flattens_an_arc_under_unequal_scales() raises:
+    # Unequal magnitudes turn a circular arc into an elliptical one,
+    # which arc_to cannot express -- so it is flattened instead. The
+    # drawn shape must still be right: every point on the ellipse the
+    # transform implies.
+    var t = Transform2D(3.0, 1.0, 25.0, 40.0)
+    var p = Path()
+    p.move_to(10.0, 0.0)
+    p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
+
+    var pts = _flat_points(p.transformed(t))
+    assert_true(len(pts) > 4, "the arc was flattened, not dropped")
+    for i in range(len(pts)):
+        var dx = (pts[i].x - 25.0) / 30.0
+        var dy = (pts[i].y - 40.0) / 10.0
+        assert_true(
+            abs(dx * dx + dy * dy - 1.0) < 1.0e-9,
+            "every point lies on the implied ellipse",
+        )
+
+
+def test_transformed_arc_survives_a_y_flip() raises:
+    # A y-flip is the transform a chart actually uses, and it reflects:
+    # the sweep runs backwards, so the angles have to be negated and
+    # swapped or the arc comes out as its complement.
+    var t = Transform2D(2.0, -2.0, 50.0, 50.0)
+    var p = Path()
+    p.move_to(10.0, 0.0)
+    p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
+
+    var pts = _flat_points(p.transformed(t))
+    # The original quarter sweeps from (10, 0) to (0, 10). Flipped and
+    # scaled about (50, 50) that is (70, 50) to (50, 30) -- and it must
+    # come out in that order. Re-emitting it as an arc_to instead of
+    # flattening would reverse it, because arc_to only sweeps in
+    # increasing angle and a reflection runs the other way.
+    var first = pts[0]
+    var last = pts[len(pts) - 1]
+    assert_true(
+        abs(first.x - 70.0) < 1.0e-9 and abs(first.y - 50.0) < 1.0e-9,
+        "the flipped arc starts where the original's start maps to",
+    )
+    assert_true(
+        abs(last.x - 50.0) < 1.0e-9 and abs(last.y - 30.0) < 1.0e-9,
+        "...and ends where its end maps to",
+    )
+    # ...and stays on the circle throughout, rather than sweeping the
+    # other three quarters.
+    for i in range(len(pts)):
+        var dx = pts[i].x - 50.0
+        var dy = pts[i].y - 50.0
+        assert_true(
+            abs(sqrt(dx * dx + dy * dy) - 20.0) < 1.0e-9,
+            "on the flipped circle",
+        )
+        assert_true(
+            pts[i].x >= 49.999 and pts[i].y <= 50.001,
+            "and confined to the quarter the original covered",
+        )
+
+
+def test_transformed_leaves_the_original_alone() raises:
+    # It returns a new path precisely so the source can be reused.
+    var t = Transform2D(2.0, 2.0, 10.0, 10.0)
+    var p = Path()
+    p.move_to(1.0, 1.0)
+    p.line_to(5.0, 1.0)
+    var moved = p.transformed(t)
+    var original = _flat_points(p)
+    assert_equal(original[0].x, 1.0, "the source path is unchanged")
+    assert_equal(original[1].x, 5.0)
+    var got = _flat_points(moved)
+    assert_equal(got[0].x, 12.0, "while the copy is transformed")
 
 
 def main() raises:
