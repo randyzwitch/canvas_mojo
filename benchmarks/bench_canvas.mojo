@@ -37,6 +37,7 @@ from canvas.geometry import FPoint, Point
 from canvas.path import Path, fill_path_aa, stroke_path_aa
 from canvas.io.png import write_png, read_png
 from canvas.resize import downsample
+from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa
 from canvas.shapes.ellipses import fill_ellipse_aa
 from canvas.shapes.lines import draw_line_aa, draw_polyline_aa
@@ -194,6 +195,33 @@ def main() raises:
             fill_ellipse_aa(canvas, ex, ey, 5.0, 3.0, INK)
         sink += Int(canvas.get_pixel(100, 100).r)
     _report(rows, "fill_ellipse_aa x2000 small (5x3)", perf_counter_ns() - t0, iters)
+
+    # Pie and donut segments, the shapes a chart makes most of these
+    # for. A near-half sweep specifically, since the wedge's
+    # provably-inside fast path is guarded on sweep width.
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_arc_aa(canvas, 400.0, 300.0, 260.0, -1.2, 1.4, INK)
+        sink += Int(canvas.get_pixel(420, 300).r)
+    _report(
+        rows,
+        "fill_arc_aa large pie wedge (r=260)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_ring_sector_aa(canvas, 400.0, 300.0, 150.0, 260.0, -1.2, 1.4, INK)
+        sink += Int(canvas.get_pixel(400, 100).r)
+    _report(
+        rows,
+        "fill_ring_sector_aa large donut (150-260)",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     var poly = List[FPoint]()
     for i in range(64):
