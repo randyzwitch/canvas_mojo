@@ -1,29 +1,28 @@
 """A polygon's *interior* fill: the scanline/winding-number machinery
-(`_Crossing`, `_Span`, `_is_inside`, `_spans_from_crossings`), its two
-consumers here (`fill_polygon`, `fill_polygon_aa`), and
-`_point_in_polygon`/`_polygon_row_crossings_aa`, the real-valued
-membership tests `fill_polygon_aa`'s supersampling needs.
+(`_Crossing`, `_Span`, `_spans_from_crossings`), its two consumers
+here (`fill_polygon`, `fill_polygon_aa`), and `_point_in_polygon`, the
+real-valued membership test the anti-aliased sweep is checked against.
 
 Not `draw_polygon`/`draw_polygon_aa` in canvas.shapes.lines, which
 stroke a polygon's *outline* through a different algorithm entirely.
 
-path.mojo imports `_Crossing`/`_spans_from_crossings`/`_is_inside` for
-fill_path/fill_path_aa: the two fills differ in how they collect a
-row's crossings, not in how those crossings become spans.
-"""
+`fill_polygon_aa` describes its geometry as an `_EdgeTable` and hands
+that to `canvas.aa_crossing`'s `_sweep_edges_aa`, the coverage sweep it
+shares with `fill_path_aa` -- the two differ in how they collect their
+edges, not in how those edges become pixels.
 
-from std.math import ceil
+path.mojo imports `_Crossing`/`_spans_from_crossings` for
+fill_path/fill_path_gradient: those hard-edged fills likewise differ in
+how they collect a row's crossings, not in how those crossings become
+spans. `_is_inside` itself lives in `canvas.fill_rule` -- see there for
+why it has to.
+"""
 
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import Point
-from canvas.fill_rule import FillRule
-from canvas.aa_crossing import (
-    _AACrossing,
-    _EdgeTable,
-    _sample_x,
-    _sort_aa_crossings_by_x,
-)
+from canvas.fill_rule import FillRule, _is_inside
+from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
 
 
 struct _Crossing(ImplicitlyCopyable, Movable):
@@ -49,15 +48,6 @@ struct _Span(ImplicitlyCopyable, Movable):
     def __init__(out self, start_x: Int, end_x: Int):
         self.start_x = start_x
         self.end_x = end_x
-
-
-def _is_inside(winding: Int, fill_rule: FillRule) -> Bool:
-    if fill_rule == FillRule.NONZERO:
-        return winding != 0
-    var w = winding
-    if w < 0:
-        w = -w
-    return w % 2 == 1
 
 
 def _spans_from_crossings(
@@ -231,44 +221,6 @@ def _point_in_polygon(
     return _is_inside(winding, fill_rule)
 
 
-def _polygon_row_crossings_aa(
-    points: List[Point], fy: Float64
-) -> List[_AACrossing]:
-    """_point_in_polygon's per-sample ray-cast, hoisted to run once per
-    sub-scanline -- the technique path.mojo's fill_path_aa uses, and
-    what keeps fill_polygon_aa's sweep sub-quadratic.
-    """
-    var crossings = List[_AACrossing]()
-    _polygon_row_crossings_aa_into(points, fy, crossings)
-    return crossings^
-
-
-def _polygon_row_crossings_aa_into(
-    points: List[Point], fy: Float64, mut crossings: List[_AACrossing]
-) -> None:
-    """`_polygon_row_crossings_aa` writing into a caller-owned list,
-    so the sweep allocates once rather than once per sub-scanline --
-    see `fill_path_aa` (path.mojo), which this mirrors.
-    """
-    crossings.clear()
-
-    var n = len(points)
-    for i in range(n):
-        var p0 = points[i]
-        var p1 = points[(i + 1) % n]
-        var y0 = Float64(p0.y)
-        var y1 = Float64(p1.y)
-        if y0 == y1:
-            continue
-        var lo = min(y0, y1)
-        var hi = max(y0, y1)
-        if fy >= lo and fy < hi:
-            var t = (fy - y0) / (y1 - y0)
-            var x = Float64(p0.x) + t * Float64(p1.x - p0.x)
-            var direction = 1 if y1 > y0 else -1
-            crossings.append(_AACrossing(x, direction))
-
-
 def fill_polygon_aa(
     mut canvas: Canvas,
     points: List[Point],
@@ -289,9 +241,11 @@ def fill_polygon_aa(
     other AA primitive here, and the same `fill_rule` fill_polygon
     takes, sharing `_is_inside` so the two agree on the boundary.
 
-    Swept per sub-scanline (_polygon_row_crossings_aa) rather than per
-    sub-pixel sample: see fill_path_aa for the complexity argument.
-    `_point_in_polygon` remains the reference implementation this
+    The sweep itself is `canvas.aa_crossing`'s `_sweep_edges_aa`,
+    shared with `fill_path_aa` -- see there for why it works per
+    sub-scanline rather than per sub-pixel sample. All this function
+    contributes is the polygon's bounding box and its edges.
+    `_point_in_polygon` remains the reference implementation that
     sweep's output must match pixel for pixel.
 
     Not fused with fill_polygon behind an `antialias: Bool`, for the
@@ -323,97 +277,20 @@ def fill_polygon_aa(
         if points[i].y > max_y:
             max_y = points[i].y
 
-    var s = supersample
-    var total_samples = s * s
-    var step = 1.0 / Float64(s)
-    var row_first_px = min_x - 1
-    var row_width = (max_x + 2) - row_first_px
-
-    # Allocated once for the whole sweep rather than per row and per
-    # sub-scanline -- see fill_path_aa (path.mojo) for the measurement
-    # that motivated it.
-    var row_covered = List[Int](capacity=row_width)
-    for _ in range(row_width):
-        row_covered.append(0)
-    var crossings = List[_AACrossing]()
-    var suffix = List[Int]()
     var edges = _EdgeTable()
-    var pn = len(points)
-    for i in range(pn):
+    for i in range(n):
         var a = points[i]
-        var b = points[(i + 1) % pn]
+        var b = points[(i + 1) % n]
         edges.add_edge(Float64(a.x), Float64(a.y), Float64(b.x), Float64(b.y))
 
-    for py in range(min_y - 1, max_y + 2):
-        for pxi in range(row_width):
-            row_covered[pxi] = 0
-
-        for sy in range(s):
-            var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-            edges.crossings_at(fy, crossings)
-            _sort_aa_crossings_by_x(crossings)
-            var k = len(crossings)
-
-            while len(suffix) < k + 1:
-                suffix.append(0)
-            suffix[k] = 0
-            for i in range(k - 1, -1, -1):
-                suffix[i] = suffix[i + 1] + crossings[i].direction
-
-            # Counted by interval rather than tested per sample --
-            # see fill_path_aa (path.mojo), which this mirrors, for
-            # why the counts are identical either way.
-            var total_g = row_width * s
-            var x0 = Float64(row_first_px) - 0.5
-            for i in range(k + 1):
-                if not _is_inside(suffix[i], fill_rule):
-                    continue
-
-                var g_start = 0
-                if i > 0:
-                    var lo = crossings[i - 1].x
-                    g_start = Int(ceil((lo - x0) * Float64(s) - 0.5))
-                    while g_start > 0 and _sample_x(x0, g_start - 1, s) >= lo:
-                        g_start -= 1
-                    while g_start < total_g and _sample_x(x0, g_start, s) < lo:
-                        g_start += 1
-                    if g_start < 0:
-                        g_start = 0
-
-                var g_end = total_g - 1
-                if i < k:
-                    var hi = crossings[i].x
-                    g_end = Int(ceil((hi - x0) * Float64(s) - 0.5)) - 1
-                    while g_end >= 0 and _sample_x(x0, g_end, s) >= hi:
-                        g_end -= 1
-                    while (
-                        g_end + 1 < total_g and _sample_x(x0, g_end + 1, s) < hi
-                    ):
-                        g_end += 1
-                    if g_end > total_g - 1:
-                        g_end = total_g - 1
-
-                var g = g_start
-                while g <= g_end:
-                    var pxi = g // s
-                    var upper = (pxi + 1) * s - 1
-                    if g_end < upper:
-                        upper = g_end
-                    row_covered[pxi] += upper - g + 1
-                    g = upper + 1
-
-        for pxi in range(row_width):
-            var covered = row_covered[pxi]
-            if covered > 0:
-                var px = row_first_px + pxi
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
-                canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
-                )
+    _sweep_edges_aa(
+        canvas,
+        edges,
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        color,
+        fill_rule,
+        supersample,
+    )

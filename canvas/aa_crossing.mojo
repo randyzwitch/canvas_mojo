@@ -1,23 +1,40 @@
-"""`_AACrossing` and its sort: one sub-scanline crossing at a
-real-valued x -- polygon_fill's `_Crossing` with a fractional y, where
-x stays `Float64` rather than rounding to `Int`, since an AA sweep
-places a crossing between two supersample columns, not two whole
-pixels -- plus the insertion sort `fill_polygon_aa` and `fill_path_aa`
-both use to order a sub-scanline's crossings before their identical
-left-to-right winding scan.
+"""The anti-aliased scanline sweep, and the pieces it is built from:
+`_AACrossing` (one sub-scanline crossing at a real-valued x --
+polygon_fill's `_Crossing` with a fractional y, where x stays
+`Float64` rather than rounding to `Int`, since an AA sweep places a
+crossing between two supersample columns, not two whole pixels), the
+insertion sort that orders a sub-scanline's crossings, the
+`_EdgeTable` those crossings are read out of, and `_sweep_edges_aa`
+itself -- the coverage sweep `fill_path_aa` and `fill_polygon_aa` both
+run, once, over whatever edges their caller handed in.
 
-A leaf module so neither file imports it from the other: `path.mojo`
-already imports drawing primitives *from* `polygon_fill`, so importing
-`_AACrossing` back the other way would be a real cycle. This module
-imports from neither, leaving a clean DAG (polygon_fill ->
-aa_crossing, path -> aa_crossing, path -> polygon_fill).
+The two fills differ only in how they describe their geometry: one
+walks sub-paths, the other a single point ring. Everything after that
+-- collecting a sub-scanline's crossings, sorting them, accumulating
+suffix windings, counting inside runs into per-pixel coverage, and
+turning coverage into alpha -- is identical, and used to exist as two
+line-for-line copies that had to be kept in step by hand.
+
+A near-leaf module, which is what lets both callers share it:
+`path.mojo` already imports drawing primitives *from* `polygon_fill`,
+so anything the two have in common has to live somewhere neither
+imports. Nothing here imports either of them (`_is_inside` comes from
+`fill_rule.mojo`, which imports nothing at all), leaving a clean DAG:
+polygon_fill -> aa_crossing, path -> aa_crossing, path ->
+polygon_fill.
 
 Insertion sort, since a sub-scanline's crossing count is a handful,
-not the whole path's point count -- the same reasoning
+not the whole shape's point count -- the same reasoning
 `polygon_fill`'s `_spans_from_crossings` uses for its own copy of this
 sort over `_Crossing`/`Int`. Unifying the two behind one generic sort
 would be a larger change than sharing this struct was.
 """
+
+from std.math import ceil
+
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.fill_rule import FillRule, _is_inside
 
 
 struct _AACrossing(ImplicitlyCopyable, Movable):
@@ -139,4 +156,159 @@ struct _EdgeTable(Movable):
                         ex0[unsafe_offset=i] + t * edx[unsafe_offset=i],
                         edir[unsafe_offset=i],
                     )
+                )
+
+
+def _sweep_edges_aa(
+    mut canvas: Canvas,
+    edges: _EdgeTable,
+    min_x: Int,
+    min_y: Int,
+    max_x: Int,
+    max_y: Int,
+    color: Color,
+    fill_rule: FillRule,
+    supersample: Int,
+):
+    """Rasterize `edges` into `canvas` with supersampled coverage AA:
+    for every pixel in the padded bounding box, sample an NxN sub-pixel
+    grid and turn the covered fraction into that pixel's alpha. Each
+    output pixel is written exactly once, so a translucent color can't
+    double-blend anywhere -- including where a shape crosses itself.
+
+    `fill_path_aa` and `fill_polygon_aa` are the callers; each builds
+    its own `_EdgeTable` and bounding box from its own geometry and
+    then runs this. `min_x`/`min_y`/`max_x`/`max_y` are the integer
+    bounds of that geometry, unpadded -- the one-pixel skirt every AA
+    fill needs is added here, so neither caller has to remember it.
+
+    Swept per sub-scanline rather than per sub-pixel sample. The naive
+    membership test (`_point_in_subpaths` in path.mojo,
+    `_point_in_polygon` in polygon_fill.mojo -- both kept as reference
+    implementations this must match pixel for pixel, and both still
+    tested directly) rescans every edge for every one of a pixel's
+    supersample^2 sub-samples: O(pixels * supersample^2 * edges), fine
+    for a small shape but seconds of work for a large edge-dense one,
+    since arc_to's point count scales with radius. Collecting a
+    sub-scanline's crossings once removes the `* edges` factor: sort by
+    x, precompute each crossing's suffix winding sum, then sweep every
+    sub-sample's x -- strictly increasing across the row -- against
+    that sorted list with one forward-only pointer, an amortized O(1)
+    lookup per sample. The math per sample is the reference ray cast
+    either way.
+    """
+    var s = supersample
+    var total_samples = s * s
+    var step = 1.0 / Float64(s)
+    var row_first_px = min_x - 1
+    var row_width = (max_x + 2) - row_first_px  # px range length
+
+    # Buffers for the whole sweep, not per row and per sub-scanline.
+    # A glyph-sized path is small enough that allocating a crossing
+    # list, a suffix list and a coverage row for every sub-scanline
+    # costs more than the sampling does -- measured at roughly 5x the
+    # per-pixel cost of a large shape. `_draw_polyline_core_aa` already
+    # reuses its per-row buffers this way; these match it.
+    var row_covered = List[Int](capacity=row_width)
+    for _ in range(row_width):
+        row_covered.append(0)
+    var crossings = List[_AACrossing]()
+    var suffix = List[Int]()
+
+    for py in range(min_y - 1, max_y + 2):
+        for pxi in range(row_width):
+            row_covered[pxi] = 0
+
+        for sy in range(s):
+            var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+            edges.crossings_at(fy, crossings)
+            _sort_aa_crossings_by_x(crossings)
+            var k = len(crossings)
+
+            # suffix[i] is the signed winding contributed by every
+            # crossing from index i onward -- what the reference ray
+            # cast's `x > fx` test sums fresh per sample. Precomputing
+            # it per sub-scanline is what removes the `* edges` factor.
+            # Grown to fit, never shrunk, so a later sub-scanline with
+            # fewer crossings reuses the same storage.
+            while len(suffix) < k + 1:
+                suffix.append(0)
+            suffix[k] = 0
+            for i in range(k - 1, -1, -1):
+                suffix[i] = suffix[i + 1] + crossings[i].direction
+
+            # Inside/outside is constant between consecutive
+            # crossings, and the sub-sample x positions are uniformly
+            # spaced -- fx(g) = x0 + (g + 0.5)/s for a sample index g
+            # running across the whole row. So each inside run maps to
+            # a contiguous range of g, and the samples in it can be
+            # counted rather than tested one at a time: a pixel wholly
+            # inside a run takes `+= s` in one step, and a pixel in no
+            # run is never touched at all.
+            #
+            # Exactly the same counts as testing each position -- the
+            # positions themselves are unchanged, only the way they're
+            # counted is -- so every hand-derived coverage value in the
+            # tests still holds. That is the check that this stayed
+            # exact rather than merely close.
+            var total_g = row_width * s
+            var x0 = Float64(row_first_px) - 0.5
+            for i in range(k + 1):
+                if not _is_inside(suffix[i], fill_rule):
+                    continue
+
+                # First sample at or after this run's left edge.
+                var g_start = 0
+                if i > 0:
+                    var lo = crossings[i - 1].x
+                    g_start = Int(ceil((lo - x0) * Float64(s) - 0.5))
+                    # `ceil` on a float expression can land a step off
+                    # at a boundary; nudge to the exact first sample
+                    # rather than trust it.
+                    while g_start > 0 and _sample_x(x0, g_start - 1, s) >= lo:
+                        g_start -= 1
+                    while g_start < total_g and _sample_x(x0, g_start, s) < lo:
+                        g_start += 1
+                    if g_start < 0:
+                        g_start = 0
+
+                # Last sample strictly before this run's right edge.
+                var g_end = total_g - 1
+                if i < k:
+                    var hi = crossings[i].x
+                    g_end = Int(ceil((hi - x0) * Float64(s) - 0.5)) - 1
+                    while g_end >= 0 and _sample_x(x0, g_end, s) >= hi:
+                        g_end -= 1
+                    while (
+                        g_end + 1 < total_g and _sample_x(x0, g_end + 1, s) < hi
+                    ):
+                        g_end += 1
+                    if g_end > total_g - 1:
+                        g_end = total_g - 1
+
+                # Walk the run a pixel at a time, taking every sample
+                # that pixel contributes in one add.
+                var g = g_start
+                while g <= g_end:
+                    var pxi = g // s
+                    var upper = (pxi + 1) * s - 1
+                    if g_end < upper:
+                        upper = g_end
+                    row_covered[pxi] += upper - g + 1
+                    g = upper + 1
+
+        for pxi in range(row_width):
+            var covered = row_covered[pxi]
+            if covered > 0:
+                var px = row_first_px + pxi
+                var alpha = UInt8(
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(color.a)
+                        + 0.5
+                    )
+                )
+                canvas.set_pixel(
+                    px, py, Color(color.r, color.g, color.b, alpha)
                 )

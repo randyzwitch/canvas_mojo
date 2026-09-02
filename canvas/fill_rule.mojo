@@ -38,3 +38,25 @@ struct FillRule(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+
+def _is_inside(winding: Int, fill_rule: FillRule) -> Bool:
+    """Whether a signed winding number counts as "inside" under
+    `fill_rule` -- the single place the two rules actually differ.
+
+    Every fill in this package routes its membership decision through
+    here, which is what makes a hard-edged fill and its anti-aliased
+    counterpart agree on exactly where a boundary sits.
+
+    Lives here rather than in `canvas.shapes.polygon_fill`, where it
+    used to: `canvas.aa_crossing`'s shared AA sweep needs it too, and
+    `polygon_fill` imports *from* that module, so reaching back the
+    other way would be a cycle. This module imports nothing at all,
+    which makes it the one place both can see.
+    """
+    if fill_rule == FillRule.NONZERO:
+        return winding != 0
+    var w = winding
+    if w < 0:
+        w = -w
+    return w % 2 == 1
