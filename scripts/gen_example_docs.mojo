@@ -43,6 +43,7 @@ def _titles() -> Dict[String, String]:
     d["transform"] = "Transforms"
     d["clipping"] = "Clipping"
     d["png_output"] = "PNG I/O"
+    d["transparency"] = "Transparency"
     d["text"] = "Text"
     d["vector"] = "Vector Output"
     return d^
@@ -115,8 +116,11 @@ def _categories() -> List[Category]:
     cats.append(
         Category(
             "Image I/O",
-            "Writing (and reading back) the pixel buffer as a real image file.",
-            ["png_output"],
+            (
+                "Writing (and reading back) the pixel buffer as a real image"
+                " file, and which format can carry an alpha channel."
+            ),
+            ["png_output", "transparency"],
         )
     )
     cats.append(
