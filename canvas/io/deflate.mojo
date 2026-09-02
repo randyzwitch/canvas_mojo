@@ -608,6 +608,28 @@ comptime _WINDOW = 32768
 # Real encoders go much higher at their top compression levels.
 comptime _MAX_CHAIN = 32
 
+# Hash table sizing for the match search below. The table is indexed by
+# a hash of the 3 bytes at a position, and holds the most recent
+# position with that hash; `_HashChains.prev` links each position to
+# the previous one sharing it. Both are plain integer arrays, so an
+# insert is two stores and never allocates.
+#
+# Sized to the input rather than fixed: a 2x1 PNG's 7-byte scanline
+# does not need (and should not zero) a 64K-entry table, while an
+# 800x600 RGBA image's ~1.9MB does. Rounded up to a power of two so the
+# index is a mask rather than a modulo.
+comptime _MIN_HASH_SIZE = 256
+comptime _MAX_HASH_SIZE = 1 << 15
+# _WINDOW is a power of two, so a position maps into `prev` with a mask.
+comptime _WINDOW_MASK = _WINDOW - 1
+
+# Knuth's multiplicative constant, 2^32 / phi. The 3-byte prefix is
+# spread across the table's width by multiplying and taking the high
+# bits, so inputs differing only in their low byte -- consecutive
+# pixels of a gradient, say -- land in different buckets instead of
+# adjacent ones.
+comptime _HASH_MUL = 2654435761
+
 
 def _fixed_lit_lengths() -> List[Int]:
     """RFC 1951 3.2.6's fixed code lengths in the shape the *encoder*
@@ -697,38 +719,76 @@ def _distance_symbol(distance: Int, dists: List[Int]) -> Int:
     return idx
 
 
-def _hash3(data: List[UInt8], pos: Int) -> Int:
-    """The 3 raw bytes at `pos` packed into a 24-bit integer, used
-    directly as a Dict key rather than hashed into a smaller bucket
-    count. Every entry a lookup finds therefore already shares the
-    position's 3-byte prefix -- no re-check before extending a
-    candidate -- and 3 bytes is DEFLATE's minimum match length
-    (_MIN_MATCH) anyway.
+def _hash3(data: List[UInt8], pos: Int, mask: Int) -> Int:
+    """A table index for the 3 bytes at `pos`. 3 bytes because that is
+    DEFLATE's minimum match length (_MIN_MATCH).
+
+    Unlike an exact 24-bit key, this can collide: two different
+    3-byte prefixes may share a bucket. That costs a little of the
+    search budget but cannot produce a wrong match, because
+    `_find_match` compares candidates against the input byte by byte
+    rather than trusting the bucket.
     """
-    return (
+    var v = (
         (Int(data[pos]) << 16) | (Int(data[pos + 1]) << 8) | Int(data[pos + 2])
     )
+    return ((v * _HASH_MUL) >> 16) & mask
 
 
-def _insert_hash(
-    mut chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int
-) raises:
-    """Records `pos` as a candidate match source for its 3-byte prefix,
-    capped at _MAX_CHAIN entries per key, oldest dropped first. This
-    bounds memory for a constantly recurring prefix -- a large
-    flat-color region's background could recur millions of times in one
-    image -- without changing which candidates get considered, since
-    _find_match only checks the _MAX_CHAIN most recent entries anyway.
+struct _HashChains(Movable):
+    """Most-recent-position-per-hash (`head`) plus a per-position link
+    to the next-most-recent sharing that hash (`prev`) -- the standard
+    LZ77 chain structure, and the reason a match search does not need a
+    dictionary.
+
+    This replaced a `Dict[Int, List[Int]]` whose per-position insert
+    hashed a key, risked an allocation, and called `pop(0)` on the
+    bucket -- an O(bucket) memmove -- once per byte of every image
+    written. Here an insert is two array stores, and the _MAX_CHAIN cap
+    moves from the insert (bounding what is stored) to the search
+    (bounding what is walked), which is where it was always doing the
+    real work: `_find_match` never looked past that many candidates
+    anyway.
+
+    Walking `prev` from `head` yields positions in most-recent-first
+    order, which is what makes `_find_match`'s "nearest among equal
+    lengths" tie-break fall out for free.
     """
-    var key = _hash3(data, pos)
-    if key in chains:
-        chains[key].append(pos)
-        if len(chains[key]) > _MAX_CHAIN:
-            _ = chains[key].pop(0)
-    else:
-        var bucket = List[Int]()
-        bucket.append(pos)
-        chains[key] = bucket^
+
+    # Int32, not Int: these are positions in a buffer DEFLATE already
+    # caps at a 32768-byte match distance, so 32 bits is ample, and
+    # halving both arrays keeps the pair at 256KB rather than 512KB --
+    # small enough not to disturb the allocator on a caller that
+    # encodes in a loop.
+    var head: List[Int32]
+    var prev: List[Int32]
+    var mask: Int
+
+    def __init__(out self, n: Int):
+        var size = _MIN_HASH_SIZE
+        while size < n and size < _MAX_HASH_SIZE:
+            size <<= 1
+        self.head = List[Int32](length=size, fill=-1)
+        # _WINDOW entries, not one per input byte. A match may never
+        # reach further back than _WINDOW, so a link out of that range
+        # could never be used -- making this array proportional to the
+        # input instead would allocate and zero ~8 bytes per byte
+        # compressed (15MB for an 800x600 RGBA image), which measured
+        # slower than the dictionary this replaced.
+        self.prev = List[Int32](length=_WINDOW, fill=-1)
+        self.mask = size - 1
+
+    def insert(mut self, data: List[UInt8], pos: Int):
+        """Record `pos` as a candidate match source for its 3-byte
+        prefix. Unbounded in what it stores; the search is what caps
+        how far back it looks.
+        """
+        var h = _hash3(data, pos, self.mask)
+        var hp = self.head.unsafe_ptr()
+        self.prev.unsafe_ptr()[unsafe_offset=pos & _WINDOW_MASK] = hp[
+            unsafe_offset=h
+        ]
+        hp[unsafe_offset=h] = Int32(pos)
 
 
 struct _Match(ImplicitlyCopyable, Movable):
@@ -740,14 +800,18 @@ struct _Match(ImplicitlyCopyable, Movable):
         self.distance = distance
 
 
-def _find_match(
-    chains: Dict[Int, List[Int]], data: List[UInt8], pos: Int
-) raises -> _Match:
+def _find_match(chains: _HashChains, data: List[UInt8], pos: Int) -> _Match:
     """The best LZ77 match for the bytes at `pos` -- longest, and
-    nearest among equal lengths, since candidates are searched
-    most-recent-first -- among whatever `chains` holds for that 3-byte
-    prefix. Length 0 means nothing at least _MIN_MATCH long was found,
-    and the caller emits a literal byte.
+    nearest among equal lengths, since the chain is walked
+    most-recent-first -- among the _MAX_CHAIN most recent positions
+    sharing this position's hash bucket. Length 0 means nothing at
+    least _MIN_MATCH long was found, and the caller emits a literal
+    byte.
+
+    A bucket may hold positions whose 3 bytes merely *hash* the same
+    (see _hash3), so a candidate is not assumed to match; the
+    comparison below establishes it. A collision therefore costs a
+    rejected candidate, never a wrong match.
 
     Length is measured by byte-by-byte comparison against the
     *original* input array, not a partially-built output buffer, which
@@ -758,10 +822,6 @@ def _find_match(
     """
     var n = len(data)
     if pos + _MIN_MATCH > n:
-        return _Match(0, 0)
-
-    var key = _hash3(data, pos)
-    if key not in chains:
         return _Match(0, 0)
 
     var best_length = 0
@@ -775,13 +835,16 @@ def _find_match(
     # is at most `n - pos`, and `candidate + length` is smaller still
     # since `candidate < pos`.
     var d = data.unsafe_ptr()
-    ref chain = chains[key]
-    var j = len(chain) - 1
-    while j >= 0:
-        var candidate = chain[j]
+    var pp = chains.prev.unsafe_ptr()
+    var candidate = Int(
+        chains.head.unsafe_ptr()[unsafe_offset=_hash3(data, pos, chains.mask)]
+    )
+    var walked = 0
+    while candidate >= 0 and walked < _MAX_CHAIN:
+        walked += 1
         var distance = pos - candidate
         if distance > _WINDOW:
-            break  # older entries (smaller j) are only further still
+            break  # earlier links are only further still
         var length = 0
         while (
             length < max_possible
@@ -806,7 +869,14 @@ def _find_match(
                 # "nearest among equal lengths" tie-break is unchanged
                 # and so is the emitted stream, byte for byte.
                 break
-        j -= 1
+        # `prev` wraps every _WINDOW positions, so an untouched slot
+        # can still hold a position from a previous lap. A chain is
+        # strictly decreasing by construction, so anything that is not
+        # is such a leftover and ends the walk.
+        var next_candidate = Int(pp[unsafe_offset=candidate & _WINDOW_MASK])
+        if next_candidate >= candidate:
+            break
+        candidate = next_candidate
 
     if best_length < _MIN_MATCH:
         return _Match(0, 0)
@@ -815,8 +885,8 @@ def _find_match(
 
 def deflate(data: List[UInt8]) raises -> List[UInt8]:
     """Compress `data` into a raw DEFLATE stream (RFC 1951): LZ77 +
-    fixed-Huffman, one block, hash-chain match search capped at
-    _MAX_CHAIN candidates. Not a zlib stream (RFC 1950) -- a caller
+    fixed-Huffman, one block, head/prev hash-chain match search
+    (see _HashChains) capped at _MAX_CHAIN candidates. Not a zlib stream (RFC 1950) -- a caller
     needing one, such as write_png, adds the 2-byte header and 4-byte
     Adler-32 trailer itself.
 
@@ -969,8 +1039,8 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
         13,
     ]
 
-    var chains = Dict[Int, List[Int]]()
     var n = len(data)
+    var chains = _HashChains(n)
     var i = 0
     while i < n:
         var m = _find_match(chains, data, i)
@@ -988,13 +1058,13 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
             # starting partway through this one won't be found), not a
             # correctness gap.
             if i + _MIN_MATCH <= n:
-                _insert_hash(chains, data, i)
+                chains.insert(data, i)
             i += m.length
         else:
             var byte = Int(data[i])
             writer.write_code(lit_codes[byte], lit_lengths[byte])
             if i + _MIN_MATCH <= n:
-                _insert_hash(chains, data, i)
+                chains.insert(data, i)
             i += 1
 
     writer.write_code(lit_codes[256], lit_lengths[256])  # end-of-block
