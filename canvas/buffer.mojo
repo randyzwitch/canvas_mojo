@@ -1,6 +1,8 @@
 """The pixel raster buffer at the core of the canvas package."""
 
-from canvas.color import Color
+from std.memory import unsafe_memcpy
+
+from canvas.color import Color, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.path import Path, fill_path_aa, stroke_path_aa
@@ -77,13 +79,39 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         self.width = width
         self.height = height
-        self.pixels = List[UInt8](capacity=width * height * 3)
-        for _ in range(width * height):
-            self.pixels.append(fill.r)
-            self.pixels.append(fill.g)
-            self.pixels.append(fill.b)
-        # empty stack == no clip active == the clip region is the whole canvas
+
+        # One scratch row is built byte by byte, then copied into
+        # every row of the canvas. The obvious version -- three
+        # `append`s per pixel -- pays a capacity check and a length
+        # update per byte across the whole buffer; this pays them for
+        # one row and lets the bulk copy do the rest.
+        #
+        # Via a separate `row` list rather than copying the canvas's
+        # own first row down: Mojo rejects a `memcpy` whose source and
+        # destination share an origin, `unsafe_memcpy` included, so a
+        # self-copy is not expressible here however the pointers are
+        # offset.
+        var total = width * height * 3
+        self.pixels = List[UInt8](length=total, fill=0)
         self.clip_stack = List[_ClipRect]()
+        if total == 0:
+            return
+
+        var row_bytes = width * 3
+        var row = List[UInt8](length=row_bytes, fill=0)
+        var rp = row.unsafe_ptr()
+        for i in range(0, row_bytes, 3):
+            rp[unsafe_offset=i] = fill.r
+            rp[unsafe_offset=i + 1] = fill.g
+            rp[unsafe_offset=i + 2] = fill.b
+
+        var p = self.pixels.unsafe_ptr()
+        for y in range(height):
+            unsafe_memcpy(
+                dest=p.unsafe_offset(y * row_bytes),
+                src=rp,
+                count=row_bytes,
+            )
 
     def __init__(
         out self, width: Int, height: Int, var pixels: List[UInt8]
@@ -253,12 +281,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
             p[unsafe_offset=idx + 1] = color.g
             p[unsafe_offset=idx + 2] = color.b
         else:
-            var bg = Color(
+            var blended = color.blend_over_opaque(
                 p[unsafe_offset=idx],
                 p[unsafe_offset=idx + 1],
                 p[unsafe_offset=idx + 2],
             )
-            var blended = color.blend_over(bg)
             p[unsafe_offset=idx] = blended.r
             p[unsafe_offset=idx + 1] = blended.g
             p[unsafe_offset=idx + 2] = blended.b
@@ -354,13 +381,81 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 translucent.
         """
         var region = self.effective_fill_rect(0, 0, self.width, self.height)
-        var rx = region[0]
-        var ry = region[1]
-        var rw = region[2]
-        var rh = region[3]
+        self._fill_region(region[0], region[1], region[2], region[3], color)
+
+    def _fill_region(
+        mut self, rx: Int, ry: Int, rw: Int, rh: Int, color: Color
+    ):
+        """Fill an already-clipped, already-bounds-checked rectangle --
+        the region `effective_fill_rect` returns, so every coordinate
+        in it is known drawable and no per-pixel check is needed.
+
+        Two things this does that a `write_pixel` loop cannot. The
+        pointer and the row base are computed once per row rather than
+        once per pixel, and the opaque case builds one span of bytes
+        and bulk-copies it into every row -- the same trick the
+        constructor uses, and for the same reason.
+
+        The translucent case still blends per pixel, since each output
+        depends on what was already there, but it hoists everything
+        that does not: the source colour's premultiplied terms and the
+        complementary alpha are computed once for the whole rectangle,
+        leaving one multiply-add and one `_div255` per channel.
+
+        Byte-for-byte identical to the loop it replaces. This is
+        `blend_over_opaque` inlined -- same arithmetic, same exact
+        `_div255`, and the background is opaque here for the same
+        reason it always is (see color.mojo).
+        """
+        if rw <= 0 or rh <= 0:
+            return
+        var p = self.pixels.unsafe_ptr()
+        var span_bytes = rw * 3
+        var stride = self.width * 3
+
+        if color.a == 255:
+            # One scratch span, copied into every row of the
+            # rectangle. Separate from the canvas for the reason the
+            # constructor gives: a same-origin memcpy is rejected.
+            var span = List[UInt8](length=span_bytes, fill=0)
+            var sp = span.unsafe_ptr()
+            for i in range(0, span_bytes, 3):
+                sp[unsafe_offset=i] = color.r
+                sp[unsafe_offset=i + 1] = color.g
+                sp[unsafe_offset=i + 2] = color.b
+            for y in range(ry, ry + rh):
+                unsafe_memcpy(
+                    dest=p.unsafe_offset(y * stride + rx * 3),
+                    src=sp,
+                    count=span_bytes,
+                )
+            return
+
+        if color.a == 0:
+            return
+
+        # Unit-stride inner loop with the index carried along, rather
+        # than `range(0, span_bytes, 3)`: the strided form measured
+        # slower than the per-pixel `write_pixel` loop this replaced,
+        # which is the opposite of the point.
+        var sa = Int(color.a)
+        var inv = 255 - sa
+        var cr = Int(color.r) * sa
+        var cg = Int(color.g) * sa
+        var cb = Int(color.b) * sa
         for y in range(ry, ry + rh):
-            for x in range(rx, rx + rw):
-                self.write_pixel(x, y, color)
+            var idx = y * stride + rx * 3
+            for _ in range(rw):
+                p[unsafe_offset=idx] = UInt8(
+                    _div255(cr + Int(p[unsafe_offset=idx]) * inv)
+                )
+                p[unsafe_offset=idx + 1] = UInt8(
+                    _div255(cg + Int(p[unsafe_offset=idx + 1]) * inv)
+                )
+                p[unsafe_offset=idx + 2] = UInt8(
+                    _div255(cb + Int(p[unsafe_offset=idx + 2]) * inv)
+                )
+                idx += 3
 
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color

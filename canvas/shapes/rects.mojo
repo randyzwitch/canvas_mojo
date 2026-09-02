@@ -64,13 +64,7 @@ def fill_rect(
         return
 
     var region = canvas.effective_fill_rect(x, y, width, height)
-    var rx = region[0]
-    var ry = region[1]
-    var rw = region[2]
-    var rh = region[3]
-    for yy in range(ry, ry + rh):
-        for xx in range(rx, rx + rw):
-            canvas.write_pixel(xx, yy, color)
+    canvas._fill_region(region[0], region[1], region[2], region[3], color)
 
 
 def fill_rect_gradient(
