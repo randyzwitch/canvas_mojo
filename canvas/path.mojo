@@ -60,6 +60,7 @@ from canvas.shapes.lines import (
     draw_polygon,
     draw_polyline_aa,
     draw_polygon_aa,
+    LineCap,
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_fpoints
@@ -1111,6 +1112,7 @@ def stroke_path_aa(
     curve_steps: Int = 0,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    cap: LineCap = LineCap.ROUND,
 ):
     """Anti-aliased version of stroke_path -- see draw_polyline_aa/
     draw_polygon_aa.
@@ -1132,6 +1134,8 @@ def stroke_path_aa(
             stroke. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the stroke starts
             at.
+        cap: How an *open* sub-path's two ends are finished -- see
+            LineCap. A closed sub-path has no ends and ignores it.
     """
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
@@ -1159,4 +1163,5 @@ def stroke_path_aa(
                 supersample,
                 dashes,
                 dash_offset,
+                cap,
             )
