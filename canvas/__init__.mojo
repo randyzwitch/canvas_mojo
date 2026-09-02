@@ -2,7 +2,7 @@ from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.compose import draw_canvas
 from canvas.geometry import Point, Transform2D
-from canvas.gradient import LinearGradient, RadialGradient
+from canvas.gradient import ColorSource, LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule
 from canvas.shapes.lines import (
     LineCap,
@@ -55,7 +55,9 @@ from canvas.path import (
     fill_path,
     fill_path_aa,
     fill_path_gradient,
+    fill_path_gradient_aa,
     fill_path_radial_gradient,
+    fill_path_radial_gradient_aa,
     stroke_path,
     stroke_path_aa,
 )

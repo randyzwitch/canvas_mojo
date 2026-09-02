@@ -46,9 +46,9 @@ close() was called.
 from std.math import ceil, cos, floor, pi, sin, sqrt
 
 from canvas.buffer import Canvas
-from canvas.color import Color
+from canvas.color import Color, _div255
 from canvas.geometry import Point, FPoint, Transform2D, _round_to_int
-from canvas.gradient import LinearGradient, RadialGradient
+from canvas.gradient import ColorSource, LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import (
     _EdgeTable,
@@ -857,6 +857,72 @@ def fill_path(
                 canvas.set_pixel(x, y, color)
 
 
+struct _FBounds(ImplicitlyCopyable, Movable):
+    """A flattened path's real-valued extent."""
+
+    var min_x: Float64
+    var max_x: Float64
+    var min_y: Float64
+    var max_y: Float64
+
+    def __init__(
+        out self, min_x: Float64, max_x: Float64, min_y: Float64, max_y: Float64
+    ):
+        self.min_x = min_x
+        self.max_x = max_x
+        self.min_y = min_y
+        self.max_y = max_y
+
+
+def _subpath_bounds(subpaths: List[_Subpath]) -> _FBounds:
+    """The bounding box of every point in `subpaths`, unrounded.
+
+    Callers widen this to whole pixels themselves (floor/ceil, not
+    round): an edge at x = 10.2 has to have pixel 10 swept for it to
+    pick up any partial coverage there.
+    """
+    var min_x = subpaths[0].points[0].x
+    var max_x = min_x
+    var min_y = subpaths[0].points[0].y
+    var max_y = min_y
+    for sp_idx in range(len(subpaths)):
+        ref sp = subpaths[sp_idx]
+        for p in sp.points:
+            if p.x < min_x:
+                min_x = p.x
+            if p.x > max_x:
+                max_x = p.x
+            if p.y < min_y:
+                min_y = p.y
+            if p.y > max_y:
+                max_y = p.y
+    return _FBounds(min_x, max_x, min_y, max_y)
+
+
+def _subpath_edges(subpaths: List[_Subpath]) -> _EdgeTable:
+    """Every sub-path's edges in one table, so their winding
+    contributions combine before the fill rule is applied -- which is
+    what makes an inner sub-path punch a hole rather than fill solid.
+
+    Handed over unrounded. This is the whole point of `_Subpath`
+    carrying FPoint: an edge running from x = 10.4 to x = 13.7 covers a
+    genuinely different set of sub-samples than one snapped to
+    10 -> 14, and it is that difference the coverage sweep turns into
+    alpha.
+    """
+    var edges = _EdgeTable()
+    for sp_idx in range(len(subpaths)):
+        ref sp = subpaths[sp_idx]
+        var pn = len(sp.points)
+        if pn < 2:
+            continue
+        for i in range(pn):
+            var a = sp.points[i]
+            var b = sp.points[(i + 1) % pn]
+            edges.add_edge(a.x, a.y, b.x, b.y)
+    return edges^
+
+
 def _point_in_subpaths(
     subpaths: List[_Subpath], fx: Float64, fy: Float64, fill_rule: FillRule
 ) -> Bool:
@@ -945,41 +1011,12 @@ def fill_path_aa(
     if len(subpaths) == 0:
         return
 
-    var min_x = subpaths[0].points[0].x
-    var max_x = min_x
-    var min_y = subpaths[0].points[0].y
-    var max_y = min_y
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        for p in sp.points:
-            if p.x < min_x:
-                min_x = p.x
-            if p.x > max_x:
-                max_x = p.x
-            if p.y < min_y:
-                min_y = p.y
-            if p.y > max_y:
-                max_y = p.y
-
-    # Every sub-path's edges go into one table, so their winding
-    # contributions combine before the fill rule is applied -- which is
-    # what makes an inner sub-path punch a hole rather than fill solid.
-    #
-    # Handed over unrounded. This is the whole point of `_Subpath`
-    # carrying FPoint: an edge running from x = 10.4 to x = 13.7 covers
-    # a genuinely different set of sub-samples than one snapped to
-    # 10 -> 14, and it is that difference the coverage sweep turns into
-    # alpha.
-    var edges = _EdgeTable()
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        var pn = len(sp.points)
-        if pn < 2:
-            continue
-        for i in range(pn):
-            var a = sp.points[i]
-            var b = sp.points[(i + 1) % pn]
-            edges.add_edge(a.x, a.y, b.x, b.y)
+    var fb = _subpath_bounds(subpaths)
+    var min_x = fb.min_x
+    var max_x = fb.max_x
+    var min_y = fb.min_y
+    var max_y = fb.max_y
+    var edges = _subpath_edges(subpaths)
 
     # The sweep works in whole pixels, so the real-valued bounds widen
     # outward to the pixels that contain them (floor/ceil, not round):
@@ -1024,32 +1061,12 @@ def _path_coverage_mask(
     if len(subpaths) == 0:
         return mask^
 
-    var min_x = subpaths[0].points[0].x
-    var max_x = min_x
-    var min_y = subpaths[0].points[0].y
-    var max_y = min_y
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        for p in sp.points:
-            if p.x < min_x:
-                min_x = p.x
-            if p.x > max_x:
-                max_x = p.x
-            if p.y < min_y:
-                min_y = p.y
-            if p.y > max_y:
-                max_y = p.y
-
-    var edges = _EdgeTable()
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        var pn = len(sp.points)
-        if pn < 2:
-            continue
-        for i in range(pn):
-            var a = sp.points[i]
-            var b = sp.points[(i + 1) % pn]
-            edges.add_edge(a.x, a.y, b.x, b.y)
+    var fb = _subpath_bounds(subpaths)
+    var min_x = fb.min_x
+    var max_x = fb.max_x
+    var min_y = fb.min_y
+    var max_y = fb.max_y
+    var edges = _subpath_edges(subpaths)
 
     _sweep_edges_to_mask(
         mask,
@@ -1066,29 +1083,22 @@ def _path_coverage_mask(
     return mask^
 
 
-def fill_path_gradient(
+def _fill_path_source[
+    S: ColorSource
+](
     mut canvas: Canvas,
     path: Path,
-    gradient: LinearGradient,
-    fill_rule: FillRule = FillRule.EVEN_ODD,
-    curve_steps: Int = 0,
+    source: S,
+    fill_rule: FillRule,
+    curve_steps: Int,
 ):
-    """Fill a path's interior as fill_path does, but sourcing each
-    pixel's color from `gradient` (gradient.mojo) rather than one flat
-    Color. Same scanline structure, duplicated rather than factored
-    behind a "how to get a color" parameter for two call sites.
+    """`fill_path`'s hard-edged scanline fill, taking each pixel's
+    colour from `source` instead of one flat Color.
 
-    `curve_steps` is fill_path's same per-segment flattening knob --
-    see its docstring.
-
-    Args:
-        canvas: Canvas to fill into.
-        path: Path to fill.
-        gradient: Fill source, queried per pixel.
-        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+    Generic over the source rather than written once per gradient type:
+    `fill_path_gradient` and `fill_path_radial_gradient` had
+    byte-for-byte identical bodies, differing only in the type of the
+    argument they queried.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -1113,9 +1123,105 @@ def fill_path_gradient(
         for span_idx in range(len(spans)):
             ref span = spans[span_idx]
             for x in range(span.start_x, span.end_x + 1):
-                canvas.set_pixel(
-                    x, y, gradient.color_at(Float64(x), Float64(y))
-                )
+                canvas.set_pixel(x, y, source.color_at(Float64(x), Float64(y)))
+
+
+def _fill_path_source_aa[
+    S: ColorSource
+](
+    mut canvas: Canvas,
+    path: Path,
+    source: S,
+    fill_rule: FillRule,
+    supersample: Int,
+    curve_steps: Int,
+):
+    """`fill_path_aa`'s anti-aliased fill, taking each pixel's colour
+    from `source` instead of one flat Color.
+
+    Coverage comes from `_sweep_edges_to_mask` -- the same sweep
+    `fill_path_aa` and `Canvas.push_clip_path` run, so a gradient fill's
+    edge lands in exactly the same places a flat fill's would. It is
+    swept to a mask first rather than blended during the sweep because
+    the sweep hands its band tasks a single flat `Color`; going through
+    the mask keeps this out of that machinery entirely.
+
+    Coverage scales the source colour's own alpha, so a translucent
+    gradient stop stays translucent and a partly-covered edge pixel
+    compounds the two -- the rule `Canvas._set_pixel_masked` already
+    follows for clip masks.
+    """
+    var subpaths = _flatten(path, curve_steps)
+    if len(subpaths) == 0:
+        return
+
+    var fb = _subpath_bounds(subpaths)
+    var edges = _subpath_edges(subpaths)
+    var min_x = Int(floor(fb.min_x))
+    var min_y = Int(floor(fb.min_y))
+    var max_x = Int(ceil(fb.max_x))
+    var max_y = Int(ceil(fb.max_y))
+
+    var mask = List[UInt8](length=canvas.width * canvas.height, fill=0)
+    _sweep_edges_to_mask(
+        mask,
+        canvas.width,
+        canvas.height,
+        edges,
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        fill_rule,
+        supersample,
+    )
+
+    # The same one-pixel skirt the sweep pads by, clamped to the canvas
+    # so the read below stays inside the mask.
+    var lo_x = max(0, min_x - 1)
+    var hi_x = min(canvas.width, max_x + 2)
+    var lo_y = max(0, min_y - 1)
+    var hi_y = min(canvas.height, max_y + 2)
+    for py in range(lo_y, hi_y):
+        var row = py * canvas.width
+        for px in range(lo_x, hi_x):
+            var coverage = Int(mask[row + px])
+            if coverage == 0:
+                continue
+            var c = source.color_at(Float64(px), Float64(py))
+            var alpha = _div255(Int(c.a) * coverage)
+            if alpha == 0:
+                continue
+            canvas.set_pixel(px, py, Color(c.r, c.g, c.b, UInt8(alpha)))
+
+
+def fill_path_gradient(
+    mut canvas: Canvas,
+    path: Path,
+    gradient: LinearGradient,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    curve_steps: Int = 0,
+):
+    """Fill a path's interior as fill_path does, but sourcing each
+    pixel's color from `gradient` (gradient.mojo) rather than one flat
+    Color.
+
+    Hard-edged, like `fill_path` itself. `fill_path_gradient_aa` is the
+    anti-aliased counterpart.
+
+    `curve_steps` is fill_path's same per-segment flattening knob --
+    see its docstring.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        gradient: Fill source, queried per pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
+    """
+    _fill_path_source(canvas, path, gradient, fill_rule, curve_steps)
 
 
 def fill_path_radial_gradient(
@@ -1136,32 +1242,66 @@ def fill_path_radial_gradient(
             0 (the default) picks a count per segment from its own
             curvature; a positive value forces that many.
     """
-    var subpaths = _flatten(path, curve_steps)
-    if len(subpaths) == 0:
-        return
+    _fill_path_source(canvas, path, gradient, fill_rule, curve_steps)
 
-    # Integer bounds over the rounded points, matching the rounding
-    # _row_crossings does -- this is the hard-edged scanline fill.
-    var min_y = _round_to_int(subpaths[0].points[0].y)
-    var max_y = min_y
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        for p in sp.points:
-            var py = _round_to_int(p.y)
-            if py < min_y:
-                min_y = py
-            if py > max_y:
-                max_y = py
 
-    for y in range(min_y, max_y):
-        var crossings = _row_crossings(subpaths, y)
-        var spans = _spans_from_crossings(crossings, fill_rule)
-        for span_idx in range(len(spans)):
-            ref span = spans[span_idx]
-            for x in range(span.start_x, span.end_x + 1):
-                canvas.set_pixel(
-                    x, y, gradient.color_at(Float64(x), Float64(y))
-                )
+def fill_path_gradient_aa(
+    mut canvas: Canvas,
+    path: Path,
+    gradient: LinearGradient,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    supersample: Int = 4,
+    curve_steps: Int = 0,
+):
+    """Anti-aliased `fill_path_gradient` -- `fill_path_aa`'s coverage
+    with a gradient as the fill source.
+
+    This is what a gradient-filled shape in a chart wants. Its
+    hard-edged sibling puts a staircase along every boundary that is
+    not axis-aligned, which is the artifact the rest of this package's
+    `_aa` fills exist to avoid; a gradient-filled wedge or area had no
+    way to avoid it before this existed.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        gradient: Fill source, queried per covered pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
+    """
+    _fill_path_source_aa(
+        canvas, path, gradient, fill_rule, supersample, curve_steps
+    )
+
+
+def fill_path_radial_gradient_aa(
+    mut canvas: Canvas,
+    path: Path,
+    gradient: RadialGradient,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    supersample: Int = 4,
+    curve_steps: Int = 0,
+):
+    """Like fill_path_gradient_aa, but for a RadialGradient.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        gradient: Fill source, queried per covered pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
+    """
+    _fill_path_source_aa(
+        canvas, path, gradient, fill_rule, supersample, curve_steps
+    )
 
 
 def stroke_path(
