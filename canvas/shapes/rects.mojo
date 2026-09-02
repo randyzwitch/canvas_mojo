@@ -95,6 +95,17 @@ def fill_rect_gradient(
     var ry = region[1]
     var rw = region[2]
     var rh = region[3]
+    # A clip path modulates each pixel by its own coverage, which
+    # `write_pixel` deliberately skips -- see its docstring. Nothing
+    # pays for this branch until a clip path is actually pushed.
+    if canvas.has_clip_mask():
+        for yy in range(ry, ry + rh):
+            for xx in range(rx, rx + rw):
+                canvas.set_pixel(
+                    xx, yy, gradient.color_at(Float64(xx), Float64(yy))
+                )
+        return
+
     for yy in range(ry, ry + rh):
         for xx in range(rx, rx + rw):
             canvas.write_pixel(
@@ -131,6 +142,17 @@ def fill_rect_radial_gradient(
     var ry = region[1]
     var rw = region[2]
     var rh = region[3]
+    # A clip path modulates each pixel by its own coverage, which
+    # `write_pixel` deliberately skips -- see its docstring. Nothing
+    # pays for this branch until a clip path is actually pushed.
+    if canvas.has_clip_mask():
+        for yy in range(ry, ry + rh):
+            for xx in range(rx, rx + rw):
+                canvas.set_pixel(
+                    xx, yy, gradient.color_at(Float64(xx), Float64(yy))
+                )
+        return
+
     for yy in range(ry, ry + rh):
         for xx in range(rx, rx + rw):
             canvas.write_pixel(

@@ -20,7 +20,13 @@ from std.memory import unsafe_memcpy
 from canvas.color import Color, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
-from canvas.path import Path, fill_path_aa, stroke_path_aa
+from canvas.fill_rule import FillRule
+from canvas.path import (
+    Path,
+    fill_path_aa,
+    stroke_path_aa,
+    _path_coverage_mask,
+)
 from canvas.shapes.lines import draw_line_aa
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa
@@ -81,6 +87,23 @@ struct Canvas(Copyable, DrawTarget, Movable):
     var height: Int
     var pixels: List[UInt8]
     var clip_stack: List[_ClipRect]
+    # Coverage masks pushed by push_clip_path, innermost last. Each is
+    # width*height bytes: 255 fully inside the clip, 0 fully outside,
+    # and the values between are what make a clip path's own edge
+    # anti-aliased rather than a staircase.
+    #
+    # A stack of whole masks rather than one mask plus a stack of undo
+    # information: a mask is w*h bytes, and nesting clips more than a
+    # couple deep is not something a chart does, so the simpler
+    # structure costs nothing that matters. Each pushed mask is already
+    # intersected with its parent (see push_clip_path), so only the top
+    # one is ever consulted -- the same arrangement clip_stack uses for
+    # rectangles.
+    var clip_masks: List[List[UInt8]]
+    # len(clip_masks), mirrored as a plain Int. `set_pixel` tests this
+    # once per pixel drawn anywhere in the package, and a bare field
+    # load beats reaching into a List-of-Lists for its length.
+    var _clip_mask_count: Int
 
     def __init__(
         out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)
@@ -109,6 +132,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var total = width * height * BYTES_PER_PIXEL
         self.pixels = List[UInt8](length=total, fill=0)
         self.clip_stack = List[_ClipRect]()
+        self.clip_masks = List[List[UInt8]]()
+        self._clip_mask_count = 0
         if total == 0:
             return
 
@@ -168,6 +193,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.height = height
         self.pixels = pixels^
         self.clip_stack = List[_ClipRect]()
+        self.clip_masks = List[List[UInt8]]()
+        self._clip_mask_count = 0
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.
@@ -220,6 +247,111 @@ struct Canvas(Copyable, DrawTarget, Movable):
         if len(self.clip_stack) > 0:
             _ = self.clip_stack.pop()
 
+    def push_clip_path(
+        mut self,
+        path: Path,
+        fill_rule: FillRule = FillRule.EVEN_ODD,
+        supersample: Int = 4,
+        curve_steps: Int = 16,
+    ):
+        """Restrict subsequent drawing to `path`'s interior -- the
+        arbitrary-shape counterpart of `push_clip`, which can only cut
+        to a rectangle.
+
+        What a chart wants this for is clipping a series to a
+        non-rectangular plot area, or masking a gradient to a shape.
+        Doing it by drawing into a scratch canvas and compositing back
+        works but costs a full extra surface; this costs one byte per
+        pixel and no second render.
+
+        The clip is *anti-aliased*, not a hard in/out test: the path's
+        coverage becomes a 0-255 mask, and a pixel the path half covers
+        lets half the drawing through. A hard test would put a
+        staircase along the boundary of every clipped shape, which is
+        precisely what this package's rasterizer exists to avoid.
+
+        Composes with everything already pushed. A new mask is
+        multiplied into the current one, so a nested clip can only ever
+        restrict further, never escape its parent -- the rule
+        `push_clip` follows for rectangles, and the rectangle clips
+        still apply independently on top.
+
+        Pair with `pop_clip_path`.
+
+        Args:
+            path: Shape to clip to. Its interior is what stays visible.
+            fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+                Governs the interior of a self-intersecting or
+                multi-sub-path clip shape exactly as it does a fill.
+            supersample: Sub-pixel grid side length used to compute the
+                mask's edge coverage.
+            curve_steps: Straight-line segments per quad/cubic Bezier.
+        """
+        var mask = _path_coverage_mask(
+            path, self.width, self.height, fill_rule, supersample, curve_steps
+        )
+        if self._clip_mask_count > 0:
+            # Intersect with the parent by multiplying coverages: a
+            # pixel half-covered by an outer clip and half by an inner
+            # one lets a quarter through, which is what nesting two
+            # translucent stencils physically does.
+            ref parent = self.clip_masks[self._clip_mask_count - 1]
+            var mp = mask.unsafe_ptr()
+            var pp = parent.unsafe_ptr()
+            for i in range(self.width * self.height):
+                var m = Int(mp[unsafe_offset=i])
+                if m != 0:
+                    mp[unsafe_offset=i] = UInt8(
+                        _div255(m * Int(pp[unsafe_offset=i]))
+                    )
+        self.clip_masks.append(mask^)
+        self._clip_mask_count += 1
+
+    def has_clip_mask(self) -> Bool:
+        """Whether a clip path is currently active.
+
+        The check a caller writing through `write_pixel` needs: that
+        method deliberately skips every per-pixel test, and a clip
+        path's coverage is per-pixel by nature, so a bulk writer must
+        route through `set_pixel` while one is pushed. See
+        `write_pixel` and `_fill_region`.
+
+        Returns:
+            True if at least one clip path is pushed.
+        """
+        return self._clip_mask_count > 0
+
+    def pop_clip_path(mut self):
+        """Remove the most recently pushed clip path, reverting to the
+        parent clip path if one exists or to no path clip if not.
+
+        A no-op on an empty stack, matching `pop_clip`.
+        """
+        if self._clip_mask_count > 0:
+            _ = self.clip_masks.pop()
+            self._clip_mask_count -= 1
+
+    def clip_coverage(self, x: Int, y: Int) -> UInt8:
+        """How much of (x, y) the active clip paths let through: 255 if
+        no clip path is active or the pixel is fully inside one, 0 if
+        fully outside, in between on an anti-aliased boundary.
+
+        Rectangle clips are not included here -- `in_clip` covers
+        those, and `set_pixel` applies both.
+
+        Args:
+            x: Column to query.
+            y: Row to query.
+
+        Returns:
+            Coverage 0-255.
+        """
+        if self._clip_mask_count == 0:
+            return 255
+        if not self.in_bounds(x, y):
+            return 0
+        return self.clip_masks[self._clip_mask_count - 1][y * self.width + x]
+
     def in_clip(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is inside the active clip region.
 
@@ -255,13 +387,61 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
         if not self.in_clip(x, y):
             return
+        if self._clip_mask_count != 0:
+            self._set_pixel_masked(x, y, color)
+            return
         self.write_pixel(x, y, color)
+
+    def _set_pixel_masked(mut self, x: Int, y: Int, color: Color):
+        """`set_pixel`'s clip-path branch, kept in its own method.
+
+        `set_pixel` is called once per pixel by every primitive in the
+        package, so what matters is that its common path stays small
+        enough to inline into those loops. Folding this inline cost
+        measurably: `fill_circle_aa` over 2000 markers went from ~1750us
+        to ~3130us with the mask lookup and its Color rebuild sitting in
+        the middle of `set_pixel`, for a branch no canvas takes until a
+        clip path is pushed.
+
+        The guard in `set_pixel` is a plain integer field rather than
+        `len(self.clip_masks)` for the same reason -- one load and a
+        compare, with no List indirection on a path that almost always
+        falls straight through.
+        """
+        var coverage = self.clip_masks[self._clip_mask_count - 1][
+            y * self.width + x
+        ]
+        if coverage == 0:
+            return
+        if coverage == 255:
+            self.write_pixel(x, y, color)
+            return
+        # Coverage scales the drawn colour's own alpha rather than
+        # replacing it, so clipping a translucent fill compounds the two.
+        self.write_pixel(
+            x,
+            y,
+            Color(
+                color.r,
+                color.g,
+                color.b,
+                UInt8(_div255(Int(color.a) * Int(coverage))),
+            ),
+        )
 
     def write_pixel(mut self, x: Int, y: Int, color: Color):
         """Write `color` at (x, y) *without* set_pixel's in_bounds/
         in_clip checks. The caller must already know (x, y) is inside
         both the canvas and the active clip, typically from a range
         effective_fill_rect (below) intersected against both.
+
+        This also skips the clip *path* mask, which `effective_fill_rect`
+        cannot fold in: a rectangle clip is a range, but a path clip is
+        a per-pixel coverage value, so there is nothing to intersect a
+        loop range against. A bulk writer must therefore check
+        `has_clip_mask()` and fall back to `set_pixel` when one is
+        active -- `_fill_region` and the gradient rect fills in
+        canvas.shapes.rects both do.
 
         set_pixel stays the checked entry point for pixel-at-a-time
         primitives (draw_line_aa, fill_circle_aa, ...), which have no
@@ -450,6 +630,18 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         if rw <= 0 or rh <= 0:
             return
+
+        # A clip path modulates each pixel individually, which neither
+        # the bulk copy nor the hoisted blend below can express -- so
+        # with one active this falls back to the checked per-pixel
+        # path, which already consults the mask. Nothing pays for this
+        # until a clip path is actually pushed.
+        if self._clip_mask_count > 0:
+            for y in range(ry, ry + rh):
+                for x in range(rx, rx + rw):
+                    self.set_pixel(x, y, color)
+            return
+
         var p = self.pixels.unsafe_ptr()
         var span_bytes = rw * BYTES_PER_PIXEL
         var stride = self.width * BYTES_PER_PIXEL

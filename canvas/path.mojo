@@ -41,7 +41,11 @@ from canvas.color import Color
 from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule, _is_inside
-from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
+from canvas.aa_crossing import (
+    _EdgeTable,
+    _sweep_edges_aa,
+    _sweep_edges_to_mask,
+)
 from canvas.shapes.lines import (
     draw_polyline,
     draw_polygon,
@@ -653,6 +657,73 @@ def fill_path_aa(
         fill_rule,
         supersample,
     )
+
+
+def _path_coverage_mask(
+    path: Path,
+    width: Int,
+    height: Int,
+    fill_rule: FillRule,
+    supersample: Int,
+    curve_steps: Int,
+) -> List[UInt8]:
+    """`path`'s anti-aliased coverage over a width x height grid, as
+    one 0-255 byte per pixel -- what `Canvas.push_clip_path` stores as
+    a clip mask.
+
+    The same flatten-and-sweep `fill_path_aa` runs, with the coverage
+    kept as a number instead of being turned into a colour's alpha, so
+    a clip boundary and a fill boundary of the same path fall in
+    exactly the same places.
+
+    Lives here rather than in buffer.mojo because it needs `_flatten`,
+    which is this module's; `buffer.mojo` already imports from here.
+    """
+    var mask = List[UInt8](length=width * height, fill=0)
+    var subpaths = _flatten(path, curve_steps)
+    if len(subpaths) == 0:
+        return mask^
+
+    var min_x = subpaths[0].points[0].x
+    var max_x = min_x
+    var min_y = subpaths[0].points[0].y
+    var max_y = min_y
+    for sp_idx in range(len(subpaths)):
+        ref sp = subpaths[sp_idx]
+        for p in sp.points:
+            if p.x < min_x:
+                min_x = p.x
+            if p.x > max_x:
+                max_x = p.x
+            if p.y < min_y:
+                min_y = p.y
+            if p.y > max_y:
+                max_y = p.y
+
+    var edges = _EdgeTable()
+    for sp_idx in range(len(subpaths)):
+        ref sp = subpaths[sp_idx]
+        var pn = len(sp.points)
+        if pn < 2:
+            continue
+        for i in range(pn):
+            var a = sp.points[i]
+            var b = sp.points[(i + 1) % pn]
+            edges.add_edge(a.x, a.y, b.x, b.y)
+
+    _sweep_edges_to_mask(
+        mask,
+        width,
+        height,
+        edges,
+        Int(floor(min_x)),
+        Int(floor(min_y)),
+        Int(ceil(max_x)),
+        Int(ceil(max_y)),
+        fill_rule,
+        supersample,
+    )
+    return mask^
 
 
 def fill_path_gradient(

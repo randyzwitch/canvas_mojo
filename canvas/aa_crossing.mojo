@@ -159,6 +159,113 @@ struct _EdgeTable(Movable):
                 )
 
 
+def _accumulate_row_coverage(
+    edges: _EdgeTable,
+    py: Int,
+    supersample: Int,
+    row_first_px: Int,
+    row_width: Int,
+    fill_rule: FillRule,
+    mut row_covered: List[Int],
+    mut crossings: List[_AACrossing],
+    mut suffix: List[Int],
+):
+    """Sub-sample coverage counts for one pixel row of `edges`, written
+    into `row_covered` (which the caller has already cleared and sized
+    to `row_width`).
+
+    This is the whole of the anti-aliasing: everything above it is
+    bounds arithmetic and everything below it is turning a count into
+    a byte. It is a separate function so the two things that need
+    coverage can share it -- `_sweep_edges_aa`, which blends it onto a
+    canvas as alpha, and `_sweep_edges_to_mask`, which stores it as a
+    clip mask. Those differ only in what they do with the counts, which
+    is exactly the split that let `fill_path_aa` and `fill_polygon_aa`
+    share a sweep in the first place.
+
+    `crossings` and `suffix` are caller-owned scratch, reused across
+    every row of a sweep rather than reallocated per row -- see the
+    callers.
+    """
+    var s = supersample
+    var step = 1.0 / Float64(s)
+    for sy in range(s):
+        var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
+        edges.crossings_at(fy, crossings)
+        _sort_aa_crossings_by_x(crossings)
+        var k = len(crossings)
+
+        # suffix[i] is the signed winding contributed by every
+        # crossing from index i onward -- what the reference ray
+        # cast's `x > fx` test sums fresh per sample. Precomputing
+        # it per sub-scanline is what removes the `* edges` factor.
+        # Grown to fit, never shrunk, so a later sub-scanline with
+        # fewer crossings reuses the same storage.
+        while len(suffix) < k + 1:
+            suffix.append(0)
+        suffix[k] = 0
+        for i in range(k - 1, -1, -1):
+            suffix[i] = suffix[i + 1] + crossings[i].direction
+
+        # Inside/outside is constant between consecutive
+        # crossings, and the sub-sample x positions are uniformly
+        # spaced -- fx(g) = x0 + (g + 0.5)/s for a sample index g
+        # running across the whole row. So each inside run maps to
+        # a contiguous range of g, and the samples in it can be
+        # counted rather than tested one at a time: a pixel wholly
+        # inside a run takes `+= s` in one step, and a pixel in no
+        # run is never touched at all.
+        #
+        # Exactly the same counts as testing each position -- the
+        # positions themselves are unchanged, only the way they're
+        # counted is -- so every hand-derived coverage value in the
+        # tests still holds. That is the check that this stayed
+        # exact rather than merely close.
+        var total_g = row_width * s
+        var x0 = Float64(row_first_px) - 0.5
+        for i in range(k + 1):
+            if not _is_inside(suffix[i], fill_rule):
+                continue
+
+            # First sample at or after this run's left edge.
+            var g_start = 0
+            if i > 0:
+                var lo = crossings[i - 1].x
+                g_start = Int(ceil((lo - x0) * Float64(s) - 0.5))
+                # `ceil` on a float expression can land a step off
+                # at a boundary; nudge to the exact first sample
+                # rather than trust it.
+                while g_start > 0 and _sample_x(x0, g_start - 1, s) >= lo:
+                    g_start -= 1
+                while g_start < total_g and _sample_x(x0, g_start, s) < lo:
+                    g_start += 1
+                if g_start < 0:
+                    g_start = 0
+
+            # Last sample strictly before this run's right edge.
+            var g_end = total_g - 1
+            if i < k:
+                var hi = crossings[i].x
+                g_end = Int(ceil((hi - x0) * Float64(s) - 0.5)) - 1
+                while g_end >= 0 and _sample_x(x0, g_end, s) >= hi:
+                    g_end -= 1
+                while g_end + 1 < total_g and _sample_x(x0, g_end + 1, s) < hi:
+                    g_end += 1
+                if g_end > total_g - 1:
+                    g_end = total_g - 1
+
+            # Walk the run a pixel at a time, taking every sample
+            # that pixel contributes in one add.
+            var g = g_start
+            while g <= g_end:
+                var pxi = g // s
+                var upper = (pxi + 1) * s - 1
+                if g_end < upper:
+                    upper = g_end
+                row_covered[pxi] += upper - g + 1
+                g = upper + 1
+
+
 def _sweep_edges_aa(
     mut canvas: Canvas,
     edges: _EdgeTable,
@@ -199,7 +306,6 @@ def _sweep_edges_aa(
     """
     var s = supersample
     var total_samples = s * s
-    var step = 1.0 / Float64(s)
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px  # px range length
 
@@ -219,83 +325,17 @@ def _sweep_edges_aa(
         for pxi in range(row_width):
             row_covered[pxi] = 0
 
-        for sy in range(s):
-            var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-            edges.crossings_at(fy, crossings)
-            _sort_aa_crossings_by_x(crossings)
-            var k = len(crossings)
-
-            # suffix[i] is the signed winding contributed by every
-            # crossing from index i onward -- what the reference ray
-            # cast's `x > fx` test sums fresh per sample. Precomputing
-            # it per sub-scanline is what removes the `* edges` factor.
-            # Grown to fit, never shrunk, so a later sub-scanline with
-            # fewer crossings reuses the same storage.
-            while len(suffix) < k + 1:
-                suffix.append(0)
-            suffix[k] = 0
-            for i in range(k - 1, -1, -1):
-                suffix[i] = suffix[i + 1] + crossings[i].direction
-
-            # Inside/outside is constant between consecutive
-            # crossings, and the sub-sample x positions are uniformly
-            # spaced -- fx(g) = x0 + (g + 0.5)/s for a sample index g
-            # running across the whole row. So each inside run maps to
-            # a contiguous range of g, and the samples in it can be
-            # counted rather than tested one at a time: a pixel wholly
-            # inside a run takes `+= s` in one step, and a pixel in no
-            # run is never touched at all.
-            #
-            # Exactly the same counts as testing each position -- the
-            # positions themselves are unchanged, only the way they're
-            # counted is -- so every hand-derived coverage value in the
-            # tests still holds. That is the check that this stayed
-            # exact rather than merely close.
-            var total_g = row_width * s
-            var x0 = Float64(row_first_px) - 0.5
-            for i in range(k + 1):
-                if not _is_inside(suffix[i], fill_rule):
-                    continue
-
-                # First sample at or after this run's left edge.
-                var g_start = 0
-                if i > 0:
-                    var lo = crossings[i - 1].x
-                    g_start = Int(ceil((lo - x0) * Float64(s) - 0.5))
-                    # `ceil` on a float expression can land a step off
-                    # at a boundary; nudge to the exact first sample
-                    # rather than trust it.
-                    while g_start > 0 and _sample_x(x0, g_start - 1, s) >= lo:
-                        g_start -= 1
-                    while g_start < total_g and _sample_x(x0, g_start, s) < lo:
-                        g_start += 1
-                    if g_start < 0:
-                        g_start = 0
-
-                # Last sample strictly before this run's right edge.
-                var g_end = total_g - 1
-                if i < k:
-                    var hi = crossings[i].x
-                    g_end = Int(ceil((hi - x0) * Float64(s) - 0.5)) - 1
-                    while g_end >= 0 and _sample_x(x0, g_end, s) >= hi:
-                        g_end -= 1
-                    while (
-                        g_end + 1 < total_g and _sample_x(x0, g_end + 1, s) < hi
-                    ):
-                        g_end += 1
-                    if g_end > total_g - 1:
-                        g_end = total_g - 1
-
-                # Walk the run a pixel at a time, taking every sample
-                # that pixel contributes in one add.
-                var g = g_start
-                while g <= g_end:
-                    var pxi = g // s
-                    var upper = (pxi + 1) * s - 1
-                    if g_end < upper:
-                        upper = g_end
-                    row_covered[pxi] += upper - g + 1
-                    g = upper + 1
+        _accumulate_row_coverage(
+            edges,
+            py,
+            s,
+            row_first_px,
+            row_width,
+            fill_rule,
+            row_covered,
+            crossings,
+            suffix,
+        )
 
         for pxi in range(row_width):
             var covered = row_covered[pxi]
@@ -312,3 +352,70 @@ def _sweep_edges_aa(
                 canvas.set_pixel(
                     px, py, Color(color.r, color.g, color.b, alpha)
                 )
+
+
+def _sweep_edges_to_mask(
+    mut mask: List[UInt8],
+    mask_width: Int,
+    mask_height: Int,
+    edges: _EdgeTable,
+    min_x: Int,
+    min_y: Int,
+    max_x: Int,
+    max_y: Int,
+    fill_rule: FillRule,
+    supersample: Int,
+):
+    """`_sweep_edges_aa`'s counterpart for a clip mask: the same
+    coverage, written as a per-pixel 0-255 byte into `mask` instead of
+    blended onto a canvas as alpha.
+
+    `mask` is expected to be `mask_width * mask_height` bytes, already
+    zeroed. Anything the shape does not cover keeps its zero, which is
+    what makes the mask read as "clipped out" there.
+
+    Coverage, not a hard in/out test, is the point: a clip path's own
+    edge is anti-aliased exactly as a filled path's would be, so
+    clipping a shape to a circle gives a smooth boundary rather than a
+    staircase.
+    """
+    var s = supersample
+    var total_samples = s * s
+    var row_first_px = min_x - 1
+    var row_width = (max_x + 2) - row_first_px
+
+    var row_covered = List[Int](capacity=row_width)
+    for _ in range(row_width):
+        row_covered.append(0)
+    var crossings = List[_AACrossing]()
+    var suffix = List[Int]()
+
+    for py in range(min_y - 1, max_y + 2):
+        if py < 0 or py >= mask_height:
+            continue
+        for pxi in range(row_width):
+            row_covered[pxi] = 0
+
+        _accumulate_row_coverage(
+            edges,
+            py,
+            s,
+            row_first_px,
+            row_width,
+            fill_rule,
+            row_covered,
+            crossings,
+            suffix,
+        )
+
+        var row_base = py * mask_width
+        for pxi in range(row_width):
+            var covered = row_covered[pxi]
+            if covered == 0:
+                continue
+            var px = row_first_px + pxi
+            if px < 0 or px >= mask_width:
+                continue
+            mask[row_base + px] = UInt8(
+                Int(Float64(covered) / Float64(total_samples) * 255.0 + 0.5)
+            )
