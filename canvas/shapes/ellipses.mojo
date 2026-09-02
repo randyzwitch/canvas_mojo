@@ -6,7 +6,7 @@ fill_ellipse_aa) -- see canvas.shapes.lines for the hard-edged
 vs. `_aa` naming convention this follows.
 """
 
-from std.math import ceil, floor
+from std.math import ceil, floor, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
@@ -188,6 +188,27 @@ def fill_ellipse_aa(
     )
 
 
+# Below this horizontal radius the interior span is not worth solving
+# for: the sqrt, the endpoint nudging and the bulk-fill call cost more
+# per row than testing the handful of pixels the row contains. Same
+# value and same reasoning as fill_circle_aa's.
+comptime _MIN_SPAN_RADIUS = 8.0
+
+
+def _pixel_inside(
+    px: Int, cx: Float64, far_y_term: Float64, ry2: Float64, limit: Float64
+) -> Bool:
+    """Whether the pixel square centred at `px`, on a row whose
+    `far_y^2 * rx^2` term is `far_y_term`, lies entirely within the
+    ellipse.
+
+    Exactly the test the per-pixel path applies, kept as a function so
+    the span's endpoint nudging cannot drift from it.
+    """
+    var far_x = abs(Float64(px) - cx) + 0.5
+    return far_x * far_x * ry2 + far_y_term <= limit
+
+
 def fill_ellipse_aa(
     mut canvas: Canvas,
     cx: Float64,
@@ -248,42 +269,125 @@ def fill_ellipse_aa(
 
     # Widened outward to whole pixels, so a pixel the ellipse only
     # partly covers is still visited.
-    for py in range(Int(floor(cy - ry)) - 1, Int(ceil(cy + ry)) + 2):
-        for px in range(Int(floor(cx - rx)) - 1, Int(ceil(cx + rx)) + 2):
-            var dx = abs(Float64(px) - cx)
-            var dy = abs(Float64(py) - cy)
+    var lo_x = Int(floor(cx - rx)) - 1
+    var hi_x = Int(ceil(cx + rx)) + 2
+    var lo_y = Int(floor(cy - ry)) - 1
+    var hi_y = Int(ceil(cy + ry)) + 2
 
-            var near_x = max(0.0, dx - 0.5)
-            var near_y = max(0.0, dy - 0.5)
-            if near_x * near_x * ry2 + near_y * near_y * rx2 > limit:
-                continue  # whole pixel square is outside the ellipse
+    # Solving the interior span costs a sqrt and some endpoint nudging
+    # per row, which only pays off once a row's interior run is long
+    # enough to matter -- and run length is governed by the horizontal
+    # radius. Same threshold and same reasoning as fill_circle_aa.
+    var solve_span = rx >= _MIN_SPAN_RADIUS
 
-            var far_x = dx + 0.5
-            var far_y = dy + 0.5
-            if far_x * far_x * ry2 + far_y * far_y * rx2 <= limit:
-                canvas.set_pixel(px, py, color)  # whole pixel square is inside
-                continue
+    for py in range(lo_y, hi_y):
+        var dy = abs(Float64(py) - cy)
+        var near_y = max(0.0, dy - 0.5)
+        var far_y = dy + 0.5
+        var far_y_term = far_y * far_y * rx2
+        var near_y_term = near_y * near_y * rx2
 
-            var covered = 0
-            for sy in range(n):
-                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
-                var fy_term = fy * fy * rx2
-                for sx in range(n):
-                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
-                    if fx * fx * ry2 + fy_term <= limit:
-                        covered += 1
-            if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
+        # The run of provably-interior pixels on this row, in closed
+        # form. A pixel is wholly inside when its farthest corner is:
+        #
+        #   far_x^2 * ry^2 + far_y^2 * rx^2 <= (rx*ry)^2
+        #
+        # which for a fixed row rearranges to
+        #
+        #   |dx| <= sqrt(limit - far_y^2 * rx^2) / ry - 0.5
+        #
+        # so the whole interior is one bulk fill and only the pixels at
+        # the two ends need sampling. This is fill_circle_aa's span
+        # solve generalized to independent radii; see there for the
+        # measurements that motivated it.
+        var span_lo = 1
+        var span_hi = 0  # empty unless this row reaches the interior
+        if solve_span:
+            var interior = limit - far_y_term
+            if interior > 0.0:
+                var half = sqrt(interior) / ry_f - 0.5
+                if half >= 0.0:
+                    span_lo = Int(ceil(cx - half))
+                    span_hi = Int(floor(cx + half))
+
+                    # sqrt/ceil/floor on a float expression can land a
+                    # step either side of the true boundary, so both
+                    # ends are nudged against the exact test the
+                    # per-pixel path below applies -- what keeps the two
+                    # routes bit-for-bit identical rather than close.
+                    while span_lo <= span_hi and not _pixel_inside(
+                        span_lo, cx, far_y_term, ry2, limit
+                    ):
+                        span_lo += 1
+                    while span_lo > lo_x and _pixel_inside(
+                        span_lo - 1, cx, far_y_term, ry2, limit
+                    ):
+                        span_lo -= 1
+                    while span_hi >= span_lo and not _pixel_inside(
+                        span_hi, cx, far_y_term, ry2, limit
+                    ):
+                        span_hi -= 1
+                    while span_hi < hi_x - 1 and _pixel_inside(
+                        span_hi + 1, cx, far_y_term, ry2, limit
+                    ):
+                        span_hi += 1
+
+                    if span_lo < lo_x:
+                        span_lo = lo_x
+                    if span_hi > hi_x - 1:
+                        span_hi = hi_x - 1
+
+        var edge_end = hi_x
+        var edge_resume = hi_x
+        if span_lo <= span_hi:
+            var region = canvas.effective_fill_rect(
+                span_lo, py, span_hi - span_lo + 1, 1
+            )
+            canvas._fill_region(
+                region[0], region[1], region[2], region[3], color
+            )
+            edge_end = span_lo
+            edge_resume = span_hi + 1
+
+        # Everything the run did not cover, as two explicit ranges
+        # rather than a per-pixel skip test -- see fill_circle_aa for
+        # why, including why the body is inline rather than a helper.
+        for seg in range(2):
+            var seg_lo = lo_x if seg == 0 else edge_resume
+            var seg_hi = edge_end if seg == 0 else hi_x
+            for px in range(seg_lo, seg_hi):
+                var dx = abs(Float64(px) - cx)
+                var near_x = max(0.0, dx - 0.5)
+                if near_x * near_x * ry2 + near_y_term > limit:
+                    continue  # whole pixel square is outside the ellipse
+
+                var far_x = dx + 0.5
+                if far_x * far_x * ry2 + far_y_term <= limit:
+                    canvas.set_pixel(px, py, color)  # wholly inside
+                    continue
+
+                var covered = 0
+                for sy in range(n):
+                    var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
+                    var fy_term = fy * fy * rx2
+                    for sx in range(n):
+                        var fx = (
+                            Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
+                        )
+                        if fx * fx * ry2 + fy_term <= limit:
+                            covered += 1
+                if covered > 0:
+                    var alpha = UInt8(
+                        Int(
+                            Float64(covered)
+                            / Float64(total_samples)
+                            * Float64(color.a)
+                            + 0.5
+                        )
                     )
-                )
-                canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
-                )
+                    canvas.set_pixel(
+                        px, py, Color(color.r, color.g, color.b, alpha)
+                    )
 
 
 def draw_ellipse_aa(
