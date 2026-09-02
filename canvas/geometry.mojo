@@ -2,6 +2,19 @@
 than a single (x, y) pair -- polylines/polygons take a sequence of
 points, where two parallel List[Int]s would be error-prone to keep in
 sync.
+
+Two point types, because the package rasterizes at two precisions.
+`Point` is whole pixels, what the hard-edged primitives address.
+`FPoint` is sub-pixel, what the anti-aliased ones need: an edge that
+crosses a pixel at x = 10.4 has to stay at 10.4 all the way to the
+coverage sweep, since rounding it to 10 first throws away exactly the
+detail the supersampling exists to resolve.
+
+`FPoint` lives here rather than in `path.mojo` (where it was first
+defined, and from which it is still exported for compatibility)
+because `canvas.shapes.arcs` samples arcs at sub-pixel precision too,
+and `path.mojo` imports *from* arcs -- so the shared type has to sit
+below both.
 """
 
 from std.math import cos, sin
@@ -19,6 +32,26 @@ struct Point(ImplicitlyCopyable, Movable):
         Args:
             x: Column.
             y: Row.
+        """
+        self.x = x
+        self.y = y
+
+
+struct FPoint(ImplicitlyCopyable, Movable):
+    """A floating-point 2D coordinate: the sub-pixel counterpart of
+    `Point`, and what every anti-aliased path/arc sampler carries
+    through to the coverage sweep.
+    """
+
+    var x: Float64
+    var y: Float64
+
+    def __init__(out self, x: Float64, y: Float64):
+        """A floating-point 2D coordinate.
+
+        Args:
+            x: Column, sub-pixel precision.
+            y: Row, sub-pixel precision.
         """
         self.x = x
         self.y = y

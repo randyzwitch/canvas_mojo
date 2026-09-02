@@ -16,7 +16,7 @@ from std.math import atan2, cos, pi, sin
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import Point, _round_to_int
+from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.shapes.lines import draw_polyline, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon
 
@@ -123,13 +123,13 @@ def _union_bounds(
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
-def _arc_points(
+def _arc_fpoints(
     cx: Float64,
     cy: Float64,
     radius: Float64,
     start_angle: Float64,
     end_angle: Float64,
-) -> List[Point]:
+) -> List[FPoint]:
     """Sample points along a circular arc (radians, start_angle <=
     end_angle expected; pass end_angle = start_angle + 2*pi for a full
     circle) at roughly 1-pixel arc-length spacing. Step count scales
@@ -141,16 +141,42 @@ def _arc_points(
     Exact circle math (cx + r*cos(theta), cy + r*sin(theta)) sampled
     directly, not a cubic-Bezier approximation, matching draw_circle/
     draw_ellipse and needing no curve-fitting error bound.
+
+    Sub-pixel, and `_arc_points` below rounds it for the hard-edged
+    callers. That is the direction the conversion has to run: an
+    anti-aliased `Path.arc_to` needs the unrounded samples (rounding
+    first discards exactly the detail the coverage sweep resolves), and
+    a sampler that rounded first could not hand them back.
     """
     var span = end_angle - start_angle
     var steps = max(4, Int(radius * abs(span)))
-    var points = List[Point](capacity=steps + 1)
+    var points = List[FPoint](capacity=steps + 1)
     for i in range(steps + 1):
         var t = Float64(i) / Float64(steps)
         var angle = start_angle + t * span
-        var x = cx + radius * cos(angle)
-        var y = cy + radius * sin(angle)
-        points.append(Point(_round_to_int(x), _round_to_int(y)))
+        points.append(
+            FPoint(cx + radius * cos(angle), cy + radius * sin(angle))
+        )
+    return points^
+
+
+def _arc_points(
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+) -> List[Point]:
+    """`_arc_fpoints` rounded to whole pixels, for the hard-edged
+    primitives (draw_arc, fill_arc, fill_ring_sector) that address
+    pixels rather than sub-pixel positions.
+    """
+    var fpoints = _arc_fpoints(cx, cy, radius, start_angle, end_angle)
+    var points = List[Point](capacity=len(fpoints))
+    for i in range(len(fpoints)):
+        points.append(
+            Point(_round_to_int(fpoints[i].x), _round_to_int(fpoints[i].y))
+        )
     return points^
 
 
