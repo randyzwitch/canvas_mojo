@@ -29,24 +29,15 @@ from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.geometry import Point, _round_to_int
 from canvas.gradient import LinearGradient, RadialGradient
-from canvas.fill_rule import FillRule
-from canvas.aa_crossing import (
-    _AACrossing,
-    _EdgeTable,
-    _sample_x,
-    _sort_aa_crossings_by_x,
-)
+from canvas.fill_rule import FillRule, _is_inside
+from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
 from canvas.shapes.lines import (
     draw_polyline,
     draw_polygon,
     draw_polyline_aa,
     draw_polygon_aa,
 )
-from canvas.shapes.polygon_fill import (
-    _Crossing,
-    _spans_from_crossings,
-    _is_inside,
-)
+from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_points
 
 comptime _MOVE_TO = 0
@@ -522,54 +513,6 @@ def _point_in_subpaths(
     return _is_inside(winding, fill_rule)
 
 
-def _row_crossings_aa(
-    subpaths: List[_Subpath], fy: Float64
-) -> List[_AACrossing]:
-    """_point_in_subpaths's per-sample ray-cast, hoisted to run once
-    per sub-scanline: every edge crossing y=fy, unordered (sorted by
-    _sort_aa_crossings_by_x). See fill_path_aa for why this split is
-    what keeps the sweep sub-quadratic.
-    """
-    var crossings = List[_AACrossing]()
-    _row_crossings_aa_into(subpaths, fy, crossings)
-    return crossings^
-
-
-def _row_crossings_aa_into(
-    subpaths: List[_Subpath], fy: Float64, mut crossings: List[_AACrossing]
-) -> None:
-    """`_row_crossings_aa` writing into a caller-owned list.
-
-    The sweep calls this once per sub-scanline, so returning a fresh
-    list would allocate once per sub-scanline -- for a glyph-sized
-    path that is most of the work, since the shape is small enough
-    that allocation outweighs the sampling. Reusing one buffer across
-    the whole sweep is what `_draw_polyline_core_aa` already does
-    with its own per-row buffers, for the same reason.
-    """
-    crossings.clear()
-
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        var n = len(sp.points)
-        if n < 2:
-            continue
-        for i in range(n):
-            var p0 = sp.points[i]
-            var p1 = sp.points[(i + 1) % n]
-            var y0 = Float64(p0.y)
-            var y1 = Float64(p1.y)
-            if y0 == y1:
-                continue
-            var lo = min(y0, y1)
-            var hi = max(y0, y1)
-            if fy >= lo and fy < hi:
-                var t = (fy - y0) / (y1 - y0)
-                var x = Float64(p0.x) + t * Float64(p1.x - p0.x)
-                var direction = 1 if y1 > y0 else -1
-                crossings.append(_AACrossing(x, direction))
-
-
 def fill_path_aa(
     mut canvas: Canvas,
     path: Path,
@@ -591,18 +534,14 @@ def fill_path_aa(
     per-sub-path independently, for the identical reason fill_path's
     own docstring gives.
 
-    Swept per sub-scanline, not per sub-pixel sample. The naive
-    membership test (`_point_in_subpaths`, kept as a reference
-    implementation and still tested directly) rescans every edge for
-    every one of a pixel's supersample^2 sub-samples: O(pixels *
-    supersample^2 * edges), fine for a small shape but seconds of work
-    for a large edge-dense one, since arc_to's point count scales with
-    radius. Collecting a sub-scanline's crossings once removes the
-    `* edges` factor: sort by x (_sort_aa_crossings_by_x), precompute
-    each crossing's suffix winding sum, then sweep every sub-sample's x
-    -- strictly increasing across the row -- against that sorted list
-    with one forward-only pointer, an amortized O(1) lookup per sample.
-    The math per sample is _point_in_subpaths' ray cast either way.
+    The sweep itself is `canvas.aa_crossing`'s `_sweep_edges_aa`,
+    shared with `fill_polygon_aa` -- see there for why it works per
+    sub-scanline rather than per sub-pixel sample, and what that buys
+    over the naive membership test. All this function contributes is
+    the flattened path's bounding box and its edges.
+    `_point_in_subpaths` remains the reference implementation that
+    sweep's output must match pixel for pixel, and is still tested
+    directly.
 
     Not fused with fill_path behind an `antialias: Bool`, for the
     reason canvas.shapes.lines gives: a complexity-class jump per
@@ -640,25 +579,9 @@ def fill_path_aa(
             if p.y > max_y:
                 max_y = p.y
 
-    var s = supersample
-    var total_samples = s * s
-    var step = 1.0 / Float64(s)
-    var row_first_px = min_x - 1
-    var row_width = (
-        max_x + 2
-    ) - row_first_px  # px range length, see the loop below
-
-    # Buffers for the whole sweep, not per row and per sub-scanline.
-    # A glyph-sized path is small enough that allocating a crossing
-    # list, a suffix list and a coverage row for every sub-scanline
-    # costs more than the sampling does -- measured at roughly 5x the
-    # per-pixel cost of a large shape. `_draw_polyline_core_aa` already
-    # reuses its per-row buffers this way; these now match it.
-    var row_covered = List[Int](capacity=row_width)
-    for _ in range(row_width):
-        row_covered.append(0)
-    var crossings = List[_AACrossing]()
-    var suffix = List[Int]()
+    # Every sub-path's edges go into one table, so their winding
+    # contributions combine before the fill rule is applied -- which is
+    # what makes an inner sub-path punch a hole rather than fill solid.
     var edges = _EdgeTable()
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
@@ -672,103 +595,17 @@ def fill_path_aa(
                 Float64(a.x), Float64(a.y), Float64(b.x), Float64(b.y)
             )
 
-    for py in range(min_y - 1, max_y + 2):
-        for pxi in range(row_width):
-            row_covered[pxi] = 0
-
-        for sy in range(s):
-            var fy = Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-            edges.crossings_at(fy, crossings)
-            _sort_aa_crossings_by_x(crossings)
-            var k = len(crossings)
-
-            # suffix[i] is the signed winding contributed by every
-            # crossing from index i onward -- what _point_in_subpaths'
-            # `x > fx` ray cast sums fresh per sample. Precomputing it
-            # per sub-scanline is what removes the `* edges` factor.
-            # Grown to fit, never shrunk, so a later sub-scanline with
-            # fewer crossings reuses the same storage.
-            while len(suffix) < k + 1:
-                suffix.append(0)
-            suffix[k] = 0
-            for i in range(k - 1, -1, -1):
-                suffix[i] = suffix[i + 1] + crossings[i].direction
-
-            # Inside/outside is constant between consecutive
-            # crossings, and the sub-sample x positions are uniformly
-            # spaced -- fx(g) = x0 + (g + 0.5)/s for a sample index g
-            # running across the whole row. So each inside run maps to
-            # a contiguous range of g, and the samples in it can be
-            # counted rather than tested one at a time: a pixel wholly
-            # inside a run takes `+= s` in one step, and a pixel in no
-            # run is never touched at all.
-            #
-            # Exactly the same counts as testing each position -- the
-            # positions themselves are unchanged, only the way they're
-            # counted is -- so every hand-derived coverage value in the
-            # tests still holds. That is the check that this stayed
-            # exact rather than merely close.
-            var total_g = row_width * s
-            var x0 = Float64(row_first_px) - 0.5
-            for i in range(k + 1):
-                if not _is_inside(suffix[i], fill_rule):
-                    continue
-
-                # First sample at or after this run's left edge.
-                var g_start = 0
-                if i > 0:
-                    var lo = crossings[i - 1].x
-                    g_start = Int(ceil((lo - x0) * Float64(s) - 0.5))
-                    # `ceil` on a float expression can land a step off
-                    # at a boundary; nudge to the exact first sample
-                    # rather than trust it.
-                    while g_start > 0 and _sample_x(x0, g_start - 1, s) >= lo:
-                        g_start -= 1
-                    while g_start < total_g and _sample_x(x0, g_start, s) < lo:
-                        g_start += 1
-                    if g_start < 0:
-                        g_start = 0
-
-                # Last sample strictly before this run's right edge.
-                var g_end = total_g - 1
-                if i < k:
-                    var hi = crossings[i].x
-                    g_end = Int(ceil((hi - x0) * Float64(s) - 0.5)) - 1
-                    while g_end >= 0 and _sample_x(x0, g_end, s) >= hi:
-                        g_end -= 1
-                    while (
-                        g_end + 1 < total_g and _sample_x(x0, g_end + 1, s) < hi
-                    ):
-                        g_end += 1
-                    if g_end > total_g - 1:
-                        g_end = total_g - 1
-
-                # Walk the run a pixel at a time, taking every sample
-                # that pixel contributes in one add.
-                var g = g_start
-                while g <= g_end:
-                    var pxi = g // s
-                    var upper = (pxi + 1) * s - 1
-                    if g_end < upper:
-                        upper = g_end
-                    row_covered[pxi] += upper - g + 1
-                    g = upper + 1
-
-        for pxi in range(row_width):
-            var covered = row_covered[pxi]
-            if covered > 0:
-                var px = row_first_px + pxi
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
-                canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
-                )
+    _sweep_edges_aa(
+        canvas,
+        edges,
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        color,
+        fill_rule,
+        supersample,
+    )
 
 
 def fill_path_gradient(
