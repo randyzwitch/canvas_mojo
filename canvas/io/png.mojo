@@ -20,21 +20,28 @@ PNG's chunk framing (length, CRC-32) and the zlib Adler-32 trailer are
 big-endian, but DEFLATE's stored-block LEN/NLEN fields are
 little-endian.
 
-`write_png` emits only color type 2 (truecolor, no alpha) at 8-bit
-depth, matching Canvas's RGB storage. `read_png` accepts color types
-0/2/4/6 (grayscale, truecolor, grayscale+alpha, truecolor+alpha) at
-8-bit depth, non-interlaced. Indexed/palette color (type 3), other bit
-depths, and Adam7 interlacing raise a clear error rather than
-misreading pixels -- a deliberate scope limit covering what the
-overwhelming majority of real PNGs are.
+`write_png` emits color type 6 (truecolor + alpha) when the canvas
+actually contains a pixel that is not fully opaque, and color type 2
+(truecolor, no alpha) when it does not. Picking the narrower format
+when the wider one carries no information is what an encoder is
+supposed to do, and it means a render that never used transparency
+produces exactly the same file it always did -- no size regression, no
+change to any existing output.
 
-A PNG with an alpha channel loses that alpha on read: `read_png`
-composites each pixel through `Canvas.set_pixel`'s blend_over onto the
-fresh canvas's white background, because `Canvas` has no per-pixel
-alpha channel to keep it in (see buffer.mojo).
+`read_png` accepts color types 0/2/4/6 (grayscale, truecolor,
+grayscale+alpha, truecolor+alpha) at 8-bit depth, non-interlaced.
+Indexed/palette color (type 3), other bit depths, and Adam7
+interlacing raise a clear error rather than misreading pixels -- a
+deliberate scope limit covering what the overwhelming majority of real
+PNGs are.
+
+A PNG with an alpha channel now keeps it: `Canvas` stores per-pixel
+alpha (see buffer.mojo), so `read_png` writes each pixel's alpha
+straight through instead of compositing it away onto white, and a
+file round-trips through `read_png` -> `write_png` unchanged.
 """
 
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color
 from canvas.io.deflate import deflate, inflate
 
@@ -148,8 +155,9 @@ def _write_chunk(
 
 
 def write_png(canvas: Canvas, path: String) raises:
-    """Write `canvas` to `path` as a truecolor (color type 2), 8-bit,
-    non-interlaced PNG.
+    """Write `canvas` to `path` as an 8-bit, non-interlaced PNG --
+    color type 6 (truecolor + alpha) if any pixel is not fully opaque,
+    color type 2 (truecolor) otherwise.
 
     Args:
         canvas: Canvas to write.
@@ -162,6 +170,18 @@ def write_png(canvas: Canvas, path: String) raises:
     var h = canvas.height
     var crc_table = _crc32_table()
 
+    # One pass to decide the colour type. `has_alpha` is false for the
+    # overwhelming majority of renders (anything drawn onto an opaque
+    # background), and those take the 3-bytes-per-pixel path exactly as
+    # before.
+    var has_alpha = False
+    var px = canvas.pixels.unsafe_ptr()
+    for i in range(w * h):
+        if px[unsafe_offset=i * BYTES_PER_PIXEL + 3] != 255:
+            has_alpha = True
+            break
+    var channels = 4 if has_alpha else 3
+
     var file_buf = List[UInt8]()
     var signature: List[UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
     for b in signature:
@@ -171,26 +191,39 @@ def write_png(canvas: Canvas, path: String) raises:
     _append_u32_be(ihdr, UInt32(w))
     _append_u32_be(ihdr, UInt32(h))
     ihdr.append(8)  # bit depth
-    ihdr.append(2)  # color type: truecolor, no alpha
+    # 6 = truecolor + alpha, 2 = truecolor. See this module's docstring
+    # on why the narrower type is used when nothing needs the wider.
+    ihdr.append(UInt8(6) if has_alpha else UInt8(2))
     ihdr.append(0)  # compression method (always 0 -- deflate)
     ihdr.append(0)  # filter method (always 0)
     ihdr.append(0)  # interlace method: none
     _write_chunk(file_buf, crc_table, "IHDR", ihdr)
 
-    # Raw scanlines: a filter-type byte, then that row's RGB bytes.
+    # Raw scanlines: a filter-type byte, then that row's pixel bytes.
     # Filter type 0 (None, no per-pixel prediction) because deflate()'s
     # LZ77 already finds the horizontal-run redundancy a predictor
     # targets, and these images are dominated by flat-color regions.
     #
-    # Each row is one bulk slice copy rather than a get_pixel walk:
-    # canvas.pixels is already RGB row-major, exactly what a
-    # filter-type-0 scanline wants, so there's no transformation to
-    # justify w * h in_bounds checks and Color constructions.
-    var raw = List[UInt8](capacity=h * (1 + w * 3))
+    # With alpha, the canvas's own RGBA layout *is* the scanline
+    # layout, so each row is one bulk slice copy. Without it the alpha
+    # byte has to be dropped per pixel, which is a copy either way --
+    # still reading straight from the buffer rather than walking
+    # `get_pixel`, which would add w * h bounds checks and Color
+    # constructions for no gain.
+    var raw = List[UInt8](capacity=h * (1 + w * channels))
     for y in range(h):
         raw.append(0)
-        var row_start = y * w * 3
-        raw.extend(canvas.pixels[row_start : row_start + w * 3])
+        var row_start = y * w * BYTES_PER_PIXEL
+        if has_alpha:
+            raw.extend(
+                canvas.pixels[row_start : row_start + w * BYTES_PER_PIXEL]
+            )
+        else:
+            for x in range(w):
+                var i = row_start + x * BYTES_PER_PIXEL
+                raw.append(px[unsafe_offset=i])
+                raw.append(px[unsafe_offset=i + 1])
+                raw.append(px[unsafe_offset=i + 2])
 
     var zlib_stream = List[UInt8]()
     # zlib header (RFC 1950 2.2): CMF=0x78 (deflate, 32K window),
@@ -346,43 +379,45 @@ def _unfilter_scanlines(
 def _canvas_from_scanlines(
     unfiltered: List[UInt8], width: Int, height: Int, color_type: Int
 ) raises -> Canvas:
-    """Converts already-unfiltered scanline bytes into a Canvas,
-    compositing every pixel through `write_pixel`'s blend_over. An
-    alpha channel is flattened here, for the reason this module's
-    docstring gives.
+    """Converts already-unfiltered scanline bytes into a Canvas.
 
-    write_pixel, not set_pixel: the loop ranges come from
-    width/height on a fresh canvas with no clip pushed, so
-    set_pixel's in_bounds/in_clip checks could only confirm what's
-    already guaranteed.
+    Builds the RGBA buffer directly and hands it to the
+    `(width, height, pixels)` constructor, rather than writing pixels
+    into a blank canvas one at a time. That is not just faster: a
+    `write_pixel` walk would *composite* each pixel onto the canvas's
+    initial background, which is exactly how alpha used to be lost
+    here. Decoding a file is a replace, not a draw.
     """
-    var canvas = Canvas(width, height)
     var bpp = _bytes_per_pixel(color_type)
     var row_bytes = width * bpp
+    var pixels = List[UInt8](capacity=width * height * BYTES_PER_PIXEL)
     for y in range(height):
         var row_start = y * row_bytes
         for x in range(width):
             var px = row_start + x * bpp
-            var color: Color
             if color_type == 0:
                 var gray = unfiltered[px]
-                color = Color(gray, gray, gray)
+                pixels.append(gray)
+                pixels.append(gray)
+                pixels.append(gray)
+                pixels.append(255)
             elif color_type == 2:
-                color = Color(
-                    unfiltered[px], unfiltered[px + 1], unfiltered[px + 2]
-                )
+                pixels.append(unfiltered[px])
+                pixels.append(unfiltered[px + 1])
+                pixels.append(unfiltered[px + 2])
+                pixels.append(255)
             elif color_type == 4:
                 var gray = unfiltered[px]
-                color = Color(gray, gray, gray, unfiltered[px + 1])
+                pixels.append(gray)
+                pixels.append(gray)
+                pixels.append(gray)
+                pixels.append(unfiltered[px + 1])
             else:  # 6 -- _bytes_per_pixel already rejected anything else
-                color = Color(
-                    unfiltered[px],
-                    unfiltered[px + 1],
-                    unfiltered[px + 2],
-                    unfiltered[px + 3],
-                )
-            canvas.write_pixel(x, y, color)
-    return canvas^
+                pixels.append(unfiltered[px])
+                pixels.append(unfiltered[px + 1])
+                pixels.append(unfiltered[px + 2])
+                pixels.append(unfiltered[px + 3])
+    return Canvas(width, height, pixels^)
 
 
 def read_png(path: String) raises -> Canvas:

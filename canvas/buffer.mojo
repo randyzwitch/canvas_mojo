@@ -1,5 +1,20 @@
 """The pixel raster buffer at the core of the canvas package."""
 
+# Bytes per pixel: R, G, B, A, straight (non-premultiplied) alpha.
+#
+# The alpha channel is what lets a canvas have a transparent
+# background -- `Canvas(w, h, Color(0, 0, 0, 0))` -- and therefore what
+# lets `write_png` emit a PNG with real transparency rather than
+# whatever the image was flattened onto. Storing it also makes
+# `read_png` able to keep the alpha of a file that has one, which it
+# previously composited away.
+#
+# Straight rather than premultiplied, so `get_pixel` returns the colour
+# a caller would recognise: premultiplying is the better representation
+# for repeated compositing, but it makes every read lossy at low alpha
+# and would change what every existing caller of `get_pixel` sees.
+comptime BYTES_PER_PIXEL = 4
+
 from std.memory import unsafe_memcpy
 
 from canvas.color import Color, _div255
@@ -91,19 +106,20 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # destination share an origin, `unsafe_memcpy` included, so a
         # self-copy is not expressible here however the pointers are
         # offset.
-        var total = width * height * 3
+        var total = width * height * BYTES_PER_PIXEL
         self.pixels = List[UInt8](length=total, fill=0)
         self.clip_stack = List[_ClipRect]()
         if total == 0:
             return
 
-        var row_bytes = width * 3
+        var row_bytes = width * BYTES_PER_PIXEL
         var row = List[UInt8](length=row_bytes, fill=0)
         var rp = row.unsafe_ptr()
-        for i in range(0, row_bytes, 3):
+        for i in range(0, row_bytes, BYTES_PER_PIXEL):
             rp[unsafe_offset=i] = fill.r
             rp[unsafe_offset=i + 1] = fill.g
             rp[unsafe_offset=i + 2] = fill.b
+            rp[unsafe_offset=i + 3] = fill.a
 
         var p = self.pixels.unsafe_ptr()
         for y in range(height):
@@ -123,24 +139,24 @@ struct Canvas(Copyable, DrawTarget, Movable):
         output pixel before handing the canvas back -- filling first
         would double the call's pixel-write cost.
 
-        Raises unless `pixels` is exactly width * height * 3 bytes
-        (RGB, row-major, the layout get_pixel/set_pixel assume). A
+        Raises unless `pixels` is exactly width * height * 4 bytes
+        (RGBA, row-major, the layout get_pixel/set_pixel assume). A
         wrong size is a caller bug, and wrapping it anyway would
         corrupt every later index.
 
         Args:
             width: Canvas width in pixels.
             height: Canvas height in pixels.
-            pixels: Row-major RGB bytes, exactly width * height * 3
+            pixels: Row-major RGBA bytes, exactly width * height * 4
                 long.
 
         Raises:
-            Error: `pixels`' length isn't width * height * 3.
+            Error: `pixels`' length isn't width * height * 4.
         """
-        if len(pixels) != width * height * 3:
+        if len(pixels) != width * height * BYTES_PER_PIXEL:
             raise Error(
                 "Canvas(width, height, pixels): pixels must be exactly"
-                " width * height * 3 bytes (got "
+                " width * height * 4 bytes (got "
                 + String(len(pixels))
                 + " for a "
                 + String(width)
@@ -274,21 +290,43 @@ struct Canvas(Copyable, DrawTarget, Movable):
             color: Color to write, blended over the existing pixel if
                 translucent.
         """
-        var idx = (y * self.width + x) * 3
+        var idx = (y * self.width + x) * BYTES_PER_PIXEL
         var p = self.pixels.unsafe_ptr()
         if color.a == 255:
             p[unsafe_offset=idx] = color.r
             p[unsafe_offset=idx + 1] = color.g
             p[unsafe_offset=idx + 2] = color.b
-        else:
-            var blended = color.blend_over_opaque(
+            p[unsafe_offset=idx + 3] = 255
+            return
+
+        var dst_a = p[unsafe_offset=idx + 3]
+        if dst_a == 255:
+            # The overwhelmingly common case -- anything drawn onto a
+            # canvas with an opaque background -- and the one that
+            # avoids a per-pixel division. See Color.blend_over_opaque.
+            var opaque_blend = color.blend_over_opaque(
                 p[unsafe_offset=idx],
                 p[unsafe_offset=idx + 1],
                 p[unsafe_offset=idx + 2],
             )
-            p[unsafe_offset=idx] = blended.r
-            p[unsafe_offset=idx + 1] = blended.g
-            p[unsafe_offset=idx + 2] = blended.b
+            p[unsafe_offset=idx] = opaque_blend.r
+            p[unsafe_offset=idx + 1] = opaque_blend.g
+            p[unsafe_offset=idx + 2] = opaque_blend.b
+            p[unsafe_offset=idx + 3] = 255
+            return
+
+        var blended = color.blend_over(
+            Color(
+                p[unsafe_offset=idx],
+                p[unsafe_offset=idx + 1],
+                p[unsafe_offset=idx + 2],
+                dst_a,
+            )
+        )
+        p[unsafe_offset=idx] = blended.r
+        p[unsafe_offset=idx + 1] = blended.g
+        p[unsafe_offset=idx + 2] = blended.b
+        p[unsafe_offset=idx + 3] = blended.a
 
     def effective_fill_rect(
         self, x: Int, y: Int, width: Int, height: Int
@@ -339,9 +377,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         if not self.in_bounds(x, y):
             return Color(0, 0, 0)
-        var idx = (y * self.width + x) * 3
+        var idx = (y * self.width + x) * BYTES_PER_PIXEL
         return Color(
-            self.pixels[idx], self.pixels[idx + 1], self.pixels[idx + 2]
+            self.pixels[idx],
+            self.pixels[idx + 1],
+            self.pixels[idx + 2],
+            self.pixels[idx + 3],
         )
 
     def read_pixel(self, x: Int, y: Int) -> Color:
@@ -364,12 +405,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Returns:
             The pixel's color.
         """
-        var idx = (y * self.width + x) * 3
+        var idx = (y * self.width + x) * BYTES_PER_PIXEL
         var p = self.pixels.unsafe_ptr()
         return Color(
             p[unsafe_offset=idx],
             p[unsafe_offset=idx + 1],
             p[unsafe_offset=idx + 2],
+            p[unsafe_offset=idx + 3],
         )
 
     def fill(mut self, color: Color):
@@ -400,18 +442,17 @@ struct Canvas(Copyable, DrawTarget, Movable):
         depends on what was already there, but it hoists everything
         that does not: the source colour's premultiplied terms and the
         complementary alpha are computed once for the whole rectangle,
-        leaving one multiply-add and one `_div255` per channel.
-
-        Byte-for-byte identical to the loop it replaces. This is
+        leaving one multiply-add and one `_div255` per channel wherever
+        the destination pixel is opaque. That branch is
         `blend_over_opaque` inlined -- same arithmetic, same exact
-        `_div255`, and the background is opaque here for the same
-        reason it always is (see color.mojo).
+        `_div255`. A translucent destination falls back to the general
+        `blend_over`, which needs a per-pixel divide.
         """
         if rw <= 0 or rh <= 0:
             return
         var p = self.pixels.unsafe_ptr()
-        var span_bytes = rw * 3
-        var stride = self.width * 3
+        var span_bytes = rw * BYTES_PER_PIXEL
+        var stride = self.width * BYTES_PER_PIXEL
 
         if color.a == 255:
             # One scratch span, copied into every row of the
@@ -419,13 +460,14 @@ struct Canvas(Copyable, DrawTarget, Movable):
             # constructor gives: a same-origin memcpy is rejected.
             var span = List[UInt8](length=span_bytes, fill=0)
             var sp = span.unsafe_ptr()
-            for i in range(0, span_bytes, 3):
+            for i in range(0, span_bytes, BYTES_PER_PIXEL):
                 sp[unsafe_offset=i] = color.r
                 sp[unsafe_offset=i + 1] = color.g
                 sp[unsafe_offset=i + 2] = color.b
+                sp[unsafe_offset=i + 3] = 255
             for y in range(ry, ry + rh):
                 unsafe_memcpy(
-                    dest=p.unsafe_offset(y * stride + rx * 3),
+                    dest=p.unsafe_offset(y * stride + rx * BYTES_PER_PIXEL),
                     src=sp,
                     count=span_bytes,
                 )
@@ -435,27 +477,45 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
 
         # Unit-stride inner loop with the index carried along, rather
-        # than `range(0, span_bytes, 3)`: the strided form measured
-        # slower than the per-pixel `write_pixel` loop this replaced,
-        # which is the opposite of the point.
+        # than a strided `range`: the strided form measured slower than
+        # the per-pixel `write_pixel` loop this replaced, which is the
+        # opposite of the point.
         var sa = Int(color.a)
         var inv = 255 - sa
         var cr = Int(color.r) * sa
         var cg = Int(color.g) * sa
         var cb = Int(color.b) * sa
         for y in range(ry, ry + rh):
-            var idx = y * stride + rx * 3
+            var idx = y * stride + rx * BYTES_PER_PIXEL
             for _ in range(rw):
-                p[unsafe_offset=idx] = UInt8(
-                    _div255(cr + Int(p[unsafe_offset=idx]) * inv)
-                )
-                p[unsafe_offset=idx + 1] = UInt8(
-                    _div255(cg + Int(p[unsafe_offset=idx + 1]) * inv)
-                )
-                p[unsafe_offset=idx + 2] = UInt8(
-                    _div255(cb + Int(p[unsafe_offset=idx + 2]) * inv)
-                )
-                idx += 3
+                if p[unsafe_offset=idx + 3] == 255:
+                    # Opaque destination: the hoisted division-free
+                    # form, and the result stays opaque.
+                    p[unsafe_offset=idx] = UInt8(
+                        _div255(cr + Int(p[unsafe_offset=idx]) * inv)
+                    )
+                    p[unsafe_offset=idx + 1] = UInt8(
+                        _div255(cg + Int(p[unsafe_offset=idx + 1]) * inv)
+                    )
+                    p[unsafe_offset=idx + 2] = UInt8(
+                        _div255(cb + Int(p[unsafe_offset=idx + 2]) * inv)
+                    )
+                else:
+                    # Translucent destination: the general src-over,
+                    # which needs the per-pixel divide.
+                    var blended = color.blend_over(
+                        Color(
+                            p[unsafe_offset=idx],
+                            p[unsafe_offset=idx + 1],
+                            p[unsafe_offset=idx + 2],
+                            p[unsafe_offset=idx + 3],
+                        )
+                    )
+                    p[unsafe_offset=idx] = blended.r
+                    p[unsafe_offset=idx + 1] = blended.g
+                    p[unsafe_offset=idx + 2] = blended.b
+                    p[unsafe_offset=idx + 3] = blended.a
+                idx += BYTES_PER_PIXEL
 
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color

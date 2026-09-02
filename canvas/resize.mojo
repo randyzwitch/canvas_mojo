@@ -9,7 +9,7 @@ with finer edges baked into the file rather than left to whatever
 displays it.
 """
 
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, BYTES_PER_PIXEL
 
 
 def downsample(source: Canvas, factor: Int) raises -> Canvas:
@@ -61,15 +61,30 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     # always true on a fresh clip-free canvas -- would add nothing, and
     # the (width, height, pixels) constructor skips the solid fill a
     # plain Canvas() would immediately overwrite.
-    var pixels = List[UInt8](capacity=out_width * out_height * 3)
+    var pixels = List[UInt8](capacity=out_width * out_height * BYTES_PER_PIXEL)
     # Every coordinate below comes from out_width/out_height times
     # `factor`, which is how the output dimensions were derived, so
     # each read is on-canvas by construction -- see Canvas.read_pixel.
+    #
+    # Alpha is averaged alongside the colour channels. That is the
+    # right answer for the case this exists for -- supersample at 2x,
+    # downsample to 1x -- where a block straddling a shape's edge on a
+    # transparent background should come out partly transparent, in
+    # exactly the proportion of the block the shape covered.
+    #
+    # It is *not* correct in general: averaging straight (rather than
+    # premultiplied) colour lets a fully transparent pixel's colour
+    # bleed into the result. For a downsample of a rendered image that
+    # is harmless, since a transparent pixel here carries the
+    # background colour it was initialised with rather than arbitrary
+    # data. Worth knowing before reusing this on an arbitrary RGBA
+    # image.
     for oy in range(out_height):
         for ox in range(out_width):
             var r_sum = 0
             var g_sum = 0
             var b_sum = 0
+            var a_sum = 0
             for dy in range(factor):
                 for dx in range(factor):
                     var p = source.read_pixel(
@@ -78,7 +93,9 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
                     r_sum += Int(p.r)
                     g_sum += Int(p.g)
                     b_sum += Int(p.b)
+                    a_sum += Int(p.a)
             pixels.append(UInt8((r_sum + n // 2) // n))
             pixels.append(UInt8((g_sum + n // 2) // n))
             pixels.append(UInt8((b_sum + n // 2) // n))
+            pixels.append(UInt8((a_sum + n // 2) // n))
     return Canvas(out_width, out_height, pixels^)
