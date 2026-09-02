@@ -108,5 +108,91 @@ def test_downsample_raises_when_factor_does_not_evenly_divide_dimensions() raise
         _ = downsample(c, 2)  # 5 % 2 != 0
 
 
+def test_large_downsample_matches_a_hand_computed_block_average() raises:
+    # Every other test here uses a canvas of a few pixels, which stays
+    # under the threshold that splits the work across cores -- so none
+    # of them exercise the banded path at all. This one is big enough
+    # to be banded, and checks the result against block averages
+    # computed independently of the implementation.
+    #
+    # The source is a deterministic gradient rather than a solid fill,
+    # so a band that read or wrote the wrong rows would produce visibly
+    # wrong values rather than the same colour by luck.
+    var factor = 2
+    var out_w = 160
+    var out_h = 120
+    # Built as a raw buffer rather than through set_pixel, which
+    # *composites*: a pixel written with alpha 0 would leave the
+    # background showing instead of storing the value this test then
+    # expects to read back. The (w, h, pixels) constructor stores exact
+    # bytes, which is what lets alpha carry a varying value here at all.
+    var sw = out_w * factor
+    var sh = out_h * factor
+    var raw = List[UInt8](capacity=sw * sh * 4)
+    for y in range(sh):
+        for x in range(sw):
+            raw.append(UInt8(x % 256))
+            raw.append(UInt8(y % 256))
+            raw.append(UInt8((x + y) % 256))
+            raw.append(UInt8((x * 2 + y) % 256))
+    var src = Canvas(sw, sh, raw^)
+
+    var small = downsample(src, factor)
+    assert_equal(small.width, out_w)
+    assert_equal(small.height, out_h)
+
+    var n = factor * factor
+    for oy in range(out_h):
+        for ox in range(out_w):
+            var r = 0
+            var g = 0
+            var b = 0
+            var a = 0
+            for dy in range(factor):
+                for dx in range(factor):
+                    var sx = ox * factor + dx
+                    var sy = oy * factor + dy
+                    r += sx % 256
+                    g += sy % 256
+                    b += (sx + sy) % 256
+                    a += (sx * 2 + sy) % 256
+            var got = small.get_pixel(ox, oy)
+            assert_equal(
+                Int(got.r),
+                (r + n // 2) // n,
+                "red block average at (" + String(ox) + ", " + String(oy) + ")",
+            )
+            assert_equal(Int(got.g), (g + n // 2) // n, "green block average")
+            assert_equal(Int(got.b), (b + n // 2) // n, "blue block average")
+            assert_equal(Int(got.a), (a + n // 2) // n, "alpha block average")
+
+
+def test_large_downsample_is_deterministic() raises:
+    # Banding makes this concurrent, and a race here would show as the
+    # same input producing different output run to run -- which no
+    # assertion about a single render can catch.
+    # Raw buffer, not set_pixel -- see the block-average test above.
+    var raw = List[UInt8](capacity=600 * 400 * 4)
+    for y in range(400):
+        for x in range(600):
+            raw.append(UInt8(x % 251))
+            raw.append(UInt8(y % 241))
+            raw.append(UInt8((x ^ y) % 239))
+            raw.append(UInt8((x + 3 * y) % 253))
+    var src = Canvas(600, 400, raw^)
+
+    var first = downsample(src, 2)
+    for _ in range(8):
+        var again = downsample(src, 2)
+        for y in range(first.height):
+            for x in range(first.width):
+                var a = first.get_pixel(x, y)
+                var b = again.get_pixel(x, y)
+                assert_equal(a.r, b.r, "repeat downsample matches")
+                assert_equal(a.g, b.g)
+                assert_equal(a.b, b.b)
+                assert_equal(a.a, b.a)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
