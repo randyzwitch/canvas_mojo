@@ -17,6 +17,8 @@ from canvas.geometry import Point
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule
 from canvas.shapes.arcs import fill_arc
+from canvas.shapes.ellipses import fill_ellipse_aa
+from canvas.shapes.rects import fill_rect
 from canvas.shapes.polygon_fill import fill_polygon, fill_polygon_aa
 from canvas.path import (
     Path,
@@ -682,6 +684,200 @@ def test_fill_path_nonzero_fills_the_overlap_of_same_direction_subpaths_solid() 
     _assert_pixel(
         c, 15, 15, FG, "overlap region -- solid under NONZERO, no hole"
     )
+
+
+def test_rect_builds_the_same_subpath_as_the_long_form() raises:
+    # The convenience builder must be exactly its expansion, not
+    # merely similar -- so this compares flattened points rather than
+    # rendering.
+    var built = Path()
+    built.rect(10.0, 20.0, 30.0, 40.0)
+
+    var manual = Path()
+    manual.move_to(10.0, 20.0)
+    manual.line_to(40.0, 20.0)
+    manual.line_to(40.0, 60.0)
+    manual.line_to(10.0, 60.0)
+    manual.close()
+
+    var a = _flatten(built)
+    var b = _flatten(manual)
+    assert_equal(len(a), len(b), "same sub-path count")
+    assert_equal(len(a[0].points), len(b[0].points), "same point count")
+    assert_true(a[0].closed and b[0].closed, "both closed")
+    for i in range(len(a[0].points)):
+        assert_equal(a[0].points[i].x, b[0].points[i].x)
+        assert_equal(a[0].points[i].y, b[0].points[i].y)
+
+
+def test_rect_covers_the_geometric_rectangle_not_fill_rects_extent() raises:
+    # A gotcha worth pinning rather than papering over. Path.rect
+    # describes the geometric rectangle [x, x+width] x [y, y+height],
+    # which is what `rect` means everywhere else. fill_path's X-fill
+    # between a row's crossing pair is *inclusive*, so filling it
+    # covers column x+width as well -- one more than
+    # fill_rect(x, y, width, height), which stops at x+width-1.
+    #
+    # That is fill_polygon's documented convention, not a bug in
+    # either: matching fill_rect exactly needs the asymmetric corners
+    # its docstring describes. Asserted both ways here so a future
+    # change to either cannot quietly diverge.
+    var via_path = Canvas(40, 40, BG)
+    var p = Path()
+    p.rect(8.0, 6.0, 20.0, 24.0)
+    fill_path(via_path, p, FG)
+
+    var via_rect = Canvas(40, 40, BG)
+    fill_rect(via_rect, 8, 6, 20, 24, FG)
+
+    assert_equal(via_path.get_pixel(27, 15).r, 255, "shared last column")
+    assert_equal(via_rect.get_pixel(27, 15).r, 255, "shared last column")
+    assert_equal(
+        via_path.get_pixel(28, 15).r,
+        255,
+        "the path fill includes the closing column",
+    )
+    assert_equal(
+        via_rect.get_pixel(28, 15).r,
+        0,
+        "fill_rect stops one short of it",
+    )
+
+    # With the asymmetric corners fill_polygon documents, they agree
+    # exactly.
+    var matched = Canvas(40, 40, BG)
+    var q = Path()
+    q.move_to(8.0, 6.0)
+    q.line_to(27.0, 6.0)
+    q.line_to(27.0, 30.0)
+    q.line_to(8.0, 30.0)
+    q.close()
+    fill_path(matched, q, FG)
+    for y in range(40):
+        for x in range(40):
+            assert_equal(
+                matched.get_pixel(x, y).r,
+                via_rect.get_pixel(x, y).r,
+                "asymmetric corners reproduce fill_rect exactly",
+            )
+
+
+def test_degenerate_rect_adds_nothing() raises:
+    var p = Path()
+    p.rect(5.0, 5.0, 0.0, 10.0)
+    p.rect(5.0, 5.0, 10.0, -3.0)
+    assert_equal(len(_flatten(p)), 0, "no sub-path from a degenerate rect")
+
+
+def test_round_rect_corners_are_inside_the_square_corners() raises:
+    # A rounded corner must cut the corner off: the pixel at the
+    # rectangle's own corner is outside the shape, while a point well
+    # inside is not.
+    var c = Canvas(60, 60, BG)
+    var p = Path()
+    p.round_rect(10.0, 10.0, 40.0, 40.0, 12.0)
+    fill_path_aa(c, p, FG)
+
+    assert_equal(c.get_pixel(11, 11).r, 0, "the square corner is cut away")
+    assert_equal(c.get_pixel(30, 30).r, 255, "the middle is filled")
+    assert_equal(c.get_pixel(30, 11).r, 255, "the straight top edge is filled")
+    assert_equal(c.get_pixel(11, 30).r, 255, "the straight left edge too")
+
+
+def test_round_rect_radius_is_clamped_to_half_the_short_side() raises:
+    # An over-large radius must give the stadium/circle limit rather
+    # than self-intersecting corners, which under EVEN_ODD would punch
+    # holes in the shape.
+    var clamped = Canvas(60, 60, BG)
+    var p1 = Path()
+    p1.round_rect(10.0, 10.0, 40.0, 40.0, 500.0)
+    fill_path_aa(clamped, p1, FG)
+
+    var exact = Canvas(60, 60, BG)
+    var p2 = Path()
+    p2.round_rect(10.0, 10.0, 40.0, 40.0, 20.0)
+    fill_path_aa(exact, p2, FG)
+
+    for y in range(60):
+        for x in range(60):
+            assert_equal(
+                clamped.get_pixel(x, y).r,
+                exact.get_pixel(x, y).r,
+                "an over-large radius equals the half-side limit",
+            )
+    assert_equal(clamped.get_pixel(30, 30).r, 255, "and it is solid, not holed")
+
+
+def test_round_rect_with_zero_radius_is_a_plain_rect() raises:
+    var rounded = Canvas(40, 40, BG)
+    var p1 = Path()
+    p1.round_rect(6.0, 6.0, 20.0, 24.0, 0.0)
+    fill_path(rounded, p1, FG)
+
+    var plain = Canvas(40, 40, BG)
+    var p2 = Path()
+    p2.rect(6.0, 6.0, 20.0, 24.0)
+    fill_path(plain, p2, FG)
+
+    for y in range(40):
+        for x in range(40):
+            assert_equal(rounded.get_pixel(x, y).r, plain.get_pixel(x, y).r)
+
+
+def test_path_ellipse_tracks_the_exact_primitive() raises:
+    # Four cubics per ellipse is an approximation where fill_ellipse_aa
+    # is exact, so this asserts they agree closely rather than exactly:
+    # kappa's worst radial error is ~0.027% of the radius, far under
+    # one supersample step. Compared as total ink so a boundary pixel
+    # differing by a level or two does not fail it.
+    var via_path = Canvas(80, 60, BG)
+    var p = Path()
+    p.ellipse(40.0, 30.0, 30.0, 20.0)
+    fill_path_aa(via_path, p, FG)
+
+    var via_primitive = Canvas(80, 60, BG)
+    fill_ellipse_aa(via_primitive, 40.0, 30.0, 30.0, 20.0, FG)
+
+    var ink_path = 0
+    var ink_prim = 0
+    for y in range(60):
+        for x in range(80):
+            ink_path += Int(via_path.get_pixel(x, y).r)
+            ink_prim += Int(via_primitive.get_pixel(x, y).r)
+
+    var gap = ink_path - ink_prim
+    if gap < 0:
+        gap = -gap
+    assert_true(
+        gap * 500 < ink_prim,
+        "the cubic approximation is within 0.2% of the exact ellipse's"
+        " ink (path "
+        + String(ink_path)
+        + " vs primitive "
+        + String(ink_prim)
+        + ")",
+    )
+    assert_equal(via_path.get_pixel(40, 30).r, 255, "centre is filled")
+    assert_equal(via_path.get_pixel(2, 2).r, 0, "the corner is not")
+
+
+def test_path_ellipse_can_punch_a_hole() raises:
+    # The reason this exists at all rather than deferring to
+    # fill_ellipse_aa: an ellipse that is one sub-path among several.
+    var c = Canvas(80, 60, BG)
+    var p = Path()
+    p.ellipse(40.0, 30.0, 32.0, 24.0)
+    p.ellipse(40.0, 30.0, 16.0, 12.0)
+    fill_path_aa(c, p, FG)
+
+    assert_equal(c.get_pixel(40, 30).r, 0, "inner ellipse punches a hole")
+    assert_equal(c.get_pixel(40, 12).r, 255, "the ring itself is filled")
+
+
+def test_degenerate_ellipse_adds_nothing() raises:
+    var p = Path()
+    p.ellipse(10.0, 10.0, 0.0, 5.0)
+    assert_equal(len(_flatten(p)), 0, "no sub-path from a zero radius")
 
 
 def main() raises:

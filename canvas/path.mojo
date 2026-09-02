@@ -34,7 +34,7 @@ closed (draw_polygon) or open (draw_polyline) depending on whether
 close() was called.
 """
 
-from std.math import ceil, cos, floor, sin
+from std.math import ceil, cos, floor, pi, sin
 
 from canvas.buffer import Canvas
 from canvas.color import Color
@@ -54,6 +54,12 @@ from canvas.shapes.lines import (
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_fpoints
+
+# Control-point offset for approximating a quarter ellipse with one
+# cubic Bezier: 4/3 * (sqrt(2) - 1). Maximum radial error is about
+# 0.027% of the radius, which at any size this package draws is far
+# below one supersample step.
+comptime _KAPPA = 0.5522847498307936
 
 comptime _MOVE_TO = 0
 comptime _LINE_TO = 1
@@ -266,6 +272,151 @@ struct Path(Movable):
         )
         self._current_x = cx + radius * cos(end_angle)
         self._current_y = cy + radius * sin(end_angle)
+
+    def rect(
+        mut self, x: Float64, y: Float64, width: Float64, height: Float64
+    ) raises:
+        """Add a closed rectangular sub-path, clockwise from its
+        top-left corner.
+
+        Equivalent to the move_to/line_to/line_to/line_to/close it
+        expands to, which is the point: a rectangle is the single most
+        common shape to want inside a path -- a plot frame, a legend
+        box, a clip region -- and writing five calls for it obscures
+        what the path is.
+
+        A degenerate rectangle (zero or negative width or height) adds
+        nothing, rather than a sub-path that fills as a line or
+        backwards. `fill_rect` is the primitive for an axis-aligned
+        rectangle on its own; this is for one that has to be part of a
+        path, typically to combine with another sub-path or to clip to.
+
+        Worth knowing before reaching for one over the other: this
+        describes the geometric rectangle [x, x+width] x [y, y+height],
+        and `fill_path`'s X-fill between a row's crossings is
+        inclusive, so filling it covers column x+width -- one more than
+        `fill_rect(x, y, width, height)`, which stops at x+width-1.
+        That is `fill_polygon`'s documented convention (see its
+        docstring for the asymmetric corners that reproduce fill_rect
+        exactly), not a discrepancy introduced here.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width in pixels.
+            height: Height in pixels.
+
+        Raises:
+            Error: Never in practice -- the internal line_to calls
+                always follow this method's own move_to.
+        """
+        if width <= 0.0 or height <= 0.0:
+            return
+        self.move_to(x, y)
+        self.line_to(x + width, y)
+        self.line_to(x + width, y + height)
+        self.line_to(x, y + height)
+        self.close()
+
+    def round_rect(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        radius: Float64,
+    ) raises:
+        """Add a closed rectangular sub-path with rounded corners.
+
+        Corners are true circular quarter-arcs through `arc_to`, not
+        Bezier approximations, so they sample at the same
+        radius-proportional density every other arc in this package
+        does.
+
+        `radius` is clamped to half the shorter side. Past that the
+        corners would overlap and the shape would self-intersect, which
+        under EVEN_ODD would punch holes in its own corners -- a
+        surprising result from a value that merely looks too big. A
+        radius at exactly half the shorter side gives a stadium (or a
+        circle, when the rectangle is square), which is the natural
+        limit of the shape rather than a special case.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width in pixels.
+            height: Height in pixels.
+            radius: Corner radius, clamped to half the shorter side.
+
+        Raises:
+            Error: Never in practice -- every internal call follows
+                this method's own move_to.
+        """
+        if width <= 0.0 or height <= 0.0:
+            return
+        var r = radius
+        var half_short = min(width, height) / 2.0
+        if r > half_short:
+            r = half_short
+        if r <= 0.0:
+            self.rect(x, y, width, height)
+            return
+
+        var right = x + width
+        var bottom = y + height
+
+        # Angles are this package's convention throughout: 0 along +x,
+        # increasing clockwise on screen because y grows downward. So a
+        # top-left corner sweeps from pi to 3*pi/2.
+        self.move_to(x + r, y)
+        self.line_to(right - r, y)
+        self.arc_to(right - r, y + r, r, -pi / 2.0, 0.0)
+        self.line_to(right, bottom - r)
+        self.arc_to(right - r, bottom - r, r, 0.0, pi / 2.0)
+        self.line_to(x + r, bottom)
+        self.arc_to(x + r, bottom - r, r, pi / 2.0, pi)
+        self.line_to(x, y + r)
+        self.arc_to(x + r, y + r, r, pi, 3.0 * pi / 2.0)
+        self.close()
+
+    def ellipse(
+        mut self, cx: Float64, cy: Float64, rx: Float64, ry: Float64
+    ) raises:
+        """Add a closed elliptical sub-path.
+
+        Four cubic Beziers, one per quadrant, with control points at
+        the standard kappa = 4/3 * (sqrt(2) - 1) offset. That is an
+        approximation -- maximum radial error about 0.027% of the
+        radius -- where `fill_ellipse_aa` is exact, and the difference
+        is why both exist: this is for an ellipse that has to be *part
+        of a path*, to combine with other sub-paths, to stroke, or to
+        clip to. Reach for `fill_ellipse_aa` for a plain filled one.
+
+        Cubics rather than `arc_to`, which takes a single `radius` and
+        so can only build circular arcs. This is the same limitation
+        `DrawTarget` documents as the reason `fill_ellipse_aa` is in
+        that trait at all.
+
+        Args:
+            cx: Centre x.
+            cy: Centre y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+
+        Raises:
+            Error: Never in practice -- every internal call follows
+                this method's own move_to.
+        """
+        if rx <= 0.0 or ry <= 0.0:
+            return
+        var ox = rx * _KAPPA
+        var oy = ry * _KAPPA
+        self.move_to(cx + rx, cy)
+        self.cubic_curve_to(cx + rx, cy + oy, cx + ox, cy + ry, cx, cy + ry)
+        self.cubic_curve_to(cx - ox, cy + ry, cx - rx, cy + oy, cx - rx, cy)
+        self.cubic_curve_to(cx - rx, cy - oy, cx - ox, cy - ry, cx, cy - ry)
+        self.cubic_curve_to(cx + ox, cy - ry, cx + rx, cy - oy, cx + rx, cy)
+        self.close()
 
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's move_to and
