@@ -31,13 +31,6 @@ from canvas.shapes.dash import _is_dash_on, _dash_next_boundary
 
 comptime _SQRT2 = 1.4142135623730951
 
-# Sub-samples evaluated per SIMD step in the anti-aliased polyline
-# core. 4 rather than the widest available vector: the default
-# supersample is 4, so one chunk covers a whole row of sub-samples with
-# no masked-off lanes, and a wider vector would spend most of its width
-# idle at the size this is actually called with.
-comptime _AA_LANES = 4
-
 
 struct LineCap(Copyable, ImplicitlyCopyable, Movable):
     """How an open stroke ends.
@@ -199,12 +192,11 @@ def draw_line_aa(
     end caps.
 
     A one-segment polyline, and drawn as one: `_draw_polyline_core_aa`
-    already carries the row- and column-level filtering that keeps a
-    long diagonal from scanning its whole bounding box, and the
-    vectorized sample loop. Scanning the bounding box directly, as this
-    used to, costs the same for a 1-pixel line as for the rectangle it
-    spans -- a full-width diagonal covers a few thousand pixels inside
-    a box of nearly a million.
+    turns the stroke into an outline and fills it, so the cost follows
+    the stroke's own area rather than its bounding box. Scanning the
+    bounding box directly, as this used to, costs the same for a
+    1-pixel line as for the rectangle it spans -- a full-width diagonal
+    covers a few thousand pixels inside a box of nearly a million.
 
     Confirmed byte-identical to the previous implementation across
     horizontal, vertical, diagonal, thick and dashed cases before the
@@ -452,19 +444,15 @@ def _draw_polyline_core_aa(
     """Shared implementation for draw_polyline_aa/draw_polygon_aa.
 
     Calling draw_line_aa per segment would double-blend at every
-    joint, and the hard-edged "skip a pixel" fix doesn't apply, since
-    AA coverage comes from sampling. Instead every sample tests its
-    distance to *every* segment and keeps the minimum, so overlapping
-    round-cap regions at a joint still yield one coverage value, and
-    one set_pixel call, per pixel.
+    joint. Instead the whole stroke -- every segment, its caps, and its
+    joins -- is converted to a single closed outline by `_stroke_edges`
+    and filled once with FillRule.NONZERO, so a pixel under two
+    overlapping segments is still written exactly once.
 
-    Dashing composes with that minimum: a segment counts as a coverage
-    candidate only if the sample's projected point on it is within
-    half_width *and* inside an "on" region for that segment's
-    precomputed, joint-continuous start distance. Evaluating dash state
-    per segment before taking the minimum -- rather than dashing an
-    already-collapsed "closest segment" -- is what correctly covers a
-    sample where one segment is off but its neighbor is on.
+    Dashing happens during that conversion rather than during
+    rasterization: `_stroke_edges` emits a separate outline per dash
+    "on" region, carrying the phase across joints, so the fill sees
+    ordinary geometry and needs to know nothing about dashes.
     """
     var count = len(points)
     if count == 0:
@@ -475,11 +463,7 @@ def _draw_polyline_core_aa(
         )
         return
 
-    var num_segments = count if closed else count - 1
     var half_width = width / 2.0
-    var n = supersample
-    var total_samples = n * n
-    var step = 1.0 / Float64(n)
     var pad = Int(half_width) + 2
 
     # Each segment's start distance (cumulative length of everything
@@ -765,11 +749,12 @@ def _stroke_edges(
 ) -> _EdgeTable:
     """A stroke expressed as the outline of a filled region.
 
-    The min-distance formulation `_draw_polyline_core_aa` uses defines
-    a stroke as every point within `half_width` of some *drawn* part of
-    the path. That is exactly the union of one rectangle per drawn
-    stretch and one disk per vertex it turns through -- so the same
-    shape can be handed to the ordinary path fill.
+    The min-distance formulation `_draw_polyline_core_aa` used to
+    rasterize directly defines a stroke as every point within
+    `half_width` of some *drawn* part of the path. That is exactly the
+    union of one rectangle per drawn stretch and one disk per vertex it
+    turns through -- so the same shape can be handed to the ordinary
+    path fill, which is what that function now does instead.
 
     Which is the point: `_sweep_edges_aa` is already parallel across
     cores and already correct, where the stroke sweep's own banding is
