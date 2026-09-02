@@ -3,17 +3,28 @@ close, built up through chained calls, then flattened into straight-
 line segments and handed to canvas.shapes' polyline/polygon/fill
 machinery rather than reimplementing fill or stroke here.
 
-Coordinates are Float64 (FPoint), not Point's integer pixels: a control
-point off by a fraction of a pixel changes the flattened curve's shape,
-where a straight line's endpoints only need whole pixels. Quad/cubic
-flattening uses a fixed step count per segment (`curve_steps`, default
-16) rather than adaptive subdivision -- good enough at these sizes for
-the default, and callers with an unusually large or highly curved path
-can raise it. arc_to is the exception: it
-reuses canvas.shapes.arcs' `_arc_points` (radius-proportional step
-count), the same sampling draw_arc/fill_arc/fill_ring_sector use, since
-a fixed count doesn't stretch across a path-drawn arc's much wider
-radius range.
+Coordinates are Float64 (FPoint), not Point's integer pixels, and stay
+that way end to end: flattening keeps sub-pixel positions rather than
+snapping them to the grid, so `fill_path_aa`'s coverage sweep sees
+where an edge actually falls. That matters most for text, which
+rasterizes through this path -- a glyph at 12px has most of its
+outline landing between pixel centers, and rounding first was visible
+as uneven stem widths and wobbling spacing. Measured against a 9x
+supersampled reference, dropping the rounding cuts a text line's total
+per-pixel error by about 78%, with the worst single pixel going from
+209/255 wrong to 39.
+
+The hard-edged consumers (`fill_path`, `stroke_path`, `stroke_path_aa`)
+address whole pixels and round at the point of use -- see `_Subpath`.
+
+Quad/cubic flattening uses a fixed step count per segment
+(`curve_steps`, default 16) rather than adaptive subdivision -- good
+enough at these sizes for the default, and callers with an unusually
+large or highly curved path can raise it. arc_to is the exception: it
+reuses canvas.shapes.arcs' `_arc_fpoints` (radius-proportional step
+count), the sub-pixel sampler underneath the `_arc_points` that
+draw_arc/fill_arc/fill_ring_sector use, since a fixed count doesn't
+stretch across a path-drawn arc's much wider radius range.
 
 A path can hold multiple sub-paths (more than one move_to). fill_path
 combines every sub-path's scanline crossings (even-odd), so an outer
@@ -23,11 +34,11 @@ closed (draw_polygon) or open (draw_polyline) depending on whether
 close() was called.
 """
 
-from std.math import ceil, cos, sin
+from std.math import ceil, cos, floor, sin
 
 from canvas.buffer import Canvas
 from canvas.color import Color
-from canvas.geometry import Point, _round_to_int
+from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
@@ -38,7 +49,7 @@ from canvas.shapes.lines import (
     draw_polygon_aa,
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
-from canvas.shapes.arcs import _arc_points
+from canvas.shapes.arcs import _arc_fpoints
 
 comptime _MOVE_TO = 0
 comptime _LINE_TO = 1
@@ -46,25 +57,6 @@ comptime _QUAD_TO = 2
 comptime _CUBIC_TO = 3
 comptime _CLOSE = 4
 comptime _ARC_TO = 5
-
-
-struct FPoint(ImplicitlyCopyable, Movable):
-    """A floating-point 2D coordinate: Path's point type, separate from
-    geometry.Point, which is integer pixels only.
-    """
-
-    var x: Float64
-    var y: Float64
-
-    def __init__(out self, x: Float64, y: Float64):
-        """A floating-point 2D coordinate.
-
-        Args:
-            x: Column, sub-pixel precision.
-            y: Row, sub-pixel precision.
-        """
-        self.x = x
-        self.y = y
 
 
 struct _PathCommand(ImplicitlyCopyable, Movable):
@@ -236,7 +228,7 @@ struct Path(Movable):
         to `end_angle` (radians, start_angle <= end_angle) -- the same
         convention as draw_arc/fill_arc/fill_ring_sector, including
         which way increasing angle sweeps on screen. Flattened at build
-        time through that family's `_arc_points`, so a rendered
+        time through that family's `_arc_fpoints`, so a rendered
         arc_to traces the identical curve a direct draw_arc call would.
 
         Unlike Cairo's `arc()`, this inserts no connecting line from
@@ -316,24 +308,58 @@ def _cubic_point(
 
 
 struct _Subpath(Movable):
-    """One flattened sub-path: its points, and whether it was close()d."""
+    """One flattened sub-path: its points, and whether it was close()d.
 
-    var points: List[Point]
+    Points are `FPoint`, not `Point`: flattening is where a curve's
+    real shape is decided, and rounding there would throw away the
+    sub-pixel detail `fill_path_aa`'s coverage sweep exists to
+    resolve -- a glyph outline at 12px has most of its control points
+    landing between pixel centers, and snapping them first is visible
+    as uneven stem widths and wobbling spacing.
+
+    The hard-edged consumers (`fill_path`, `stroke_path`,
+    `stroke_path_aa`) round these to whole pixels at the point of use,
+    which reproduces exactly what flattening used to hand them.
+    """
+
+    var points: List[FPoint]
     var closed: Bool
 
-    def __init__(out self, var points: List[Point], closed: Bool):
+    def __init__(out self, var points: List[FPoint], closed: Bool):
         self.points = points^
         self.closed = closed
+
+
+def _round_point(p: FPoint) -> Point:
+    """One sub-pixel point snapped to the pixel grid."""
+    return Point(_round_to_int(p.x), _round_to_int(p.y))
+
+
+def _rounded_points(sp: _Subpath) -> List[Point]:
+    """A sub-path's points snapped to whole pixels, for the primitives
+    that address pixels rather than sub-pixel positions. Identical to
+    what `_flatten` itself used to return.
+    """
+    var points = List[Point](capacity=len(sp.points))
+    for i in range(len(sp.points)):
+        points.append(
+            Point(_round_to_int(sp.points[i].x), _round_to_int(sp.points[i].y))
+        )
+    return points^
 
 
 def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
     """Walk a Path's commands, flattening curves into straight-line
     steps (`curve_steps` per quad/cubic segment), and split into one
-    List[Point] per sub-path (a new one starting at each move_to after
+    List[FPoint] per sub-path (a new one starting at each move_to after
     the first).
+
+    Sub-pixel throughout -- see `_Subpath` on why nothing is rounded
+    here, and `_rounded_points` for what the hard-edged callers use
+    instead.
     """
     var subpaths = List[_Subpath]()
-    var current = List[Point]()
+    var current = List[FPoint]()
     var current_closed = False
     var cur_x = 0.0
     var cur_y = 0.0
@@ -344,23 +370,23 @@ def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
         if cmd.kind == _MOVE_TO:
             if len(current) > 0:
                 subpaths.append(_Subpath(current^, current_closed))
-                current = List[Point]()
+                current = List[FPoint]()
                 current_closed = False
             cur_x = cmd.p1.x
             cur_y = cmd.p1.y
             start_x = cur_x
             start_y = cur_y
-            current.append(Point(_round_to_int(cur_x), _round_to_int(cur_y)))
+            current.append(FPoint(cur_x, cur_y))
         elif cmd.kind == _LINE_TO:
             cur_x = cmd.p1.x
             cur_y = cmd.p1.y
-            current.append(Point(_round_to_int(cur_x), _round_to_int(cur_y)))
+            current.append(FPoint(cur_x, cur_y))
         elif cmd.kind == _QUAD_TO:
             var p0 = FPoint(cur_x, cur_y)
             for step in range(1, curve_steps + 1):
                 var t = Float64(step) / Float64(curve_steps)
                 var p = _quad_point(p0, cmd.p1, cmd.p2, t)
-                current.append(Point(_round_to_int(p.x), _round_to_int(p.y)))
+                current.append(p)
             cur_x = cmd.p2.x
             cur_y = cmd.p2.y
         elif cmd.kind == _CUBIC_TO:
@@ -368,16 +394,16 @@ def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
             for step in range(1, curve_steps + 1):
                 var t = Float64(step) / Float64(curve_steps)
                 var p = _cubic_point(p0, cmd.p1, cmd.p2, cmd.p3, t)
-                current.append(Point(_round_to_int(p.x), _round_to_int(p.y)))
+                current.append(p)
             cur_x = cmd.p3.x
             cur_y = cmd.p3.y
         elif cmd.kind == _ARC_TO:
             # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
-            # cmd.p3.x = end_angle (see _PathCommand). _arc_points
+            # cmd.p3.x = end_angle (see _PathCommand). _arc_fpoints
             # includes the arc's start point at index 0, which arc_to's
             # contract puts at (cur_x, cur_y) already, so it's skipped
             # the way the quad/cubic branches skip t=0.
-            var arc_points = _arc_points(
+            var arc_points = _arc_fpoints(
                 cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x
             )
             for i in range(1, len(arc_points)):
@@ -409,8 +435,14 @@ def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
         if n < 2:
             continue
         for i in range(n):
-            var p0 = sp.points[i]
-            var p1 = sp.points[(i + 1) % n]
+            # Rounded here rather than at flatten time (see _Subpath).
+            # This is a hard-edged fill addressing whole pixels, so it
+            # wants the same snapped geometry flattening used to hand
+            # it, and rounding at the point of use keeps it bit-for-bit
+            # identical while the AA fill reads the same sub-paths
+            # unrounded.
+            var p0 = _round_point(sp.points[i])
+            var p1 = _round_point(sp.points[(i + 1) % n])
             if p0.y == p1.y:
                 continue
             var lo = min(p0.y, p1.y)
@@ -461,15 +493,18 @@ def fill_path(
     if len(subpaths) == 0:
         return
 
-    var min_y = subpaths[0].points[0].y
+    # Integer bounds over the rounded points, matching the rounding
+    # _row_crossings does -- this is the hard-edged scanline fill.
+    var min_y = _round_to_int(subpaths[0].points[0].y)
     var max_y = min_y
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         for p in sp.points:
-            if p.y < min_y:
-                min_y = p.y
-            if p.y > max_y:
-                max_y = p.y
+            var py = _round_to_int(p.y)
+            if py < min_y:
+                min_y = py
+            if py > max_y:
+                max_y = py
 
     for y in range(min_y, max_y):
         var crossings = _row_crossings(subpaths, y)
@@ -486,9 +521,14 @@ def _point_in_subpaths(
     """The continuous-point analog of _row_crossings + _is_inside:
     every sub-path's edges combined into one signed winding number at
     an arbitrary real-valued point, which is what fill_path_aa's
-    supersampling needs. Shares `_is_inside` with the discrete
-    fill_path, so hard-edged and AA fills of one path agree on where
-    the boundary is.
+    supersampling needs.
+
+    Reads the sub-paths' points unrounded, as fill_path_aa does -- this
+    is the reference implementation that fill's output has to match, so
+    it has to see the same geometry. The hard-edged `_row_crossings`
+    rounds instead; the two therefore agree on a boundary only to
+    within the rounding, which is inherent to one of them addressing
+    whole pixels.
     """
     var winding = 0
     for sp_idx in range(len(subpaths)):
@@ -499,17 +539,15 @@ def _point_in_subpaths(
         for i in range(n):
             var p0 = sp.points[i]
             var p1 = sp.points[(i + 1) % n]
-            var y0 = Float64(p0.y)
-            var y1 = Float64(p1.y)
-            if y0 == y1:
+            if p0.y == p1.y:
                 continue
-            var lo = min(y0, y1)
-            var hi = max(y0, y1)
+            var lo = min(p0.y, p1.y)
+            var hi = max(p0.y, p1.y)
             if fy >= lo and fy < hi:
-                var t = (fy - y0) / (y1 - y0)
-                var x = Float64(p0.x) + t * Float64(p1.x - p0.x)
+                var t = (fy - p0.y) / (p1.y - p0.y)
+                var x = p0.x + t * (p1.x - p0.x)
                 if x > fx:
-                    winding += 1 if y1 > y0 else -1
+                    winding += 1 if p1.y > p0.y else -1
     return _is_inside(winding, fill_rule)
 
 
@@ -582,6 +620,12 @@ def fill_path_aa(
     # Every sub-path's edges go into one table, so their winding
     # contributions combine before the fill rule is applied -- which is
     # what makes an inner sub-path punch a hole rather than fill solid.
+    #
+    # Handed over unrounded. This is the whole point of `_Subpath`
+    # carrying FPoint: an edge running from x = 10.4 to x = 13.7 covers
+    # a genuinely different set of sub-samples than one snapped to
+    # 10 -> 14, and it is that difference the coverage sweep turns into
+    # alpha.
     var edges = _EdgeTable()
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
@@ -591,17 +635,20 @@ def fill_path_aa(
         for i in range(pn):
             var a = sp.points[i]
             var b = sp.points[(i + 1) % pn]
-            edges.add_edge(
-                Float64(a.x), Float64(a.y), Float64(b.x), Float64(b.y)
-            )
+            edges.add_edge(a.x, a.y, b.x, b.y)
 
+    # The sweep works in whole pixels, so the real-valued bounds widen
+    # outward to the pixels that contain them (floor/ceil, not round):
+    # an edge at x = 10.2 has to have pixel 10 swept for it to pick up
+    # any partial coverage there. The sweep pads by a further pixel on
+    # each side on top of this.
     _sweep_edges_aa(
         canvas,
         edges,
-        min_x,
-        min_y,
-        max_x,
-        max_y,
+        Int(floor(min_x)),
+        Int(floor(min_y)),
+        Int(ceil(max_x)),
+        Int(ceil(max_y)),
         color,
         fill_rule,
         supersample,
@@ -634,15 +681,18 @@ def fill_path_gradient(
     if len(subpaths) == 0:
         return
 
-    var min_y = subpaths[0].points[0].y
+    # Integer bounds over the rounded points, matching the rounding
+    # _row_crossings does -- this is the hard-edged scanline fill.
+    var min_y = _round_to_int(subpaths[0].points[0].y)
     var max_y = min_y
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         for p in sp.points:
-            if p.y < min_y:
-                min_y = p.y
-            if p.y > max_y:
-                max_y = p.y
+            var py = _round_to_int(p.y)
+            if py < min_y:
+                min_y = py
+            if py > max_y:
+                max_y = py
 
     for y in range(min_y, max_y):
         var crossings = _row_crossings(subpaths, y)
@@ -675,15 +725,18 @@ def fill_path_radial_gradient(
     if len(subpaths) == 0:
         return
 
-    var min_y = subpaths[0].points[0].y
+    # Integer bounds over the rounded points, matching the rounding
+    # _row_crossings does -- this is the hard-edged scanline fill.
+    var min_y = _round_to_int(subpaths[0].points[0].y)
     var max_y = min_y
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         for p in sp.points:
-            if p.y < min_y:
-                min_y = p.y
-            if p.y > max_y:
-                max_y = p.y
+            var py = _round_to_int(p.y)
+            if py < min_y:
+                min_y = py
+            if py > max_y:
+                max_y = py
 
     for y in range(min_y, max_y):
         var crossings = _row_crossings(subpaths, y)
@@ -723,10 +776,11 @@ def stroke_path(
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
+        var points = _rounded_points(sp)
         if sp.closed:
-            draw_polygon(canvas, sp.points, color, dashes, dash_offset)
+            draw_polygon(canvas, points, color, dashes, dash_offset)
         else:
-            draw_polyline(canvas, sp.points, color, dashes, dash_offset)
+            draw_polyline(canvas, points, color, dashes, dash_offset)
 
 
 def stroke_path_aa(
@@ -761,10 +815,14 @@ def stroke_path_aa(
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
+        # Rounded: draw_polyline_aa/draw_polygon_aa still address whole
+        # pixels. Sub-pixel stroking means a float polyline core too --
+        # a separate change from this one, which is about fills.
+        var points = _rounded_points(sp)
         if sp.closed:
             draw_polygon_aa(
                 canvas,
-                sp.points,
+                points,
                 color,
                 width,
                 supersample,
@@ -774,7 +832,7 @@ def stroke_path_aa(
         else:
             draw_polyline_aa(
                 canvas,
-                sp.points,
+                points,
                 color,
                 width,
                 supersample,

@@ -3,7 +3,13 @@ fill_path/stroke_path/stroke_path_aa entry points.
 """
 
 from std.math import cos, pi, sin, sqrt
-from std.testing import assert_equal, assert_true, assert_raises, TestSuite
+from std.testing import (
+    assert_almost_equal,
+    assert_equal,
+    assert_true,
+    assert_raises,
+    TestSuite,
+)
 
 from canvas.color import Color
 from canvas.buffer import Canvas
@@ -105,7 +111,13 @@ def test_flatten_quad_curve_passes_through_hand_derived_midpoint() raises:
     # _CURVE_STEPS is 16, so t=0.5 falls exactly on step 8 -- the 8th
     # flattened point after the curve's start (index 7, since the
     # start point itself is index 0 and steps are 1-indexed from
-    # there). (7.5, 2.5) rounds (half-away-from-zero) to (8, 3).
+    # there). At t=0.5 the quadratic weights are (0.25, 0.5, 0.25), so
+    # x = 0.5*10 + 0.25*10 = 7.5 and y = 0.25*10 = 2.5.
+    #
+    # 7.5 exactly, not 8: flattening keeps sub-pixel positions rather
+    # than snapping to the pixel grid, which is what lets
+    # fill_path_aa's coverage sweep see where an edge really falls.
+    # This assertion is what pins that.
     var p = Path()
     p.move_to(0.0, 0.0)
     p.quad_curve_to(10.0, 0.0, 10.0, 10.0)
@@ -113,11 +125,11 @@ def test_flatten_quad_curve_passes_through_hand_derived_midpoint() raises:
     assert_equal(len(subpaths), 1)
     ref pts = subpaths[0].points
     assert_equal(len(pts), 17)  # start point + 16 flattened curve steps
-    assert_equal(pts[8].x, 8)
-    assert_equal(pts[8].y, 3)
+    assert_equal(pts[8].x, 7.5)
+    assert_equal(pts[8].y, 2.5)
     # curve's actual endpoint must be exact, not just close
-    assert_equal(pts[16].x, 10)
-    assert_equal(pts[16].y, 10)
+    assert_equal(pts[16].x, 10.0)
+    assert_equal(pts[16].y, 10.0)
 
 
 def test_flatten_cubic_curve_passes_through_hand_derived_midpoint() raises:
@@ -127,10 +139,13 @@ def test_flatten_cubic_curve_passes_through_hand_derived_midpoint() raises:
     var subpaths = _flatten(p)
     ref pts = subpaths[0].points
     assert_equal(len(pts), 17)
-    assert_equal(pts[8].x, 5)
-    assert_equal(pts[8].y, 8)  # 7.5 rounds up (half-away-from-zero)
-    assert_equal(pts[16].x, 10)
-    assert_equal(pts[16].y, 0)
+    # t=0.5 cubic weights are (0.125, 0.375, 0.375, 0.125):
+    # x = 0.375*10 + 0.125*10 = 5.0, y = 0.375*10 + 0.375*10 = 7.5.
+    # 7.5 is kept, not rounded to 8 -- see the quad test above.
+    assert_equal(pts[8].x, 5.0)
+    assert_equal(pts[8].y, 7.5)
+    assert_equal(pts[16].x, 10.0)
+    assert_equal(pts[16].y, 0.0)
 
 
 def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
@@ -152,18 +167,22 @@ def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
     # sub-path holds move_to's point plus arc_points[1:]: 1 + 15 == 16,
     # not 17. A wrong count means the skip broke.
     assert_equal(len(pts), 16)
-    assert_equal(pts[0].x, 10)
-    assert_equal(pts[0].y, 0)
+    assert_equal(pts[0].x, 10.0)
+    assert_equal(pts[0].y, 0.0)
     var last = pts[len(pts) - 1]
-    assert_equal(last.x, 0)
-    assert_equal(last.y, 10)
+    # cos(pi/2) is 6.1e-17 rather than a clean zero in Float64, and
+    # flattening no longer rounds that away -- so the endpoint check is
+    # a tolerance, not an equality. The tolerance is far tighter than
+    # the half-pixel the old rounding hid it behind.
+    assert_almost_equal(last.x, 0.0, atol=1e-12)
+    assert_almost_equal(last.y, 10.0, atol=1e-12)
     # Every intermediate sample must sit within a pixel of the circle
     # (radius 10, origin-centered): real curved sampling, not a
     # straight line between endpoints, which a start/end check alone
     # would accept.
     for i in range(1, len(pts) - 1):
         var p_i = pts[i]
-        var dist = sqrt(Float64(p_i.x * p_i.x + p_i.y * p_i.y))
+        var dist = sqrt(p_i.x * p_i.x + p_i.y * p_i.y)
         assert_true(
             abs(dist - 10.0) < 1.0,
             "intermediate arc sample stays on the circle",
@@ -181,11 +200,13 @@ def test_arc_to_updates_current_point_to_the_arc_end() raises:
     var subpaths = _flatten(p)
     ref pts = subpaths[0].points
     var last = pts[len(pts) - 1]
-    assert_equal(last.x, 20)
-    assert_equal(last.y, 20)
+    assert_equal(last.x, 20.0)
+    assert_equal(last.y, 20.0)
     var before_last = pts[len(pts) - 2]
-    assert_equal(before_last.x, 0)
-    assert_equal(before_last.y, 10)
+    # The arc's own endpoint, unrounded -- cos(pi/2)'s Float64 noise
+    # again, see the quarter-circle test above.
+    assert_almost_equal(before_last.x, 0.0, atol=1e-12)
+    assert_almost_equal(before_last.y, 10.0, atol=1e-12)
 
 
 def test_fill_path_arc_to_matches_fill_arc_for_a_wedge() raises:
@@ -427,6 +448,77 @@ def test_fill_path_aa_punches_a_hole_with_a_second_subpath() raises:
 
     _assert_pixel(c, 15, 15, FG, "outer ring is filled")
     _assert_pixel(c, 30, 30, BG, "inner hole is punched through")
+
+
+def test_fill_path_aa_resolves_a_subpixel_edge_shift() raises:
+    # The property the sub-pixel pipeline exists for: moving an edge by
+    # a fraction of a pixel has to change the rendering. Under the old
+    # integer-snapped flattening, 10.0 and 10.25 both became 10 and
+    # rendered byte-for-byte identically, so this is a real regression
+    # guard rather than a restatement of the implementation.
+    #
+    # Hand-derived, not merely "different". A pixel centered at x=10
+    # spans [9.5, 10.5], and at the default 4x supersample its columns
+    # sit at 9.625, 9.875, 10.125 and 10.375. An edge at x=10.0 leaves
+    # two of the four inside -> 8 of 16 samples -> alpha
+    # round(0.5 * 255) = 128. At 10.25 only 10.375 survives -> 4/16 ->
+    # round(0.25 * 255) = 64. At 10.5 none do -> the pixel is never
+    # written at all.
+    var expected_alpha: List[Int] = [128, 64, 0]
+    for step in range(3):
+        var left = 10.0 + 0.25 * Float64(step)
+        var p = Path()
+        p.move_to(left, 5.0)
+        p.line_to(25.0, 5.0)
+        p.line_to(25.0, 25.0)
+        p.line_to(left, 25.0)
+        p.close()
+
+        var c = Canvas(40, 40, BG)
+        fill_path_aa(c, p, FG)
+
+        assert_equal(
+            Int(c.get_pixel(10, 15).r),
+            expected_alpha[step],
+            "boundary-pixel coverage for a left edge at "
+            + String(left)
+            + " (a quarter-pixel shift must be visible)",
+        )
+        # The interior is unaffected by where the boundary sits.
+        _assert_pixel(c, 20, 15, FG, "interior stays fully covered")
+
+
+def test_fill_path_aa_subpixel_coverage_is_monotonic_across_a_pixel() raises:
+    # Sweeping the edge a full pixel right, a quarter at a time, must
+    # monotonically remove ink -- and strictly so at every step, which
+    # is what says all four sub-sample columns are distinguishable
+    # rather than two of them collapsing onto the same position.
+    #
+    # Summed across both columns the boundary passes through (10 and
+    # 11), because the boundary itself migrates from one to the other
+    # partway through the sweep: 128+255, 64+255, 0+255, 0+191, 0+128.
+    var previous = -1
+    for step in range(5):
+        var left = 10.0 + 0.25 * Float64(step)
+        var p = Path()
+        p.move_to(left, 5.0)
+        p.line_to(25.0, 5.0)
+        p.line_to(25.0, 25.0)
+        p.line_to(left, 25.0)
+        p.close()
+
+        var c = Canvas(40, 40, BG)
+        fill_path_aa(c, p, FG)
+        var ink = Int(c.get_pixel(10, 15).r) + Int(c.get_pixel(11, 15).r)
+        if previous >= 0:
+            assert_true(
+                ink < previous,
+                (
+                    "each quarter-pixel step right must strictly reduce ink"
+                    " across the boundary columns"
+                ),
+            )
+        previous = ink
 
 
 def test_point_in_subpaths_nonzero_fills_the_overlap_of_same_direction_subpaths() raises:
