@@ -13,12 +13,19 @@ function above builds on.
 """
 
 from std.math import atan2, cos, pi, sin
+from std.runtime.asyncrt import TaskGroup, parallelism_level
 
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.shapes.lines import draw_polyline, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon
+
+
+# Below this many pixels in a shape's bounding box, the fill runs
+# inline rather than dispatching tasks. Matches the fill sweep's
+# threshold in canvas.aa_crossing.
+comptime _MIN_PARALLEL_PIXELS = 40000
 
 
 def _extend_bounds(
@@ -486,7 +493,137 @@ def fill_arc_aa(
     # time, as the whole wedge used to be.
     var can_fast_fill = span.always_inside or not span.wide
 
-    for py in range(min_py, max_py + 1):
+    # Rows are independent -- each tests its own pixels against the
+    # wedge's equations and writes only its own -- so a large wedge is
+    # split into bands, one task per band. Same pattern as the fill
+    # sweep in canvas.aa_crossing.
+    #
+    # Everything a band needs is scalars: centre, radius, the angle
+    # span (itself a struct of plain floats and bools) and the colour.
+    # That matters here, because the aggregate arguments that corrupt
+    # under `create_task` are the heap-backed ones -- see #97. There is
+    # no List anywhere in this call.
+    var row_count = max_py + 1 - min_py
+    var col_count = max_px + 1 - min_px
+    if row_count <= 0 or col_count <= 0:
+        return
+
+    var bands = 1
+    if row_count * col_count >= _MIN_PARALLEL_PIXELS:
+        bands = parallelism_level()
+        if bands > row_count:
+            bands = row_count
+        if bands < 1:
+            bands = 1
+
+    if bands == 1:
+        _fill_arc_band(
+            canvas,
+            cx,
+            cy,
+            r2,
+            span,
+            can_fast_fill,
+            min_px,
+            max_px,
+            min_py,
+            max_py + 1,
+            n,
+            step,
+            total_samples,
+            color,
+        )
+        return
+
+    var per_band = (row_count + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var band_start = min_py + b * per_band
+        var band_end = band_start + per_band
+        if band_end > max_py + 1:
+            band_end = max_py + 1
+        if band_start >= band_end:
+            continue
+        tg.create_task(
+            _fill_arc_band_async(
+                canvas,
+                cx,
+                cy,
+                r2,
+                span,
+                can_fast_fill,
+                min_px,
+                max_px,
+                band_start,
+                band_end,
+                n,
+                step,
+                total_samples,
+                color,
+            )
+        )
+    tg.wait()
+
+
+async def _fill_arc_band_async(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    r2: Float64,
+    span: _AngleSpan,
+    can_fast_fill: Bool,
+    min_px: Int,
+    max_px: Int,
+    first_row: Int,
+    last_row: Int,
+    n: Int,
+    step: Float64,
+    total_samples: Int,
+    color: Color,
+):
+    """`_fill_arc_band` as a task, so the single-band path stays an
+    ordinary call with no coroutine machinery around it.
+    """
+    _fill_arc_band(
+        canvas,
+        cx,
+        cy,
+        r2,
+        span,
+        can_fast_fill,
+        min_px,
+        max_px,
+        first_row,
+        last_row,
+        n,
+        step,
+        total_samples,
+        color,
+    )
+
+
+def _fill_arc_band(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    r2: Float64,
+    span: _AngleSpan,
+    can_fast_fill: Bool,
+    min_px: Int,
+    max_px: Int,
+    first_row: Int,
+    last_row: Int,
+    n: Int,
+    step: Float64,
+    total_samples: Int,
+    color: Color,
+):
+    """Fill rows [first_row, last_row) of a wedge.
+
+    Bands write disjoint rows, so no two ever touch the same pixel --
+    the basis on which `canvas` is shared mutably between them.
+    """
+    for py in range(first_row, last_row):
         var oy = Float64(py) - cy
         var dy = abs(oy)
         var near_dy = max(0.0, dy - 0.5)
@@ -644,7 +781,131 @@ def fill_ring_sector_aa(
     # _square_in_cone, and fill_arc_aa which uses the same guard.
     var can_fast_fill = span.always_inside or not span.wide
 
-    for py in range(min_py, max_py + 1):
+    # Banded exactly as fill_arc_aa is, and for the same reason: rows
+    # are independent and every argument a band needs is a scalar.
+    var row_count = max_py + 1 - min_py
+    var col_count = max_px + 1 - min_px
+    if row_count <= 0 or col_count <= 0:
+        return
+
+    var bands = 1
+    if row_count * col_count >= _MIN_PARALLEL_PIXELS:
+        bands = parallelism_level()
+        if bands > row_count:
+            bands = row_count
+        if bands < 1:
+            bands = 1
+
+    if bands == 1:
+        _fill_ring_band(
+            canvas,
+            cx,
+            cy,
+            inner_r2,
+            outer_r2,
+            span,
+            can_fast_fill,
+            min_px,
+            max_px,
+            min_py,
+            max_py + 1,
+            n,
+            step,
+            total_samples,
+            color,
+        )
+        return
+
+    var per_band = (row_count + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var band_start = min_py + b * per_band
+        var band_end = band_start + per_band
+        if band_end > max_py + 1:
+            band_end = max_py + 1
+        if band_start >= band_end:
+            continue
+        tg.create_task(
+            _fill_ring_band_async(
+                canvas,
+                cx,
+                cy,
+                inner_r2,
+                outer_r2,
+                span,
+                can_fast_fill,
+                min_px,
+                max_px,
+                band_start,
+                band_end,
+                n,
+                step,
+                total_samples,
+                color,
+            )
+        )
+    tg.wait()
+
+
+async def _fill_ring_band_async(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    inner_r2: Float64,
+    outer_r2: Float64,
+    span: _AngleSpan,
+    can_fast_fill: Bool,
+    min_px: Int,
+    max_px: Int,
+    first_row: Int,
+    last_row: Int,
+    n: Int,
+    step: Float64,
+    total_samples: Int,
+    color: Color,
+):
+    """`_fill_ring_band` as a task; see fill_arc_aa's equivalent."""
+    _fill_ring_band(
+        canvas,
+        cx,
+        cy,
+        inner_r2,
+        outer_r2,
+        span,
+        can_fast_fill,
+        min_px,
+        max_px,
+        first_row,
+        last_row,
+        n,
+        step,
+        total_samples,
+        color,
+    )
+
+
+def _fill_ring_band(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    inner_r2: Float64,
+    outer_r2: Float64,
+    span: _AngleSpan,
+    can_fast_fill: Bool,
+    min_px: Int,
+    max_px: Int,
+    first_row: Int,
+    last_row: Int,
+    n: Int,
+    step: Float64,
+    total_samples: Int,
+    color: Color,
+):
+    """Fill rows [first_row, last_row) of a ring sector.
+
+    Bands write disjoint rows, so no two ever touch the same pixel.
+    """
+    for py in range(first_row, last_row):
         var oy = Float64(py) - cy
         var dy = abs(oy)
         var near_dy = max(0.0, dy - 0.5)

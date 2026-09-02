@@ -223,6 +223,20 @@ def main() raises:
         iters,
     )
 
+    # Many small wedges, to check the banding threshold does not tax
+    # the case it is meant to leave alone.
+    iters = 40
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        for i in range(2000):
+            var wx = 20.0 + Float64((i * 37) % 760)
+            var wy = 20.0 + Float64((i * 53) % 560)
+            fill_arc_aa(canvas, wx, wy, 4.0, -0.6, 1.1, INK)
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows, "fill_arc_aa x2000 small (r=4)", perf_counter_ns() - t0, iters
+    )
+
     var poly = List[FPoint]()
     for i in range(64):
         var t = Float64(i) / 64.0 * 6.283185307179586
