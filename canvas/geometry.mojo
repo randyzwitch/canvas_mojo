@@ -141,15 +141,21 @@ struct Transform2D(ImplicitlyCopyable, Movable):
         self._cos_rotation = cos(rotation)
         self._sin_rotation = sin(rotation)
 
-    def to_pixel(self, x: Float64, y: Float64) -> Point:
-        """Map a data-space point to the nearest integer pixel.
+    def to_point(self, x: Float64, y: Float64) -> FPoint:
+        """Map a data-space point to sub-pixel canvas space.
+
+        The same pipeline `to_pixel` applies, without the final
+        rounding. This is the one the anti-aliased primitives want: a
+        marker at y = 44.3 should be drawn there, not at 44 (see
+        `draw_line_aa`'s sub-pixel overload). `to_pixel` rounds this,
+        so the two cannot drift apart.
 
         Args:
             x: Data-space x.
             y: Data-space y.
 
         Returns:
-            The transformed point, rounded to the nearest pixel.
+            The transformed point, unrounded.
         """
         var sx = x * self.scale_x
         var sy = y * self.scale_y
@@ -160,6 +166,17 @@ struct Transform2D(ImplicitlyCopyable, Movable):
             rx = sx * self._cos_rotation - sy * self._sin_rotation
             ry = sx * self._sin_rotation + sy * self._cos_rotation
 
-        var px = rx + self.translate_x
-        var py = ry + self.translate_y
-        return Point(_round_to_int(px), _round_to_int(py))
+        return FPoint(rx + self.translate_x, ry + self.translate_y)
+
+    def to_pixel(self, x: Float64, y: Float64) -> Point:
+        """Map a data-space point to the nearest integer pixel.
+
+        Args:
+            x: Data-space x.
+            y: Data-space y.
+
+        Returns:
+            The transformed point, rounded to the nearest pixel.
+        """
+        var p = self.to_point(x, y)
+        return Point(_round_to_int(p.x), _round_to_int(p.y))
