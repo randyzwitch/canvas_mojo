@@ -328,6 +328,37 @@ Comments in tests should record the derivation. A number with no
 arithmetic behind it is indistinguishable from a number someone pasted
 from failing output.
 
+### Golden images
+
+`tests/test_golden.mojo` is the exception to all of the above, and
+covers what per-pixel assertions structurally cannot: that an entire
+render still looks the way it did. Hand-derived assertions are precise
+about the places you thought to check; they cannot notice that every
+anti-aliased edge shifted by one, or that a glyph moved half a pixel.
+
+Each scene renders a small dense figure and compares it to a PNG in
+`tests/golden/`. Two thresholds, and the important one is **how many
+pixels changed, not how far**. A real regression (coverage-to-alpha
+truncating instead of rounding) moves a couple of hundred pixels by
+exactly one level, and a magnitude-only tolerance sails straight past
+it. See that file's docstring for the full reasoning, including why the
+opposite shape — a few pixels moving a lot — is what a legitimate
+cross-platform difference looks like.
+
+When a change is *supposed* to alter output:
+
+```sh
+CANVAS_REGEN_GOLDEN=1 pixi run test
+```
+
+That rewrites every reference and passes trivially, so **the diff it
+produces is the thing to review**. Committing a regenerated golden is
+asserting the new pixels are correct — do it deliberately, and never to
+turn a red test green.
+
+Text is deliberately not covered by a golden: it depends on which fonts
+are installed and their exact version, which this repo does not control.
+
 ## Submitting a change
 
 1. Branch off `main`.
