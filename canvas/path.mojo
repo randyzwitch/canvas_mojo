@@ -17,10 +17,19 @@ per-pixel error by about 78%, with the worst single pixel going from
 The hard-edged consumers (`fill_path`, `stroke_path`, `stroke_path_aa`)
 address whole pixels and round at the point of use -- see `_Subpath`.
 
-Quad/cubic flattening uses a fixed step count per segment
-(`curve_steps`, default 16) rather than adaptive subdivision -- good
-enough at these sizes for the default, and callers with an unusually
-large or highly curved path can raise it. arc_to is the exception: it
+Quad/cubic flattening picks its step count per segment from that
+segment's own curvature, so it suits the curve's size rather than
+being a fixed guess. Chords over n equal parameter intervals deviate
+from a curve by at most (1/(8n^2)) * max|B''(t)|, and requiring that
+stay under a tolerance gives a closed form for n -- a bound rather
+than an estimate, so the result is never under-sampled. That matters
+because the failure mode of guessing low is a visibly faceted curve:
+at the fixed count of 16 this used to use, the large cubic in the
+`large_curves` golden scene strays 1.61 pixels from the true curve,
+against 0.0196 chosen adaptively. See `_auto_steps` for the
+derivation. `curve_steps` remains as an override -- a positive value
+forces that many segments, and 0, the default, means "choose per
+segment". arc_to is the exception: it
 reuses canvas.shapes.arcs' `_arc_fpoints` (radius-proportional step
 count), the sub-pixel sampler underneath the `_arc_points` that
 draw_arc/fill_arc/fill_ring_sector use, since a fixed count doesn't

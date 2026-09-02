@@ -134,9 +134,14 @@ def _arc_fpoints(
     end_angle expected; pass end_angle = start_angle + 2*pi for a full
     circle) at roughly 1-pixel arc-length spacing. Step count scales
     with radius * angle span, so a tiny wedge and a full-page donut
-    both sample smoothly, where Path's fixed step count would facet the
-    large one and waste work on the small -- arc radii vary far more
-    than a Path's typical curve size.
+    both sample smoothly.
+
+    Arc-length spacing rather than the curvature bound `Path` uses for
+    its Beziers: both adapt to the curve's size, but a circular arc's
+    geometry is known exactly here, so its step count follows directly
+    from the radius and sweep instead of from a second-difference
+    bound. `Path.arc_to` flattens through this function for that
+    reason -- see path.mojo.
 
     Exact circle math (cx + r*cos(theta), cy + r*sin(theta)) sampled
     directly, not a cubic-Bezier approximation, matching draw_circle/
