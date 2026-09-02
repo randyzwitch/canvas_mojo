@@ -38,6 +38,7 @@ from canvas.path import Path, fill_path_aa, stroke_path_aa
 from canvas.io.png import write_png, read_png
 from canvas.resize import downsample
 from canvas.shapes.circles import fill_circle_aa
+from canvas.shapes.ellipses import fill_ellipse_aa
 from canvas.shapes.lines import draw_line_aa, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.shapes.rects import fill_rect
@@ -176,6 +177,23 @@ def main() raises:
         fill_circle_aa(canvas, 400.0, 300.0, 250.0, INK)
         sink += Int(canvas.get_pixel(400, 300).r)
     _report(rows, "fill_circle_aa one large (r=250)", perf_counter_ns() - t0, iters)
+
+    iters = 200
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_ellipse_aa(canvas, 400.0, 300.0, 340.0, 220.0, INK)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(rows, "fill_ellipse_aa one large (340x220)", perf_counter_ns() - t0, iters)
+
+    iters = 40
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        for i in range(2000):
+            var ex = 20.0 + Float64((i * 37) % 760)
+            var ey = 20.0 + Float64((i * 53) % 560)
+            fill_ellipse_aa(canvas, ex, ey, 5.0, 3.0, INK)
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(rows, "fill_ellipse_aa x2000 small (5x3)", perf_counter_ns() - t0, iters)
 
     var poly = List[FPoint]()
     for i in range(64):
