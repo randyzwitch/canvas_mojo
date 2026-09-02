@@ -137,8 +137,7 @@ struct _EdgeTable(Movable):
         never resized while the sweep runs, and every index is bounded
         by the same count the loop iterates. Checked reads would defeat
         the point -- seven bounds checks per edge is more work than the
-        two the point lists cost, not less, which an earlier draft of
-        this measured the hard way.
+        two the point lists cost, not less.
         """
         crossings.clear()
         var count = len(self.y_lo)

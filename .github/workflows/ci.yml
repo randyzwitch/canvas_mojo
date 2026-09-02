@@ -13,66 +13,37 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # Mojo compiles here are heavy (some individual test/example files
-    # take several minutes) -- generous timeout rather than a flaky
-    # default.
+    # Mojo compiles are heavy here; some files take several minutes.
     timeout-minutes: 60
     steps:
-      # v7 specifically, not just "latest v4" -- v4 is built against
-      # Node.js 20, which GitHub Actions runners now force onto Node 24
-      # instead (a real, visible "Node.js 20 is deprecated" annotation
-      # on every run otherwise, confirmed on this repo's own CI: see
-      # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/).
-      # v7 is built against Node 24 natively, no forced-compat warning.
+      # v7, not v4: v4 runs on Node 20, which the runners now force
+      # onto Node 24 with a deprecation annotation on every run.
       - uses: actions/checkout@v7
 
-      # Font *files*, and nothing else: this package links no library
-      # at all any more. canvas/text/font_discovery.mojo used to
-      # dlopen libfontconfig to resolve a family name to an installed
-      # file, and now walks the platform's font directories and reads
-      # each font's own name/OS/2 tables itself, the same way
-      # canvas/text/ttf.mojo has always parsed outlines natively.
-      # What that does not remove is the need for fonts to actually be
-      # installed -- a bare runner image ships almost none, so these
-      # packages are a real test dependency rather than a cosmetic
-      # extra.
+      # Font files only -- this package links no library. But the
+      # tests need real fonts installed, and a bare runner ships almost
+      # none:
       #
-      # fonts-ubuntu/fonts-dejavu-core (and their Homebrew-cask
-      # equivalents below): tests/test_font_discovery.mojo's
-      # char-constrained-resolution tests hard-code "the 'Ubuntu' font
-      # lacks a snowman glyph (U+2603) that 'DejaVu Sans' has" as their
-      # real, contrasting fallback case -- true on a desktop Ubuntu
-      # install (where that assumption was probe-confirmed), but not on
-      # a bare runner image. Without these packages
-      # `resolve_font_file("Ubuntu")` silently falls back to whatever
-      # the default sans list finds instead, collapsing the "falls back
-      # to a *different* font" assertion the test depends on --
-      # confirmed as the exact, sole cause of a real CI failure on
-      # Linux, not a guess. DejaVu also heads font_discovery.mojo's own
-      # default sans/serif/monospace lists, so it is what
-      # `resolve_font_file("Sans")` finds on both runners.
-      #
-      # fonts-urw-base35 (font-urw-base35 on macOS) is a real,
-      # genuinely CFF/OpenType-CFF font family (confirmed by reading
-      # its own sfntVersion field directly -- 'OTTO', not guessed at)
-      # -- tests/test_ttf.mojo's own CFF-rejection test resolves
-      # "Nimbus Sans" from it, a real font rather than a synthetic
-      # stand-in.
+      # - fonts-ubuntu + fonts-dejavu-core: test_font_discovery.mojo's
+      #   fallback tests rely on 'Ubuntu' lacking a snowman glyph
+      #   (U+2603) that 'DejaVu Sans' has. Without both, the "falls
+      #   back to a *different* font" assertion collapses -- this was
+      #   a real CI failure. DejaVu also heads the default sans list.
+      # - fonts-urw-base35: a genuine OpenType-CFF family ('OTTO'
+      #   sfntVersion), which test_ttf.mojo's CFF-rejection test
+      #   resolves "Nimbus Sans" from.
       - name: Install test fonts (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y fonts-ubuntu fonts-dejavu-core fonts-urw-base35
 
-      # No `fc-cache` here the way there used to be: nothing reads
-      # fontconfig's cache any more, and the casks drop their files
-      # straight into ~/Library/Fonts, which font_discovery.mojo scans.
+      # No `fc-cache`: nothing reads fontconfig's cache, and the casks
+      # drop files into ~/Library/Fonts, which font_discovery scans.
       - name: Install test fonts (macOS)
         if: runner.os == 'macOS'
         run: brew install --cask font-ubuntu font-dejavu font-urw-base35
 
-      # Pinned to match the pixi version pixi.lock (v7 format) was
-      # generated with locally -- an older pixi here would just hit the
-      # same "lock file uses an older format" warning in reverse (or
-      # worse, fail to read a v7 lock file at all).
+      # Pinned to the pixi version pixi.lock (v7 format) was generated
+      # with; an older pixi may not read a v7 lock file at all.
       - uses: prefix-dev/setup-pixi@v0.9.0
         with:
           pixi-version: v0.76.2

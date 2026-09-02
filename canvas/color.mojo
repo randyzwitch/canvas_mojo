@@ -4,16 +4,13 @@
 # floor(t / 255), exactly, for any t this file produces.
 #
 # Every division in blend_over below has a numerator bounded by
-# 255 * 255 = 65025 (a channel times an alpha, plus a channel times the
-# complementary alpha), and over [0, 65025] the identity
-# (t * 32897) >> 23 == t // 255 holds for every single value -- checked
-# exhaustively, not spot-checked, and the constants come from that
-# search rather than from a rule of thumb.
+# 255 * 255 = 65025, and over [0, 65025] the identity
+# (t * 32897) >> 23 == t // 255 holds for every value -- checked
+# exhaustively.
 #
-# This is not the familiar `(t + 1 + (t >> 8)) >> 8` blend trick, which
-# rounds rather than truncates and would therefore shift output values
-# by one across the whole package. The point here is to remove the
-# division while leaving every rendered pixel bit-for-bit unchanged.
+# Not the familiar `(t + 1 + (t >> 8)) >> 8` trick, which rounds rather
+# than truncates and would shift output values by one across the whole
+# package. This removes the division leaving every pixel unchanged.
 comptime _DIV255_MUL = 32897
 comptime _DIV255_SHIFT = 23
 
@@ -81,12 +78,9 @@ struct Color(ImplicitlyCopyable, Movable):
 
         # Straight (non-premultiplied) src-over: each channel is the
         # alpha-weighted average of source and surviving background,
-        # normalized by the output alpha. Dividing by `out_a` rather
-        # than by 255 is what this had wrong before the canvas could
-        # hold a translucent pixel -- with an opaque background the two
-        # coincide (bg_eff == inv, out_a == 255), so no existing render
-        # changes, which was checked across every (channel, alpha)
-        # combination rather than argued.
+        # normalized by the output alpha. With an opaque background
+        # dividing by `out_a` and by 255 coincide (bg_eff == inv,
+        # out_a == 255), so no existing render changes.
         #
         # A real division, unlike the opaque path's `_div255`, because
         # the divisor varies per pixel. `blend_over_opaque` below is

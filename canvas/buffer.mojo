@@ -398,13 +398,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def _set_pixel_masked(mut self, x: Int, y: Int, color: Color):
         """`set_pixel`'s clip-path branch, kept in its own method.
 
-        `set_pixel` is called once per pixel by every primitive in the
-        package, so what matters is that its common path stays small
-        enough to inline into those loops. Folding this inline cost
-        measurably: `fill_circle_aa` over 2000 markers went from ~1750us
-        to ~3130us with the mask lookup and its Color rebuild sitting in
-        the middle of `set_pixel`, for a branch no canvas takes until a
-        clip path is pushed.
+        `set_pixel` is called once per pixel by every primitive here,
+        so its common path has to stay small enough to inline into
+        those loops. Folding this inline took `fill_circle_aa` over
+        2000 markers from ~1750us to ~3130us, for a branch no canvas
+        takes until a clip path is pushed.
 
         The guard in `set_pixel` is a plain integer field rather than
         `len(self.clip_masks)` for the same reason -- one load and a
