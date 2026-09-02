@@ -97,7 +97,36 @@ def _color_at_t(
     )
 
 
-struct LinearGradient(Movable):
+trait ColorSource:
+    """Anything that can answer "what colour is at this point?" -- the
+    fill source a gradient-filled shape queries per pixel.
+
+    `LinearGradient` and `RadialGradient` both conform. The point is
+    that the fills in `canvas.path` need nothing else from a gradient,
+    so they can be written once against this instead of once per
+    gradient type -- which is what `fill_path_gradient` and
+    `fill_path_radial_gradient` were before, two functions whose
+    bodies were byte-for-byte identical.
+
+    Conformance is nominal per Mojo's trait rule, so a new fill source
+    has to declare `ColorSource` explicitly to be usable as one.
+    """
+
+    def color_at(self, x: Float64, y: Float64) -> Color:
+        """This source's colour at (x, y), in canvas pixel
+        coordinates.
+
+        Args:
+            x: Point x.
+            y: Point y.
+
+        Returns:
+            The colour to paint at that point.
+        """
+        ...
+
+
+struct LinearGradient(ColorSource, Movable):
     """A linear gradient along the axis from (x0, y0) to (x1, y1).
     Add stops with add_stop(), then pass to fill_rect_gradient/
     fill_path_gradient (or query color_at() directly).
@@ -183,7 +212,7 @@ struct LinearGradient(Movable):
         return _color_at_t(self.stops, self._lowest, self._highest, t)
 
 
-struct RadialGradient(Movable):
+struct RadialGradient(ColorSource, Movable):
     """A radial gradient centered at (cx, cy) with the given radius:
     offset 0.0 is the center, offset 1.0 is the circle at `radius`.
     Add stops with add_stop(), then pass to fill_rect_radial_gradient/
