@@ -417,6 +417,51 @@ def draw_polygon(
     )
 
 
+struct _SegmentTable(Movable):
+    """Every stroke segment's precomputed geometry, as flat arrays.
+
+    These were thirteen parallel locals in `_draw_polyline_core_aa`.
+    Bundling them is what lets the sweep be split into row bands: a
+    band worker needs all of this and none of it changes once built, so
+    it is passed as one immutable argument rather than threaded through
+    a thirteen-parameter signature.
+
+    Grouping also makes the invariant explicit -- every list here is
+    `num_segments` long and indexed by the same segment number.
+    """
+
+    var start_distance: List[Float64]
+    var length: List[Float64]
+    var x0: List[Float64]
+    var y0: List[Float64]
+    var dx: List[Float64]
+    var dy: List[Float64]
+    var len2: List[Float64]
+    var min_x: List[Float64]
+    var max_x: List[Float64]
+    var min_y: List[Float64]
+    var max_y: List[Float64]
+    # Which segment ends stop dead instead of rounding over -- see
+    # LineCap. Only an open stroke's two extremities are ever flagged.
+    var clip_start: List[Bool]
+    var clip_end: List[Bool]
+
+    def __init__(out self, capacity: Int):
+        self.start_distance = List[Float64](capacity=capacity)
+        self.length = List[Float64](capacity=capacity)
+        self.x0 = List[Float64](capacity=capacity)
+        self.y0 = List[Float64](capacity=capacity)
+        self.dx = List[Float64](capacity=capacity)
+        self.dy = List[Float64](capacity=capacity)
+        self.len2 = List[Float64](capacity=capacity)
+        self.min_x = List[Float64](capacity=capacity)
+        self.max_x = List[Float64](capacity=capacity)
+        self.min_y = List[Float64](capacity=capacity)
+        self.max_y = List[Float64](capacity=capacity)
+        self.clip_start = List[Bool](capacity=capacity)
+        self.clip_end = List[Bool](capacity=capacity)
+
+
 def _draw_polyline_core_aa(
     mut canvas: Canvas,
     points: List[FPoint],
@@ -473,23 +518,14 @@ def _draw_polyline_core_aa(
     # the sample loops is the difference between once per segment and
     # once per (pixel, sample, segment) -- supersample^2 times more
     # often, for a value that cannot change.
-    var seg_start_distance = List[Float64](capacity=num_segments)
-    var seg_length = List[Float64](capacity=num_segments)
-    var seg_x0 = List[Float64](capacity=num_segments)
-    var seg_y0 = List[Float64](capacity=num_segments)
-    var seg_dx = List[Float64](capacity=num_segments)
-    var seg_dy = List[Float64](capacity=num_segments)
-    var seg_len2 = List[Float64](capacity=num_segments)
-    # Which segment ends stop dead instead of rounding over. Only an
-    # open stroke's two extremities are ever flagged: every interior
-    # joint keeps its round overlap, which is what stops a joint
-    # double-blending (see this function's docstring).
-    var clip_start = List[Bool](capacity=num_segments)
-    var clip_end = List[Bool](capacity=num_segments)
+    var segs = _SegmentTable(num_segments)
+    # Only an open stroke's two extremities are ever capped: every
+    # interior joint keeps its round overlap, which is what stops a
+    # joint double-blending (see this function's docstring).
     var capped = (not closed) and cap != LineCap.ROUND
     for seg in range(num_segments):
-        clip_start.append(capped and seg == 0)
-        clip_end.append(capped and seg == num_segments - 1)
+        segs.clip_start.append(capped and seg == 0)
+        segs.clip_end.append(capped and seg == num_segments - 1)
 
     var running_distance = 0.0
     for seg in range(num_segments):
@@ -501,26 +537,28 @@ def _draw_polyline_core_aa(
         # SQUARE is BUTT with the end pushed out by half a width, so
         # only one rejection rule is needed below. Done here, on the
         # geometry, rather than as a second case in the sample loop.
-        if cap == LineCap.SQUARE and (clip_start[seg] or clip_end[seg]):
+        if cap == LineCap.SQUARE and (
+            segs.clip_start[seg] or segs.clip_end[seg]
+        ):
             var seg_len = sqrt(sdx * sdx + sdy * sdy)
             if seg_len > 0.0:
                 var ux = sdx / seg_len
                 var uy = sdy / seg_len
-                if clip_start[seg]:
+                if segs.clip_start[seg]:
                     sa = FPoint(sa.x - ux * half_width, sa.y - uy * half_width)
-                if clip_end[seg]:
+                if segs.clip_end[seg]:
                     sb = FPoint(sb.x + ux * half_width, sb.y + uy * half_width)
                 sdx = sb.x - sa.x
                 sdy = sb.y - sa.y
         var slen2 = sdx * sdx + sdy * sdy
         var slen = sqrt(slen2)
-        seg_start_distance.append(running_distance)
-        seg_length.append(slen)
-        seg_x0.append(sa.x)
-        seg_y0.append(sa.y)
-        seg_dx.append(sdx)
-        seg_dy.append(sdy)
-        seg_len2.append(slen2)
+        segs.start_distance.append(running_distance)
+        segs.length.append(slen)
+        segs.x0.append(sa.x)
+        segs.y0.append(sa.y)
+        segs.dx.append(sdx)
+        segs.dy.append(sdy)
+        segs.len2.append(slen2)
         running_distance += slen
 
     # Real-valued extent, then widened outward to the pixels that
@@ -554,10 +592,6 @@ def _draw_polyline_core_aa(
     # sweep is O(pixels * supersample^2 * segments) even for an
     # ordinary line chart spread across the canvas, where most
     # segments are nowhere near most pixels.
-    var seg_min_x = List[Float64](capacity=num_segments)
-    var seg_max_x = List[Float64](capacity=num_segments)
-    var seg_min_y = List[Float64](capacity=num_segments)
-    var seg_max_y = List[Float64](capacity=num_segments)
     for seg in range(num_segments):
         var a = points[seg]
         var b = points[(seg + 1) % count]
@@ -565,20 +599,78 @@ def _draw_polyline_core_aa(
         var ay = a.y
         var bx = b.x
         var by = b.y
-        seg_min_x.append(min(ax, bx) - half_width - 1.0)
-        seg_max_x.append(max(ax, bx) + half_width + 1.0)
-        seg_min_y.append(min(ay, by) - half_width - 1.0)
-        seg_max_y.append(max(ay, by) + half_width + 1.0)
+        segs.min_x.append(min(ax, bx) - half_width - 1.0)
+        segs.max_x.append(max(ax, bx) + half_width + 1.0)
+        segs.min_y.append(min(ay, by) - half_width - 1.0)
+        segs.max_y.append(max(ay, by) + half_width + 1.0)
 
+    # Extracted into `_stroke_band` rather than inlined here, with its
+    # scratch buffers local to the call. That is the shape a banded,
+    # multi-core sweep needs, and the fill sweep in
+    # `canvas.aa_crossing` already runs that way to good effect.
+    #
+    # This one does not, yet. Splitting it across tasks produced a
+    # reliable nondeterministic result -- 19 of 20 repeat renders
+    # differing -- that I could not track down, and a renderer that
+    # returns a different image each run is far worse than a slow one.
+    # See the issue this file's history references for the
+    # reproduction and for what was ruled out. Kept as a single call
+    # until that is understood.
+    var row_count = max_y - min_y + 1
+    if row_count <= 0 or max_x - min_x + 1 <= 0:
+        return
+    _stroke_band(
+        canvas,
+        segs,
+        num_segments,
+        min_x,
+        max_x,
+        min_y,
+        max_y + 1,
+        half_width,
+        hw2,
+        n,
+        step,
+        total_samples,
+        color,
+        dashes,
+        dash_offset,
+    )
+
+
+def _stroke_band(
+    mut canvas: Canvas,
+    segs: _SegmentTable,
+    num_segments: Int,
+    min_x: Int,
+    max_x: Int,
+    first_row: Int,
+    last_row: Int,
+    half_width: Float64,
+    hw2: Float64,
+    n: Int,
+    step: Float64,
+    total_samples: Int,
+    color: Color,
+    dashes: List[Float64],
+    dash_offset: Float64,
+):
+    """Sweep rows [first_row, last_row) of a stroke onto `canvas`.
+
+    Currently always called once, for the whole row range. It takes a
+    range, and keeps its scratch buffers local rather than shared with
+    the caller, so that splitting the sweep across cores becomes a
+    change to the caller alone -- see the note there on why that is not
+    done yet.
+    """
     # Per-column candidate buckets, indexed by `px - min_x`, cleared
-    # and reused across rows rather than reallocated. One-time O(width)
-    # setup, outside the row loop.
+    # and reused across this band's rows rather than reallocated.
     var col_candidates = List[List[Int]](capacity=max_x - min_x + 1)
     for _ in range(max_x - min_x + 1):
         col_candidates.append(List[Int]())
 
     var row_candidates = List[Int](capacity=num_segments)
-    for py in range(min_y, max_y + 1):
+    for py in range(first_row, last_row):
         var fpy = Float64(py)
 
         # Row-level pre-filter by y alone, before the per-pixel x
@@ -587,7 +679,7 @@ def _draw_polyline_core_aa(
         # part O(rows * segments) instead of O(pixels * segments).
         row_candidates.clear()
         for seg in range(num_segments):
-            if fpy >= seg_min_y[seg] and fpy <= seg_max_y[seg]:
+            if fpy >= segs.min_y[seg] and fpy <= segs.max_y[seg]:
                 row_candidates.append(seg)
 
         if len(row_candidates) == 0:
@@ -624,13 +716,13 @@ def _draw_polyline_core_aa(
             var seg = row_candidates[ri]
             var sx_lo: Float64
             var sx_hi: Float64
-            var ay = seg_y0[seg]
-            var dy = seg_dy[seg]
+            var ay = segs.y0[seg]
+            var dy = segs.dy[seg]
             if dy == 0.0:
                 # Horizontal: the row filter already established that
                 # this row is in range, and the whole segment is.
-                sx_lo = seg_min_x[seg]
-                sx_hi = seg_max_x[seg]
+                sx_lo = segs.min_x[seg]
+                sx_hi = segs.max_x[seg]
             else:
                 var ta = (band_lo - ay) / dy
                 var tb = (band_hi - ay) / dy
@@ -644,8 +736,8 @@ def _draw_polyline_core_aa(
                     tb = 1.0
                 if ta > tb:
                     continue  # segment does not reach this row's band
-                var ax = seg_x0[seg]
-                var ddx = seg_dx[seg]
+                var ax = segs.x0[seg]
+                var ddx = segs.dx[seg]
                 var xa = ax + ta * ddx
                 var xb = ax + tb * ddx
                 sx_lo = min(xa, xb) - half_width - 1.0
@@ -708,16 +800,16 @@ def _draw_polyline_core_aa(
                         var minv = SIMD[DType.float64, _AA_LANES](1.0e30)
                         for ci in range(len(candidates)):
                             var seg = candidates[ci]
-                            var fx0 = seg_x0[seg]
-                            var fy0 = seg_y0[seg]
-                            var ldx = seg_dx[seg]
-                            var ldy = seg_dy[seg]
+                            var fx0 = segs.x0[seg]
+                            var fy0 = segs.y0[seg]
+                            var ldx = segs.dx[seg]
+                            var ldy = segs.dy[seg]
                             # A zero-length segment has inv_len2 == 0,
                             # so t falls out as 0 and the closest point
                             # is the segment's own endpoint -- the same
                             # answer the scalar path's explicit
                             # zero-length branch gives.
-                            var len2 = seg_len2[seg]
+                            var len2 = segs.len2[seg]
                             var raw_t = SIMD[DType.float64, _AA_LANES](0.0)
                             if len2 != 0.0:
                                 raw_t = (
@@ -738,7 +830,7 @@ def _draw_polyline_core_aa(
                             # segment, so an uncapped stroke -- every
                             # closed shape, and the default -- runs the
                             # identical lane arithmetic it always did.
-                            if clip_start[seg] or clip_end[seg]:
+                            if segs.clip_start[seg] or segs.clip_end[seg]:
                                 # Per lane rather than a vector mask:
                                 # comparing two SIMDs reduces to a
                                 # single Bool in this Mojo, so there is
@@ -748,9 +840,9 @@ def _draw_polyline_core_aa(
                                 # the interior.
                                 for lane in range(_AA_LANES):
                                     var rt = raw_t[lane]
-                                    if clip_start[seg] and rt < 0.0:
+                                    if segs.clip_start[seg] and rt < 0.0:
                                         d2v[lane] = 1.0e30
-                                    elif clip_end[seg] and rt > 1.0:
+                                    elif segs.clip_end[seg] and rt > 1.0:
                                         d2v[lane] = 1.0e30
                             minv = min(minv, d2v)
                         # Lanes past `lanes` hold whatever the zeroed
@@ -771,11 +863,11 @@ def _draw_polyline_core_aa(
                         var min_dist2 = -1.0
                         for ci in range(len(candidates)):
                             var seg = candidates[ci]
-                            var fx0 = seg_x0[seg]
-                            var fy0 = seg_y0[seg]
-                            var ldx = seg_dx[seg]
-                            var ldy = seg_dy[seg]
-                            var len2 = seg_len2[seg]
+                            var fx0 = segs.x0[seg]
+                            var fy0 = segs.y0[seg]
+                            var ldx = segs.dx[seg]
+                            var ldy = segs.dy[seg]
+                            var len2 = segs.len2[seg]
                             var t: Float64
                             if len2 == 0.0:
                                 t = 0.0
@@ -786,9 +878,9 @@ def _draw_polyline_core_aa(
                                 ) / len2
                                 # See the vectorized path above on why
                                 # this tests the unclamped projection.
-                                if clip_start[seg] and raw_t < 0.0:
+                                if segs.clip_start[seg] and raw_t < 0.0:
                                     continue
-                                if clip_end[seg] and raw_t > 1.0:
+                                if segs.clip_end[seg] and raw_t > 1.0:
                                     continue
                                 t = raw_t
                                 if t < 0.0:
@@ -809,8 +901,8 @@ def _draw_polyline_core_aa(
                             # a segment that itself has d2 <= hw2.
                             if d2 <= hw2:
                                 var sample_distance = (
-                                    seg_start_distance[seg]
-                                    + t * seg_length[seg]
+                                    segs.start_distance[seg]
+                                    + t * segs.length[seg]
                                 )
                                 if _is_dash_on(
                                     sample_distance, dashes, dash_offset
