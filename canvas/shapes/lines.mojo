@@ -172,6 +172,8 @@ def draw_line(
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
         cap: How the two ends are finished -- see LineCap.
+        join: Unused for a single segment, which has no corners.
+        miter_limit: Unused for a single segment.
     """
     _ = _draw_line_core(
         canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0
@@ -190,6 +192,8 @@ def draw_line_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
     cap: LineCap = LineCap.ROUND,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """Anti-aliased line, `width` pixels wide (default 1), with round
     end caps.
@@ -222,6 +226,8 @@ def draw_line_aa(
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
         cap: How the two ends are finished -- see LineCap.
+        join: Unused for a single segment, which has no corners.
+        miter_limit: Unused for a single segment.
     """
     draw_line_aa(
         canvas,
@@ -235,6 +241,8 @@ def draw_line_aa(
         dashes,
         dash_offset,
         cap,
+        join,
+        miter_limit,
     )
 
 
@@ -250,6 +258,8 @@ def draw_line_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
     cap: LineCap = LineCap.ROUND,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """`draw_line_aa` at sub-pixel endpoints -- the same line, placed
     to a fraction of a pixel rather than snapped to the pixel grid.
@@ -274,6 +284,8 @@ def draw_line_aa(
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
         cap: How the two ends are finished -- see LineCap.
+        join: Unused for a single segment, which has no corners.
+        miter_limit: Unused for a single segment.
     """
     var points: List[FPoint] = [FPoint(x0, y0), FPoint(x1, y1)]
     _draw_polyline_core_aa(
@@ -286,6 +298,8 @@ def draw_line_aa(
         dashes,
         dash_offset,
         cap,
+        join,
+        miter_limit,
     )
 
 
@@ -364,6 +378,9 @@ def draw_polygon(
             around the polygon. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the polygon starts
             at.
+        join: How corners are turned -- see LineJoin.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
     """
     var n = len(points)
     if n == 0:
@@ -429,6 +446,8 @@ def _draw_polyline_core_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
     cap: LineCap = LineCap.ROUND,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """Shared implementation for draw_polyline_aa/draw_polygon_aa.
 
@@ -501,7 +520,14 @@ def _draw_polyline_core_aa(
     # parallel across cores. See `_stroke_edges` for why the two
     # formulations describe the same shape.
     var edges = _stroke_edges(
-        points, closed, half_width, cap, dashes, dash_offset
+        points,
+        closed,
+        half_width,
+        cap,
+        dashes,
+        dash_offset,
+        join,
+        miter_limit,
     )
     _sweep_edges_aa(
         canvas,
@@ -521,6 +547,144 @@ def _draw_polyline_core_aa(
 # at the default supersample, so a skipped joint cannot move a
 # coverage count.
 comptime _JOIN_DISK_TOLERANCE = 0.02
+
+
+struct LineJoin(Copyable, ImplicitlyCopyable, Movable):
+    """How a stroke turns a corner.
+
+    ROUND (the default, and what this package has always drawn) fills
+    the corner with a disk of the stroke's own radius. BEVEL cuts it
+    off flat, joining the two outer corners directly. MITER extends
+    both outer edges until they meet, giving the sharp point a drawn
+    box or axis frame is usually expected to have.
+
+    MITER needs a limit. As a corner tightens the apex runs away
+    towards infinity -- at 10 degrees it already sticks out more than
+    eleven times the stroke's half-width -- so past `miter_limit` the
+    join falls back to BEVEL. That is SVG's rule and its default of 4,
+    which trips at about 29 degrees.
+
+    Joins apply only where a stroke actually turns. The two ends of an
+    open stroke are a cap, not a join -- see LineCap.
+    """
+
+    var _value: Int
+
+    comptime ROUND = Self(0)
+    comptime BEVEL = Self(1)
+    comptime MITER = Self(2)
+
+    def __init__(out self, value: Int):
+        """Prefer the ROUND/BEVEL/MITER comptime constants over
+        constructing one directly.
+
+        Args:
+            value: 0 for ROUND, 1 for BEVEL, 2 for MITER.
+        """
+        self._value = value
+
+    def __eq__(self, other: Self) -> Bool:
+        return self._value == other._value
+
+    def __ne__(self, other: Self) -> Bool:
+        return self._value != other._value
+
+
+def _add_polygon(mut edges: _EdgeTable, xs: List[Float64], ys: List[Float64]):
+    """A closed polygon, wound to match `_add_quad`.
+
+    The winding is checked rather than assumed: a join's corner order
+    depends on which way the path turns, and handing NONZERO a polygon
+    of the wrong orientation makes it *cancel* against the quads it
+    should be filling in -- a hole exactly where the join was meant to
+    be. Cheaper to compute the signed area here than to reason about
+    the turn direction at every call site.
+    """
+    var n = len(xs)
+    if n < 3:
+        return
+    var area2 = 0.0
+    for i in range(n):
+        var j = (i + 1) % n
+        area2 += xs[i] * ys[j] - xs[j] * ys[i]
+    if area2 < 0.0:
+        for i in range(n):
+            var j = (i + 1) % n
+            edges.add_edge(xs[i], ys[i], xs[j], ys[j])
+    else:
+        for i in range(n - 1, -1, -1):
+            var j = (i - 1 + n) % n
+            edges.add_edge(xs[i], ys[i], xs[j], ys[j])
+
+
+def _add_join(
+    mut edges: _EdgeTable,
+    vx: Float64,
+    vy: Float64,
+    ux: Float64,
+    uy: Float64,
+    wx: Float64,
+    wy: Float64,
+    half_width: Float64,
+    join: LineJoin,
+    miter_limit: Float64,
+):
+    """The wedge a stroke leaves on the outside of a corner at (vx, vy),
+    arriving along unit (ux, uy) and leaving along unit (wx, wy).
+
+    ROUND fills it with a disk, which is also the shape the
+    min-distance definition produces and so the one every existing
+    stroke rendered.
+
+    BEVEL and MITER need to know which side is outside. That is the
+    side away from the turn: the cross product of the two directions
+    gives the turn's handedness, and the outer normal is the one
+    opposed to it. Getting this backwards fills the *inner* corner,
+    which is already covered by both quads and so looks like nothing
+    happened until a wide stroke makes the missing outer wedge obvious.
+    """
+    if join == LineJoin.ROUND:
+        _add_disk(edges, vx, vy, half_width)
+        return
+
+    var cross = ux * wy - uy * wx
+    if cross == 0.0:
+        # Straight through, or a perfect reversal. Nothing to fill in
+        # the first case; in the second there is no outer side at all
+        # and a disk is the only sensible answer.
+        if ux * wx + uy * wy < 0.0:
+            _add_disk(edges, vx, vy, half_width)
+        return
+    var side = -1.0 if cross > 0.0 else 1.0
+
+    # Outer corner of each adjoining quad.
+    var ax = vx + side * -uy * half_width
+    var ay = vy + side * ux * half_width
+    var bx = vx + side * -wy * half_width
+    var by = vy + side * wx * half_width
+
+    if join == LineJoin.MITER:
+        var dot = ux * wx + uy * wy
+        var denom = 1.0 + dot
+        if denom > 1.0e-12:
+            # Apex at V + h * (n_in + n_out) / (1 + n_in . n_out), the
+            # standard miter point; its distance from V is
+            # half_width / cos(theta/2), which is what the limit caps.
+            var mx = vx + (ax - vx + bx - vx) / denom
+            var my = vy + (ay - vy + by - vy) / denom
+            var dx = mx - vx
+            var dy = my - vy
+            if sqrt(dx * dx + dy * dy) <= miter_limit * half_width:
+                var xs: List[Float64] = [vx, ax, mx, bx]
+                var ys: List[Float64] = [vy, ay, my, by]
+                _add_polygon(edges, xs, ys)
+                return
+        # Past the limit (or a near-reversal): fall back to bevel,
+        # which is what SVG specifies rather than dropping the join.
+
+    var xs: List[Float64] = [vx, ax, bx]
+    var ys: List[Float64] = [vy, ay, by]
+    _add_polygon(edges, xs, ys)
 
 
 def _add_quad(
@@ -596,6 +760,8 @@ def _stroke_edges(
     cap: LineCap,
     dashes: List[Float64],
     dash_offset: Float64,
+    join: LineJoin,
+    miter_limit: Float64,
 ) -> _EdgeTable:
     """A stroke expressed as the outline of a filled region.
 
@@ -753,6 +919,8 @@ def _stroke_edges(
         if not reached_end or seg_len[nxt] == 0.0:
             _add_disk(edges, bx[seg], by[seg], half_width)
             continue
+        var jvx = (bx[nxt] - ax[nxt]) / seg_len[nxt]
+        var jvy = (by[nxt] - ay[nxt]) / seg_len[nxt]
 
         # The wedge argument below assumes both quads reach at least
         # half_width back from the joint -- otherwise the disk pokes
@@ -766,12 +934,21 @@ def _stroke_edges(
             after_end = next_seg_end
         var after = after_end - seg_end_d
         if before < half_width or after < half_width:
-            _add_disk(edges, bx[seg], by[seg], half_width)
+            _add_join(
+                edges,
+                bx[seg],
+                by[seg],
+                ux,
+                uy,
+                jvx,
+                jvy,
+                half_width,
+                join,
+                miter_limit,
+            )
             continue
 
-        var vx = (bx[nxt] - ax[nxt]) / seg_len[nxt]
-        var vy = (by[nxt] - ay[nxt]) / seg_len[nxt]
-        var dot = ux * vx + uy * vy
+        var dot = ux * jvx + uy * jvy
         if dot > 1.0:
             dot = 1.0
         elif dot < -1.0:
@@ -780,7 +957,18 @@ def _stroke_edges(
         # cos(theta/2) = sqrt((1 + cos theta) / 2).
         var sagitta = half_width * (1.0 - sqrt((1.0 + dot) * 0.5))
         if sagitta > _JOIN_DISK_TOLERANCE:
-            _add_disk(edges, bx[seg], by[seg], half_width)
+            _add_join(
+                edges,
+                bx[seg],
+                by[seg],
+                ux,
+                uy,
+                jvx,
+                jvy,
+                half_width,
+                join,
+                miter_limit,
+            )
 
     return edges^
 
@@ -794,6 +982,8 @@ def draw_polyline_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
     cap: LineCap = LineCap.ROUND,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """Anti-aliased polyline. See draw_polyline for the hard-edged
     version, and _draw_polyline_core_aa for how joints avoid
@@ -823,6 +1013,8 @@ def draw_polyline_aa(
         dashes,
         dash_offset,
         cap,
+        join,
+        miter_limit,
     )
 
 
@@ -835,6 +1027,8 @@ def draw_polyline_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
     cap: LineCap = LineCap.ROUND,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """`draw_polyline_aa` at sub-pixel vertices -- the same polyline, placed
     to a fraction of a pixel rather than snapped to the pixel grid.
@@ -854,6 +1048,9 @@ def draw_polyline_aa(
             a solid line.
         dash_offset: Distance into the dash pattern to start at.
         cap: How the two open ends are finished -- see LineCap.
+        join: How corners are turned -- see LineJoin.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
     """
     _draw_polyline_core_aa(
         canvas,
@@ -865,6 +1062,8 @@ def draw_polyline_aa(
         dashes,
         dash_offset,
         cap,
+        join,
+        miter_limit,
     )
 
 
@@ -876,6 +1075,8 @@ def draw_polygon_aa(
     supersample: Int = 4,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """Anti-aliased polygon outline; see draw_polygon for the
     hard-edged version. The closing segment joins every sample's
@@ -894,12 +1095,23 @@ def draw_polygon_aa(
             around the polygon. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the polygon starts
             at.
+        join: How corners are turned -- see LineJoin.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
     """
     var fpoints = List[FPoint](capacity=len(points))
     for i in range(len(points)):
         fpoints.append(FPoint(Float64(points[i].x), Float64(points[i].y)))
     draw_polygon_aa(
-        canvas, fpoints, color, width, supersample, dashes, dash_offset
+        canvas,
+        fpoints,
+        color,
+        width,
+        supersample,
+        dashes,
+        dash_offset,
+        join,
+        miter_limit,
     )
 
 
@@ -911,6 +1123,8 @@ def draw_polygon_aa(
     supersample: Int = 4,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """`draw_polygon_aa` at sub-pixel vertices -- the same polygon outline, placed
     to a fraction of a pixel rather than snapped to the pixel grid.
@@ -931,5 +1145,15 @@ def draw_polygon_aa(
         dash_offset: Distance into the dash pattern to start at.
     """
     _draw_polyline_core_aa(
-        canvas, points, color, width, supersample, True, dashes, dash_offset
+        canvas,
+        points,
+        color,
+        width,
+        supersample,
+        True,
+        dashes,
+        dash_offset,
+        LineCap.ROUND,  # a closed shape has no ends to cap
+        join,
+        miter_limit,
     )

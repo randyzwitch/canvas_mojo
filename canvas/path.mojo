@@ -61,6 +61,7 @@ from canvas.shapes.lines import (
     draw_polyline_aa,
     draw_polygon_aa,
     LineCap,
+    LineJoin,
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_fpoints
@@ -1113,6 +1114,8 @@ def stroke_path_aa(
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
     cap: LineCap = LineCap.ROUND,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
     """Anti-aliased version of stroke_path -- see draw_polyline_aa/
     draw_polygon_aa.
@@ -1136,6 +1139,12 @@ def stroke_path_aa(
             at.
         cap: How an *open* sub-path's two ends are finished -- see
             LineCap. A closed sub-path has no ends and ignores it.
+        join: How corners are turned -- see LineJoin. A flattened
+            curve's corners are shallow enough that the three styles
+            are hard to tell apart; the difference shows on a polygon
+            or a sharply-kinked path.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
     """
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
@@ -1145,6 +1154,7 @@ def stroke_path_aa(
         # exactly rather than a grid-snapped copy of it.
         ref points = sp.points
         if sp.closed:
+            # No `cap`: a closed sub-path has no ends to finish.
             draw_polygon_aa(
                 canvas,
                 points,
@@ -1153,6 +1163,8 @@ def stroke_path_aa(
                 supersample,
                 dashes,
                 dash_offset,
+                join,
+                miter_limit,
             )
         else:
             draw_polyline_aa(
@@ -1164,4 +1176,6 @@ def stroke_path_aa(
                 dashes,
                 dash_offset,
                 cap,
+                join,
+                miter_limit,
             )
