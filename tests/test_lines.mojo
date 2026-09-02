@@ -2,7 +2,7 @@
 inputs, verified against hand-traced runs of the same algorithms.
 """
 
-from std.testing import assert_equal, TestSuite
+from std.testing import assert_equal, assert_true, TestSuite
 from std.math import sqrt
 
 from canvas.color import Color
@@ -540,6 +540,59 @@ def test_draw_polyline_aa_dashed_matches_a_brute_force_reference_on_a_jagged_str
         reference, points, Color(0, 0, 0), 2.0, 4, False, dashes, 0.0
     )
 
+    for i in range(len(canvas.pixels)):
+        assert_equal(canvas.pixels[i], reference.pixels[i])
+
+
+def test_dashed_stroke_has_butt_ends_not_round_ones() raises:
+    # A dash piece is a rectangle, not a stadium. The coverage test is
+    # on the *projection* of a sample onto the segment, so a point past
+    # a dash's end is not drawn however close it is to the last drawn
+    # point -- dash ends are butt, and only the segment's own endpoints
+    # round off.
+    #
+    # Rounding every dash end instead extends each piece by half a
+    # width at both ends, which for a [5, 3] pattern at width 2 closes
+    # the gaps almost entirely. That is what this pins: the gap has to
+    # survive.
+    var dashes: List[Float64] = [5.0, 3.0]
+    var c = Canvas(40, 9, BG)
+    draw_line_aa(c, 2.0, 4.0, 34.0, 4.0, FG, 2.0, 4, dashes, 0.0)
+
+    # First dash runs from x=2; the gap that follows must contain at
+    # least one completely undrawn column.
+    var blank = 0
+    for x in range(7, 11):
+        if c.get_pixel(x, 4).r == BG.r:
+            blank += 1
+    assert_true(
+        blank > 0,
+        "the gap between dashes must contain an undrawn column",
+    )
+
+
+def test_stroke_matches_brute_force_on_short_segments() raises:
+    # The jagged stress paths above use long segments. A flattened
+    # curve does not -- it is hundreds of segments shorter than the
+    # stroke is wide, and that is a different case: a joint's round
+    # disk is only covered by its two adjoining quads when both of them
+    # reach at least half a width back from it. Skipping the disk
+    # without checking that leaves a notch on every tight joint, which
+    # no long-segment test can see.
+    var points = List[Point](capacity=120)
+    for i in range(120):
+        var t = Float64(i) / 119.0
+        var x = 6 + Int(t * 88.0)
+        var y = 70 + Int(45.0 * (1.0 - 2.0 * t) * (1.0 - 2.0 * t))
+        points.append(Point(x, y))
+
+    var canvas = Canvas(100, 140, Color(255, 255, 255))
+    draw_polyline_aa(canvas, points, Color(0, 0, 0), width=3.0)
+
+    var reference = Canvas(100, 140, Color(255, 255, 255))
+    _brute_force_stroke_polyline_aa(
+        reference, points, Color(0, 0, 0), 3.0, 4, False, List[Float64](), 0.0
+    )
     for i in range(len(canvas.pixels)):
         assert_equal(canvas.pixels[i], reference.pixels[i])
 
