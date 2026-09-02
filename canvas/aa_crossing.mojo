@@ -31,6 +31,7 @@ would be a larger change than sharing this struct was.
 """
 
 from std.math import ceil
+from std.runtime.asyncrt import TaskGroup, parallelism_level
 
 from canvas.buffer import Canvas
 from canvas.color import Color
@@ -157,6 +158,12 @@ struct _EdgeTable(Movable):
                         edir[unsafe_offset=i],
                     )
                 )
+
+
+# Below this many pixels in a fill's bounding box, the sweep runs
+# inline rather than dispatching tasks. Task setup is not free and the
+# shapes this package fills most often are glyph-sized.
+comptime _MIN_PARALLEL_PIXELS = 40000
 
 
 def _accumulate_row_coverage(
@@ -305,11 +312,120 @@ def _sweep_edges_aa(
     either way.
     """
     var s = supersample
-    var total_samples = s * s
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px  # px range length
+    var first_row = min_y - 1
+    var last_row = max_y + 2  # exclusive
+    var row_count = last_row - first_row
+    if row_count <= 0 or row_width <= 0:
+        return
 
-    # Buffers for the whole sweep, not per row and per sub-scanline.
+    # Rows are independent -- each derives its own crossings from the
+    # shared, immutable edge table and writes only its own pixels -- so
+    # a large fill is split into bands, one task per band.
+    #
+    # Only a large one. See _MIN_PARALLEL_PIXELS: dispatching for a
+    # glyph costs more than sweeping it inline.
+    var bands = 1
+    if row_count * row_width >= _MIN_PARALLEL_PIXELS:
+        bands = parallelism_level()
+        if bands > row_count:
+            bands = row_count
+        if bands < 1:
+            bands = 1
+
+    if bands == 1:
+        _sweep_band(
+            canvas,
+            edges,
+            first_row,
+            last_row,
+            row_first_px,
+            row_width,
+            color,
+            fill_rule,
+            s,
+        )
+        return
+
+    var per_band = (row_count + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var band_start = first_row + b * per_band
+        var band_end = band_start + per_band
+        if band_end > last_row:
+            band_end = last_row
+        if band_start >= band_end:
+            continue
+        tg.create_task(
+            _sweep_band_async(
+                canvas,
+                edges,
+                band_start,
+                band_end,
+                row_first_px,
+                row_width,
+                color,
+                fill_rule,
+                s,
+            )
+        )
+    tg.wait()
+
+
+async def _sweep_band_async(
+    mut canvas: Canvas,
+    edges: _EdgeTable,
+    first_row: Int,
+    last_row: Int,
+    row_first_px: Int,
+    row_width: Int,
+    color: Color,
+    fill_rule: FillRule,
+    supersample: Int,
+):
+    """`_sweep_band` as a task. Separate from the plain function so the
+    single-band path keeps an ordinary call with no coroutine
+    machinery around it.
+    """
+    _sweep_band(
+        canvas,
+        edges,
+        first_row,
+        last_row,
+        row_first_px,
+        row_width,
+        color,
+        fill_rule,
+        supersample,
+    )
+
+
+def _sweep_band(
+    mut canvas: Canvas,
+    edges: _EdgeTable,
+    first_row: Int,
+    last_row: Int,
+    row_first_px: Int,
+    row_width: Int,
+    color: Color,
+    fill_rule: FillRule,
+    supersample: Int,
+):
+    """Sweep rows [first_row, last_row) of `edges` onto `canvas`.
+
+    One band of a fill. Every buffer here is local to the band rather
+    than shared across the whole sweep, which is what makes bands
+    independent -- and costs nothing, since the allocation was always
+    per-sweep and there are only ever a handful of bands.
+
+    Bands write disjoint rows, so no two ever touch the same pixel.
+    `canvas` is shared mutably between them on exactly that basis.
+    """
+    var s = supersample
+    var total_samples = s * s
+
+    # Buffers for the whole band, not per row and per sub-scanline.
     # A glyph-sized path is small enough that allocating a crossing
     # list, a suffix list and a coverage row for every sub-scanline
     # costs more than the sampling does -- measured at roughly 5x the
@@ -321,7 +437,7 @@ def _sweep_edges_aa(
     var crossings = List[_AACrossing]()
     var suffix = List[Int]()
 
-    for py in range(min_y - 1, max_y + 2):
+    for py in range(first_row, last_row):
         for pxi in range(row_width):
             row_covered[pxi] = 0
 
