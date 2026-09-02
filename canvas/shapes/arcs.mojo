@@ -302,6 +302,40 @@ struct _AngleSpan(ImplicitlyCopyable, Movable):
         return cross_start > 0.0 and cross_end > 0.0
 
 
+def _square_in_cone(span: _AngleSpan, ox: Float64, oy: Float64) -> Bool:
+    """Whether the whole pixel square centred at offset (ox, oy) from
+    the wedge's own centre lies within the wedge's angular sweep.
+
+    Only sound for a sweep of at most half a turn, which the caller
+    checks. The reason: an angular sector is the intersection of two
+    half-planes through the centre, and that intersection is convex
+    exactly while the sweep stays within pi. A convex set containing
+    all four corners of a square contains the square -- so four
+    `contains` calls settle it. Past pi the sector is non-convex and
+    four corners prove nothing, which is why a wider wedge gets no fast
+    path rather than a subtly wrong one.
+
+    The square that straddles the centre is excluded outright. The
+    centre is the cone's apex, where an angle is not defined at all
+    (`_AngleSpan` decides that degenerate case separately, by fiat),
+    and a square around the apex is anyway not contained in any sector
+    narrower than a half turn. At most one pixel per wedge is affected
+    and it falls through to sampling.
+    """
+    var lx = ox - 0.5
+    var hx = ox + 0.5
+    var ly = oy - 0.5
+    var hy = oy + 0.5
+    if lx <= 0.0 and hx >= 0.0 and ly <= 0.0 and hy >= 0.0:
+        return False
+    return (
+        span.contains(lx, ly)
+        and span.contains(hx, ly)
+        and span.contains(lx, hy)
+        and span.contains(hx, hy)
+    )
+
+
 def draw_arc(
     mut canvas: Canvas,
     cx: Float64,
@@ -444,21 +478,44 @@ def fill_arc_aa(
     # `atan2` per sub-sample -- see `_AngleSpan`.
     var span = _AngleSpan(start_angle, end_angle)
 
+    # Whether a "whole pixel square is provably inside" test is sound
+    # for this wedge. See _square_in_cone: the argument needs the
+    # angular cone to be convex, which it is exactly when the sweep is
+    # at most half a turn. A wider sweep gets no fast path -- its
+    # interior is still filled correctly, just one sub-sample grid at a
+    # time, as the whole wedge used to be.
+    var can_fast_fill = span.always_inside or not span.wide
+
     for py in range(min_py, max_py + 1):
+        var oy = Float64(py) - cy
+        var dy = abs(oy)
+        var near_dy = max(0.0, dy - 0.5)
+        var far_dy = dy + 0.5
         for px in range(min_px, max_px + 1):
-            # A rigorous "whole pixel square is provably inside" test
-            # is fiddly for a wedge (angle wraparound, a pixel
-            # straddling the center where angle is undefined) and isn't
-            # attempted. "Provably outside the radius, regardless of
-            # angle" is cheap and always valid -- the AABB-vs-circle
-            # nearest-point test fill_circle_aa uses -- and skips a
-            # real fraction of the box with no angle math.
-            var dx = abs(Float64(px) - cx)
-            var dy = abs(Float64(py) - cy)
+            # "Provably outside the radius, regardless of angle" is
+            # cheap and always valid -- the AABB-vs-circle nearest-point
+            # test fill_circle_aa uses.
+            var ox = Float64(px) - cx
+            var dx = abs(ox)
             var near_dx = max(0.0, dx - 0.5)
-            var near_dy = max(0.0, dy - 0.5)
             if near_dx * near_dx + near_dy * near_dy > r2:
                 continue
+
+            # ...and the converse, which this wedge fill never had.
+            # Without it every interior pixel of a pie slice paid a
+            # full supersample^2 grid to arrive at total coverage,
+            # which for a large wedge is nearly all of its area.
+            if can_fast_fill:
+                var far_dx = dx + 0.5
+                if far_dx * far_dx + far_dy * far_dy <= r2:
+                    if span.always_inside:
+                        # The sweep is a full turn, so the wedge is the
+                        # disk and the radius test settled it.
+                        canvas.set_pixel(px, py, color)
+                        continue
+                    if _square_in_cone(span, ox, oy):
+                        canvas.set_pixel(px, py, color)
+                        continue
 
             var covered = 0
             for sy in range(n):
@@ -583,22 +640,45 @@ def fill_ring_sector_aa(
     # `atan2` per sub-sample -- see `_AngleSpan`.
     var span = _AngleSpan(start_angle, end_angle)
 
+    # Sound only for a sweep of at most half a turn -- see
+    # _square_in_cone, and fill_arc_aa which uses the same guard.
+    var can_fast_fill = span.always_inside or not span.wide
+
     for py in range(min_py, max_py + 1):
+        var oy = Float64(py) - cy
+        var dy = abs(oy)
+        var near_dy = max(0.0, dy - 0.5)
+        var far_dy = dy + 0.5
         for px in range(min_px, max_px + 1):
             # fill_arc_aa's radius-only fast-outside skip, applied at
             # both edges: the pixel square entirely beyond
             # outer_radius, or its farthest point from center still
             # within inner_radius, so no corner reaches the ring.
-            var dx = abs(Float64(px) - cx)
-            var dy = abs(Float64(py) - cy)
+            var ox = Float64(px) - cx
+            var dx = abs(ox)
             var near_dx = max(0.0, dx - 0.5)
-            var near_dy = max(0.0, dy - 0.5)
-            if near_dx * near_dx + near_dy * near_dy > outer_r2:
+            var near_d2 = near_dx * near_dx + near_dy * near_dy
+            if near_d2 > outer_r2:
                 continue
             var far_dx = dx + 0.5
-            var far_dy = dy + 0.5
-            if far_dx * far_dx + far_dy * far_dy < inner_r2:
+            var far_d2 = far_dx * far_dx + far_dy * far_dy
+            if far_d2 < inner_r2:
                 continue
+
+            # Provably inside, the converse this fill never had. The
+            # square sits within the annulus when its nearest point to
+            # the centre already clears the inner radius and its
+            # farthest stays inside the outer -- an exact test needing
+            # no convexity, since it is a distance range. Combined with
+            # the square lying inside the angular cone, that puts it
+            # inside the ring sector.
+            if can_fast_fill and far_d2 <= outer_r2 and near_d2 >= inner_r2:
+                if span.always_inside:
+                    canvas.set_pixel(px, py, color)
+                    continue
+                if _square_in_cone(span, ox, oy):
+                    canvas.set_pixel(px, py, color)
+                    continue
 
             var covered = 0
             for sy in range(n):

@@ -190,6 +190,80 @@ def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises
     )
 
 
+def test_wedge_fast_fill_does_not_bleed_past_the_straight_edges() raises:
+    # The provably-inside fast path fills a pixel outright without
+    # sampling it. If its containment test were too permissive, the
+    # first casualty would be the wedge's two straight edges: pixels
+    # the boundary crosses would come out solid instead of partially
+    # covered. This pins that they stay anti-aliased.
+    #
+    # A sweep of 1.2 radians is under pi, so the fast path is active.
+    var c = Canvas(120, 120, BG)
+    fill_arc_aa(c, 60.0, 60.0, 45.0, 0.0, 1.2, FG)
+
+    # Deep interior of the wedge -- solid, and the fast path's job.
+    _assert_pixel(c, 78, 72, FG, "interior of the wedge is solid")
+
+    # Just outside the start edge (angle 0 runs along +x, so anything
+    # a little above it in screen terms is outside the sweep).
+    assert_equal(c.get_pixel(80, 58).r, 0, "outside the start edge")
+
+    # The edge itself must be partially covered somewhere along it: a
+    # scan across the boundary has to find at least one intermediate
+    # value, which a too-eager fast fill would replace with a hard
+    # 0/255 step.
+    var partials = 0
+    for y in range(45, 76):
+        var v = Int(c.get_pixel(72, y).r)
+        if v > 0 and v < 255:
+            partials += 1
+    assert_true(
+        partials > 0,
+        "the wedge's boundary is anti-aliased, not a hard step",
+    )
+
+
+def test_wedge_renders_consistently_either_side_of_the_half_turn_guard() raises:
+    # The fast path is only sound for a sweep of at most pi, so it is
+    # switched off above that. Both branches must produce a wedge with
+    # the same character: solid deep inside, anti-aliased at the arc.
+    # A bug in either branch shows up as one of these failing while its
+    # twin passes.
+    var narrow = Canvas(120, 120, BG)
+    fill_arc_aa(narrow, 60.0, 60.0, 45.0, 0.0, 3.10, FG)  # just under pi
+    var wide = Canvas(120, 120, BG)
+    fill_arc_aa(wide, 60.0, 60.0, 45.0, 0.0, 3.18, FG)  # just over pi
+
+    _assert_pixel(narrow, 60, 75, FG, "narrow sweep fills its interior")
+    _assert_pixel(wide, 60, 75, FG, "wide sweep fills its interior")
+
+    # Both must be anti-aliased at the outer arc, on a ray that is
+    # inside both sweeps.
+    var narrow_partials = 0
+    var wide_partials = 0
+    for y in range(100, 112):
+        var nv = Int(narrow.get_pixel(60, y).r)
+        var wv = Int(wide.get_pixel(60, y).r)
+        if nv > 0 and nv < 255:
+            narrow_partials += 1
+        if wv > 0 and wv < 255:
+            wide_partials += 1
+    assert_true(narrow_partials > 0, "narrow sweep's arc is anti-aliased")
+    assert_true(wide_partials > 0, "wide sweep's arc is anti-aliased")
+
+
+def test_ring_sector_fast_fill_keeps_its_inner_hole() raises:
+    # The ring's fast path additionally requires the pixel square to
+    # clear the inner radius. If that test were wrong the hole would
+    # fill in, which is the most visible way a donut chart can break.
+    var c = Canvas(120, 120, BG)
+    fill_ring_sector_aa(c, 60.0, 60.0, 20.0, 45.0, 0.0, 1.2, FG)
+
+    _assert_pixel(c, 60, 60, BG, "the centre stays empty")
+    _assert_pixel(c, 68, 63, BG, "and so does the rest of the hole")
+    _assert_pixel(c, 85, 70, FG, "while the band itself is solid")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
 
