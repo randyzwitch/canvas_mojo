@@ -24,7 +24,7 @@ from std.math import ceil, floor, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import Point
+from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.shapes.dash import _is_dash_on
 
 comptime _SQRT2 = 1.4142135623730951
@@ -176,7 +176,56 @@ def draw_line_aa(
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
     """
-    var points: List[Point] = [Point(x0, y0), Point(x1, y1)]
+    draw_line_aa(
+        canvas,
+        Float64(x0),
+        Float64(y0),
+        Float64(x1),
+        Float64(y1),
+        color,
+        width,
+        supersample,
+        dashes,
+        dash_offset,
+    )
+
+
+def draw_line_aa(
+    mut canvas: Canvas,
+    x0: Float64,
+    y0: Float64,
+    x1: Float64,
+    y1: Float64,
+    color: Color,
+    width: Float64 = 1.0,
+    supersample: Int = 4,
+    dashes: List[Float64] = List[Float64](),
+    dash_offset: Float64 = 0.0,
+):
+    """`draw_line_aa` at sub-pixel endpoints -- the same line, placed
+    to a fraction of a pixel rather than snapped to the pixel grid.
+
+    This is the real implementation; the whole-pixel overload above
+    converts and calls it. A chart plotting a value at x = 103.7 wants
+    this one: rounding to 104 first moves the line by a third of a
+    pixel, which at a 1px stroke width is a visible shift in where the
+    series sits.
+
+    Args:
+        canvas: Canvas to draw into.
+        x0: Start point x.
+        y0: Start point y.
+        x1: End point x.
+        y1: End point y.
+        color: Line color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        dashes: On/off segment lengths in pixels, cycled along the
+            line. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the line starts at.
+    """
+    var points: List[FPoint] = [FPoint(x0, y0), FPoint(x1, y1)]
     _draw_polyline_core_aa(
         canvas, points, color, width, supersample, False, dashes, dash_offset
     )
@@ -314,7 +363,7 @@ def draw_polygon(
 
 def _draw_polyline_core_aa(
     mut canvas: Canvas,
-    points: List[Point],
+    points: List[FPoint],
     color: Color,
     width: Float64,
     supersample: Int,
@@ -343,7 +392,9 @@ def _draw_polyline_core_aa(
     if count == 0:
         return
     if count == 1:
-        canvas.set_pixel(points[0].x, points[0].y, color)
+        canvas.set_pixel(
+            _round_to_int(points[0].x), _round_to_int(points[0].y), color
+        )
         return
 
     var num_segments = count if closed else count - 1
@@ -376,36 +427,40 @@ def _draw_polyline_core_aa(
     for seg in range(num_segments):
         var sa = points[seg]
         var sb = points[(seg + 1) % count]
-        var sdx = Float64(sb.x - sa.x)
-        var sdy = Float64(sb.y - sa.y)
+        var sdx = sb.x - sa.x
+        var sdy = sb.y - sa.y
         var slen2 = sdx * sdx + sdy * sdy
         var slen = sqrt(slen2)
         seg_start_distance.append(running_distance)
         seg_length.append(slen)
-        seg_x0.append(Float64(sa.x))
-        seg_y0.append(Float64(sa.y))
+        seg_x0.append(sa.x)
+        seg_y0.append(sa.y)
         seg_dx.append(sdx)
         seg_dy.append(sdy)
         seg_len2.append(slen2)
         running_distance += slen
 
-    var min_x = points[0].x
-    var max_x = points[0].x
-    var min_y = points[0].y
-    var max_y = points[0].y
+    # Real-valued extent, then widened outward to the pixels that
+    # contain it (floor/ceil, not round) before the flat `pad` -- a
+    # vertex at x = 10.2 has to have pixel 10 swept for it to pick up
+    # any partial coverage there.
+    var fmin_x = points[0].x
+    var fmax_x = points[0].x
+    var fmin_y = points[0].y
+    var fmax_y = points[0].y
     for i in range(1, count):
-        if points[i].x < min_x:
-            min_x = points[i].x
-        if points[i].x > max_x:
-            max_x = points[i].x
-        if points[i].y < min_y:
-            min_y = points[i].y
-        if points[i].y > max_y:
-            max_y = points[i].y
-    min_x -= pad
-    max_x += pad
-    min_y -= pad
-    max_y += pad
+        if points[i].x < fmin_x:
+            fmin_x = points[i].x
+        if points[i].x > fmax_x:
+            fmax_x = points[i].x
+        if points[i].y < fmin_y:
+            fmin_y = points[i].y
+        if points[i].y > fmax_y:
+            fmax_y = points[i].y
+    var min_x = Int(floor(fmin_x)) - pad
+    var max_x = Int(ceil(fmax_x)) + pad
+    var min_y = Int(floor(fmin_y)) - pad
+    var max_y = Int(ceil(fmax_y)) + pad
 
     # Each segment's bounding box, expanded by half_width -- a sample
     # outside it can't be within half_width of the segment, since its
@@ -423,10 +478,10 @@ def _draw_polyline_core_aa(
     for seg in range(num_segments):
         var a = points[seg]
         var b = points[(seg + 1) % count]
-        var ax = Float64(a.x)
-        var ay = Float64(a.y)
-        var bx = Float64(b.x)
-        var by = Float64(b.y)
+        var ax = a.x
+        var ay = a.y
+        var bx = b.x
+        var by = b.y
         seg_min_x.append(min(ax, bx) - half_width - 1.0)
         seg_max_x.append(max(ax, bx) + half_width + 1.0)
         seg_min_y.append(min(ay, by) - half_width - 1.0)
@@ -693,6 +748,41 @@ def draw_polyline_aa(
         dash_offset: Distance into the dash pattern the polyline
             starts at.
     """
+    var fpoints = List[FPoint](capacity=len(points))
+    for i in range(len(points)):
+        fpoints.append(FPoint(Float64(points[i].x), Float64(points[i].y)))
+    draw_polyline_aa(
+        canvas, fpoints, color, width, supersample, dashes, dash_offset
+    )
+
+
+def draw_polyline_aa(
+    mut canvas: Canvas,
+    points: List[FPoint],
+    color: Color,
+    width: Float64 = 1.0,
+    supersample: Int = 4,
+    dashes: List[Float64] = List[Float64](),
+    dash_offset: Float64 = 0.0,
+):
+    """`draw_polyline_aa` at sub-pixel vertices -- the same polyline, placed
+    to a fraction of a pixel rather than snapped to the pixel grid.
+
+    This is the real implementation; the whole-pixel overload above
+    converts and calls it. See `draw_line_aa`'s sub-pixel overload for
+    why a chart wants this one.
+
+    Args:
+        canvas: Canvas to draw into.
+        points: Vertices to connect, in order, at sub-pixel positions.
+        color: Line color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        dashes: On/off segment lengths in pixels. Empty (default) draws
+            a solid line.
+        dash_offset: Distance into the dash pattern to start at.
+    """
     _draw_polyline_core_aa(
         canvas, points, color, width, supersample, False, dashes, dash_offset
     )
@@ -724,6 +814,41 @@ def draw_polygon_aa(
             around the polygon. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the polygon starts
             at.
+    """
+    var fpoints = List[FPoint](capacity=len(points))
+    for i in range(len(points)):
+        fpoints.append(FPoint(Float64(points[i].x), Float64(points[i].y)))
+    draw_polygon_aa(
+        canvas, fpoints, color, width, supersample, dashes, dash_offset
+    )
+
+
+def draw_polygon_aa(
+    mut canvas: Canvas,
+    points: List[FPoint],
+    color: Color,
+    width: Float64 = 1.0,
+    supersample: Int = 4,
+    dashes: List[Float64] = List[Float64](),
+    dash_offset: Float64 = 0.0,
+):
+    """`draw_polygon_aa` at sub-pixel vertices -- the same polygon outline, placed
+    to a fraction of a pixel rather than snapped to the pixel grid.
+
+    This is the real implementation; the whole-pixel overload above
+    converts and calls it. See `draw_line_aa`'s sub-pixel overload for
+    why a chart wants this one.
+
+    Args:
+        canvas: Canvas to draw into.
+        points: Vertices to connect, in order, at sub-pixel positions.
+        color: Line color.
+        width: Stroke width in pixels.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+        dashes: On/off segment lengths in pixels. Empty (default) draws
+            a solid line.
+        dash_offset: Distance into the dash pattern to start at.
     """
     _draw_polyline_core_aa(
         canvas, points, color, width, supersample, True, dashes, dash_offset

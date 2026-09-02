@@ -18,9 +18,11 @@ spans. `_is_inside` itself lives in `canvas.fill_rule` -- see there for
 why it has to.
 """
 
+from std.math import ceil, floor
+
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import Point
+from canvas.geometry import Point, FPoint
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
 
@@ -277,19 +279,70 @@ def fill_polygon_aa(
         if points[i].y > max_y:
             max_y = points[i].y
 
+    var fpoints = List[FPoint](capacity=n)
+    for i in range(n):
+        fpoints.append(FPoint(Float64(points[i].x), Float64(points[i].y)))
+    fill_polygon_aa(canvas, fpoints, color, fill_rule, supersample)
+
+
+def fill_polygon_aa(
+    mut canvas: Canvas,
+    points: List[FPoint],
+    color: Color,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    supersample: Int = 4,
+):
+    """`fill_polygon_aa` at sub-pixel vertices -- the same fill, with
+    its outline placed to a fraction of a pixel rather than snapped to
+    the pixel grid.
+
+    This is the real implementation; the whole-pixel overload above
+    converts and calls it. See `draw_line_aa`'s sub-pixel overload
+    (canvas.shapes.lines) for why a chart wants this one.
+
+    Args:
+        canvas: Canvas to fill into.
+        points: Polygon vertices, in order, at sub-pixel positions.
+            Implicitly closed.
+        color: Fill color.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+    """
+    var n = len(points)
+    if n < 3:
+        return
+
+    var min_x = points[0].x
+    var max_x = min_x
+    var min_y = points[0].y
+    var max_y = min_y
+    for i in range(1, n):
+        if points[i].x < min_x:
+            min_x = points[i].x
+        if points[i].x > max_x:
+            max_x = points[i].x
+        if points[i].y < min_y:
+            min_y = points[i].y
+        if points[i].y > max_y:
+            max_y = points[i].y
+
     var edges = _EdgeTable()
     for i in range(n):
         var a = points[i]
         var b = points[(i + 1) % n]
-        edges.add_edge(Float64(a.x), Float64(a.y), Float64(b.x), Float64(b.y))
+        edges.add_edge(a.x, a.y, b.x, b.y)
 
+    # Widened outward to whole pixels (floor/ceil, not round) so a
+    # pixel an edge only partly covers is still swept -- see
+    # fill_path_aa, which does the same.
     _sweep_edges_aa(
         canvas,
         edges,
-        min_x,
-        min_y,
-        max_x,
-        max_y,
+        Int(floor(min_x)),
+        Int(floor(min_y)),
+        Int(ceil(max_x)),
+        Int(ceil(max_y)),
         color,
         fill_rule,
         supersample,

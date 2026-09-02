@@ -734,7 +734,118 @@ def draw_text(
     mut cache: FontCache,
 ) raises:
     """Like draw_text above, but resolving fonts through `cache` rather
-    than fresh every call. This also collapses the two resolutions a
+    than fresh every call. Whole-pixel anchor; delegates to the
+    sub-pixel overload below.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Anchor x -- baseline left end for LEFT alignment.
+        y: Anchor y -- baseline.
+        text: Text to draw, "\\n"-separated lines.
+        color: Text color.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+        cache: Shared cache for font resolution and parsed faces.
+    """
+    draw_text(
+        canvas,
+        Float64(x),
+        Float64(y),
+        text,
+        color,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        cache=cache,
+    )
+
+
+def draw_text(
+    mut canvas: Canvas,
+    x: Float64,
+    y: Float64,
+    text: String,
+    color: Color,
+    size: Float64,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+) raises:
+    """`draw_text` anchored at a sub-pixel position, resolving fonts
+    fresh. See the sub-pixel cached overload below for what the anchor
+    buys.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Anchor x, sub-pixel -- baseline left end for LEFT alignment.
+        y: Anchor y, sub-pixel -- baseline.
+        text: Text to draw, "\\n"-separated lines.
+        color: Text color.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+    """
+    var cache = FontCache()
+    draw_text(
+        canvas,
+        x,
+        y,
+        text,
+        color,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        cache=cache,
+    )
+
+
+def draw_text(
+    mut canvas: Canvas,
+    x: Float64,
+    y: Float64,
+    text: String,
+    color: Color,
+    size: Float64,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    *,
+    mut cache: FontCache,
+) raises:
+    """The implementation every other `draw_text` overload delegates
+    to: sub-pixel anchor, fonts resolved through `cache` rather than
+    fresh every call.
+
+    A sub-pixel anchor is what lets a caller place a label relative to
+    something that is itself at a fractional position -- a tick at
+    x = 103.7, a label centered on a bar whose midpoint is not a whole
+    pixel. Rounding the anchor first shifts the whole string, which at
+    text sizes is a visible change in spacing against whatever it
+    labels. The glyph outlines themselves have been sub-pixel since
+    they reach `fill_path_aa` unrounded; this extends that to where the
+    string is placed.
+
+    Resolving through the cache also collapses the two resolutions a
+    single call makes -- _layout_block's measuring pass and the render
+    pass below both want the same face -- into one lookup plus a cache
+    hit. This also collapses the two resolutions a
     single call makes -- _layout_block's measuring pass and the render
     pass below both want the same face -- into one lookup plus a cache
     hit.
@@ -769,8 +880,8 @@ def draw_text(
     var face = _load_sized_face(family, slant, weight, size, cache)
     var c = cos(rotation)
     var s = sin(rotation)
-    var anchor_x = Float64(x)
-    var anchor_y = Float64(y)
+    var anchor_x = x
+    var anchor_y = y
 
     for line in block.lines:
         if line.text == "":

@@ -815,10 +815,10 @@ def stroke_path_aa(
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
-        # Rounded: draw_polyline_aa/draw_polygon_aa still address whole
-        # pixels. Sub-pixel stroking means a float polyline core too --
-        # a separate change from this one, which is about fills.
-        var points = _rounded_points(sp)
+        # Unrounded: draw_polyline_aa/draw_polygon_aa take sub-pixel
+        # vertices, so a stroked curve follows the flattened path
+        # exactly rather than a grid-snapped copy of it.
+        ref points = sp.points
         if sp.closed:
             draw_polygon_aa(
                 canvas,

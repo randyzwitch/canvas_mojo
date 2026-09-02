@@ -6,8 +6,11 @@ fill_ellipse_aa) -- see canvas.shapes.lines for the hard-edged
 vs. `_aa` naming convention this follows.
 """
 
+from std.math import ceil, floor
+
 from canvas.color import Color
 from canvas.buffer import Canvas
+from canvas.geometry import _round_to_int
 
 
 def _plot_ellipse_points(
@@ -174,34 +177,81 @@ def fill_ellipse_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N
             samples).
     """
-    if rx <= 0 or ry <= 0:
-        canvas.set_pixel(cx, cy, color)
+    fill_ellipse_aa(
+        canvas,
+        Float64(cx),
+        Float64(cy),
+        Float64(rx),
+        Float64(ry),
+        color,
+        supersample,
+    )
+
+
+def fill_ellipse_aa(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+    supersample: Int = 4,
+):
+    """`fill_ellipse_aa` at a sub-pixel center and radii -- the same
+    ellipse, placed and sized to a fraction of a pixel rather than
+    snapped to the pixel grid.
+
+    This is the real implementation; the whole-pixel overload above
+    converts and calls it. An error ellipse or confidence region is
+    sized from data, so its radii are almost never whole pixels, and
+    rounding them changes the region it claims to show.
+
+    `draw_ellipse_aa` (the outline) stays whole-pixel: it draws a fixed
+    ~1px stroke, and `DrawTarget` documents it that way.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x, sub-pixel.
+        cy: Center y, sub-pixel.
+        rx: Horizontal radius in pixels, sub-pixel.
+        ry: Vertical radius in pixels, sub-pixel.
+        color: Fill color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+    """
+    if rx <= 0.0 or ry <= 0.0:
+        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
         return
 
-    var rx_f = Float64(rx)
-    var ry_f = Float64(ry)
+    var rx_f = rx
+    var ry_f = ry
     var n = supersample
     var total_samples = n * n
     var step = 1.0 / Float64(n)
 
     # The membership test is (x/rx)^2 + (y/ry)^2 <= 1, multiplied
     # through by (rx*ry)^2 to give x^2*ry^2 + y^2*rx^2 <= (rx*ry)^2.
-    # Two reasons, and exactness is the first: every term here is a
-    # product of values that are exact in Float64 -- radii are whole
-    # pixels, offsets are whole pixels plus a multiple of 1/supersample
-    # -- and stays far below 2^53 at any canvas size, so the comparison
-    # carries no rounding at all, where the divided form rounds four
-    # times per pixel. The second is speed: this ran four divisions per
-    # pixel in the bounds test and two more per sub-sample, and
-    # division is an order of magnitude more expensive than multiply.
+    # Speed is the reason that survives sub-pixel radii: the divided
+    # form runs four divisions per pixel in the bounds test and two
+    # more per sub-sample, and division is an order of magnitude more
+    # expensive than multiply.
+    #
+    # It used to be exact as well, back when radii were necessarily
+    # whole pixels: every term was then a product of Float64-exact
+    # values staying far below 2^53, so the comparison carried no
+    # rounding at all. A sub-pixel radius ends that -- but the
+    # multiplied form still rounds no more than the divided one would,
+    # so allowing it regressed nothing.
     var rx2 = rx_f * rx_f
     var ry2 = ry_f * ry_f
     var limit = rx2 * ry2
 
-    for py in range(cy - ry - 1, cy + ry + 2):
-        for px in range(cx - rx - 1, cx + rx + 2):
-            var dx = abs(Float64(px - cx))
-            var dy = abs(Float64(py - cy))
+    # Widened outward to whole pixels, so a pixel the ellipse only
+    # partly covers is still visited.
+    for py in range(Int(floor(cy - ry)) - 1, Int(ceil(cy + ry)) + 2):
+        for px in range(Int(floor(cx - rx)) - 1, Int(ceil(cx + rx)) + 2):
+            var dx = abs(Float64(px) - cx)
+            var dy = abs(Float64(py) - cy)
 
             var near_x = max(0.0, dx - 0.5)
             var near_y = max(0.0, dy - 0.5)
@@ -216,10 +266,10 @@ def fill_ellipse_aa(
 
             var covered = 0
             for sy in range(n):
-                var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
+                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
                 var fy_term = fy * fy * rx2
                 for sx in range(n):
-                    var fx = Float64(px - cx) + (Float64(sx) + 0.5) * step - 0.5
+                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
                     if fx * fx * ry2 + fy_term <= limit:
                         covered += 1
             if covered > 0:

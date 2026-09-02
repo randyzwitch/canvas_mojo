@@ -5,8 +5,11 @@ canvas.shapes.lines for the hard-edged
 vs. `_aa` naming convention this follows.
 """
 
+from std.math import ceil, floor
+
 from canvas.color import Color
 from canvas.buffer import Canvas
+from canvas.geometry import _round_to_int
 
 
 def draw_circle(
@@ -137,19 +140,62 @@ def fill_circle_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N
             samples).
     """
-    if radius <= 0:
-        canvas.set_pixel(cx, cy, color)
+    fill_circle_aa(
+        canvas,
+        Float64(cx),
+        Float64(cy),
+        Float64(radius),
+        color,
+        supersample,
+    )
+
+
+def fill_circle_aa(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    color: Color,
+    supersample: Int = 4,
+):
+    """`fill_circle_aa` at a sub-pixel center and radius -- the same
+    disk, placed and sized to a fraction of a pixel rather than snapped
+    to the pixel grid.
+
+    This is the real implementation; the whole-pixel overload above
+    converts and calls it. See `draw_line_aa`'s sub-pixel overload
+    (canvas.shapes.lines) for why a chart wants this one -- a scatter
+    marker at y = 44.3 is the same case.
+
+    Args:
+        canvas: Canvas to fill into.
+        cx: Center x, sub-pixel.
+        cy: Center y, sub-pixel.
+        radius: Circle radius in pixels, sub-pixel.
+        color: Fill color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples).
+    """
+    if radius <= 0.0:
+        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
         return
 
-    var r2 = Float64(radius * radius)
+    var r2 = radius * radius
     var n = supersample
     var total_samples = n * n
     var step = 1.0 / Float64(n)
 
-    for py in range(cy - radius - 1, cy + radius + 2):
-        for px in range(cx - radius - 1, cx + radius + 2):
-            var dx = abs(Float64(px - cx))
-            var dy = abs(Float64(py - cy))
+    # Widened outward to whole pixels, so a pixel the disk only partly
+    # covers is still visited.
+    var lo_x = Int(floor(cx - radius)) - 1
+    var hi_x = Int(ceil(cx + radius)) + 2
+    var lo_y = Int(floor(cy - radius)) - 1
+    var hi_y = Int(ceil(cy + radius)) + 2
+
+    for py in range(lo_y, hi_y):
+        for px in range(lo_x, hi_x):
+            var dx = abs(Float64(px) - cx)
+            var dy = abs(Float64(py) - cy)
 
             var near_dx = max(0.0, dx - 0.5)
             var near_dy = max(0.0, dy - 0.5)
@@ -166,9 +212,9 @@ def fill_circle_aa(
 
             var covered = 0
             for sy in range(n):
-                var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
+                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
                 for sx in range(n):
-                    var fx = Float64(px - cx) + (Float64(sx) + 0.5) * step - 0.5
+                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
                     if fx * fx + fy * fy <= r2:
                         covered += 1
             if covered > 0:
