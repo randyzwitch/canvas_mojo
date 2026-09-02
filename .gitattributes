@@ -1,2 +1,7 @@
 # SCM syntax highlighting & preventing 3-way merges
 pixi.lock merge=binary linguist-language=YAML linguist-generated=true -diff
+
+# Golden reference renders (tests/test_golden.mojo). Binary, and a
+# textual diff of a PNG is noise -- what matters is that the test
+# reports which pixels moved, not what the bytes look like.
+tests/golden/*.png binary -diff
