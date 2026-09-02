@@ -34,7 +34,7 @@ closed (draw_polygon) or open (draw_polyline) depending on whether
 close() was called.
 """
 
-from std.math import ceil, cos, floor, pi, sin
+from std.math import ceil, cos, floor, pi, sin, sqrt
 
 from canvas.buffer import Canvas
 from canvas.color import Color
@@ -438,6 +438,74 @@ struct Path(Movable):
         self._current_y = self._subpath_start_y
 
 
+# How far a flattened curve may stray from the true curve, in pixels,
+# when the step count is chosen automatically.
+#
+# 1/50 of a pixel. The coverage sweep samples a 4x4 grid per pixel, so
+# a boundary displaced by this much moves a pixel's alpha by at most
+# about five levels out of 255 -- below what the supersampling itself
+# can resolve, and far below the ~16-level step a single flipped
+# sub-sample already produces.
+comptime _FLATTEN_TOLERANCE = 0.02
+
+# Bounds on the automatic step count. The floor keeps a
+# nearly-straight segment from degenerating to a single chord across a
+# long span; the ceiling stops a pathological control polygon from
+# generating tens of thousands of edges for one segment.
+comptime _MIN_AUTO_STEPS = 3
+comptime _MAX_AUTO_STEPS = 400
+
+
+def _auto_steps(second_diff: Float64, scale: Float64) -> Int:
+    """Segments needed to flatten a Bezier within
+    `_FLATTEN_TOLERANCE`.
+
+    Chords over n equal parameter intervals deviate from a curve by at
+    most (1/(8n^2)) * max|B''(t)|, so requiring that to stay under the
+    tolerance gives n >= sqrt(scale * second_diff / (8 * tolerance)),
+    where `scale` folds in the constant from B'' for the degree in
+    question (2 for a quadratic, 6 for a cubic) and `second_diff` is
+    the largest second difference of the control points.
+
+    That is a bound, not an estimate, so the result is never
+    under-sampled -- which matters because the failure mode of guessing
+    low is a visibly faceted curve.
+    """
+    var bound = scale * second_diff / (8.0 * _FLATTEN_TOLERANCE)
+    if bound <= 0.0:
+        return _MIN_AUTO_STEPS
+    var n = Int(ceil(sqrt(bound)))
+    if n < _MIN_AUTO_STEPS:
+        return _MIN_AUTO_STEPS
+    if n > _MAX_AUTO_STEPS:
+        return _MAX_AUTO_STEPS
+    return n
+
+
+def _hypot(x: Float64, y: Float64) -> Float64:
+    return sqrt(x * x + y * y)
+
+
+def _quad_steps(p0: FPoint, c: FPoint, p1: FPoint) -> Int:
+    """Automatic step count for a quadratic. B''(t) is the constant
+    2 * (P0 - 2*C + P1), so the second difference is that vector's
+    length.
+    """
+    return _auto_steps(
+        _hypot(p0.x - 2.0 * c.x + p1.x, p0.y - 2.0 * c.y + p1.y), 2.0
+    )
+
+
+def _cubic_steps(p0: FPoint, c1: FPoint, c2: FPoint, p1: FPoint) -> Int:
+    """Automatic step count for a cubic. B''(t) interpolates between
+    6*(P0 - 2*C1 + C2) and 6*(C1 - 2*C2 + P1), so the larger of those
+    two second differences bounds it over the whole segment.
+    """
+    var d1 = _hypot(p0.x - 2.0 * c1.x + c2.x, p0.y - 2.0 * c1.y + c2.y)
+    var d2 = _hypot(c1.x - 2.0 * c2.x + p1.x, c1.y - 2.0 * c2.y + p1.y)
+    return _auto_steps(max(d1, d2), 6.0)
+
+
 def _quad_point(p0: FPoint, control: FPoint, p1: FPoint, t: Float64) -> FPoint:
     var mt = 1.0 - t
     var a = mt * mt
@@ -503,11 +571,15 @@ def _rounded_points(sp: _Subpath) -> List[Point]:
     return points^
 
 
-def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
+def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
     """Walk a Path's commands, flattening curves into straight-line
-    steps (`curve_steps` per quad/cubic segment), and split into one
-    List[FPoint] per sub-path (a new one starting at each move_to after
-    the first).
+    steps and splitting into one List[FPoint] per sub-path (a new one
+    starting at each move_to after the first).
+
+    `curve_steps` of 0 or less -- the default -- chooses the count per
+    segment from the segment's own curvature, so it is enough for the
+    curve's size rather than a fixed guess. A positive value forces
+    that many steps for every quad/cubic, which is what it always did.
 
     Sub-pixel throughout -- see `_Subpath` on why nothing is rounded
     here, and `_rounded_points` for what the hard-edged callers use
@@ -538,16 +610,22 @@ def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
             current.append(FPoint(cur_x, cur_y))
         elif cmd.kind == _QUAD_TO:
             var p0 = FPoint(cur_x, cur_y)
-            for step in range(1, curve_steps + 1):
-                var t = Float64(step) / Float64(curve_steps)
+            var steps = curve_steps if curve_steps > 0 else _quad_steps(
+                p0, cmd.p1, cmd.p2
+            )
+            for step in range(1, steps + 1):
+                var t = Float64(step) / Float64(steps)
                 var p = _quad_point(p0, cmd.p1, cmd.p2, t)
                 current.append(p)
             cur_x = cmd.p2.x
             cur_y = cmd.p2.y
         elif cmd.kind == _CUBIC_TO:
             var p0 = FPoint(cur_x, cur_y)
-            for step in range(1, curve_steps + 1):
-                var t = Float64(step) / Float64(curve_steps)
+            var steps = curve_steps if curve_steps > 0 else _cubic_steps(
+                p0, cmd.p1, cmd.p2, cmd.p3
+            )
+            for step in range(1, steps + 1):
+                var t = Float64(step) / Float64(steps)
                 var p = _cubic_point(p0, cmd.p1, cmd.p2, cmd.p3, t)
                 current.append(p)
             cur_x = cmd.p3.x
@@ -615,7 +693,7 @@ def fill_path(
     path: Path,
     color: Color,
     fill_rule: FillRule = FillRule.EVEN_ODD,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Fill a path's interior with the scanline algorithm, combining
     every sub-path's crossings per scanline into a signed winding
@@ -643,6 +721,8 @@ def fill_path(
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -712,7 +792,7 @@ def fill_path_aa(
     color: Color,
     fill_rule: FillRule = FillRule.EVEN_ODD,
     supersample: Int = 4,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
     fill_polygon_aa is fill_polygon's (see that function in
@@ -751,6 +831,8 @@ def fill_path_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N
             samples).
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -882,7 +964,7 @@ def fill_path_gradient(
     path: Path,
     gradient: LinearGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Fill a path's interior as fill_path does, but sourcing each
     pixel's color from `gradient` (gradient.mojo) rather than one flat
@@ -898,6 +980,8 @@ def fill_path_gradient(
         gradient: Fill source, queried per pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -932,7 +1016,7 @@ def fill_path_radial_gradient(
     path: Path,
     gradient: RadialGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Like fill_path_gradient, but for a RadialGradient (gradient.mojo).
 
@@ -942,6 +1026,8 @@ def fill_path_radial_gradient(
         gradient: Fill source, queried per pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -975,7 +1061,7 @@ def stroke_path(
     mut canvas: Canvas,
     path: Path,
     color: Color,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
@@ -990,6 +1076,8 @@ def stroke_path(
         path: Path to stroke.
         color: Stroke color.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
         dashes: On/off segment lengths in pixels, cycled along the
             stroke. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the stroke starts
@@ -1011,7 +1099,7 @@ def stroke_path_aa(
     color: Color,
     width: Float64 = 1.0,
     supersample: Int = 4,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
@@ -1029,6 +1117,8 @@ def stroke_path_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N
             samples).
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
         dashes: On/off segment lengths in pixels, cycled along the
             stroke. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the stroke starts
