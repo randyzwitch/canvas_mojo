@@ -1,5 +1,6 @@
 from canvas.color import Color
 from canvas.buffer import Canvas
+from canvas.compose import draw_canvas
 from canvas.geometry import Point, Transform2D
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule

@@ -38,3 +38,7 @@ docs/src/examples/
 docs/site/content/
 docs/site/public/
 docs/site/*.lock
+
+# Agent worktrees created by Claude Code (see .claude/), never part of
+# the project itself.
+.claude/worktrees/
