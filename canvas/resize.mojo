@@ -9,7 +9,14 @@ with finer edges baked into the file rather than left to whatever
 displays it.
 """
 
+from std.runtime.asyncrt import TaskGroup, parallelism_level
+
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
+
+# Below this many *source* pixels read, the resize runs inline rather
+# than dispatching tasks. Matches the fill sweep's threshold in
+# canvas.aa_crossing.
+comptime _MIN_PARALLEL_PIXELS = 40000
 
 
 def downsample(source: Canvas, factor: Int) raises -> Canvas:
@@ -55,17 +62,6 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     var out_height = source.height // factor
     var n = factor * factor
 
-    # Built via append in the row-major (y outer, x inner, R-G-B) order
-    # Canvas's pixels buffer uses. Every output pixel is computed here
-    # and written once, so set_pixel's in_bounds/in_clip checks -- both
-    # always true on a fresh clip-free canvas -- would add nothing, and
-    # the (width, height, pixels) constructor skips the solid fill a
-    # plain Canvas() would immediately overwrite.
-    var pixels = List[UInt8](capacity=out_width * out_height * BYTES_PER_PIXEL)
-    # Every coordinate below comes from out_width/out_height times
-    # `factor`, which is how the output dimensions were derived, so
-    # each read is on-canvas by construction -- see Canvas.read_pixel.
-    #
     # Alpha is averaged alongside the colour channels. That is the
     # right answer for the case this exists for -- supersample at 2x,
     # downsample to 1x -- where a block straddling a shape's edge on a
@@ -79,7 +75,91 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     # background colour it was initialised with rather than arbitrary
     # data. Worth knowing before reusing this on an arbitrary RGBA
     # image.
-    for oy in range(out_height):
+    #
+    # Sized up front and written by index rather than appended, because
+    # appending is inherently sequential -- it is the order of the
+    # calls that decides where a pixel lands. Indexing lets output rows
+    # be computed independently, which is what the banding below needs.
+    var pixels = List[UInt8](
+        length=out_width * out_height * BYTES_PER_PIXEL, fill=0
+    )
+
+    # Output rows are the most independent loop in this package: each
+    # reads a disjoint block of the source and writes its own slots,
+    # with no shared scratch at all. So a large resize is split into
+    # bands, one task per band.
+    #
+    # Only a large one -- see _MIN_PARALLEL_PIXELS. The threshold is on
+    # *source* pixels read rather than output pixels written, since
+    # that is what the work actually scales with: a factor-8
+    # downsample writes very little but reads 64 pixels for each of
+    # them.
+    var bands = 1
+    if out_width * out_height * n >= _MIN_PARALLEL_PIXELS:
+        bands = parallelism_level()
+        if bands > out_height:
+            bands = out_height
+        if bands < 1:
+            bands = 1
+
+    if bands == 1:
+        _downsample_band(source, pixels, 0, out_height, out_width, factor, n)
+        return Canvas(out_width, out_height, pixels^)
+
+    var per_band = (out_height + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var band_start = b * per_band
+        var band_end = band_start + per_band
+        if band_end > out_height:
+            band_end = out_height
+        if band_start >= band_end:
+            continue
+        tg.create_task(
+            _downsample_band_async(
+                source, pixels, band_start, band_end, out_width, factor, n
+            )
+        )
+    tg.wait()
+    return Canvas(out_width, out_height, pixels^)
+
+
+async def _downsample_band_async(
+    source: Canvas,
+    mut pixels: List[UInt8],
+    first_row: Int,
+    last_row: Int,
+    out_width: Int,
+    factor: Int,
+    n: Int,
+):
+    """`_downsample_band` as a task, so the single-band path stays an
+    ordinary call with no coroutine machinery around it.
+    """
+    _downsample_band(source, pixels, first_row, last_row, out_width, factor, n)
+
+
+def _downsample_band(
+    source: Canvas,
+    mut pixels: List[UInt8],
+    first_row: Int,
+    last_row: Int,
+    out_width: Int,
+    factor: Int,
+    n: Int,
+):
+    """Average source blocks into output rows [first_row, last_row).
+
+    Bands write disjoint output rows and only read the source, so no
+    two ever touch the same byte -- which is the basis on which
+    `pixels` is shared mutably between them.
+
+    Every coordinate here comes from out_width/out_height times
+    `factor`, which is how the output dimensions were derived, so each
+    read is on-canvas by construction -- see Canvas.read_pixel.
+    """
+    for oy in range(first_row, last_row):
+        var out_idx = oy * out_width * BYTES_PER_PIXEL
         for ox in range(out_width):
             var r_sum = 0
             var g_sum = 0
@@ -94,8 +174,8 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
                     g_sum += Int(p.g)
                     b_sum += Int(p.b)
                     a_sum += Int(p.a)
-            pixels.append(UInt8((r_sum + n // 2) // n))
-            pixels.append(UInt8((g_sum + n // 2) // n))
-            pixels.append(UInt8((b_sum + n // 2) // n))
-            pixels.append(UInt8((a_sum + n // 2) // n))
-    return Canvas(out_width, out_height, pixels^)
+            pixels[out_idx] = UInt8((r_sum + n // 2) // n)
+            pixels[out_idx + 1] = UInt8((g_sum + n // 2) // n)
+            pixels[out_idx + 2] = UInt8((b_sum + n // 2) // n)
+            pixels[out_idx + 3] = UInt8((a_sum + n // 2) // n)
+            out_idx += BYTES_PER_PIXEL
