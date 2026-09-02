@@ -27,7 +27,7 @@ from canvas.buffer import Canvas
 from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
 from canvas.fill_rule import FillRule
-from canvas.shapes.dash import _is_dash_on
+from canvas.shapes.dash import _is_dash_on, _dash_next_boundary
 
 comptime _SQRT2 = 1.4142135623730951
 
@@ -419,51 +419,6 @@ def draw_polygon(
     )
 
 
-struct _SegmentTable(Movable):
-    """Every stroke segment's precomputed geometry, as flat arrays.
-
-    These were thirteen parallel locals in `_draw_polyline_core_aa`.
-    Bundling them is what lets the sweep be split into row bands: a
-    band worker needs all of this and none of it changes once built, so
-    it is passed as one immutable argument rather than threaded through
-    a thirteen-parameter signature.
-
-    Grouping also makes the invariant explicit -- every list here is
-    `num_segments` long and indexed by the same segment number.
-    """
-
-    var start_distance: List[Float64]
-    var length: List[Float64]
-    var x0: List[Float64]
-    var y0: List[Float64]
-    var dx: List[Float64]
-    var dy: List[Float64]
-    var len2: List[Float64]
-    var min_x: List[Float64]
-    var max_x: List[Float64]
-    var min_y: List[Float64]
-    var max_y: List[Float64]
-    # Which segment ends stop dead instead of rounding over -- see
-    # LineCap. Only an open stroke's two extremities are ever flagged.
-    var clip_start: List[Bool]
-    var clip_end: List[Bool]
-
-    def __init__(out self, capacity: Int):
-        self.start_distance = List[Float64](capacity=capacity)
-        self.length = List[Float64](capacity=capacity)
-        self.x0 = List[Float64](capacity=capacity)
-        self.y0 = List[Float64](capacity=capacity)
-        self.dx = List[Float64](capacity=capacity)
-        self.dy = List[Float64](capacity=capacity)
-        self.len2 = List[Float64](capacity=capacity)
-        self.min_x = List[Float64](capacity=capacity)
-        self.max_x = List[Float64](capacity=capacity)
-        self.min_y = List[Float64](capacity=capacity)
-        self.max_y = List[Float64](capacity=capacity)
-        self.clip_start = List[Bool](capacity=capacity)
-        self.clip_end = List[Bool](capacity=capacity)
-
-
 def _draw_polyline_core_aa(
     mut canvas: Canvas,
     points: List[FPoint],
@@ -503,7 +458,6 @@ def _draw_polyline_core_aa(
 
     var num_segments = count if closed else count - 1
     var half_width = width / 2.0
-    var hw2 = half_width * half_width
     var n = supersample
     var total_samples = n * n
     var step = 1.0 / Float64(n)
@@ -520,49 +474,6 @@ def _draw_polyline_core_aa(
     # the sample loops is the difference between once per segment and
     # once per (pixel, sample, segment) -- supersample^2 times more
     # often, for a value that cannot change.
-    var segs = _SegmentTable(num_segments)
-    # Only an open stroke's two extremities are ever capped: every
-    # interior joint keeps its round overlap, which is what stops a
-    # joint double-blending (see this function's docstring).
-    var capped = (not closed) and cap != LineCap.ROUND
-    for seg in range(num_segments):
-        segs.clip_start.append(capped and seg == 0)
-        segs.clip_end.append(capped and seg == num_segments - 1)
-
-    var running_distance = 0.0
-    for seg in range(num_segments):
-        var sa = points[seg]
-        var sb = points[(seg + 1) % count]
-        var sdx = sb.x - sa.x
-        var sdy = sb.y - sa.y
-
-        # SQUARE is BUTT with the end pushed out by half a width, so
-        # only one rejection rule is needed below. Done here, on the
-        # geometry, rather than as a second case in the sample loop.
-        if cap == LineCap.SQUARE and (
-            segs.clip_start[seg] or segs.clip_end[seg]
-        ):
-            var seg_len = sqrt(sdx * sdx + sdy * sdy)
-            if seg_len > 0.0:
-                var ux = sdx / seg_len
-                var uy = sdy / seg_len
-                if segs.clip_start[seg]:
-                    sa = FPoint(sa.x - ux * half_width, sa.y - uy * half_width)
-                if segs.clip_end[seg]:
-                    sb = FPoint(sb.x + ux * half_width, sb.y + uy * half_width)
-                sdx = sb.x - sa.x
-                sdy = sb.y - sa.y
-        var slen2 = sdx * sdx + sdy * sdy
-        var slen = sqrt(slen2)
-        segs.start_distance.append(running_distance)
-        segs.length.append(slen)
-        segs.x0.append(sa.x)
-        segs.y0.append(sa.y)
-        segs.dx.append(sdx)
-        segs.dy.append(sdy)
-        segs.len2.append(slen2)
-        running_distance += slen
-
     # Real-valued extent, then widened outward to the pixels that
     # contain it (floor/ceil, not round) before the flat `pad` -- a
     # vertex at x = 10.2 has to have pixel 10 swept for it to pick up
@@ -585,375 +496,24 @@ def _draw_polyline_core_aa(
     var min_y = Int(floor(fmin_y)) - pad
     var max_y = Int(ceil(fmax_y)) + pad
 
-    # Each segment's bounding box, expanded by half_width -- a sample
-    # outside it can't be within half_width of the segment, since its
-    # closest point lies on the segment, inside the box -- plus a flat
-    # 1.0 margin, since a pixel's samples land up to 0.5 from its
-    # center in either axis. Precomputed so a whole pixel can skip a
-    # segment without visiting any of its samples. Without this the
-    # sweep is O(pixels * supersample^2 * segments) even for an
-    # ordinary line chart spread across the canvas, where most
-    # segments are nowhere near most pixels.
-    for seg in range(num_segments):
-        var a = points[seg]
-        var b = points[(seg + 1) % count]
-        var ax = a.x
-        var ay = a.y
-        var bx = b.x
-        var by = b.y
-        segs.min_x.append(min(ax, bx) - half_width - 1.0)
-        segs.max_x.append(max(ax, bx) + half_width + 1.0)
-        segs.min_y.append(min(ay, by) - half_width - 1.0)
-        segs.max_y.append(max(ay, by) + half_width + 1.0)
-
-    # Undashed strokes go through the ordinary path fill: the stroke's
-    # own outline is handed to `_sweep_edges_aa`, which is parallel
-    # across cores. See `_stroke_edges` for why the two formulations
-    # describe the same shape.
-    #
-    # Dashed strokes stay on the sampling core below for now: dashing a
-    # fill means splitting each segment into its on-intervals
-    # geometrically, which is a separate piece of work.
-    if len(dashes) == 0:
-        var edges = _stroke_edges(points, closed, half_width, cap)
-        _sweep_edges_aa(
-            canvas,
-            edges,
-            min_x,
-            min_y,
-            max_x,
-            max_y,
-            color,
-            FillRule.NONZERO,
-            supersample,
-        )
-        return
-
-    # Extracted into `_stroke_band` rather than inlined here, with its
-    # scratch buffers local to the call. That is the shape a banded,
-    # multi-core sweep needs, and the fill sweep in
-    # `canvas.aa_crossing` already runs that way to good effect.
-    #
-    # This one does not, yet. Splitting it across tasks produced a
-    # reliable nondeterministic result -- 19 of 20 repeat renders
-    # differing -- that I could not track down, and a renderer that
-    # returns a different image each run is far worse than a slow one.
-    # See the issue this file's history references for the
-    # reproduction and for what was ruled out. Kept as a single call
-    # until that is understood.
-    var row_count = max_y - min_y + 1
-    if row_count <= 0 or max_x - min_x + 1 <= 0:
-        return
-    _stroke_band(
-        canvas,
-        segs,
-        num_segments,
-        min_x,
-        max_x,
-        min_y,
-        max_y + 1,
-        half_width,
-        hw2,
-        n,
-        step,
-        total_samples,
-        color,
-        dashes,
-        dash_offset,
+    # Every stroke, dashed or not, goes through the ordinary path fill:
+    # the stroke's own outline is handed to `_sweep_edges_aa`, which is
+    # parallel across cores. See `_stroke_edges` for why the two
+    # formulations describe the same shape.
+    var edges = _stroke_edges(
+        points, closed, half_width, cap, dashes, dash_offset
     )
-
-
-def _stroke_band(
-    mut canvas: Canvas,
-    segs: _SegmentTable,
-    num_segments: Int,
-    min_x: Int,
-    max_x: Int,
-    first_row: Int,
-    last_row: Int,
-    half_width: Float64,
-    hw2: Float64,
-    n: Int,
-    step: Float64,
-    total_samples: Int,
-    color: Color,
-    dashes: List[Float64],
-    dash_offset: Float64,
-):
-    """Sweep rows [first_row, last_row) of a stroke onto `canvas`.
-
-    Currently always called once, for the whole row range. It takes a
-    range, and keeps its scratch buffers local rather than shared with
-    the caller, so that splitting the sweep across cores becomes a
-    change to the caller alone -- see the note there on why that is not
-    done yet.
-    """
-    # Per-column candidate buckets, indexed by `px - min_x`, cleared
-    # and reused across this band's rows rather than reallocated.
-    var col_candidates = List[List[Int]](capacity=max_x - min_x + 1)
-    for _ in range(max_x - min_x + 1):
-        col_candidates.append(List[Int]())
-
-    var row_candidates = List[Int](capacity=num_segments)
-    for py in range(first_row, last_row):
-        var fpy = Float64(py)
-
-        # Row-level pre-filter by y alone, before the per-pixel x
-        # check: the y test is identical for every pixel in the row, so
-        # computing it per row rather than per (row, pixel) makes this
-        # part O(rows * segments) instead of O(pixels * segments).
-        row_candidates.clear()
-        for seg in range(num_segments):
-            if fpy >= segs.min_y[seg] and fpy <= segs.max_y[seg]:
-                row_candidates.append(seg)
-
-        if len(row_candidates) == 0:
-            continue  # no segment reaches this row at all
-
-        # Bucket each row candidate into the columns its
-        # half-width-expanded x-range covers, rather than rescanning
-        # the whole row_candidates list per pixel column. The rescan
-        # costs O(row_width * row_candidates) on a dense row -- many
-        # near-vertical segments, an ordinary noisy line series sampled
-        # denser than the canvas is wide. Bucketing costs
-        # O(row_candidates * each segment's column footprint) to fill
-        # plus O(row_width) to sweep, and a segment spanning under a
-        # pixel in x lands in one or two buckets. Measured on a
-        # 3200-segment stroke: ~844ms down to a small fraction of it.
-        var row_min_px = max_x + 1
-        var row_max_px = min_x - 1
-        # A segment's columns *at this row*, not over its whole
-        # length. A steep segment crosses one row in a narrow x window
-        # even though its overall x-range may span the canvas, so
-        # bucketing by the overall range makes a full-width diagonal a
-        # candidate in every column of every row -- the whole bounding
-        # box, which is the cost this filtering exists to avoid.
-        #
-        # The row band is [py - 0.5, py + 0.5] widened by half_width,
-        # since a sample is covered by anything within half_width of
-        # it: if the nearest point on the segment is an endpoint, that
-        # endpoint is itself within half_width in y, so it falls in the
-        # band too. Conservative in both directions, so coverage is
-        # unchanged.
-        var band_lo = Float64(py) - 0.5 - half_width - 1.0
-        var band_hi = Float64(py) + 0.5 + half_width + 1.0
-        for ri in range(len(row_candidates)):
-            var seg = row_candidates[ri]
-            var sx_lo: Float64
-            var sx_hi: Float64
-            var ay = segs.y0[seg]
-            var dy = segs.dy[seg]
-            if dy == 0.0:
-                # Horizontal: the row filter already established that
-                # this row is in range, and the whole segment is.
-                sx_lo = segs.min_x[seg]
-                sx_hi = segs.max_x[seg]
-            else:
-                var ta = (band_lo - ay) / dy
-                var tb = (band_hi - ay) / dy
-                if ta > tb:
-                    var swap = ta
-                    ta = tb
-                    tb = swap
-                if ta < 0.0:
-                    ta = 0.0
-                if tb > 1.0:
-                    tb = 1.0
-                if ta > tb:
-                    continue  # segment does not reach this row's band
-                var ax = segs.x0[seg]
-                var ddx = segs.dx[seg]
-                var xa = ax + ta * ddx
-                var xb = ax + tb * ddx
-                sx_lo = min(xa, xb) - half_width - 1.0
-                sx_hi = max(xa, xb) + half_width + 1.0
-            var lo = Int(ceil(sx_lo))
-            var hi = Int(floor(sx_hi))
-            if lo < min_x:
-                lo = min_x
-            if hi > max_x:
-                hi = max_x
-            if lo > hi:
-                continue  # this segment's x-range is entirely outside the visible columns
-            if lo < row_min_px:
-                row_min_px = lo
-            if hi > row_max_px:
-                row_max_px = hi
-            for px in range(lo, hi + 1):
-                col_candidates[px - min_x].append(seg)
-
-        if row_min_px > row_max_px:
-            continue  # every candidate's x-range clipped away; nothing to sweep
-
-        for px in range(row_min_px, row_max_px + 1):
-            ref candidates = col_candidates[px - min_x]
-            if len(candidates) == 0:
-                continue  # no segment comes anywhere near this pixel
-
-            var covered = 0
-            if len(dashes) == 0:
-                # No dash pattern means every candidate is always
-                # on-dash, so coverage is a pure nearest-segment test
-                # and the whole candidate loop vectorizes: the
-                # projection and distance math is identical arithmetic
-                # on `_AA_LANES` sub-samples at once. Only the final
-                # "is the nearest segment within half-width" count stays
-                # scalar, and that is `_AA_LANES` comparisons per chunk
-                # rather than the per-candidate work.
-                #
-                # Dashed strokes keep the scalar path below: the dash
-                # test needs each sample's own distance along the path
-                # through `_is_dash_on`, which is a loop over the
-                # pattern and does not vectorize usefully.
-                for sy in range(n):
-                    var sample_y = (
-                        Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-                    )
-                    var syv = SIMD[DType.float64, _AA_LANES](sample_y)
-                    var sx0 = 0
-                    while sx0 < n:
-                        var lanes = n - sx0
-                        if lanes > _AA_LANES:
-                            lanes = _AA_LANES
-                        var sxv = SIMD[DType.float64, _AA_LANES](0.0)
-                        for l in range(lanes):
-                            sxv[l] = (
-                                Float64(px)
-                                + (Float64(sx0 + l) + 0.5) * step
-                                - 0.5
-                            )
-                        var minv = SIMD[DType.float64, _AA_LANES](1.0e30)
-                        for ci in range(len(candidates)):
-                            var seg = candidates[ci]
-                            var fx0 = segs.x0[seg]
-                            var fy0 = segs.y0[seg]
-                            var ldx = segs.dx[seg]
-                            var ldy = segs.dy[seg]
-                            # A zero-length segment has inv_len2 == 0,
-                            # so t falls out as 0 and the closest point
-                            # is the segment's own endpoint -- the same
-                            # answer the scalar path's explicit
-                            # zero-length branch gives.
-                            var len2 = segs.len2[seg]
-                            var raw_t = SIMD[DType.float64, _AA_LANES](0.0)
-                            if len2 != 0.0:
-                                raw_t = (
-                                    (sxv - fx0) * ldx + (syv - fy0) * ldy
-                                ) / len2
-                            var tv = raw_t.clamp(0.0, 1.0)
-                            var ddx = sxv - (fx0 + tv * ldx)
-                            var ddy = syv - (fy0 + tv * ldy)
-                            var d2v = ddx * ddx + ddy * ddy
-
-                            # A capped end contributes nothing beyond
-                            # its own endpoint. Testing the *unclamped*
-                            # projection is what distinguishes "past the
-                            # end" from "beside it": clamping first
-                            # turns both into a distance to the
-                            # endpoint, which is precisely the round
-                            # cap. The two guards are scalar per
-                            # segment, so an uncapped stroke -- every
-                            # closed shape, and the default -- runs the
-                            # identical lane arithmetic it always did.
-                            if segs.clip_start[seg] or segs.clip_end[seg]:
-                                # Per lane rather than a vector mask:
-                                # comparing two SIMDs reduces to a
-                                # single Bool in this Mojo, so there is
-                                # no lane mask to select on. At most two
-                                # segments of a stroke are ever capped,
-                                # so this runs for those and never for
-                                # the interior.
-                                for lane in range(_AA_LANES):
-                                    var rt = raw_t[lane]
-                                    if segs.clip_start[seg] and rt < 0.0:
-                                        d2v[lane] = 1.0e30
-                                    elif segs.clip_end[seg] and rt > 1.0:
-                                        d2v[lane] = 1.0e30
-                            minv = min(minv, d2v)
-                        # Lanes past `lanes` hold whatever the zeroed
-                        # vector produced and are simply not read.
-                        for l in range(lanes):
-                            if minv[l] <= hw2:
-                                covered += 1
-                        sx0 += _AA_LANES
-            else:
-                for sy in range(n):
-                    var sample_y = (
-                        Float64(py) + (Float64(sy) + 0.5) * step - 0.5
-                    )
-                    for sx in range(n):
-                        var sample_x = (
-                            Float64(px) + (Float64(sx) + 0.5) * step - 0.5
-                        )
-                        var min_dist2 = -1.0
-                        for ci in range(len(candidates)):
-                            var seg = candidates[ci]
-                            var fx0 = segs.x0[seg]
-                            var fy0 = segs.y0[seg]
-                            var ldx = segs.dx[seg]
-                            var ldy = segs.dy[seg]
-                            var len2 = segs.len2[seg]
-                            var t: Float64
-                            if len2 == 0.0:
-                                t = 0.0
-                            else:
-                                var raw_t = (
-                                    (sample_x - fx0) * ldx
-                                    + (sample_y - fy0) * ldy
-                                ) / len2
-                                # See the vectorized path above on why
-                                # this tests the unclamped projection.
-                                if segs.clip_start[seg] and raw_t < 0.0:
-                                    continue
-                                if segs.clip_end[seg] and raw_t > 1.0:
-                                    continue
-                                t = raw_t
-                                if t < 0.0:
-                                    t = 0.0
-                                elif t > 1.0:
-                                    t = 1.0
-                            var closest_x = fx0 + t * ldx
-                            var closest_y = fy0 + t * ldy
-                            var ddx = sample_x - closest_x
-                            var ddy = sample_y - closest_y
-                            var d2 = ddx * ddx + ddy * ddy
-                            # A segment only becomes a candidate once it's
-                            # both close enough AND on-dash at this exact
-                            # projected point -- with no dash pattern every
-                            # segment is always on-dash, so this reduces to
-                            # a plain nearest-segment-within-hw2 test,
-                            # since a global min <= hw2 can only come from
-                            # a segment that itself has d2 <= hw2.
-                            if d2 <= hw2:
-                                var sample_distance = (
-                                    segs.start_distance[seg]
-                                    + t * segs.length[seg]
-                                )
-                                if _is_dash_on(
-                                    sample_distance, dashes, dash_offset
-                                ):
-                                    if min_dist2 < 0.0 or d2 < min_dist2:
-                                        min_dist2 = d2
-                        if min_dist2 >= 0.0:
-                            covered += 1
-            if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
-                canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
-                )
-
-        # Empty every bucket this row touched, ready for the next row:
-        # the outer List is never reallocated, only the small
-        # List[Int]s inside it get cleared.
-        for px in range(row_min_px, row_max_px + 1):
-            col_candidates[px - min_x].clear()
+    _sweep_edges_aa(
+        canvas,
+        edges,
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        color,
+        FillRule.NONZERO,
+        supersample,
+    )
 
 
 # How deep a notch a joint may leave before it needs a round disk to
@@ -1034,26 +594,32 @@ def _stroke_edges(
     closed: Bool,
     half_width: Float64,
     cap: LineCap,
+    dashes: List[Float64],
+    dash_offset: Float64,
 ) -> _EdgeTable:
     """A stroke expressed as the outline of a filled region.
 
     The min-distance formulation `_draw_polyline_core_aa` uses defines
-    a stroke as every point within `half_width` of some segment. That
-    is exactly the union of one rectangle per segment and one disk per
-    vertex -- so the same shape can be handed to the ordinary path fill
-    instead of being sampled against segments per pixel.
+    a stroke as every point within `half_width` of some *drawn* part of
+    the path. That is exactly the union of one rectangle per drawn
+    stretch and one disk per vertex it turns through -- so the same
+    shape can be handed to the ordinary path fill.
 
     Which is the point: `_sweep_edges_aa` is already parallel across
     cores and already correct, where the stroke sweep's own banding is
-    blocked by a Mojo defect in how tasks receive aggregate arguments.
-    Expressing strokes as fills gets the speedup by deleting the
-    stroke-specific parallel path rather than trying to make it safe.
+    blocked by a Mojo defect in how tasks receive aggregate arguments
+    (see canvas_mojo#97).
 
-    Round joins and caps fall out of the vertex disks, which is what
-    the min-distance form produced too. BUTT and SQUARE differ only at
-    the two open ends: BUTT omits their disks, SQUARE omits them and
-    instead extends the end segments by half a width -- the same trick
-    the sampling core used.
+    Dashing is geometric here rather than per-sample. The old core
+    asked, for every sub-sample, whether the point it projected to was
+    on-dash; this splits each segment at its dash boundaries once and
+    emits only the drawn pieces. The rendered shape is the same because
+    the old test's projection is exactly the parameter this splits on.
+
+    A drawn piece is a stadium: a quad plus a disk at each end. Those
+    end disks are what made the old formulation's dash ends round, and
+    they stay round here regardless of `cap` -- `cap` describes the two
+    ends of the *stroke*, not of every dash.
     """
     var edges = _EdgeTable()
     var count = len(points)
@@ -1061,78 +627,160 @@ def _stroke_edges(
         return edges^
 
     if count == 1:
-        if closed or cap == LineCap.ROUND:
+        if _is_dash_on(0.0, dashes, dash_offset) and (
+            closed or cap == LineCap.ROUND
+        ):
             _add_disk(edges, points[0].x, points[0].y, half_width)
         return edges^
 
     var num_segments = count if closed else count - 1
     var capped = (not closed) and cap != LineCap.ROUND
 
+    # Endpoints per segment, with SQUARE's extension already folded in
+    # so distances below are measured along the geometry actually
+    # drawn -- the same order the sampling core applied it in.
+    var ax = List[Float64](capacity=num_segments)
+    var ay = List[Float64](capacity=num_segments)
+    var bx = List[Float64](capacity=num_segments)
+    var by = List[Float64](capacity=num_segments)
+    var seg_len = List[Float64](capacity=num_segments)
+    var seg_start = List[Float64](capacity=num_segments)
+    var running = 0.0
     for seg in range(num_segments):
         var a = points[seg]
         var b = points[(seg + 1) % count]
         var dx = b.x - a.x
         var dy = b.y - a.y
         var length = sqrt(dx * dx + dy * dy)
-        if length == 0.0:
-            continue  # a vertex disk covers a zero-length segment
-
-        var ux = dx / length
-        var uy = dy / length
-        if cap == LineCap.SQUARE and capped:
+        if length > 0.0 and cap == LineCap.SQUARE and capped:
+            var ux = dx / length
+            var uy = dy / length
             if seg == 0:
                 a = FPoint(a.x - ux * half_width, a.y - uy * half_width)
             if seg == num_segments - 1:
                 b = FPoint(b.x + ux * half_width, b.y + uy * half_width)
-        _add_quad(edges, a.x, a.y, b.x, b.y, -uy * half_width, ux * half_width)
+            dx = b.x - a.x
+            dy = b.y - a.y
+            length = sqrt(dx * dx + dy * dy)
+        ax.append(a.x)
+        ay.append(a.y)
+        bx.append(b.x)
+        by.append(b.y)
+        seg_len.append(length)
+        seg_start.append(running)
+        running += length
 
-    # Vertex disks. An open stroke's two ends get one only under a
-    # round cap; every joint gets one only if it actually needs it.
+    # Walk the path, emitting the drawn stretches.
     #
-    # Two quads meeting at a turn of angle theta leave a wedge on the
-    # outer side, and the disk exists to fill it. The wedge's depth is
-    # half_width * (1 - cos(theta/2)), so a nearly-straight joint needs
-    # no disk at all -- the quads already overlap across it.
+    # A dash piece is a plain rectangle, not a stadium. The sampling
+    # core tested the dash at each sample's *clamped* projection, so a
+    # point lying past a dash's end -- however close it is to the last
+    # drawn point -- projects beyond it and is not drawn. Dash ends are
+    # therefore butt, and the only round ends in a dashed stroke are
+    # where the projection clamps: at the segments' own endpoints.
     #
-    # That is not a micro-optimisation here. A flattened curve is
-    # thousands of nearly-collinear segments, and giving every one of
-    # its joints a 16-point disk buries the sweep in edges it gains
-    # nothing from: `stroke_path_aa` on a 39-curve path measured 9064us
-    # with disks everywhere against 3222us with this test, for
-    # byte-identical output.
-    var first_joint = 1
-    var last_joint = count - 1
-    if closed:
-        first_joint = 0
-        last_joint = count
-    if (not closed) and cap == LineCap.ROUND:
-        # Round caps are disks at the two ends, always.
-        _add_disk(edges, points[0].x, points[0].y, half_width)
-        _add_disk(edges, points[count - 1].x, points[count - 1].y, half_width)
-
-    for i in range(first_joint, last_joint):
-        var prev = points[(i - 1 + count) % count]
-        var here = points[i]
-        var next = points[(i + 1) % count]
-        var inx = here.x - prev.x
-        var iny = here.y - prev.y
-        var outx = next.x - here.x
-        var outy = next.y - here.y
-        var in_len = sqrt(inx * inx + iny * iny)
-        var out_len = sqrt(outx * outx + outy * outy)
-        if in_len == 0.0 or out_len == 0.0:
-            _add_disk(edges, here.x, here.y, half_width)
+    # Getting this wrong is not subtle in the output. Rounding every
+    # dash end extends each piece by half a width at both ends, which
+    # closes the gaps: a [5, 3] pattern at width 2 rendered as an
+    # almost-solid line.
+    for seg in range(num_segments):
+        var length = seg_len[seg]
+        if length == 0.0:
+            # A repeated point. The sampling core still drew it: the
+            # projection is the point itself, so anything within
+            # half_width of it is covered when that distance is drawn.
+            # Skipping it outright loses a disk the reference has.
+            if _is_dash_on(seg_start[seg], dashes, dash_offset):
+                _add_disk(edges, ax[seg], ay[seg], half_width)
             continue
-        var dot = (inx * outx + iny * outy) / (in_len * out_len)
+
+        var ux = (bx[seg] - ax[seg]) / length
+        var uy = (by[seg] - ay[seg]) / length
+        var nx = -uy * half_width
+        var ny = ux * half_width
+        var seg_end_d = seg_start[seg] + length
+
+        var reached_end = False
+        var last_piece_start = seg_start[seg]
+        var d = seg_start[seg]
+        while d < seg_end_d:
+            var on = _is_dash_on(d, dashes, dash_offset)
+            var next_d = _dash_next_boundary(d, dashes, dash_offset)
+            if next_d > seg_end_d:
+                next_d = seg_end_d
+            if on:
+                var t0 = (d - seg_start[seg]) / length
+                var t1 = (next_d - seg_start[seg]) / length
+                _add_quad(
+                    edges,
+                    ax[seg] + (bx[seg] - ax[seg]) * t0,
+                    ay[seg] + (by[seg] - ay[seg]) * t0,
+                    ax[seg] + (bx[seg] - ax[seg]) * t1,
+                    ay[seg] + (by[seg] - ay[seg]) * t1,
+                    nx,
+                    ny,
+                )
+                last_piece_start = d
+                reached_end = next_d == seg_end_d
+            else:
+                reached_end = False
+            d = next_d
+
+        # The segment's start point, for the first segment only: this
+        # is where the path's own projection clamps backwards.
+        if seg == 0 and not closed:
+            if (not capped) and _is_dash_on(seg_start[0], dashes, dash_offset):
+                _add_disk(edges, ax[0], ay[0], half_width)
+
+        # ...and its far endpoint, where the projection clamps forward.
+        if not _is_dash_on(seg_end_d, dashes, dash_offset):
+            continue  # nothing is drawn at this endpoint
+
+        var is_last = seg == num_segments - 1
+        if is_last and not closed:
+            if not capped:
+                _add_disk(edges, bx[seg], by[seg], half_width)
+            continue
+
+        # A joint. Two quads meeting at a turn of angle theta leave a
+        # wedge of depth half_width * (1 - cos(theta/2)), so a
+        # nearly-straight joint that is drawn on both sides is already
+        # covered and needs no disk. That test is not a micro-
+        # optimisation: a flattened curve is thousands of
+        # nearly-collinear segments, and a disk at every one of them
+        # buries the sweep in edges it gains nothing from.
+        var nxt = (seg + 1) % num_segments
+        if not reached_end or seg_len[nxt] == 0.0:
+            _add_disk(edges, bx[seg], by[seg], half_width)
+            continue
+
+        # The wedge argument below assumes both quads reach at least
+        # half_width back from the joint -- otherwise the disk pokes
+        # out past a quad's far end, where nothing covers it. A short
+        # dash piece is exactly that case, so the drawn run on each
+        # side has to be long enough before the disk can be skipped.
+        var before = seg_end_d - last_piece_start
+        var after_end = _dash_next_boundary(seg_end_d, dashes, dash_offset)
+        var next_seg_end = seg_end_d + seg_len[nxt]
+        if after_end > next_seg_end:
+            after_end = next_seg_end
+        var after = after_end - seg_end_d
+        if before < half_width or after < half_width:
+            _add_disk(edges, bx[seg], by[seg], half_width)
+            continue
+
+        var vx = (bx[nxt] - ax[nxt]) / seg_len[nxt]
+        var vy = (by[nxt] - ay[nxt]) / seg_len[nxt]
+        var dot = ux * vx + uy * vy
         if dot > 1.0:
             dot = 1.0
         elif dot < -1.0:
             dot = -1.0
-        # half_width * (1 - cos(theta/2)), with
+        # half_width * (1 - cos(theta/2)), using
         # cos(theta/2) = sqrt((1 + cos theta) / 2).
         var sagitta = half_width * (1.0 - sqrt((1.0 + dot) * 0.5))
         if sagitta > _JOIN_DISK_TOLERANCE:
-            _add_disk(edges, here.x, here.y, half_width)
+            _add_disk(edges, bx[seg], by[seg], half_width)
 
     return edges^
 

@@ -8,6 +8,63 @@ hard-edged vs. `_aa` naming convention every file here follows.
 
 from std.math import floor
 
+# Stands in for "no next boundary" when there is no dash pattern. Far
+# beyond any path length a canvas can hold, so callers that clamp it
+# against a segment's end get the whole segment.
+comptime _NO_BOUNDARY = 1.0e30
+
+
+def _dash_cycle(dashes: List[Float64]) -> List[Float64]:
+    """The pattern actually cycled: `dashes` as given, or doubled when
+    its length is odd.
+
+    Cairo's convention, matched here for anyone porting a pattern from
+    it: [5, 2, 1] means [5, 2, 1, 5, 2, 1], since an odd count cannot
+    otherwise alternate on/off evenly around the repeat. Factored out
+    so `_is_dash_on` and `_dash_next_boundary` cannot disagree about
+    what the repeat is.
+    """
+    var pattern = List[Float64]()
+    for d in dashes:
+        pattern.append(d)
+    if len(dashes) % 2 == 1:
+        for d in dashes:
+            pattern.append(d)
+    return pattern^
+
+
+def _dash_next_boundary(
+    distance: Float64, dashes: List[Float64], offset: Float64
+) -> Float64:
+    """The next distance strictly greater than `distance` at which the
+    dash state flips.
+
+    `_is_dash_on` answers "is this point drawn"; this answers "for how
+    much longer", which is what lets a stroke be split into drawn
+    pieces geometrically instead of tested per sample. Returns a very
+    large value when there is no pattern, so a caller's `min(boundary,
+    segment_end)` naturally yields the whole segment.
+    """
+    if len(dashes) == 0:
+        return _NO_BOUNDARY
+
+    var pattern = _dash_cycle(dashes)
+    var total = 0.0
+    for d in pattern:
+        total += d
+    if total <= 0.0:
+        return _NO_BOUNDARY
+
+    var raw = distance + offset
+    var wrapped = raw - floor(raw / total) * total
+
+    var cursor = 0.0
+    for i in range(len(pattern)):
+        cursor += pattern[i]
+        if wrapped < cursor:
+            return distance + (cursor - wrapped)
+    return distance + (total - wrapped)
+
 
 def _is_dash_on(
     distance: Float64, dashes: List[Float64], offset: Float64
@@ -29,14 +86,7 @@ def _is_dash_on(
     if len(dashes) == 0:
         return True
 
-    var odd = len(dashes) % 2 == 1
-    var pattern = List[Float64]()
-    for d in dashes:
-        pattern.append(d)
-    if odd:
-        for d in dashes:
-            pattern.append(d)
-
+    var pattern = _dash_cycle(dashes)
     var total = 0.0
     for d in pattern:
         total += d
