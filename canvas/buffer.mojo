@@ -252,7 +252,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         path: Path,
         fill_rule: FillRule = FillRule.EVEN_ODD,
         supersample: Int = 4,
-        curve_steps: Int = 16,
+        curve_steps: Int = 0,
     ):
         """Restrict subsequent drawing to `path`'s interior -- the
         arbitrary-shape counterpart of `push_clip`, which can only cut
@@ -286,6 +286,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             supersample: Sub-pixel grid side length used to compute the
                 mask's edge coverage.
             curve_steps: Straight-line segments per quad/cubic Bezier.
+                0 (the default) picks a count from the curvature.
         """
         var mask = _path_coverage_mask(
             path, self.width, self.height, fill_rule, supersample, curve_steps

@@ -342,6 +342,39 @@ def test_golden_clip_and_compose() raises:
     _check("clip_and_compose", base)
 
 
+def test_golden_large_curves() raises:
+    """Curves big enough that the flattening step count matters.
+
+    Every other scene here uses curves spanning tens of pixels, where
+    almost any reasonable step count looks the same. These span most of
+    the canvas, which is where a fixed count visibly facets: at 16
+    steps the cubic below deviates from the true curve by 1.6 pixels,
+    against 0.02 with the count chosen from the curvature.
+
+    Without this scene, reverting to fixed-step flattening would pass
+    every test in the repo.
+    """
+    var c = Canvas(_W, _H, _PAPER)
+
+    var swoop = Path()
+    swoop.move_to(4.0, 108.0)
+    swoop.cubic_curve_to(30.0, 2.0, 130.0, 118.0, 156.0, 12.0)
+    stroke_path_aa(c, swoop, _COOL, width=2.5)
+
+    var blob = Path()
+    blob.move_to(80.0, 8.0)
+    blob.cubic_curve_to(158.0, 20.0, 158.0, 100.0, 80.0, 112.0)
+    blob.cubic_curve_to(2.0, 100.0, 2.0, 20.0, 80.0, 8.0)
+    blob.close()
+    fill_path_aa(c, blob, Color(240, 190, 70, 130))
+
+    var arc_sweep = Path()
+    arc_sweep.move_to(8.0, 60.0)
+    arc_sweep.quad_curve_to(80.0, 118.0, 152.0, 60.0)
+    stroke_path_aa(c, arc_sweep, _WARM, width=1.5)
+    _check("large_curves", c)
+
+
 def test_golden_downsampled_supersample() raises:
     """A 3x supersampled render brought back down -- the resize path,
     and a second, independent route to an anti-aliased edge.

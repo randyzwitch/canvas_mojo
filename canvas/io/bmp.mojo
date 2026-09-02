@@ -1,9 +1,24 @@
-"""Write a Canvas out as an uncompressed 24-bit BMP file.
+"""Read and write uncompressed BMP files.
 
 BMP is natively previewable by most editors (including VS Code's
 built-in image preview) and OS file browsers, while still being
 trivial to encode with nothing but stdlib byte I/O and no
 compression.
+
+`write_bmp` emits 24-bit BGR, bottom-up, rows padded to a 4-byte
+boundary. `read_bmp` accepts 24-bit and 32-bit uncompressed
+(BI_RGB) files in either row order, which covers what an editor or a
+screenshot tool actually produces. Compressed variants (RLE4/RLE8),
+palettized depths (1/4/8-bit) and the BI_BITFIELDS channel-mask forms
+raise a clear error rather than misreading pixels -- the same scope
+line `read_png` draws, and for the same reason.
+
+BMP has no alpha in its 24-bit form, and its 32-bit form has a fourth
+byte that is very often padding rather than a real alpha channel --
+files written by tools that leave it zero would decode as fully
+transparent if it were trusted. `read_bmp` therefore returns opaque
+pixels always; a caller wanting real transparency should be using PNG,
+which `canvas.io.png` reads and writes with a genuine alpha channel.
 """
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -125,3 +140,135 @@ def write_bmp(canvas: Canvas, path: String) raises:
     var f = open(path, "w")
     f.write_bytes(Span(buf))
     f.close()
+
+
+def _read_u16_le(data: List[UInt8], pos: Int) raises -> Int:
+    if pos + 2 > len(data):
+        raise Error("bmp: truncated file (wanted 2 bytes for a u16)")
+    return Int(data[pos]) | (Int(data[pos + 1]) << 8)
+
+
+def _read_u32_le(data: List[UInt8], pos: Int) raises -> Int:
+    if pos + 4 > len(data):
+        raise Error("bmp: truncated file (wanted 4 bytes for a u32)")
+    return (
+        Int(data[pos])
+        | (Int(data[pos + 1]) << 8)
+        | (Int(data[pos + 2]) << 16)
+        | (Int(data[pos + 3]) << 24)
+    )
+
+
+def _read_i32_le(data: List[UInt8], pos: Int) raises -> Int:
+    """A signed 32-bit little-endian field. BMP stores image height
+    this way, and the sign carries real meaning: negative means the
+    rows are stored top-down instead of BMP's usual bottom-up.
+    """
+    var raw = _read_u32_le(data, pos)
+    if raw >= 0x80000000:
+        return raw - 0x100000000
+    return raw
+
+
+def read_bmp(path: String) raises -> Canvas:
+    """Read an uncompressed 24- or 32-bit BMP into a new Canvas.
+
+    The counterpart to `write_bmp`, and the BMP half of what
+    `canvas.io.png` already offered both directions of.
+
+    Handles both row orders. BMP conventionally stores rows
+    bottom-up, which is what `write_bmp` emits, but a negative height
+    field means top-down and several common tools write that -- reading
+    only one order would silently return vertically mirrored images
+    from the other.
+
+    Every returned pixel is opaque; see this module's docstring for why
+    a 32-bit file's fourth byte is not trusted as alpha.
+
+    Args:
+        path: File to read.
+
+    Returns:
+        A Canvas holding the decoded image.
+
+    Raises:
+        Error: The file is missing, truncated, not a BMP, or uses a
+            compression or bit depth outside the supported set.
+    """
+    var f = open(path, "r")
+    var data = f.read_bytes()
+    f.close()
+
+    if len(data) < 54:
+        raise Error(
+            "bmp: file is too short to hold a header (got "
+            + String(len(data))
+            + " bytes, need at least 54)"
+        )
+    if data[0] != 0x42 or data[1] != 0x4D:
+        raise Error("bmp: missing 'BM' signature -- not a BMP file")
+
+    var pixel_offset = _read_u32_le(data, 10)
+    var dib_size = _read_u32_le(data, 14)
+    if dib_size < 40:
+        raise Error(
+            "bmp: unsupported DIB header size "
+            + String(dib_size)
+            + " (only BITMAPINFOHEADER and later, 40+, are supported)"
+        )
+
+    var width = _read_i32_le(data, 18)
+    var raw_height = _read_i32_le(data, 22)
+    var bpp = _read_u16_le(data, 28)
+    var compression = _read_u32_le(data, 30)
+
+    if width <= 0:
+        raise Error("bmp: non-positive width " + String(width))
+    if raw_height == 0:
+        raise Error("bmp: zero height")
+    # Negative height is the top-down flag, not an error.
+    var top_down = raw_height < 0
+    var height = -raw_height if top_down else raw_height
+
+    if compression != 0:
+        raise Error(
+            "bmp: unsupported compression "
+            + String(compression)
+            + " (only BI_RGB, uncompressed, is supported)"
+        )
+    if bpp != 24 and bpp != 32:
+        raise Error(
+            "bmp: unsupported bit depth "
+            + String(bpp)
+            + " (only 24- and 32-bit uncompressed BMPs are supported)"
+        )
+
+    var channels = bpp // 8
+    var row_size = ((width * channels + 3) // 4) * 4
+    var needed = pixel_offset + row_size * height
+    if len(data) < needed:
+        raise Error(
+            "bmp: truncated pixel data (need "
+            + String(needed)
+            + " bytes, file is "
+            + String(len(data))
+            + ")"
+        )
+
+    # Built as a buffer and handed to the (width, height, pixels)
+    # constructor rather than written pixel by pixel: decoding is a
+    # replace, not a draw, so it must not go through the compositing
+    # `write_pixel` -- the same reasoning `read_png` records.
+    var pixels = List[UInt8](capacity=width * height * BYTES_PER_PIXEL)
+    var src = data.unsafe_ptr()
+    for y in range(height):
+        # Bottom-up files store the last image row first.
+        var src_row = y if top_down else (height - 1 - y)
+        var row_start = pixel_offset + src_row * row_size
+        for x in range(width):
+            var i = row_start + x * channels
+            pixels.append(src[unsafe_offset=i + 2])  # R (stored BGR)
+            pixels.append(src[unsafe_offset=i + 1])  # G
+            pixels.append(src[unsafe_offset=i])  # B
+            pixels.append(255)
+    return Canvas(width, height, pixels^)

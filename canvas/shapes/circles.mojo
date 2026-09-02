@@ -5,7 +5,7 @@ canvas.shapes.lines for the hard-edged
 vs. `_aa` naming convention this follows.
 """
 
-from std.math import ceil, floor
+from std.math import ceil, floor, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
@@ -150,6 +150,30 @@ def fill_circle_aa(
     )
 
 
+# Below this radius the interior span is not worth solving for: the
+# sqrt, the endpoint nudging and the bulk-fill call cost more per row
+# than simply testing the handful of pixels the row contains.
+#
+# Measured, not guessed. A scatter plot's markers are the case that
+# suffers -- 2000 disks at r=3.5 went from ~1800us to ~2300us when the
+# span path ran unconditionally, while one r=250 disk went from ~1500us
+# to ~460us. 8 sits comfortably above the marker sizes a chart uses and
+# far below any radius where the interior dominates.
+comptime _MIN_SPAN_RADIUS = 8.0
+
+
+def _pixel_inside(px: Int, cx: Float64, far_dy: Float64, r2: Float64) -> Bool:
+    """Whether the pixel square centred at `px` on a row whose farthest
+    vertical reach is `far_dy` lies entirely within the disk.
+
+    Exactly the test `fill_circle_aa`'s per-pixel loop applied before
+    the span solve replaced it -- kept as a function so the span's
+    endpoint nudging and the fallback path cannot drift apart.
+    """
+    var far_dx = abs(Float64(px) - cx) + 0.5
+    return far_dx * far_dx + far_dy * far_dy <= r2
+
+
 def fill_circle_aa(
     mut canvas: Canvas,
     cx: Float64,
@@ -192,43 +216,125 @@ def fill_circle_aa(
     var lo_y = Int(floor(cy - radius)) - 1
     var hi_y = Int(ceil(cy + radius)) + 2
 
+    var solve_span = radius >= _MIN_SPAN_RADIUS
+
     for py in range(lo_y, hi_y):
-        for px in range(lo_x, hi_x):
-            var dx = abs(Float64(px) - cx)
-            var dy = abs(Float64(py) - cy)
+        var dy = abs(Float64(py) - cy)
+        var near_dy = max(0.0, dy - 0.5)
+        var far_dy = dy + 0.5
 
-            var near_dx = max(0.0, dx - 0.5)
-            var near_dy = max(0.0, dy - 0.5)
-            if near_dx * near_dx + near_dy * near_dy > r2:
-                continue  # whole pixel square is outside the disk
+        # The run of provably-interior pixels on this row, solved rather
+        # than discovered one pixel at a time.
+        #
+        # A pixel is wholly inside when its farthest corner is within
+        # the disk: (|dx| + 0.5)^2 + (|dy| + 0.5)^2 <= r^2. For a fixed
+        # row that rearranges to |dx| <= sqrt(r^2 - far_dy^2) - 0.5, a
+        # closed-form span -- so the interior is written in one bulk
+        # fill and only the ends need testing. At radius 250 that
+        # interior is ~196,000 pixels which were each paying a full
+        # `set_pixel` call to write a colour the row already knew:
+        # ~1500us -> ~510us for that case.
+        var span_lo = 1
+        var span_hi = 0  # empty unless this row reaches the interior
+        if solve_span:
+            var interior_r2 = r2 - far_dy * far_dy
+            if interior_r2 > 0.0:
+                var half = sqrt(interior_r2) - 0.5
+                if half >= 0.0:
+                    span_lo = Int(ceil(cx - half))
+                    span_hi = Int(floor(cx + half))
 
-            var far_dx = dx + 0.5
-            var far_dy = dy + 0.5
-            if far_dx * far_dx + far_dy * far_dy <= r2:
-                # Whole pixel square is inside the disk: the coverage
-                # every sample would agree on.
-                canvas.set_pixel(px, py, color)
-                continue
+                    # sqrt/ceil/floor on a float expression can land a
+                    # step either side of the true boundary, so both
+                    # ends are nudged against the exact test the
+                    # per-pixel path below applies. That is what keeps
+                    # the two routes bit-for-bit identical rather than
+                    # merely close.
+                    while span_lo <= span_hi and not _pixel_inside(
+                        span_lo, cx, far_dy, r2
+                    ):
+                        span_lo += 1
+                    while span_lo > lo_x and _pixel_inside(
+                        span_lo - 1, cx, far_dy, r2
+                    ):
+                        span_lo -= 1
+                    while span_hi >= span_lo and not _pixel_inside(
+                        span_hi, cx, far_dy, r2
+                    ):
+                        span_hi -= 1
+                    while span_hi < hi_x - 1 and _pixel_inside(
+                        span_hi + 1, cx, far_dy, r2
+                    ):
+                        span_hi += 1
 
-            var covered = 0
-            for sy in range(n):
-                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
-                for sx in range(n):
-                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
-                    if fx * fx + fy * fy <= r2:
-                        covered += 1
-            if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
+                    if span_lo < lo_x:
+                        span_lo = lo_x
+                    if span_hi > hi_x - 1:
+                        span_hi = hi_x - 1
+
+        var edge_end = hi_x
+        var edge_resume = hi_x
+        if span_lo <= span_hi:
+            var region = canvas.effective_fill_rect(
+                span_lo, py, span_hi - span_lo + 1, 1
+            )
+            canvas._fill_region(
+                region[0], region[1], region[2], region[3], color
+            )
+            edge_end = span_lo
+            edge_resume = span_hi + 1
+
+        # Everything the run did not cover: the segment before it and
+        # the segment after. Two explicit ranges rather than scanning
+        # the whole row and skipping -- a per-pixel "am I in the span"
+        # test measured ~14% slower on a 2000-marker scatter, and that
+        # is a cost every small disk pays for a branch that can never
+        # be true. With no run (edge_end == edge_resume == hi_x) the
+        # first segment is the whole row and the second is empty.
+        #
+        # The body sits inside the segment loop rather than in a helper
+        # called twice: extracting it measured worse on both cases
+        # (markers ~2060us -> ~2380us, the large disk ~510us ->
+        # ~780us), so the call was not folding away.
+        for seg in range(2):
+            var seg_lo = lo_x if seg == 0 else edge_resume
+            var seg_hi = edge_end if seg == 0 else hi_x
+            for px in range(seg_lo, seg_hi):
+                var dx = abs(Float64(px) - cx)
+                var near_dx = max(0.0, dx - 0.5)
+                if near_dx * near_dx + near_dy * near_dy > r2:
+                    continue  # whole pixel square is outside the disk
+
+                # Wholly inside, so every sample would agree. Reached
+                # for real work only below _MIN_SPAN_RADIUS, where the
+                # span solve is skipped and this is what keeps a small
+                # disk's interior off the sampling grid.
+                var far_dx = dx + 0.5
+                if far_dx * far_dx + far_dy * far_dy <= r2:
+                    canvas.set_pixel(px, py, color)
+                    continue
+
+                var covered = 0
+                for sy in range(n):
+                    var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
+                    for sx in range(n):
+                        var fx = (
+                            Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
+                        )
+                        if fx * fx + fy * fy <= r2:
+                            covered += 1
+                if covered > 0:
+                    var alpha = UInt8(
+                        Int(
+                            Float64(covered)
+                            / Float64(total_samples)
+                            * Float64(color.a)
+                            + 0.5
+                        )
                     )
-                )
-                canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
-                )
+                    canvas.set_pixel(
+                        px, py, Color(color.r, color.g, color.b, alpha)
+                    )
 
 
 def draw_circle_aa(

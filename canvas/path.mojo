@@ -34,7 +34,7 @@ closed (draw_polygon) or open (draw_polyline) depending on whether
 close() was called.
 """
 
-from std.math import ceil, cos, floor, sin
+from std.math import ceil, cos, floor, pi, sin, sqrt
 
 from canvas.buffer import Canvas
 from canvas.color import Color
@@ -55,6 +55,12 @@ from canvas.shapes.lines import (
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_fpoints
+
+# Control-point offset for approximating a quarter ellipse with one
+# cubic Bezier: 4/3 * (sqrt(2) - 1). Maximum radial error is about
+# 0.027% of the radius, which at any size this package draws is far
+# below one supersample step.
+comptime _KAPPA = 0.5522847498307936
 
 comptime _MOVE_TO = 0
 comptime _LINE_TO = 1
@@ -268,6 +274,151 @@ struct Path(Movable):
         self._current_x = cx + radius * cos(end_angle)
         self._current_y = cy + radius * sin(end_angle)
 
+    def rect(
+        mut self, x: Float64, y: Float64, width: Float64, height: Float64
+    ) raises:
+        """Add a closed rectangular sub-path, clockwise from its
+        top-left corner.
+
+        Equivalent to the move_to/line_to/line_to/line_to/close it
+        expands to, which is the point: a rectangle is the single most
+        common shape to want inside a path -- a plot frame, a legend
+        box, a clip region -- and writing five calls for it obscures
+        what the path is.
+
+        A degenerate rectangle (zero or negative width or height) adds
+        nothing, rather than a sub-path that fills as a line or
+        backwards. `fill_rect` is the primitive for an axis-aligned
+        rectangle on its own; this is for one that has to be part of a
+        path, typically to combine with another sub-path or to clip to.
+
+        Worth knowing before reaching for one over the other: this
+        describes the geometric rectangle [x, x+width] x [y, y+height],
+        and `fill_path`'s X-fill between a row's crossings is
+        inclusive, so filling it covers column x+width -- one more than
+        `fill_rect(x, y, width, height)`, which stops at x+width-1.
+        That is `fill_polygon`'s documented convention (see its
+        docstring for the asymmetric corners that reproduce fill_rect
+        exactly), not a discrepancy introduced here.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width in pixels.
+            height: Height in pixels.
+
+        Raises:
+            Error: Never in practice -- the internal line_to calls
+                always follow this method's own move_to.
+        """
+        if width <= 0.0 or height <= 0.0:
+            return
+        self.move_to(x, y)
+        self.line_to(x + width, y)
+        self.line_to(x + width, y + height)
+        self.line_to(x, y + height)
+        self.close()
+
+    def round_rect(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        radius: Float64,
+    ) raises:
+        """Add a closed rectangular sub-path with rounded corners.
+
+        Corners are true circular quarter-arcs through `arc_to`, not
+        Bezier approximations, so they sample at the same
+        radius-proportional density every other arc in this package
+        does.
+
+        `radius` is clamped to half the shorter side. Past that the
+        corners would overlap and the shape would self-intersect, which
+        under EVEN_ODD would punch holes in its own corners -- a
+        surprising result from a value that merely looks too big. A
+        radius at exactly half the shorter side gives a stadium (or a
+        circle, when the rectangle is square), which is the natural
+        limit of the shape rather than a special case.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width in pixels.
+            height: Height in pixels.
+            radius: Corner radius, clamped to half the shorter side.
+
+        Raises:
+            Error: Never in practice -- every internal call follows
+                this method's own move_to.
+        """
+        if width <= 0.0 or height <= 0.0:
+            return
+        var r = radius
+        var half_short = min(width, height) / 2.0
+        if r > half_short:
+            r = half_short
+        if r <= 0.0:
+            self.rect(x, y, width, height)
+            return
+
+        var right = x + width
+        var bottom = y + height
+
+        # Angles are this package's convention throughout: 0 along +x,
+        # increasing clockwise on screen because y grows downward. So a
+        # top-left corner sweeps from pi to 3*pi/2.
+        self.move_to(x + r, y)
+        self.line_to(right - r, y)
+        self.arc_to(right - r, y + r, r, -pi / 2.0, 0.0)
+        self.line_to(right, bottom - r)
+        self.arc_to(right - r, bottom - r, r, 0.0, pi / 2.0)
+        self.line_to(x + r, bottom)
+        self.arc_to(x + r, bottom - r, r, pi / 2.0, pi)
+        self.line_to(x, y + r)
+        self.arc_to(x + r, y + r, r, pi, 3.0 * pi / 2.0)
+        self.close()
+
+    def ellipse(
+        mut self, cx: Float64, cy: Float64, rx: Float64, ry: Float64
+    ) raises:
+        """Add a closed elliptical sub-path.
+
+        Four cubic Beziers, one per quadrant, with control points at
+        the standard kappa = 4/3 * (sqrt(2) - 1) offset. That is an
+        approximation -- maximum radial error about 0.027% of the
+        radius -- where `fill_ellipse_aa` is exact, and the difference
+        is why both exist: this is for an ellipse that has to be *part
+        of a path*, to combine with other sub-paths, to stroke, or to
+        clip to. Reach for `fill_ellipse_aa` for a plain filled one.
+
+        Cubics rather than `arc_to`, which takes a single `radius` and
+        so can only build circular arcs. This is the same limitation
+        `DrawTarget` documents as the reason `fill_ellipse_aa` is in
+        that trait at all.
+
+        Args:
+            cx: Centre x.
+            cy: Centre y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+
+        Raises:
+            Error: Never in practice -- every internal call follows
+                this method's own move_to.
+        """
+        if rx <= 0.0 or ry <= 0.0:
+            return
+        var ox = rx * _KAPPA
+        var oy = ry * _KAPPA
+        self.move_to(cx + rx, cy)
+        self.cubic_curve_to(cx + rx, cy + oy, cx + ox, cy + ry, cx, cy + ry)
+        self.cubic_curve_to(cx - ox, cy + ry, cx - rx, cy + oy, cx - rx, cy)
+        self.cubic_curve_to(cx - rx, cy - oy, cx - ox, cy - ry, cx, cy - ry)
+        self.cubic_curve_to(cx + ox, cy - ry, cx + rx, cy - oy, cx + rx, cy)
+        self.close()
+
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's move_to and
         mark it closed. stroke_path/stroke_path_aa then draw it as a
@@ -286,6 +437,74 @@ struct Path(Movable):
         )
         self._current_x = self._subpath_start_x
         self._current_y = self._subpath_start_y
+
+
+# How far a flattened curve may stray from the true curve, in pixels,
+# when the step count is chosen automatically.
+#
+# 1/50 of a pixel. The coverage sweep samples a 4x4 grid per pixel, so
+# a boundary displaced by this much moves a pixel's alpha by at most
+# about five levels out of 255 -- below what the supersampling itself
+# can resolve, and far below the ~16-level step a single flipped
+# sub-sample already produces.
+comptime _FLATTEN_TOLERANCE = 0.02
+
+# Bounds on the automatic step count. The floor keeps a
+# nearly-straight segment from degenerating to a single chord across a
+# long span; the ceiling stops a pathological control polygon from
+# generating tens of thousands of edges for one segment.
+comptime _MIN_AUTO_STEPS = 3
+comptime _MAX_AUTO_STEPS = 400
+
+
+def _auto_steps(second_diff: Float64, scale: Float64) -> Int:
+    """Segments needed to flatten a Bezier within
+    `_FLATTEN_TOLERANCE`.
+
+    Chords over n equal parameter intervals deviate from a curve by at
+    most (1/(8n^2)) * max|B''(t)|, so requiring that to stay under the
+    tolerance gives n >= sqrt(scale * second_diff / (8 * tolerance)),
+    where `scale` folds in the constant from B'' for the degree in
+    question (2 for a quadratic, 6 for a cubic) and `second_diff` is
+    the largest second difference of the control points.
+
+    That is a bound, not an estimate, so the result is never
+    under-sampled -- which matters because the failure mode of guessing
+    low is a visibly faceted curve.
+    """
+    var bound = scale * second_diff / (8.0 * _FLATTEN_TOLERANCE)
+    if bound <= 0.0:
+        return _MIN_AUTO_STEPS
+    var n = Int(ceil(sqrt(bound)))
+    if n < _MIN_AUTO_STEPS:
+        return _MIN_AUTO_STEPS
+    if n > _MAX_AUTO_STEPS:
+        return _MAX_AUTO_STEPS
+    return n
+
+
+def _hypot(x: Float64, y: Float64) -> Float64:
+    return sqrt(x * x + y * y)
+
+
+def _quad_steps(p0: FPoint, c: FPoint, p1: FPoint) -> Int:
+    """Automatic step count for a quadratic. B''(t) is the constant
+    2 * (P0 - 2*C + P1), so the second difference is that vector's
+    length.
+    """
+    return _auto_steps(
+        _hypot(p0.x - 2.0 * c.x + p1.x, p0.y - 2.0 * c.y + p1.y), 2.0
+    )
+
+
+def _cubic_steps(p0: FPoint, c1: FPoint, c2: FPoint, p1: FPoint) -> Int:
+    """Automatic step count for a cubic. B''(t) interpolates between
+    6*(P0 - 2*C1 + C2) and 6*(C1 - 2*C2 + P1), so the larger of those
+    two second differences bounds it over the whole segment.
+    """
+    var d1 = _hypot(p0.x - 2.0 * c1.x + c2.x, p0.y - 2.0 * c1.y + c2.y)
+    var d2 = _hypot(c1.x - 2.0 * c2.x + p1.x, c1.y - 2.0 * c2.y + p1.y)
+    return _auto_steps(max(d1, d2), 6.0)
 
 
 def _quad_point(p0: FPoint, control: FPoint, p1: FPoint, t: Float64) -> FPoint:
@@ -353,11 +572,15 @@ def _rounded_points(sp: _Subpath) -> List[Point]:
     return points^
 
 
-def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
+def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
     """Walk a Path's commands, flattening curves into straight-line
-    steps (`curve_steps` per quad/cubic segment), and split into one
-    List[FPoint] per sub-path (a new one starting at each move_to after
-    the first).
+    steps and splitting into one List[FPoint] per sub-path (a new one
+    starting at each move_to after the first).
+
+    `curve_steps` of 0 or less -- the default -- chooses the count per
+    segment from the segment's own curvature, so it is enough for the
+    curve's size rather than a fixed guess. A positive value forces
+    that many steps for every quad/cubic, which is what it always did.
 
     Sub-pixel throughout -- see `_Subpath` on why nothing is rounded
     here, and `_rounded_points` for what the hard-edged callers use
@@ -388,16 +611,22 @@ def _flatten(path: Path, curve_steps: Int = 16) -> List[_Subpath]:
             current.append(FPoint(cur_x, cur_y))
         elif cmd.kind == _QUAD_TO:
             var p0 = FPoint(cur_x, cur_y)
-            for step in range(1, curve_steps + 1):
-                var t = Float64(step) / Float64(curve_steps)
+            var steps = curve_steps if curve_steps > 0 else _quad_steps(
+                p0, cmd.p1, cmd.p2
+            )
+            for step in range(1, steps + 1):
+                var t = Float64(step) / Float64(steps)
                 var p = _quad_point(p0, cmd.p1, cmd.p2, t)
                 current.append(p)
             cur_x = cmd.p2.x
             cur_y = cmd.p2.y
         elif cmd.kind == _CUBIC_TO:
             var p0 = FPoint(cur_x, cur_y)
-            for step in range(1, curve_steps + 1):
-                var t = Float64(step) / Float64(curve_steps)
+            var steps = curve_steps if curve_steps > 0 else _cubic_steps(
+                p0, cmd.p1, cmd.p2, cmd.p3
+            )
+            for step in range(1, steps + 1):
+                var t = Float64(step) / Float64(steps)
                 var p = _cubic_point(p0, cmd.p1, cmd.p2, cmd.p3, t)
                 current.append(p)
             cur_x = cmd.p3.x
@@ -465,7 +694,7 @@ def fill_path(
     path: Path,
     color: Color,
     fill_rule: FillRule = FillRule.EVEN_ODD,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Fill a path's interior with the scanline algorithm, combining
     every sub-path's crossings per scanline into a signed winding
@@ -493,6 +722,8 @@ def fill_path(
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -562,7 +793,7 @@ def fill_path_aa(
     color: Color,
     fill_rule: FillRule = FillRule.EVEN_ODD,
     supersample: Int = 4,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Anti-aliased fill_path -- fill_path's counterpart the same way
     fill_polygon_aa is fill_polygon's (see that function in
@@ -601,6 +832,8 @@ def fill_path_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N
             samples).
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -732,7 +965,7 @@ def fill_path_gradient(
     path: Path,
     gradient: LinearGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Fill a path's interior as fill_path does, but sourcing each
     pixel's color from `gradient` (gradient.mojo) rather than one flat
@@ -748,6 +981,8 @@ def fill_path_gradient(
         gradient: Fill source, queried per pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -782,7 +1017,7 @@ def fill_path_radial_gradient(
     path: Path,
     gradient: RadialGradient,
     fill_rule: FillRule = FillRule.EVEN_ODD,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
 ):
     """Like fill_path_gradient, but for a RadialGradient (gradient.mojo).
 
@@ -792,6 +1027,8 @@ def fill_path_radial_gradient(
         gradient: Fill source, queried per pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -825,7 +1062,7 @@ def stroke_path(
     mut canvas: Canvas,
     path: Path,
     color: Color,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
 ):
@@ -840,6 +1077,8 @@ def stroke_path(
         path: Path to stroke.
         color: Stroke color.
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
         dashes: On/off segment lengths in pixels, cycled along the
             stroke. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the stroke starts
@@ -861,7 +1100,7 @@ def stroke_path_aa(
     color: Color,
     width: Float64 = 1.0,
     supersample: Int = 4,
-    curve_steps: Int = 16,
+    curve_steps: Int = 0,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
     cap: LineCap = LineCap.ROUND,
@@ -880,6 +1119,8 @@ def stroke_path_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N
             samples).
         curve_steps: Straight-line segments per quad/cubic Bezier.
+            0 (the default) picks a count per segment from its own
+            curvature; a positive value forces that many.
         dashes: On/off segment lengths in pixels, cycled along the
             stroke. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the stroke starts
