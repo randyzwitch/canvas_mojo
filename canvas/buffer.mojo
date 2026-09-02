@@ -66,10 +66,12 @@ def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
 
 
 struct Canvas(Copyable, DrawTarget, Movable):
-    """A width x height RGB raster buffer, row-major, 3 bytes per pixel.
+    """A width x height RGBA raster buffer, row-major, 4 bytes per pixel.
 
-    Alpha is used for blending on write but is not stored per-pixel; the
-    backing buffer holds the composited RGB result.
+    Alpha is stored per-pixel, which is what lets a canvas have a
+    transparent background and lets `write_png` emit real transparency
+    rather than a flattened composite. See BYTES_PER_PIXEL for why the
+    stored alpha is straight rather than premultiplied.
 
     Conforms to `DrawTarget` through the ten methods below `fill`,
     each a thin delegation to the matching free function in
@@ -451,7 +453,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
         Writes through `pixels.unsafe_ptr()` rather than indexing the
         `List`. Checked indexing costs about 1.7ns per byte against
-        0.26ns unchecked, measured directly, and at three bytes a pixel
+        0.26ns unchecked, measured directly, and at four bytes a pixel
         that bounds check was roughly half the cost of a solid fill.
         It was also redundant with this method's own contract: a caller
         that has not already established the coordinate is in range is
@@ -577,7 +579,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         because whole-image passes -- downsampling, encoding a file --
         derive every coordinate from the canvas's own dimensions, so
         the check re-establishes what the loop already guarantees, and
-        at three bytes a pixel it is most of what such a pass costs.
+        at four bytes a pixel it is most of what such a pass costs.
 
         Args:
             x: Column to read. Must already be known in-bounds.

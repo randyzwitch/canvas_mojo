@@ -100,8 +100,11 @@ struct Color(ImplicitlyCopyable, Movable):
 
     def blend_over_opaque(self, bg_r: UInt8, bg_g: UInt8, bg_b: UInt8) -> Color:
         """`blend_over` specialized to a background already known
-        opaque -- which every pixel already on a `Canvas` is, since a
-        Canvas stores no per-pixel alpha (see buffer.mojo).
+        opaque -- the overwhelmingly common case, since a canvas
+        created with an opaque fill has every pixel at alpha 255 until
+        something translucent is drawn onto it. `Canvas.write_pixel`
+        checks the destination alpha and calls this when it is 255,
+        falling back to `blend_over` when it is not (see buffer.mojo).
 
         Two things drop out of knowing that. The result's alpha is
         always exactly 255: with bg.a == 255 the general formula gives
