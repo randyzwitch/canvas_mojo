@@ -88,7 +88,7 @@ def main() raises:
         canvas,
         60,
         50,
-        "canvas_mojo",
+        "canvas",
         Color(35, 38, 46),
         36.0,
         weight=FontWeight.BOLD,
@@ -103,7 +103,7 @@ def main() raises:
     svg.draw_text(
         60,
         50,
-        "canvas_mojo",
+        "canvas",
         Color(35, 38, 46),
         36.0,
         TextAlign.LEFT,
