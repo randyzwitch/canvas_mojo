@@ -43,6 +43,7 @@ def _titles() -> Dict[String, String]:
     d["transform"] = "Transforms"
     d["clipping"] = "Clipping"
     d["layers"] = "Layers & Compositing"
+    d["clip_path"] = "Clipping to a Path"
     d["png_output"] = "PNG I/O"
     d["transparency"] = "Transparency"
     d["text"] = "Text"
@@ -101,7 +102,7 @@ def _categories() -> List[Category]:
                 "Dash patterns, the Transform2D coordinate pipeline, clip"
                 " regions, and composing separate layers into one image."
             ),
-            ["dashes", "transform", "clipping", "layers"],
+            ["dashes", "transform", "clipping", "clip_path", "layers"],
         )
     )
     cats.append(
