@@ -4,8 +4,8 @@ RadialGradient.color_at, with every expected value hand-computed.
 
 from std.testing import assert_equal, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.gradient import LinearGradient, RadialGradient
+from canvas.color import Color
+from canvas.gradient import LinearGradient, RadialGradient
 
 
 def test_color_at_midpoint_interpolates_linearly() raises:

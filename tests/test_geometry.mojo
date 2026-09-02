@@ -3,7 +3,7 @@
 from std.math import pi
 from std.testing import assert_equal, TestSuite
 
-from canvas_mojo.geometry import Point, Transform2D
+from canvas.geometry import Point, Transform2D
 
 
 def test_transform2d_identity_rounds_fractional_input() raises:

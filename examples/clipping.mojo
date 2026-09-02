@@ -8,19 +8,19 @@ Also demonstrates nesting: a second, oversized clip pushed inside the
 first still can't draw outside the parent's region, because push_clip
 intersects with whatever is already active rather than replacing it --
 the point of a stack over a single settable rect (see
-canvas_mojo/buffer.mojo's push_clip).
+canvas/buffer.mojo's push_clip).
 
 Run with:
     pixi run example
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.rects import draw_rect
-from canvas_mojo.shapes.lines import draw_line
-from canvas_mojo.shapes.circles import fill_circle_aa
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.shapes.rects import draw_rect
+from canvas.shapes.lines import draw_line
+from canvas.shapes.circles import fill_circle_aa
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def main() raises:

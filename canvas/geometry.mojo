@@ -29,7 +29,7 @@ def _round_to_int(value: Float64) -> Int:
     so negative values need the opposite offset from positive ones to
     round correctly (e.g. -2.5 must become -3, not -2).
 
-    Imported by path.mojo and canvas_mojo.shapes.arcs for the same
+    Imported by path.mojo and canvas.shapes.arcs for the same
     rounding need: the leading underscore means "not part of the public
     API," not "private to this file."
     """

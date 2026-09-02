@@ -1,15 +1,15 @@
-"""Tests for canvas_mojo/shapes/polygon_fill.mojo: exact pixel sets for
+"""Tests for canvas/shapes/polygon_fill.mojo: exact pixel sets for
 known inputs, verified against hand-traced runs of the same algorithms.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point
-from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.shapes.rects import fill_rect
-from canvas_mojo.shapes.polygon_fill import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point
+from canvas.fill_rule import FillRule
+from canvas.shapes.rects import fill_rect
+from canvas.shapes.polygon_fill import (
     fill_polygon,
     fill_polygon_aa,
     _point_in_polygon,

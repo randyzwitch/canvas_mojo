@@ -18,7 +18,7 @@ not a video codec. `deflate()` makes the same trade -- a single
 fixed-Huffman block (RFC 1951 3.2.6, BTYPE=01, no dynamic tree to
 build or transmit) over a hash-chain LZ77 match finder with bounded
 search depth (`_MAX_CHAIN`). Real compression, not maximal.
-canvas_mojo.io.png's `write_png` is the caller.
+canvas.io.png's `write_png` is the caller.
 
 Verified against real zlib output: every `inflate()` stage
 round-trips actual `zlib.compress()` output (stored, fixed-Huffman and

@@ -5,9 +5,9 @@ arithmetic given per case below.
 
 from std.testing import assert_equal, assert_raises, TestSuite
 
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
-from canvas_mojo.resize import downsample
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.resize import downsample
 
 comptime BG = Color(0, 0, 0)
 

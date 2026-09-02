@@ -5,12 +5,12 @@ dash-aware cores they share (_draw_line_core, _draw_polyline_core_aa).
 
 `draw_polygon`/`draw_polygon_aa` here draw the *outline* only -- this
 file's line machinery closed into a loop. `fill_polygon`/
-`fill_polygon_aa` in canvas_mojo.shapes.polygon_fill fill the
+`fill_polygon_aa` in canvas.shapes.polygon_fill fill the
 *interior* by an entirely different scanline algorithm. Two different
 operations sharing half a name, kept in separate files so the module
 layout says so.
 
-Naming convention, followed by every file in canvas_mojo.shapes/:
+Naming convention, followed by every file in canvas.shapes/:
 hard-edged and anti-aliased variants stay separate functions
 (draw_circle vs. draw_circle_aa), never one function behind an
 `antialias: Bool`. A shared name invites parameters meaningful in only
@@ -22,10 +22,10 @@ supersample^2)) behind what looks like a toggle.
 
 from std.math import ceil, floor, sqrt
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point
-from canvas_mojo.shapes.dash import _is_dash_on
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point
+from canvas.shapes.dash import _is_dash_on
 
 comptime _SQRT2 = 1.4142135623730951
 

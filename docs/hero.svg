@@ -34,6 +34,6 @@
 <circle cx="360" cy="167" r="5" fill="#2864c8" fill-opacity="0.863"/>
 <path d="M400.000,420.000 L460.000,350.000 Q540.000,300.000 600.000,360.000 L660.000,330.000 L660.000,420.000 Z" fill="#50aa78" fill-opacity="0.471"/>
 <path d="M400.000,420.000 L460.000,350.000 Q540.000,300.000 600.000,360.000 L660.000,330.000 L660.000,420.000 Z" fill="none" stroke="#327850" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="60" y="50" font-size="36.000" font-family="sans-serif" font-weight="bold" fill="#23262e" text-anchor="start">canvas_mojo</text>
+<text x="60" y="50" font-size="36.000" font-family="sans-serif" font-weight="bold" fill="#23262e" text-anchor="start">canvas</text>
 <text x="60" y="82" font-size="18.000" font-family="sans-serif" fill="#787882" text-anchor="start">2D drawing, pure Mojo</text>
 </svg>

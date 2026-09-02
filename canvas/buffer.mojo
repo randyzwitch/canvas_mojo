@@ -1,14 +1,14 @@
 """The pixel raster buffer at the core of the canvas package."""
 
-from canvas_mojo.color import Color
-from canvas_mojo.gradient import LinearGradient
-from canvas_mojo.vector.draw_target import DrawTarget
-from canvas_mojo.path import Path, fill_path_aa, stroke_path_aa
-from canvas_mojo.shapes.lines import draw_line_aa
-from canvas_mojo.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
-from canvas_mojo.shapes.circles import fill_circle_aa
-from canvas_mojo.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
-from canvas_mojo.shapes.rects import fill_rect, fill_rect_gradient
+from canvas.color import Color
+from canvas.gradient import LinearGradient
+from canvas.vector.draw_target import DrawTarget
+from canvas.path import Path, fill_path_aa, stroke_path_aa
+from canvas.shapes.lines import draw_line_aa
+from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
+from canvas.shapes.circles import fill_circle_aa
+from canvas.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
+from canvas.shapes.rects import fill_rect, fill_rect_gradient
 
 
 struct _ClipRect(ImplicitlyCopyable, Movable):
@@ -50,14 +50,14 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
     Conforms to `DrawTarget` through the ten methods below `fill`,
     each a thin delegation to the matching free function in
-    `canvas_mojo.shapes`/`canvas_mojo.path`, so a caller can render
+    `canvas.shapes`/`canvas.path`, so a caller can render
     generically through a `Canvas` as through an `SvgCanvas`. Calling
     those free functions directly works the same; the methods are
     additive.
 
     No `draw_text` method, since `DrawTarget` has none -- raster and
     vector backends draw text through different mechanisms (see that
-    trait). Call `canvas_mojo.text.draw_text(canvas, ...)` directly.
+    trait). Call `canvas.text.draw_text(canvas, ...)` directly.
     """
 
     var width: Int
@@ -91,7 +91,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """Wrap an already-built RGB pixel buffer, skipping the
         solid-fill loop the (width, height, fill) constructor pays for.
         For a caller about to write every pixel itself -- downsample()
-        in canvas_mojo/resize.mojo, which computes and appends every
+        in canvas/resize.mojo, which computes and appends every
         output pixel before handing the canvas back -- filling first
         would double the call's pixel-write cost.
 
@@ -365,7 +365,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
     ):
-        """Same as `canvas_mojo.shapes.rects.fill_rect`, callable as a
+        """Same as `canvas.shapes.rects.fill_rect`, callable as a
         method.
 
         Args:
@@ -385,7 +385,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         height: Int,
         gradient: LinearGradient,
     ):
-        """Same as `canvas_mojo.shapes.rects.fill_rect_gradient`,
+        """Same as `canvas.shapes.rects.fill_rect_gradient`,
         callable as a method.
 
         Args:
@@ -406,7 +406,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         color: Color,
         width: Float64 = 1.0,
     ):
-        """Same as `canvas_mojo.shapes.lines.draw_line_aa`, callable as
+        """Same as `canvas.shapes.lines.draw_line_aa`, callable as
         a method.
 
         Args:
@@ -420,7 +420,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         draw_line_aa(self, x0, y0, x1, y1, color, width=width)
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
-        """Same as `canvas_mojo.shapes.circles.fill_circle_aa`,
+        """Same as `canvas.shapes.circles.fill_circle_aa`,
         callable as a method.
 
         Args:
@@ -434,7 +434,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
-        """Same as `canvas_mojo.shapes.ellipses.fill_ellipse_aa`,
+        """Same as `canvas.shapes.ellipses.fill_ellipse_aa`,
         callable as a method.
 
         Args:
@@ -449,7 +449,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def draw_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
-        """Same as `canvas_mojo.shapes.ellipses.draw_ellipse_aa`,
+        """Same as `canvas.shapes.ellipses.draw_ellipse_aa`,
         callable as a method.
 
         Args:
@@ -470,7 +470,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         end_angle: Float64,
         color: Color,
     ):
-        """Same as `canvas_mojo.shapes.arcs.fill_arc_aa`, callable as a
+        """Same as `canvas.shapes.arcs.fill_arc_aa`, callable as a
         method.
 
         Args:
@@ -493,7 +493,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         end_angle: Float64,
         color: Color,
     ):
-        """Same as `canvas_mojo.shapes.arcs.fill_ring_sector_aa`,
+        """Same as `canvas.shapes.arcs.fill_ring_sector_aa`,
         callable as a method.
 
         Args:
@@ -519,7 +519,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def stroke_path_aa(
         mut self, path: Path, color: Color, width: Float64 = 1.0
     ):
-        """Same as `canvas_mojo.path.stroke_path_aa`, callable as a
+        """Same as `canvas.path.stroke_path_aa`, callable as a
         method.
 
         Args:
@@ -530,7 +530,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         stroke_path_aa(self, path, color, width=width)
 
     def fill_path_aa(mut self, path: Path, color: Color):
-        """Same as `canvas_mojo.path.fill_path_aa`, callable as a
+        """Same as `canvas.path.fill_path_aa`, callable as a
         method.
 
         Args:

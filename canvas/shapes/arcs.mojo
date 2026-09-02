@@ -1,10 +1,10 @@
 """Arc/pie-wedge/ring-sector drawing: outline (draw_arc/draw_arc_aa,
 built by sampling the arc into points and handing them to
-canvas_mojo.shapes.lines' draw_polyline/draw_polyline_aa), solid
+canvas.shapes.lines' draw_polyline/draw_polyline_aa), solid
 wedge/ring fill (fill_arc/fill_ring_sector, built the same way via
-canvas_mojo.shapes.polygon_fill's fill_polygon), and their
+canvas.shapes.polygon_fill's fill_polygon), and their
 supersampled analytic-coverage AA counterparts (fill_arc_aa/
-fill_ring_sector_aa) -- see canvas_mojo.shapes.lines for the
+fill_ring_sector_aa) -- see canvas.shapes.lines for the
 hard-edged vs. `_aa` naming convention this follows.
 
 Also home to the shared angle/bounding-box math (_arc_points,
@@ -14,11 +14,11 @@ function above builds on.
 
 from std.math import atan2, cos, pi, sin
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point, _round_to_int
-from canvas_mojo.shapes.lines import draw_polyline, draw_polyline_aa
-from canvas_mojo.shapes.polygon_fill import fill_polygon
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point, _round_to_int
+from canvas.shapes.lines import draw_polyline, draw_polyline_aa
+from canvas.shapes.polygon_fill import fill_polygon
 
 
 def _extend_bounds(

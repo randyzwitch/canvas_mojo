@@ -1,6 +1,6 @@
 """Color gradients: `LinearGradient` and `RadialGradient`, consumed by
 fill_rect_gradient/fill_path_gradient and their radial counterparts
-(canvas_mojo.shapes.rects, path.mojo). Those four are the only
+(canvas.shapes.rects, path.mojo). Those four are the only
 gradient-aware fills; circle/ellipse/polygon variants aren't built.
 
 Both kinds reduce a point to a projected position `t` -- distance along
@@ -14,7 +14,7 @@ the radius takes that edge's color, clamped. No repeat or reflect.
 
 from std.math import sqrt
 
-from canvas_mojo.color import Color
+from canvas.color import Color
 
 
 struct _GradientStop(ImplicitlyCopyable, Movable):

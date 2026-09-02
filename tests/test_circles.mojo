@@ -1,13 +1,13 @@
-"""Tests for canvas_mojo/shapes/circles.mojo: exact pixel sets for
+"""Tests for canvas/shapes/circles.mojo: exact pixel sets for
 known inputs, verified against hand-traced runs of the same
 algorithms.
 """
 
 from std.testing import assert_equal, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.circles import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.shapes.circles import (
     draw_circle,
     fill_circle,
     fill_circle_aa,

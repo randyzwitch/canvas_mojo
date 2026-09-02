@@ -4,11 +4,11 @@ Run with:
     pixi run example
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.rects import draw_rect
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import write_png
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.shapes.rects import draw_rect
+from canvas.io.bmp import write_bmp
+from canvas.io.png import write_png
 
 
 def main() raises:

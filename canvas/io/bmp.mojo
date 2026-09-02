@@ -6,7 +6,7 @@ trivial to encode with nothing but stdlib byte I/O and no
 compression.
 """
 
-from canvas_mojo.buffer import Canvas
+from canvas.buffer import Canvas
 
 
 def _put_u16(mut buf: List[UInt8], offset: Int, value: UInt16):

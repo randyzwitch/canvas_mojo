@@ -28,9 +28,9 @@ applies the y-flip into this package's y-down raster space, so this
 module doesn't repeat it.
 """
 
-from canvas_mojo.path import Path
-from canvas_mojo.text.font_discovery import resolve_font_file_for_char
-from canvas_mojo.text.ttf import TTFFace, outline_to_path
+from canvas.path import Path
+from canvas.text.font_discovery import resolve_font_file_for_char
+from canvas.text.ttf import TTFFace, outline_to_path
 
 
 struct LineMetrics(ImplicitlyCopyable, Movable):

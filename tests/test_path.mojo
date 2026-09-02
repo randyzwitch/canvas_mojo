@@ -5,14 +5,14 @@ fill_path/stroke_path/stroke_path_aa entry points.
 from std.math import cos, pi, sin, sqrt
 from std.testing import assert_equal, assert_true, assert_raises, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.geometry import Point
-from canvas_mojo.gradient import LinearGradient, RadialGradient
-from canvas_mojo.fill_rule import FillRule
-from canvas_mojo.shapes.arcs import fill_arc
-from canvas_mojo.shapes.polygon_fill import fill_polygon, fill_polygon_aa
-from canvas_mojo.path import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.geometry import Point
+from canvas.gradient import LinearGradient, RadialGradient
+from canvas.fill_rule import FillRule
+from canvas.shapes.arcs import fill_arc
+from canvas.shapes.polygon_fill import fill_polygon, fill_polygon_aa
+from canvas.path import (
     Path,
     FPoint,
     fill_path,
@@ -138,7 +138,7 @@ def test_flatten_arc_to_matches_hand_derived_quarter_circle() raises:
     # quarter circle from (10, 0) to (0, 10), both endpoints exact
     # (r*cos(0)=10, r*sin(0)=0; r*cos(pi/2) ~= 0, r*sin(pi/2) ~= 10,
     # each rounding cleanly). arc_to flattens through
-    # canvas_mojo.shapes.arcs' _arc_points, so the arc's start point,
+    # canvas.shapes.arcs' _arc_points, so the arc's start point,
     # already placed by move_to, must not be duplicated.
     var p = Path()
     p.move_to(10.0, 0.0)

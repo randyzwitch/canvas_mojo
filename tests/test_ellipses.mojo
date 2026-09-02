@@ -1,13 +1,13 @@
-"""Tests for canvas_mojo/shapes/ellipses.mojo: exact pixel sets for
+"""Tests for canvas/shapes/ellipses.mojo: exact pixel sets for
 known inputs, verified against hand-traced runs of the same
 algorithms.
 """
 
 from std.testing import assert_equal, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.ellipses import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.shapes.ellipses import (
     draw_ellipse,
     fill_ellipse,
     fill_ellipse_aa,

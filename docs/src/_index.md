@@ -45,8 +45,8 @@ pixi environment — Mojo's own toolchain finds it there automatically,
 no `-I` flag needed. Then draw something:
 
 ```mojo
-from canvas_mojo import Canvas, Color, fill_circle_aa
-from canvas_mojo.io.bmp import write_bmp
+from canvas import Canvas, Color, fill_circle_aa
+from canvas.io.bmp import write_bmp
 
 def main() raises:
     var c = Canvas(200, 200, Color(255, 255, 255))
@@ -80,9 +80,9 @@ out as a real BMP file.
 Mojo-only, with no FFI and no linked libraries at all. The three jobs
 real system-font text rendering needs are each native Mojo here: font
 discovery (matching a family/style name against the fonts installed on
-the machine — `canvas_mojo/text/font_discovery.mojo`, which reads each
+the machine — `canvas/text/font_discovery.mojo`, which reads each
 font's own `name`/`OS/2` tables rather than linking `libfontconfig`),
-font parsing (glyph outlines and metrics — `canvas_mojo/text/
+font parsing (glyph outlines and metrics — `canvas/text/
 ttf.mojo`), and rasterization (this package's own `fill_path_aa`) --
 no FreeType, no Cairo, no fontconfig, no other third-party
 rendering/font engine anywhere in the pipeline. Text rendering still

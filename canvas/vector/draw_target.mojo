@@ -7,7 +7,7 @@ rendered through it deals in supersampling.
 Narrow by design: the shape primitives a chart-rendering core needs
 (`fill_rect`, `draw_line_aa`, `fill_circle_aa`, `fill_ellipse_aa`,
 `fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa`,
-`fill_path_aa`, `fill_rect_gradient`), not `canvas_mojo.shapes`'s full
+`fill_path_aa`, `fill_rect_gradient`), not `canvas.shapes`'s full
 surface -- no `fill_polygon`, dashes, clipping, radial gradients, or
 path-shaped gradients.
 
@@ -32,10 +32,10 @@ parameter the raster backend could only ignore would be worse than
 none. `fill_rect_gradient` (linear only) is here
 because a continuous color legend needs a real gradient bar rather
 than a discrete color-strip approximation; the rest of
-`canvas_mojo.gradient` has no caller through this interface.
+`canvas.gradient` has no caller through this interface.
 
 Each method's parameters mirror the same-named function in
-`canvas_mojo.shapes`/`canvas_mojo.path`, trimmed to what a generic
+`canvas.shapes`/`canvas.path`, trimmed to what a generic
 caller would pass: no `supersample`, `dashes`, or `fill_rule`. A raster
 implementation picks its own supersample factor; a vector one has no
 equivalent knob.
@@ -49,19 +49,19 @@ chart-rendering core collects text as plain data (position, string,
 color, size, alignment) and lets each backend draw that list its own
 way, outside the generic path.
 
-Excluding text also keeps `canvas_mojo.text`'s imports off every
+Excluding text also keeps `canvas.text`'s imports off every
 `Canvas` user: Mojo resolves a struct's whole method surface eagerly,
 so a `Canvas` method calling `draw_text` would pull that dependency
 chain into any file importing `Canvas` at all.
 
 Conformance is nominal, not structural, per Mojo's trait rule:
-`Canvas` (`canvas_mojo/buffer.mojo`) and `SvgCanvas`
-(`canvas_mojo/vector/svg.mojo`) each declare `DrawTarget` explicitly.
+`Canvas` (`canvas/buffer.mojo`) and `SvgCanvas`
+(`canvas/vector/svg.mojo`) each declare `DrawTarget` explicitly.
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.path import Path
-from canvas_mojo.gradient import LinearGradient
+from canvas.color import Color
+from canvas.path import Path
+from canvas.gradient import LinearGradient
 
 
 trait DrawTarget:

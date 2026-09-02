@@ -2,19 +2,19 @@
 draw_text(). Assertions are against the markup itself, hand-derived
 with the rigor pixel-color assertions get elsewhere, since there's no
 raster buffer to sample. No font machinery involved -- SvgCanvas
-touches canvas_mojo.text only for FontWeight, a small struct that
-reads no font files, never canvas_mojo.text.render.
+touches canvas.text only for FontWeight, a small struct that
+reads no font files, never canvas.text.render.
 """
 
 from std.math import pi
 from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.gradient import LinearGradient
-from canvas_mojo.path import Path
-from canvas_mojo.vector.svg import SvgCanvas
-from canvas_mojo.text.font_discovery import FontWeight
-from canvas_mojo.text.text_align import TextAlign
+from canvas.color import Color
+from canvas.gradient import LinearGradient
+from canvas.path import Path
+from canvas.vector.svg import SvgCanvas
+from canvas.text.font_discovery import FontWeight
+from canvas.text.text_align import TextAlign
 
 
 def test_fill_rect_emits_expected_rect_element() raises:

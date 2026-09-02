@@ -15,11 +15,11 @@ because a chart's rotated y-axis title needs it.
 
 from std.math import cos, pi, sin
 
-from canvas_mojo.color import Color
-from canvas_mojo.gradient import LinearGradient, _GradientStop
-from canvas_mojo.vector.draw_target import DrawTarget
-from canvas_mojo.geometry import _round_to_int
-from canvas_mojo.path import (
+from canvas.color import Color
+from canvas.gradient import LinearGradient, _GradientStop
+from canvas.vector.draw_target import DrawTarget
+from canvas.geometry import _round_to_int
+from canvas.path import (
     Path,
     _ARC_TO,
     _CLOSE,
@@ -28,8 +28,8 @@ from canvas_mojo.path import (
     _MOVE_TO,
     _QUAD_TO,
 )
-from canvas_mojo.text.font_discovery import FontWeight
-from canvas_mojo.text.text_align import TextAlign
+from canvas.text.font_discovery import FontWeight
+from canvas.text.text_align import TextAlign
 
 
 def _hex_byte(value: UInt8) -> String:
@@ -670,7 +670,7 @@ struct SvgCanvas(DrawTarget, Movable):
     ):
         """Not part of `DrawTarget`, which excludes text -- call this
         directly once a caller knows it holds an `SvgCanvas`, the way
-        raster code calls `canvas_mojo.text.draw_text` on a `Canvas`.
+        raster code calls `canvas.text.draw_text` on a `Canvas`.
 
         `family` becomes a literal `font-family` attribute, always
         emitted: without one, a viewer falls back to its own undefined

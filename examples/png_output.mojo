@@ -1,9 +1,9 @@
 """Demo: write_png/read_png -- a second, stdlib-only image format
-alongside BMP (see canvas_mojo/io/png.mojo's module docstring for why
+alongside BMP (see canvas/io/png.mojo's module docstring for why
 PNG earns its place: it previews well in essentially every viewer, not
 just ones with raw BMP support, and its pixel data is really
 compressed rather than stored raw). Both directions go through
-canvas_mojo/io/deflate.mojo -- this package's own native LZ77 +
+canvas/io/deflate.mojo -- this package's own native LZ77 +
 fixed-Huffman encoder on the way out, and its own decoder on the way
 in, which has to handle whatever a real encoder produced.
 
@@ -18,13 +18,13 @@ Run with:
     pixi run example
 """
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.shapes.ellipses import fill_ellipse_aa
-from canvas_mojo.shapes.circles import draw_circle_aa
-from canvas_mojo.shapes.lines import draw_line_aa
-from canvas_mojo.io.bmp import write_bmp
-from canvas_mojo.io.png import read_png, write_png
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.shapes.ellipses import fill_ellipse_aa
+from canvas.shapes.circles import draw_circle_aa
+from canvas.shapes.lines import draw_line_aa
+from canvas.io.bmp import write_bmp
+from canvas.io.png import read_png, write_png
 
 
 def main() raises:

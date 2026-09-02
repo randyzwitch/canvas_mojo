@@ -14,7 +14,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "canvas_mojo/**"
+      - "canvas/**"
       - "examples/**"
       - "docs/src/**"
       - "docs/site/hugo.yaml"

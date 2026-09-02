@@ -38,7 +38,7 @@ defaults in `text/font_discovery.mojo` do not cover yours.
 
 ## The DrawTarget trait, and why the package works
 
-`DrawTarget` (`canvas_mojo/vector/draw_target.mojo`) is the load-bearing
+`DrawTarget` (`canvas/vector/draw_target.mojo`) is the load-bearing
 idea in this package. It declares ten drawing primitives:
 
 ```mojo
@@ -57,11 +57,11 @@ trait DrawTarget:
 
 Two backends implement it, and they work in completely different ways:
 
-- **`Canvas`** (`canvas_mojo/buffer.mojo`) owns an RGB pixel buffer.
-  Its methods delegate to the free functions in `canvas_mojo.shapes`
-  and `canvas_mojo.path`, which rasterize with supersampled coverage
+- **`Canvas`** (`canvas/buffer.mojo`) owns an RGB pixel buffer.
+  Its methods delegate to the free functions in `canvas.shapes`
+  and `canvas.path`, which rasterize with supersampled coverage
   math.
-- **`SvgCanvas`** (`canvas_mojo/vector/svg.mojo`) owns a string. Its
+- **`SvgCanvas`** (`canvas/vector/svg.mojo`) owns a string. Its
   methods append markup. There is no anti-aliasing math anywhere in it,
   because an SVG renderer does that itself, at whatever resolution it
   displays at.
@@ -220,7 +220,7 @@ text, and picking the right one is the point.
 ### Hard-edged and anti-aliased stay separate functions
 
 `draw_circle` and `draw_circle_aa` are two functions, never one behind
-an `antialias: Bool`. Every file in `canvas_mojo/shapes/` follows this.
+an `antialias: Bool`. Every file in `canvas/shapes/` follows this.
 The reasons are concrete: a shared name invites parameters meaningful in
 only one branch (`draw_line_aa`'s `width` has no hard-edged equivalent —
 Bresenham is definitionally 1px), and it hides a complexity-class jump
@@ -288,7 +288,7 @@ public ones are user-facing documentation, not just internal notes.
 ### Formatting
 
 ```sh
-pixi run fmt   # mojo format over canvas_mojo/ tests/ examples/ scripts/
+pixi run fmt   # mojo format over canvas/ tests/ examples/ scripts/
 ```
 
 Default 80 columns, so a bare `mojo format` and an editor formatting on

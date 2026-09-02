@@ -1,10 +1,10 @@
 """Read and write PNG files, stdlib-only, with no zlib/libpng
 dependency -- this package's approach to every binary format it handles
-(BMP here, TrueType/sfnt in `canvas_mojo/text/ttf.mojo`).
+(BMP here, TrueType/sfnt in `canvas/text/ttf.mojo`).
 
 PNG's image data is wrapped in a zlib stream (RFC 1950) around a
 DEFLATE stream (RFC 1951). Both directions go through
-`canvas_mojo/io/deflate.mojo`: `write_png` compresses through its LZ77
+`canvas/io/deflate.mojo`: `write_png` compresses through its LZ77
 + fixed-Huffman `deflate()`, `read_png` decompresses through
 `inflate()`, which has to handle whatever a real encoder produced.
 
@@ -34,9 +34,9 @@ fresh canvas's white background, because `Canvas` has no per-pixel
 alpha channel to keep it in (see buffer.mojo).
 """
 
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
-from canvas_mojo.io.deflate import deflate, inflate
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.io.deflate import deflate, inflate
 
 
 def _append_u16_le(mut buf: List[UInt8], value: UInt16):

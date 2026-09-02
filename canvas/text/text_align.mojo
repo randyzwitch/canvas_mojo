@@ -1,9 +1,9 @@
 """TextAlign -- kept in its own module, separate from render.mojo, so
-it can be referenced (by `canvas_mojo.vector.draw_target`, and
-transitively by `canvas_mojo.buffer`'s `Canvas` -- see that trait for
+it can be referenced (by `canvas.vector.draw_target`, and
+transitively by `canvas.buffer`'s `Canvas` -- see that trait for
 why) without pulling in render.mojo's heavier
 font-touching imports (font_discovery.mojo/ttf.mojo/glyph_outline.mojo/
-bidi.mojo). `from canvas_mojo.text.render import TextAlign` also works
+bidi.mojo). `from canvas.text.render import TextAlign` also works
 -- render.mojo re-exports this same type.
 """
 

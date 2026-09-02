@@ -1,6 +1,6 @@
-"""Tests for canvas_mojo/text/render.mojo.
+"""Tests for canvas/text/render.mojo.
 
-These can't assert exact pixel sets the way canvas_mojo.shapes' tests
+These can't assert exact pixel sets the way canvas.shapes' tests
 do: real system-font rasterization (hinting, AA, glyph shapes) isn't
 something this repo re-derives by hand the way Bresenham or
 midpoint-circle output is. What's tested instead are the properties
@@ -33,9 +33,9 @@ machine-specific fact -- the "Ubuntu" font lacking a snowman glyph
 from std.math import pi
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.color import Color
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.text.render import (
+from canvas.color import Color
+from canvas.buffer import Canvas
+from canvas.text.render import (
     draw_text,
     measure_text,
     measure_text_block,

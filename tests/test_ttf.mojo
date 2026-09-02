@@ -1,4 +1,4 @@
-"""Tests for canvas_mojo/text/ttf.mojo.
+"""Tests for canvas/text/ttf.mojo.
 
 Needs a "Sans"-resolvable system font (the generic sans-serif
 alias, DejaVu Sans on this machine), the same real-machine dependency
@@ -14,11 +14,11 @@ oracle's decode of the same glyph.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas_mojo.buffer import Canvas
-from canvas_mojo.color import Color
-from canvas_mojo.path import fill_path_aa
-from canvas_mojo.text.font_discovery import resolve_font_file
-from canvas_mojo.text.ttf import TTFFace, outline_to_path
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.path import fill_path_aa
+from canvas.text.font_discovery import resolve_font_file
+from canvas.text.ttf import TTFFace, outline_to_path
 
 comptime BG = Color(255, 255, 255)
 comptime FG = Color(0, 0, 0)
