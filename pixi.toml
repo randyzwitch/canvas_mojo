@@ -11,110 +11,56 @@ hugo = ">=0.164.0,<0.165"
 go = ">=1.26.6,<2"
 
 [tasks]
-# Both tasks below run every file in parallel via scripts/run_parallel.sh
-# (see that script's own docstring for the full "why" -- capped at the
-# machine's real CPU count, no new dependency: xargs -P, not GNU
-# parallel). Files write to disjoint output paths (examples/out_<name>.
-# {bmp,png}; only test_bmp.mojo/test_png.mojo touch disk at all, to
-# their own distinctly-named tests/_test_*.{bmp,png}, confirmed by
-# reading every test file's own temp-path constant before relying on
-# this), so concurrent execution is safe, not just fast.
+# Both tasks run every file in parallel (scripts/run_parallel.sh).
+# Safe because files write to disjoint output paths.
 #
-# `test`'s own file order is deliberately NOT alphabetical: the five
-# font-scanning/glyph-heavy files (test_text.mojo alone dwarfs every other
-# file combined) are listed first so they occupy CPU slots from the
-# very start on a CPU-constrained CI runner -- the same "longest job
-# first" scheduling heuristic real parallel build systems use. Matters
-# far less locally (this machine's own core count comfortably exceeds
-# 16), but costs nothing to get right for CI too.
+# `test`'s order is not alphabetical: the font/glyph-heavy files run
+# first so they occupy CPU slots from the start -- longest-job-first,
+# which matters on a CPU-constrained CI runner.
 example = "bash scripts/run_parallel.sh examples/fill_rect_blend.mojo examples/rect_stroke.mojo examples/lines.mojo examples/circles.mojo examples/ellipse.mojo examples/arc.mojo examples/polyline.mojo examples/polygon.mojo examples/path.mojo examples/fill_rule.mojo examples/gradient.mojo examples/dashes.mojo examples/transform.mojo examples/clipping.mojo examples/png_output.mojo examples/text.mojo examples/vector.mojo examples/transparency.mojo examples/layers.mojo examples/clip_path.mojo examples/joins.mojo"
 test = "bash scripts/run_parallel.sh tests/test_text.mojo tests/test_font_discovery.mojo tests/test_font_cache.mojo tests/test_ttf.mojo tests/test_glyph_outline.mojo tests/test_color.mojo tests/test_buffer.mojo tests/test_bmp.mojo tests/test_deflate.mojo tests/test_png.mojo tests/test_geometry.mojo tests/test_gradient.mojo tests/test_dash.mojo tests/test_lines.mojo tests/test_polygon_fill.mojo tests/test_rects.mojo tests/test_circles.mojo tests/test_ellipses.mojo tests/test_arcs.mojo tests/test_path.mojo tests/test_subpixel_api.mojo tests/test_alpha.mojo tests/test_compose.mojo tests/test_clip_path.mojo tests/test_golden.mojo tests/test_line_cap.mojo tests/test_line_join.mojo tests/test_resize.mojo tests/test_svg.mojo tests/test_bidi.mojo"
 
-# Times the drawing primitives and prints a table (us/iter). One
-# file, so one compile: `mojo run` pays a real per-file compile cost,
-# and splitting these across files would spend more time compiling
-# than measuring. Not wired into CI -- a shared runner's timings vary
-# far too much between jobs to gate on, so this is a
-# run-it-before-and-after-your-change tool. See the file's own
-# docstring for what the numbers do and don't mean.
+# Times the drawing primitives (us/iter). One file, so one compile.
+# Not wired into CI: a shared runner's timings vary too much to gate
+# on. Run it before and after a change. See the file's own docstring
+# for what the numbers do and don't mean.
 bench = "mojo run -I . benchmarks/bench_canvas.mojo"
 
-# Formats every .mojo file in the repo at `mojo format`'s own default
-# 80-column width -- deliberately the default rather than a custom
-# `-l`, so a bare `mojo format` (or an editor formatting on save) is
-# always correct here and there's no flag to remember. Run before
-# pushing; .github/workflows/format.yml also runs this on every pull
-# request and commits the result back, so an unformatted branch gets
-# fixed rather than rejected.
+# `mojo format`'s default 80 columns rather than a custom `-l`, so a
+# bare `mojo format` (or format-on-save) is always correct here.
+# format.yml also runs this on every PR and commits the result back.
 fmt = "mojo format canvas/ tests/ examples/ scripts/"
 
-# Regenerates docs/site/content (nothing docs-build itself produces is
-# committed -- not that, not docs/site/public further downstream, not
-# docs/src/examples/, scripts/gen_example_docs.mojo's own output +
-# copied images). Everything deployed by docs/docs-serve below is
-# deployed straight to GitHub Pages by .github/workflows/docs.yml's
-# own Actions-based deploy, regenerated fresh each time. Only
-# docs/src/_index.md (the hand-written landing page), docs/src/
-# api-guide/ (the hand-written API overview), docs/modo.yaml, and
-# docs/site/'s own Hugo project files (hugo.yaml, go.mod/go.sum) are
-# real, committed source -- see docs/modo.yaml's own comments for the
-# Hugo-over-plain-markdown reasoning, and gen_example_docs.mojo's own
-# docstring for how it turns examples/*.mojo into docs/src/examples/
-# pages (a Mojo script, not Python -- this repo's own tooling stays in
-# the language it's showcasing). Assumes `pixi run example` has
-# already been run at least once (copies its output images rather
-# than re-rendering them itself, the same "separate, independently-
-# invoked task" split this file's own example/test tasks already
-# have) -- every example writes a real, DEFLATE-compressed .png via
-# canvas.io.png's own write_png (see that module's and
-# canvas/io/deflate.mojo's own docstrings: this package's own
-# native LZ77 + fixed-Huffman encoder, no external compression tool),
-# so a plain `cp` is enough; nothing here converts or re-encodes
-# anything. vector.mojo's own out_vector.svg gets the same treatment,
-# copied alongside the pngs -- it's docs/src/_index.md's hero image,
-# the one example whose vector output (not just its raster one) is
-# ever referenced from a hand-written page. README.md's own hero is a
-# *separately* committed copy, docs/hero.svg (see that file's own
-# comment): GitHub renders READMEs straight from repository content
-# with no build step, so unlike docs/src/_index.md it can't point at
-# anything this task generates. The trailing `sed` patches
-# modo's own generated canvas/_index.md front matter: modo always emits
-# `weight: 400` for a package's own root section, with no config flag
-# to change it (`modo build --help` has nothing for it, and there's no
-# local modo source to safely override via `--templates`), which
-# sorted it *after* Examples (weight: 200) in Hextra's left sidebar --
-# API reference before Examples reads better, so this pins it to 150
-# post-build instead.
+# Regenerates docs/site/content. Nothing this produces is committed;
+# .gitignore lists what is generated and what is real source.
+#
+# Requires `pixi run example` to have run at least once -- this copies
+# those output images rather than re-rendering them.
+#
+# The trailing `sed` pins modo's generated canvas/_index.md to
+# weight 150. modo always emits 400 for a package root, with no config
+# flag to change it, which sorted API reference after Examples
+# (weight 200) in Hextra's sidebar.
 docs-install = "bash scripts/install-modo.sh"
 docs-build = { cmd = "rm -rf docs/site/content docs/site/public docs/src/examples && mkdir -p docs/src/examples && mojo run -I . scripts/gen_example_docs.mojo && cp examples/out_*.png docs/src/examples/ && cp examples/out_vector.svg docs/src/examples/ && mojo doc -I . -o docs/src/canvas.json canvas && .tools/modo build docs -c modo.yaml && sed -i 's/^weight: 400$/weight: 150/' docs/site/content/canvas/_index.md", depends-on = [
     "docs-install",
 ] }
-# One-shot build into docs/site/public -- what docs-deploy.yml
-# actually deploys.
+# One-shot build into docs/site/public, what docs-deploy.yml deploys.
 docs = { cmd = "hugo -s docs/site", depends-on = ["docs-build"] }
-# Live-reloading local preview at http://localhost:1313/canvas_mojo/
-# -- edits under docs/site/content trigger an automatic rebuild, but
-# docs-build's own steps (mojo doc, gen_example_docs.mojo, modo build)
-# don't re-run on their own; re-run `pixi run docs-serve` after
-# changing canvas/'s own docstrings or examples/ itself.
+# Live preview at http://localhost:1313/canvas_mojo/. Edits under
+# docs/site/content rebuild automatically, but docs-build's steps
+# (mojo doc, gen_example_docs.mojo, modo build) do not -- re-run this
+# task after changing docstrings or examples.
 docs-serve = { cmd = "hugo server -s docs/site", depends-on = ["docs-build"] }
 
 # --- Package declaration -----------------------------------------------
-# `tests/`/`examples/` deliberately live here, as siblings of `canvas/`
-# (the actual importable package), not nested inside it -- confirmed
-# necessary, not a style preference: `mojo precompile`/`mojo package`
-# refuses to compile a package directory containing a `main()` anywhere
-# under it ("'main()' is not supported within packages"), and every
-# test/example file here has its own `main()`. Every doc example for
-# the pixi-build-mojo backend keeps tests/examples as siblings of the
-# package dir for exactly this reason. `-I .` (repo root) still resolves
-# `from canvas.X import Y` in every test/example unchanged, since
-# it never depended on where `tests/`/`examples/` themselves lived.
+# `tests/` and `examples/` are siblings of `canvas/`, not nested in it:
+# `mojo package` refuses a package directory containing a `main()`
+# ("'main()' is not supported within packages"), and every file there
+# has one. `-I .` still resolves `from canvas.X import Y`.
 #
-# `[package]` below keeps the project's own name, "canvas_mojo" --
-# only the importable package itself (the `canvas/` dir, and
-# `[package.build.config.pkg]` below which points at it) is named
-# just "canvas".
+# `[package]` keeps the project name, "canvas_mojo"; only the
+# importable package (the `canvas/` dir) is named just "canvas".
 [package]
 name = "canvas_mojo"
 version = "0.12.0"
