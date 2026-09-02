@@ -123,7 +123,10 @@ def test_flatten_quad_curve_passes_through_hand_derived_midpoint() raises:
     var p = Path()
     p.move_to(0.0, 0.0)
     p.quad_curve_to(10.0, 0.0, 10.0, 10.0)
-    var subpaths = _flatten(p)
+    # 16 steps explicitly: this test is about the Bezier arithmetic at
+    # t=0.5, so it pins the step count rather than letting the
+    # automatic one pick (which would move where t=0.5 lands).
+    var subpaths = _flatten(p, 16)
     assert_equal(len(subpaths), 1)
     ref pts = subpaths[0].points
     assert_equal(len(pts), 17)  # start point + 16 flattened curve steps
@@ -138,7 +141,7 @@ def test_flatten_cubic_curve_passes_through_hand_derived_midpoint() raises:
     var p = Path()
     p.move_to(0.0, 0.0)
     p.cubic_curve_to(0.0, 10.0, 10.0, 10.0, 10.0, 0.0)
-    var subpaths = _flatten(p)
+    var subpaths = _flatten(p, 16)  # pinned, as in the quad test above
     ref pts = subpaths[0].points
     assert_equal(len(pts), 17)
     # t=0.5 cubic weights are (0.125, 0.375, 0.375, 0.125):
@@ -878,6 +881,85 @@ def test_degenerate_ellipse_adds_nothing() raises:
     var p = Path()
     p.ellipse(10.0, 10.0, 0.0, 5.0)
     assert_equal(len(_flatten(p)), 0, "no sub-path from a zero radius")
+
+
+def test_auto_step_count_scales_with_curve_size() raises:
+    # The property adaptive flattening exists for: a bigger curve of
+    # the same shape needs proportionally more segments, where a fixed
+    # count gives the small one too many and the large one too few.
+    var small = Path()
+    small.move_to(0.0, 0.0)
+    small.cubic_curve_to(0.0, 4.0, 4.0, 4.0, 4.0, 0.0)
+    var big = Path()
+    big.move_to(0.0, 0.0)
+    big.cubic_curve_to(0.0, 400.0, 400.0, 400.0, 400.0, 0.0)
+
+    var small_sub = _flatten(small)
+    var big_sub = _flatten(big)
+    var n_small = len(small_sub[0].points)
+    var n_big = len(big_sub[0].points)
+    assert_true(
+        n_small < n_big,
+        "a 100x larger curve must be flattened more finely ("
+        + String(n_small)
+        + " vs "
+        + String(n_big)
+        + " points)",
+    )
+    # The step count follows sqrt of the second difference, so a 100x
+    # scale is about a 10x step count -- checked loosely, since the
+    # exact value depends on the tolerance constant.
+    assert_true(n_big > n_small * 4, "and by roughly the expected factor")
+
+
+def test_auto_flattening_stays_within_tolerance_of_the_true_curve() raises:
+    # Every flattened point must lie on the curve (they are sampled
+    # from it), and consecutive points must be close enough that the
+    # chord between them cannot stray far. Checked by comparing each
+    # chord midpoint against the true curve point at the same
+    # parameter -- which is the deviation the step count is chosen to
+    # bound.
+    var p = Path()
+    p.move_to(10.0, 200.0)
+    p.cubic_curve_to(60.0, 10.0, 240.0, 390.0, 290.0, 200.0)
+    var sub = _flatten(p)
+    ref pts = sub[0].points
+    var steps = len(pts) - 1
+
+    var p0 = FPoint(10.0, 200.0)
+    var c1 = FPoint(60.0, 10.0)
+    var c2 = FPoint(240.0, 390.0)
+    var p1 = FPoint(290.0, 200.0)
+
+    var worst = 0.0
+    for i in range(steps):
+        var t_mid = (Float64(i) + 0.5) / Float64(steps)
+        var exact = _cubic_point(p0, c1, c2, p1, t_mid)
+        var chord_x = (pts[i].x + pts[i + 1].x) / 2.0
+        var chord_y = (pts[i].y + pts[i + 1].y) / 2.0
+        var dx = chord_x - exact.x
+        var dy = chord_y - exact.y
+        var d = sqrt(dx * dx + dy * dy)
+        if d > worst:
+            worst = d
+    assert_true(
+        worst < 0.02,
+        "worst chord deviation "
+        + String(worst)
+        + " must stay within the flattening tolerance",
+    )
+
+
+def test_explicit_curve_steps_still_overrides() raises:
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.cubic_curve_to(0.0, 300.0, 300.0, 300.0, 300.0, 0.0)
+    var forced = _flatten(p, 8)
+    assert_equal(
+        len(forced[0].points),
+        9,
+        "an explicit count wins over the automatic one",
+    )
 
 
 def main() raises:
