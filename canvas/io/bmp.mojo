@@ -6,7 +6,8 @@ trivial to encode with nothing but stdlib byte I/O and no
 compression.
 """
 
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, BYTES_PER_PIXEL
+from canvas.color import Color
 
 
 def _put_u16(mut buf: List[UInt8], offset: Int, value: UInt16):
@@ -80,14 +81,39 @@ def write_bmp(canvas: Canvas, path: String) raises:
     var src = canvas.pixels.unsafe_ptr()
     var pad = row_size - w * 3
     for y in range(h - 1, -1, -1):
-        var row_start = y * w * 3
+        var row_start = y * w * BYTES_PER_PIXEL
         var dst_row = 54 + (h - 1 - y) * row_size
         for x in range(w):
-            var si = row_start + x * 3
+            var si = row_start + x * BYTES_PER_PIXEL
             var di = dst_row + x * 3
-            out[unsafe_offset=di] = src[unsafe_offset=si + 2]  # B
-            out[unsafe_offset=di + 1] = src[unsafe_offset=si + 1]  # G
-            out[unsafe_offset=di + 2] = src[unsafe_offset=si]  # R
+            var a = src[unsafe_offset=si + 3]
+            if a == 255:
+                out[unsafe_offset=di] = src[unsafe_offset=si + 2]  # B
+                out[unsafe_offset=di + 1] = src[unsafe_offset=si + 1]  # G
+                out[unsafe_offset=di + 2] = src[unsafe_offset=si]  # R
+            else:
+                # 24-bit BMP has nowhere to put alpha, so a translucent
+                # pixel is composited onto white before it is written.
+                # Writing the stored colour instead would render a
+                # transparent region as whatever colour happened to sit
+                # underneath the transparency -- black, for a canvas
+                # cleared to Color(0, 0, 0, 0) -- which is not what
+                # anyone means by a transparent background.
+                #
+                # White specifically because it is `Canvas`'s own
+                # default background, so a translucent render flattened
+                # to BMP matches the same render onto an opaque white
+                # canvas. `write_png` needs none of this: it emits a
+                # real alpha channel.
+                var flat = Color(
+                    src[unsafe_offset=si],
+                    src[unsafe_offset=si + 1],
+                    src[unsafe_offset=si + 2],
+                    a,
+                ).blend_over(Color(255, 255, 255))
+                out[unsafe_offset=di] = flat.b
+                out[unsafe_offset=di + 1] = flat.g
+                out[unsafe_offset=di + 2] = flat.r
         # Padding bytes are never written -- `unsafe_uninit_length`
         # leaves them as whatever memory already held, not zero. BMP's
         # own spec allows any value in row padding (readers must skip

@@ -48,7 +48,12 @@ struct Color(ImplicitlyCopyable, Movable):
         self.a = a
 
     def blend_over(self, bg: Color) -> Color:
-        """Alpha-composite self over bg (src-over compositing).
+        """Alpha-composite self over bg (straight-alpha src-over).
+
+        Correct for a translucent background as well as an opaque one:
+        a `Canvas` stores per-pixel alpha, so a caller drawing onto a
+        transparent-background canvas composites onto pixels that are
+        themselves partly transparent.
 
         Args:
             bg: Background color self is composited onto.
@@ -64,12 +69,34 @@ struct Color(ImplicitlyCopyable, Movable):
         var sa = Int(self.a)
         var inv = 255 - sa
 
-        var out_r = _div255(Int(self.r) * sa + Int(bg.r) * inv)
-        var out_g = _div255(Int(self.g) * sa + Int(bg.g) * inv)
-        var out_b = _div255(Int(self.b) * sa + Int(bg.b) * inv)
-        var out_a = sa + _div255(Int(bg.a) * inv)
+        # How much of the background survives: its own alpha, scaled by
+        # what the source lets through. The output alpha is then just
+        # the two contributions added.
+        var bg_eff = _div255(Int(bg.a) * inv)
+        var out_a = sa + bg_eff
+        if out_a == 0:
+            # Both fully transparent: no colour is defined, and
+            # dividing by out_a below would be undefined too.
+            return Color(0, 0, 0, 0)
 
-        return Color(UInt8(out_r), UInt8(out_g), UInt8(out_b), UInt8(out_a))
+        # Straight (non-premultiplied) src-over: each channel is the
+        # alpha-weighted average of source and surviving background,
+        # normalized by the output alpha. Dividing by `out_a` rather
+        # than by 255 is what this had wrong before the canvas could
+        # hold a translucent pixel -- with an opaque background the two
+        # coincide (bg_eff == inv, out_a == 255), so no existing render
+        # changes, which was checked across every (channel, alpha)
+        # combination rather than argued.
+        #
+        # A real division, unlike the opaque path's `_div255`, because
+        # the divisor varies per pixel. `blend_over_opaque` below is
+        # the fast path for the case that is nearly always taken.
+        return Color(
+            UInt8((Int(self.r) * sa + Int(bg.r) * bg_eff) // out_a),
+            UInt8((Int(self.g) * sa + Int(bg.g) * bg_eff) // out_a),
+            UInt8((Int(self.b) * sa + Int(bg.b) * bg_eff) // out_a),
+            UInt8(out_a),
+        )
 
     def blend_over_opaque(self, bg_r: UInt8, bg_g: UInt8, bg_b: UInt8) -> Color:
         """`blend_over` specialized to a background already known
