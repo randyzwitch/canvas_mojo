@@ -5,6 +5,7 @@ from canvas.geometry import Point, Transform2D
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule
 from canvas.shapes.lines import (
+    LineCap,
     draw_line,
     draw_line_aa,
     draw_polyline,

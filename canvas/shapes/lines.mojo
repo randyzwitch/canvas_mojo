@@ -37,6 +37,48 @@ comptime _SQRT2 = 1.4142135623730951
 comptime _AA_LANES = 4
 
 
+struct LineCap(Copyable, ImplicitlyCopyable, Movable):
+    """How an open stroke ends.
+
+    ROUND (the default, and what this package has always drawn) caps
+    with a half-disk of the stroke's own radius, so a stroke extends
+    half its width past each endpoint. BUTT stops exactly at the
+    endpoint. SQUARE stops half a width past it, with a flat end rather
+    than a curved one.
+
+    The distinction matters more than it sounds. An axis rule drawn
+    from x=40 to x=560 with a 4px round cap actually spans 38 to 562,
+    so it overshoots its own tick marks; a bar drawn as a thick line
+    ends in a dome rather than flush with the baseline. Neither is
+    fixable by shortening the line, because the overshoot scales with
+    stroke width.
+
+    Caps apply only to the two ends of an *open* stroke. A closed
+    polygon has no ends, and passing a cap for one changes nothing.
+    """
+
+    var _value: Int
+
+    comptime ROUND = Self(0)
+    comptime BUTT = Self(1)
+    comptime SQUARE = Self(2)
+
+    def __init__(out self, value: Int):
+        """Prefer the ROUND/BUTT/SQUARE comptime constants over
+        constructing one directly.
+
+        Args:
+            value: 0 for ROUND, 1 for BUTT, 2 for SQUARE.
+        """
+        self._value = value
+
+    def __eq__(self, other: Self) -> Bool:
+        return self._value == other._value
+
+    def __ne__(self, other: Self) -> Bool:
+        return self._value != other._value
+
+
 def _draw_line_core(
     mut canvas: Canvas,
     x0: Int,
@@ -127,6 +169,7 @@ def draw_line(
         dashes: On/off segment lengths in pixels, cycled along the
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
+        cap: How the two ends are finished -- see LineCap.
     """
     _ = _draw_line_core(
         canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0
@@ -144,6 +187,7 @@ def draw_line_aa(
     supersample: Int = 4,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    cap: LineCap = LineCap.ROUND,
 ):
     """Anti-aliased line, `width` pixels wide (default 1), with round
     end caps.
@@ -175,6 +219,7 @@ def draw_line_aa(
         dashes: On/off segment lengths in pixels, cycled along the
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
+        cap: How the two ends are finished -- see LineCap.
     """
     draw_line_aa(
         canvas,
@@ -187,6 +232,7 @@ def draw_line_aa(
         supersample,
         dashes,
         dash_offset,
+        cap,
     )
 
 
@@ -201,6 +247,7 @@ def draw_line_aa(
     supersample: Int = 4,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    cap: LineCap = LineCap.ROUND,
 ):
     """`draw_line_aa` at sub-pixel endpoints -- the same line, placed
     to a fraction of a pixel rather than snapped to the pixel grid.
@@ -224,10 +271,19 @@ def draw_line_aa(
         dashes: On/off segment lengths in pixels, cycled along the
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
+        cap: How the two ends are finished -- see LineCap.
     """
     var points: List[FPoint] = [FPoint(x0, y0), FPoint(x1, y1)]
     _draw_polyline_core_aa(
-        canvas, points, color, width, supersample, False, dashes, dash_offset
+        canvas,
+        points,
+        color,
+        width,
+        supersample,
+        False,
+        dashes,
+        dash_offset,
+        cap,
     )
 
 
@@ -370,6 +426,7 @@ def _draw_polyline_core_aa(
     closed: Bool,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    cap: LineCap = LineCap.ROUND,
 ):
     """Shared implementation for draw_polyline_aa/draw_polygon_aa.
 
@@ -423,12 +480,38 @@ def _draw_polyline_core_aa(
     var seg_dx = List[Float64](capacity=num_segments)
     var seg_dy = List[Float64](capacity=num_segments)
     var seg_len2 = List[Float64](capacity=num_segments)
+    # Which segment ends stop dead instead of rounding over. Only an
+    # open stroke's two extremities are ever flagged: every interior
+    # joint keeps its round overlap, which is what stops a joint
+    # double-blending (see this function's docstring).
+    var clip_start = List[Bool](capacity=num_segments)
+    var clip_end = List[Bool](capacity=num_segments)
+    var capped = (not closed) and cap != LineCap.ROUND
+    for seg in range(num_segments):
+        clip_start.append(capped and seg == 0)
+        clip_end.append(capped and seg == num_segments - 1)
+
     var running_distance = 0.0
     for seg in range(num_segments):
         var sa = points[seg]
         var sb = points[(seg + 1) % count]
         var sdx = sb.x - sa.x
         var sdy = sb.y - sa.y
+
+        # SQUARE is BUTT with the end pushed out by half a width, so
+        # only one rejection rule is needed below. Done here, on the
+        # geometry, rather than as a second case in the sample loop.
+        if cap == LineCap.SQUARE and (clip_start[seg] or clip_end[seg]):
+            var seg_len = sqrt(sdx * sdx + sdy * sdy)
+            if seg_len > 0.0:
+                var ux = sdx / seg_len
+                var uy = sdy / seg_len
+                if clip_start[seg]:
+                    sa = FPoint(sa.x - ux * half_width, sa.y - uy * half_width)
+                if clip_end[seg]:
+                    sb = FPoint(sb.x + ux * half_width, sb.y + uy * half_width)
+                sdx = sb.x - sa.x
+                sdy = sb.y - sa.y
         var slen2 = sdx * sdx + sdy * sdy
         var slen = sqrt(slen2)
         seg_start_distance.append(running_distance)
@@ -635,15 +718,41 @@ def _draw_polyline_core_aa(
                             # answer the scalar path's explicit
                             # zero-length branch gives.
                             var len2 = seg_len2[seg]
-                            var tv = SIMD[DType.float64, _AA_LANES](0.0)
+                            var raw_t = SIMD[DType.float64, _AA_LANES](0.0)
                             if len2 != 0.0:
-                                tv = (
+                                raw_t = (
                                     (sxv - fx0) * ldx + (syv - fy0) * ldy
                                 ) / len2
-                            tv = tv.clamp(0.0, 1.0)
+                            var tv = raw_t.clamp(0.0, 1.0)
                             var ddx = sxv - (fx0 + tv * ldx)
                             var ddy = syv - (fy0 + tv * ldy)
-                            minv = min(minv, ddx * ddx + ddy * ddy)
+                            var d2v = ddx * ddx + ddy * ddy
+
+                            # A capped end contributes nothing beyond
+                            # its own endpoint. Testing the *unclamped*
+                            # projection is what distinguishes "past the
+                            # end" from "beside it": clamping first
+                            # turns both into a distance to the
+                            # endpoint, which is precisely the round
+                            # cap. The two guards are scalar per
+                            # segment, so an uncapped stroke -- every
+                            # closed shape, and the default -- runs the
+                            # identical lane arithmetic it always did.
+                            if clip_start[seg] or clip_end[seg]:
+                                # Per lane rather than a vector mask:
+                                # comparing two SIMDs reduces to a
+                                # single Bool in this Mojo, so there is
+                                # no lane mask to select on. At most two
+                                # segments of a stroke are ever capped,
+                                # so this runs for those and never for
+                                # the interior.
+                                for lane in range(_AA_LANES):
+                                    var rt = raw_t[lane]
+                                    if clip_start[seg] and rt < 0.0:
+                                        d2v[lane] = 1.0e30
+                                    elif clip_end[seg] and rt > 1.0:
+                                        d2v[lane] = 1.0e30
+                            minv = min(minv, d2v)
                         # Lanes past `lanes` hold whatever the zeroed
                         # vector produced and are simply not read.
                         for l in range(lanes):
@@ -671,10 +780,17 @@ def _draw_polyline_core_aa(
                             if len2 == 0.0:
                                 t = 0.0
                             else:
-                                t = (
+                                var raw_t = (
                                     (sample_x - fx0) * ldx
                                     + (sample_y - fy0) * ldy
                                 ) / len2
+                                # See the vectorized path above on why
+                                # this tests the unclamped projection.
+                                if clip_start[seg] and raw_t < 0.0:
+                                    continue
+                                if clip_end[seg] and raw_t > 1.0:
+                                    continue
+                                t = raw_t
                                 if t < 0.0:
                                     t = 0.0
                                 elif t > 1.0:
@@ -731,6 +847,7 @@ def draw_polyline_aa(
     supersample: Int = 4,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    cap: LineCap = LineCap.ROUND,
 ):
     """Anti-aliased polyline. See draw_polyline for the hard-edged
     version, and _draw_polyline_core_aa for how joints avoid
@@ -752,7 +869,14 @@ def draw_polyline_aa(
     for i in range(len(points)):
         fpoints.append(FPoint(Float64(points[i].x), Float64(points[i].y)))
     draw_polyline_aa(
-        canvas, fpoints, color, width, supersample, dashes, dash_offset
+        canvas,
+        fpoints,
+        color,
+        width,
+        supersample,
+        dashes,
+        dash_offset,
+        cap,
     )
 
 
@@ -764,6 +888,7 @@ def draw_polyline_aa(
     supersample: Int = 4,
     dashes: List[Float64] = List[Float64](),
     dash_offset: Float64 = 0.0,
+    cap: LineCap = LineCap.ROUND,
 ):
     """`draw_polyline_aa` at sub-pixel vertices -- the same polyline, placed
     to a fraction of a pixel rather than snapped to the pixel grid.
@@ -782,9 +907,18 @@ def draw_polyline_aa(
         dashes: On/off segment lengths in pixels. Empty (default) draws
             a solid line.
         dash_offset: Distance into the dash pattern to start at.
+        cap: How the two open ends are finished -- see LineCap.
     """
     _draw_polyline_core_aa(
-        canvas, points, color, width, supersample, False, dashes, dash_offset
+        canvas,
+        points,
+        color,
+        width,
+        supersample,
+        False,
+        dashes,
+        dash_offset,
+        cap,
     )
 
 
