@@ -13,7 +13,7 @@ from canvas.buffer import Canvas, BYTES_PER_PIXEL
 
 # Below this many *source* pixels read, the resize runs inline rather
 # than dispatching tasks. Matches the fill sweep's threshold in
-# canvas.aa_crossing.
+# canvas.aa_crossing; set by benchmark (#96).
 comptime _MIN_PARALLEL_PIXELS = 40000
 
 

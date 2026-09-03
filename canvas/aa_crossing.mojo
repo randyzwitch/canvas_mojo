@@ -126,8 +126,9 @@ struct _EdgeTable(Movable):
 
 
 # Below this many pixels in a fill's bounding box, the sweep runs
-# inline rather than dispatching tasks. Task setup is not free and the
-# shapes this package fills most often are glyph-sized.
+# inline rather than dispatching tasks: task setup is not free and the
+# shapes this package fills most often are glyph-sized. Set by
+# benchmark (#92) -- re-benchmark before changing it.
 comptime _MIN_PARALLEL_PIXELS = 40000
 
 
@@ -367,10 +368,9 @@ def _sweep_band(
 
     # Buffers for the whole band, not per row and per sub-scanline.
     # A glyph-sized path is small enough that allocating a crossing
-    # list, a suffix list and a coverage row for every sub-scanline
-    # costs more than the sampling does -- measured at roughly 5x the
-    # per-pixel cost of a large shape. `_draw_polyline_core_aa` already
-    # reuses its per-row buffers this way; these match it.
+    # list, a suffix list and a coverage row per sub-scanline costs more
+    # than the sampling does (#73). `_draw_polyline_core_aa` reuses its
+    # per-row buffers the same way.
     var row_covered = List[Int](capacity=row_width)
     for _ in range(row_width):
         row_covered.append(0)

@@ -183,9 +183,8 @@ def fill_ellipse_aa(
 
 
 # Below this horizontal radius the interior span is not worth solving
-# for: the sqrt, the endpoint nudging and the bulk-fill call cost more
-# per row than testing the handful of pixels the row contains. Same
-# value and same reasoning as fill_circle_aa's.
+# for -- same value, same reasoning and same caveat as
+# fill_circle_aa's, set by benchmark (#84).
 comptime _MIN_SPAN_RADIUS = 8.0
 
 

@@ -540,8 +540,7 @@ def _add_polygon(mut edges: _EdgeTable, xs: List[Float64], ys: List[Float64]):
     depends on which way the path turns, and handing NONZERO a polygon
     of the wrong orientation makes it *cancel* against the quads it
     should be filling in -- a hole exactly where the join was meant to
-    be. Cheaper to compute the signed area here than to reason about
-    the turn direction at every call site.
+    be.
     """
     var n = len(xs)
     if n < 3:

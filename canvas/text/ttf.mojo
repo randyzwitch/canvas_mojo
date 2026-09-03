@@ -427,9 +427,9 @@ struct TTFFace(Movable):
     ) raises -> Int:
         var num_groups = _u32(self.data, subtable_offset + 12)
         var groups_off = subtable_offset + 16
-        # Linear scan. Groups are sorted per spec, so a binary search
-        # would be faster, but num_groups is in the tens for every real
-        # font checked.
+        # Linear scan; num_groups is in the tens for every real font
+        # checked. Groups are sorted per spec, so a binary search would
+        # fit if that ever stops holding.
         for i in range(num_groups):
             var group_off = groups_off + i * 12
             var start_char = _u32(self.data, group_off)
