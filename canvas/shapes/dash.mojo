@@ -33,69 +33,87 @@ def _dash_cycle(dashes: List[Float64]) -> List[Float64]:
     return pattern^
 
 
+struct _DashPattern(Movable):
+    """A dash pattern resolved once per stroke: the cycled lengths,
+    their total, and the phase offset. Every stroked primitive builds
+    one of these up front and queries it per pixel or per piece, so the
+    cycled list is allocated once rather than on every query --
+    Bresenham asks once per pixel.
+
+    `solid` covers both "no pattern" and a pattern whose lengths sum to
+    zero; either draws the whole stroke.
+    """
+
+    var lengths: List[Float64]
+    var total: Float64
+    var offset: Float64
+    var solid: Bool
+
+    def __init__(out self, dashes: List[Float64], offset: Float64):
+        self.lengths = _dash_cycle(dashes)
+        self.offset = offset
+        var total = 0.0
+        for d in self.lengths:
+            total += d
+        self.total = total
+        self.solid = len(dashes) == 0 or total <= 0.0
+
+    def _wrapped(self, distance: Float64) -> Float64:
+        # floor-based modulo (not `%`/truncating remainder) so a
+        # negative offset wraps correctly instead of landing outside
+        # [0, total).
+        var raw = distance + self.offset
+        return raw - floor(raw / self.total) * self.total
+
+    def is_on(self, distance: Float64) -> Bool:
+        """Is `distance` (measured along a path from wherever its
+        dash phase starts) inside an "on" (drawn) segment? Index 0 of
+        the pattern is "on", and it repeats indefinitely.
+        """
+        if self.solid:
+            return True
+        var wrapped = self._wrapped(distance)
+        var cursor = 0.0
+        for i in range(len(self.lengths)):
+            cursor += self.lengths[i]
+            if wrapped < cursor:
+                return i % 2 == 0
+        return True  # unreachable given wrapped < total by construction
+
+    def next_boundary(self, distance: Float64) -> Float64:
+        """The next distance strictly greater than `distance` at
+        which the dash state flips.
+
+        `is_on` answers "is this point drawn"; this answers "for how
+        much longer", which is what lets a stroke be split into drawn
+        pieces geometrically instead of tested per sample. Returns a
+        very large value when there is no pattern, so a caller's
+        `min(boundary, segment_end)` naturally yields the whole segment.
+        """
+        if self.solid:
+            return _NO_BOUNDARY
+        var wrapped = self._wrapped(distance)
+        var cursor = 0.0
+        for i in range(len(self.lengths)):
+            cursor += self.lengths[i]
+            if wrapped < cursor:
+                return distance + (cursor - wrapped)
+        return distance + (self.total - wrapped)
+
+
 def _dash_next_boundary(
     distance: Float64, dashes: List[Float64], offset: Float64
 ) -> Float64:
-    """The next distance strictly greater than `distance` at which the
-    dash state flips.
-
-    `_is_dash_on` answers "is this point drawn"; this answers "for how
-    much longer", which is what lets a stroke be split into drawn
-    pieces geometrically instead of tested per sample. Returns a very
-    large value when there is no pattern, so a caller's `min(boundary,
-    segment_end)` naturally yields the whole segment.
-    """
-    if len(dashes) == 0:
-        return _NO_BOUNDARY
-
-    var pattern = _dash_cycle(dashes)
-    var total = 0.0
-    for d in pattern:
-        total += d
-    if total <= 0.0:
-        return _NO_BOUNDARY
-
-    var raw = distance + offset
-    var wrapped = raw - floor(raw / total) * total
-
-    var cursor = 0.0
-    for i in range(len(pattern)):
-        cursor += pattern[i]
-        if wrapped < cursor:
-            return distance + (cursor - wrapped)
-    return distance + (total - wrapped)
+    """`_DashPattern.next_boundary` for a one-off query."""
+    return _DashPattern(dashes, offset).next_boundary(distance)
 
 
 def _is_dash_on(
     distance: Float64, dashes: List[Float64], offset: Float64
 ) -> Bool:
-    """Is `distance` (measured along a path from wherever its dash
-    phase starts) inside an "on" (drawn) segment of `dashes`, an
-    alternating on/off/on/off/... list of lengths (index 0 is "on"),
-    repeating indefinitely and shifted by `offset`?
-
-    An empty `dashes` list -- the default everywhere this is called
-    from -- means "no dash pattern," always on: a draw_line/
-    draw_polyline/etc. call that doesn't pass dashes= draws solid.
+    """`_DashPattern.is_on` for a one-off query. An empty `dashes`
+    list -- the default everywhere this is called from -- means "no
+    dash pattern," always on: a draw_line/draw_polyline/etc. call that
+    doesn't pass dashes= draws solid.
     """
-    if len(dashes) == 0:
-        return True
-
-    var pattern = _dash_cycle(dashes)
-    var total = 0.0
-    for d in pattern:
-        total += d
-    if total <= 0.0:
-        return True
-
-    # floor-based modulo (not `%`/truncating remainder) so a negative
-    # offset wraps correctly instead of landing outside [0, total).
-    var raw = distance + offset
-    var wrapped = raw - floor(raw / total) * total
-
-    var cursor = 0.0
-    for i in range(len(pattern)):
-        cursor += pattern[i]
-        if wrapped < cursor:
-            return i % 2 == 0
-    return True  # unreachable given wrapped < total by construction
+    return _DashPattern(dashes, offset).is_on(distance)

@@ -34,7 +34,7 @@ from canvas.resize import downsample
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa
 from canvas.shapes.ellipses import fill_ellipse_aa
-from canvas.shapes.lines import draw_line_aa, draw_polyline_aa
+from canvas.shapes.lines import draw_line, draw_line_aa, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
@@ -290,6 +290,24 @@ def main() raises:
         draw_polyline_aa(canvas, series, INK, width=1.5)
         sink += Int(canvas.get_pixel(400, 300).r)
     _report(rows, "draw_polyline_aa 3000-segment series", perf_counter_ns() - t0, iters)
+
+    # Dashed strokes query the dash pattern per piece (AA) or per pixel
+    # (Bresenham), so the pattern's own cost shows here and nowhere
+    # else.
+    var dashes: List[Float64] = [6.0, 4.0]
+    iters = 20
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_polyline_aa(canvas, series, INK, width=1.5, dashes=dashes)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(rows, "draw_polyline_aa 3000-segment dashed", perf_counter_ns() - t0, iters)
+
+    iters = 400
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_line(canvas, 30, 30, 770, 570, INK, dashes=dashes)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(rows, "draw_line dashed full diagonal", perf_counter_ns() - t0, iters)
 
     iters = 200
     t0 = perf_counter_ns()
