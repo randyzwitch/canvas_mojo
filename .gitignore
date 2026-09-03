@@ -39,6 +39,18 @@ docs/site/content/
 docs/site/public/
 docs/site/*.lock
 
+# tests/consumer/ is a downstream workspace that builds canvas_mojo as
+# a package and imports it (see its own pixi.toml). Its .pixi/ ignores
+# itself; this is the rest of what running it leaves behind.
+#
+# Its lock is deliberately not committed, unlike the root pixi.lock:
+# the lock records the dependency by source hash
+# (`canvas_mojo[<hash>] @ ../..`), which changes on every edit under
+# canvas/, so a committed one would go stale with each change to the
+# library. Resolving fresh is also what an actual downstream user does.
+tests/consumer/pixi.lock
+tests/consumer/smoke_out.*
+
 # Agent worktrees created by Claude Code (see .claude/), never part of
 # the project itself.
 .claude/worktrees/

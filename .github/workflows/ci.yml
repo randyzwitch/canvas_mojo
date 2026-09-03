@@ -54,3 +54,45 @@ jobs:
 
       - name: Run examples
         run: pixi run example
+
+  # Builds canvas_mojo as a package and imports it from a separate
+  # workspace -- the install path README.md documents, and the one
+  # nothing else covers. `pixi run test` and `pixi run example` both
+  # run under `-I .`, which resolves canvas/ as a source directory:
+  # the [package] section, the pixi-build-mojo backend and the built
+  # artifact's contents are all invisible to them, so a packaging
+  # break reaches users with every existing check green.
+  #
+  # Its own job rather than a step on `test`: it needs no fonts and a
+  # far shorter timeout, and running alongside keeps it off the
+  # critical path.
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # Building the package is quick; installing a second Mojo toolchain
+    # for the consumer workspace is what this spends its time on.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.76.2
+          # No caching here, unlike the test job. pixi will reuse a
+          # previously built package when only the root manifest's
+          # [package] section changed -- a source edit under canvas/
+          # does force a rebuild, but a packaging change may not -- so
+          # a restored cache could let this job pass against an
+          # artifact built from different packaging settings. A fresh
+          # build every run is the whole point of the job.
+          cache: false
+          # The environment under test is tests/consumer's, which the
+          # run step below installs on demand. The root workspace's is
+          # not needed.
+          run-install: false
+
+      - name: Build the package and import it from a separate workspace
+        run: pixi run --manifest-path tests/consumer/pixi.toml smoke

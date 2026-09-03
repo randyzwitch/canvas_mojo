@@ -381,6 +381,47 @@ turn a red test green.
 Text is deliberately not covered by a golden: it depends on which fonts
 are installed and their exact version, which this repo does not control.
 
+### The packaged install
+
+`pixi run test` and `pixi run example` both run under `-I .`, which
+resolves `canvas/` as a source directory. That covers the code and not
+the packaging: the `[package]` section of `pixi.toml`, the
+`pixi-build-mojo` backend, and what actually ends up inside the built
+artifact are all invisible to them. A `[package.build.config.pkg]`
+typo, or a subpackage that never makes it into the build, passes every
+test in `tests/` and then fails for the first person who follows the
+README.
+
+`tests/consumer/` closes that gap. It is a separate pixi workspace that
+depends on this one and imports `canvas` with no `-I` flag, the way a
+downstream project does:
+
+```sh
+pixi run --manifest-path tests/consumer/pixi.toml smoke
+```
+
+`smoke.mojo` imports from the package root and from each subpackage —
+a missing one fails here rather than reaching a user — then draws
+through both backends and round-trips a PNG. It deliberately does not
+resolve a font: a downstream workspace cannot assume any are installed.
+
+Two things to know before relying on it:
+
+- **A cached build can hide a packaging change.** Editing a file under
+  `canvas/` does force a rebuild, but changing the root manifest's
+  `[package]` section may not, and the smoke test will then pass
+  against the previously built artifact. Delete `tests/consumer/.pixi`
+  when you change packaging settings. CI's job disables caching for
+  exactly this reason.
+- **The dependency is a path, not the README's git URL.** A pull
+  request has to be tested as proposed, not as already merged. Both
+  forms go through the same build backend and install the same
+  package.
+
+`tests/consumer/pixi.lock` is not committed, unlike the root one: it
+records the dependency by source hash, so it would go stale on every
+edit under `canvas/`.
+
 ## Submitting a change
 
 1. Branch off `main`.
@@ -389,8 +430,10 @@ are installed and their exact version, which this repo does not control.
 3. If behavior changed visibly, look at the output image. Several bugs
    in this package's history were geometry errors that every test passed
    through.
-4. Open a PR. CI runs the same tests on Linux and macOS, plus a docs
-   build as a status check.
+4. If you touched `pixi.toml`'s `[package]` section or added a
+   subpackage under `canvas/`, run the packaged-install check above.
+5. Open a PR. CI runs the same tests on Linux and macOS, the packaged
+   install on both, plus a docs build as a status check.
 
 For a change with real design reasoning behind it, consider adding a
 wiki Changelog entry — that page is the project's record of *why*, and
