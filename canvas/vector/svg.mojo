@@ -142,9 +142,10 @@ def _path_d(path: Path) -> String:
     """Path.commands -> an SVG `d` attribute string, one-to-one
     (M/L/Q/C/A/Z): Path's six command kinds are already SVG path's
     move/line/quadratic/cubic/elliptical-arc/close, absolute both ways,
-    so nothing is translated. arc_to emits `sweep_flag=1` with no sign
-    flip -- SVG's space is y-down like the raster canvas's, and
-    increasing angle sweeps clockwise in both.
+    so nothing is translated. arc_to's sweep flag follows the sign of
+    its sweep with no flip -- SVG's space is y-down like the raster
+    canvas's, so increasing angle is clockwise (`sweep_flag=1`) in both
+    and a decreasing angle is `sweep_flag=0`.
     """
     var d = String("")
     var is_first = True
@@ -206,7 +207,9 @@ def _path_d(path: Path) -> String:
             var end_angle = cmd.p3.x
             var x1 = cx + radius * cos(end_angle)
             var y1 = cy + radius * sin(end_angle)
-            var large_arc_flag = 1 if (end_angle - cmd.p2.y) > pi else 0
+            var sweep = end_angle - cmd.p2.y
+            var large_arc_flag = 1 if abs(sweep) > pi else 0
+            var sweep_flag = 1 if sweep >= 0.0 else 0
             d += (
                 "A"
                 + _format_svg_float(radius)
@@ -214,7 +217,9 @@ def _path_d(path: Path) -> String:
                 + _format_svg_float(radius)
                 + " 0 "
                 + String(large_arc_flag)
-                + ",1 "
+                + ","
+                + String(sweep_flag)
+                + " "
                 + _format_svg_float(x1)
                 + ","
                 + _format_svg_float(y1)
