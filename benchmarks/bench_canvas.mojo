@@ -318,6 +318,35 @@ def main() raises:
         sink += Int(canvas.get_pixel(45, 95).r)
     _report(rows, "draw_text 3 lines @13px (cached)", perf_counter_ns() - t0, iters)
 
+    # The same paragraph through the overload that takes no cache --
+    # the shortest call to write, and the one a reader reaches for
+    # first. It builds a FontCache internally, so every call rescans
+    # every font file installed on the machine.
+    #
+    # Timed separately from that scan below, because the two answer
+    # different questions: this one is what a caller pays per label,
+    # and the constructor is the one-time cost the cached path pays
+    # instead. Neither is a rasterization measurement.
+    iters = 5
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_text(canvas, 40.0, 100.0, paragraph, INK, size=13.0)
+        sink += Int(canvas.get_pixel(45, 95).r)
+    _report(
+        rows, "draw_text 3 lines @13px (uncached)", perf_counter_ns() - t0, iters
+    )
+
+    # What the cached path pays once and the uncached path pays per
+    # call. Scales with the number of font files installed, so it is a
+    # property of the machine as much as of this code -- compare it
+    # against the uncached row above rather than reading it alone.
+    iters = 5
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var scan = FontCache()
+        _ = scan^
+    _report(rows, "FontCache() font scan", perf_counter_ns() - t0, iters)
+
     # --- image i/o -----------------------------------------------------
     var scene = Canvas(W, H, WHITE)
     fill_rect(scene, 0, 0, W, H // 2, INK)
