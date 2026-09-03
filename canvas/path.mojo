@@ -481,6 +481,43 @@ struct Path(Movable):
                 out.close()
         return out^
 
+    def bounds(
+        self, curve_steps: Int = 0
+    ) -> Tuple[Float64, Float64, Float64, Float64]:
+        """The axis-aligned box the path's flattened outline spans, as
+        (min_x, min_y, max_x, max_y) in canvas coordinates.
+
+        Measured on the same flattening the fills draw, so a curve's
+        box follows the curve and not its control points, which can
+        lie well outside it. An empty path returns all zeros.
+
+        Args:
+            curve_steps: Straight-line segments per quad/cubic Bezier;
+                0 (the default) chooses per segment, as the fills do.
+
+        Returns:
+            (min_x, min_y, max_x, max_y).
+        """
+        var subpaths = _flatten(self, curve_steps)
+        if len(subpaths) == 0:
+            return (0.0, 0.0, 0.0, 0.0)
+        var min_x = subpaths[0].points[0].x
+        var max_x = min_x
+        var min_y = subpaths[0].points[0].y
+        var max_y = min_y
+        for sp_idx in range(len(subpaths)):
+            ref sp = subpaths[sp_idx]
+            for p in sp.points:
+                if p.x < min_x:
+                    min_x = p.x
+                if p.x > max_x:
+                    max_x = p.x
+                if p.y < min_y:
+                    min_y = p.y
+                if p.y > max_y:
+                    max_y = p.y
+        return (min_x, min_y, max_x, max_y)
+
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's move_to and
         mark it closed. stroke_path/stroke_path_aa then draw it as a
