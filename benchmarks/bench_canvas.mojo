@@ -28,7 +28,8 @@ from std.time import perf_counter_ns
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.geometry import FPoint, Point
-from canvas.path import Path, fill_path_aa, stroke_path_aa
+from canvas.gradient import LinearGradient
+from canvas.path import Path, fill_path_aa, fill_path_gradient_aa, stroke_path_aa
 from canvas.io.png import write_png, read_png
 from canvas.resize import downsample
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
@@ -270,6 +271,25 @@ def main() raises:
         fill_path_aa(canvas, big_path, INK)
         sink += Int(canvas.get_pixel(400, 400).r)
     _report(rows, "fill_path_aa large 39-curve", perf_counter_ns() - t0, iters)
+
+    # Gradient-sourced path fills go through a coverage mask first;
+    # the small case is where the mask's own size shows.
+    var gradient = LinearGradient(0.0, 0.0, Float64(W), Float64(H))
+    gradient.add_stop(0.0, INK)
+    gradient.add_stop(1.0, Color(220, 90, 60))
+    iters = 2000
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_gradient_aa(canvas, glyph, gradient)
+        sink += Int(canvas.get_pixel(20, 30).r)
+    _report(rows, "fill_path_gradient_aa glyph-sized", perf_counter_ns() - t0, iters)
+
+    iters = 60
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_gradient_aa(canvas, big_path, gradient)
+        sink += Int(canvas.get_pixel(400, 400).r)
+    _report(rows, "fill_path_gradient_aa large 39-curve", perf_counter_ns() - t0, iters)
 
     # --- strokes -------------------------------------------------------
     iters = 400
