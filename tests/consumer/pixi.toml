@@ -1,0 +1,31 @@
+# A minimal downstream workspace: it depends on canvas_mojo the way
+# README.md tells a reader to, and imports `canvas` with no `-I` flag.
+# ci.yml builds and runs this, so the packaged-install path this
+# project actually ships is covered by something other than the README
+# being right.
+#
+# `pixi run test` and `pixi run example` both run under `-I .`, which
+# resolves `canvas/` as a source directory. That exercises the code but
+# not the packaging: the [package] section in the root pixi.toml, the
+# pixi-build-mojo backend and the built artifact's contents are all
+# invisible to them. A subpackage missing from the built package, or a
+# [package.build.config.pkg] typo, passes every existing test.
+#
+# `path` rather than the README's `git`: this has to test the working
+# tree a pull request proposes, not whatever is already on main. Both
+# forms go through the same build backend and install the same package.
+[workspace]
+channels = ["https://conda.modular.com/max", "conda-forge"]
+name = "canvas_mojo_consumer"
+platforms = ["linux-64", "osx-arm64"]
+preview = ["pixi-build"]
+version = "0.1.0"
+
+[dependencies]
+mojo = ">=1.0.0,<2"
+canvas_mojo = { path = "../.." }
+
+[tasks]
+# No `-I`: the whole point is that the installed package resolves on
+# its own, the way it would in a stranger's project.
+smoke = "mojo run smoke.mojo"
