@@ -44,7 +44,8 @@ jobs:
 
       # Pinned to the pixi version pixi.lock (v7 format) was generated
       # with; an older pixi may not read a v7 lock file at all.
-      - uses: prefix-dev/setup-pixi@v0.9.0
+      - name: Install pixi and the root environment
+        uses: prefix-dev/setup-pixi@v0.9.0
         with:
           pixi-version: v0.76.2
           cache: true
@@ -78,7 +79,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: prefix-dev/setup-pixi@v0.9.0
+      - name: Install pixi only, uncached
+        uses: prefix-dev/setup-pixi@v0.9.0
         with:
           pixi-version: v0.76.2
           # No caching here, unlike the test job. pixi will reuse a
