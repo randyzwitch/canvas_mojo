@@ -936,6 +936,8 @@ def _path_coverage_mask(
         mask,
         width,
         height,
+        0,
+        0,
         fe.edges,
         fe.min_x,
         fe.min_y,
@@ -989,7 +991,10 @@ def _fill_path_source_aa[
     Coverage comes from `_sweep_edges_to_mask`, the same sweep
     `fill_path_aa` and `Canvas.push_clip_path` run, so a gradient fill's
     edge lands where a flat fill's would. It goes to a mask first because
-    the sweep hands its band tasks a single flat `Color`.
+    the sweep hands its band tasks a single flat `Color`. The mask covers
+    the path's padded bounding box clamped to the canvas, not the whole
+    canvas: a small gradient-filled marker should not zero and then
+    walk every pixel of the image.
 
     Coverage scales the source colour's alpha, so a translucent gradient
     stop stays translucent and a partly-covered edge pixel compounds the
@@ -1000,11 +1005,25 @@ def _fill_path_source_aa[
         return
 
     var fe = _FillEdges(subpaths)
-    var mask = List[UInt8](length=canvas.width * canvas.height, fill=0)
+
+    # The same one-pixel skirt the sweep pads by, clamped to the canvas:
+    # the mask's extent, and the region walked below.
+    var lo_x = max(0, fe.min_x - 1)
+    var hi_x = min(canvas.width, fe.max_x + 2)
+    var lo_y = max(0, fe.min_y - 1)
+    var hi_y = min(canvas.height, fe.max_y + 2)
+    var mask_width = hi_x - lo_x
+    var mask_height = hi_y - lo_y
+    if mask_width <= 0 or mask_height <= 0:
+        return
+
+    var mask = List[UInt8](length=mask_width * mask_height, fill=0)
     _sweep_edges_to_mask(
         mask,
-        canvas.width,
-        canvas.height,
+        mask_width,
+        mask_height,
+        lo_x,
+        lo_y,
         fe.edges,
         fe.min_x,
         fe.min_y,
@@ -1014,16 +1033,10 @@ def _fill_path_source_aa[
         supersample,
     )
 
-    # The same one-pixel skirt the sweep pads by, clamped to the canvas
-    # so the read below stays inside the mask.
-    var lo_x = max(0, fe.min_x - 1)
-    var hi_x = min(canvas.width, fe.max_x + 2)
-    var lo_y = max(0, fe.min_y - 1)
-    var hi_y = min(canvas.height, fe.max_y + 2)
     for py in range(lo_y, hi_y):
-        var row = py * canvas.width
+        var row = (py - lo_y) * mask_width
         for px in range(lo_x, hi_x):
-            var coverage = Int(mask[row + px])
+            var coverage = Int(mask[row + px - lo_x])
             if coverage == 0:
                 continue
             var c = source.color_at(Float64(px), Float64(py))

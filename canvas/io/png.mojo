@@ -63,7 +63,11 @@ def _crc32_table() -> List[UInt32]:
     return table^
 
 
-def _crc32(data: List[UInt8], table: List[UInt32]) -> UInt32:
+def _crc32(data: Span[UInt8, _], table: List[UInt32]) -> UInt32:
+    """CRC-32 of `data`. A `Span`, so a caller checking a chunk
+    already sitting in a larger buffer passes a view rather than a
+    copy.
+    """
     var c = UInt32(0xFFFFFFFF)
     for byte in data:
         c = table[Int((c ^ UInt32(byte)) & 0xFF)] ^ (c >> 8)
@@ -124,7 +128,7 @@ def _write_chunk(
         type_and_data.append(UInt8(type_bytes[i]))
     type_and_data.extend(data.copy())
 
-    var crc = _crc32(type_and_data, table)
+    var crc = _crc32(Span(type_and_data), table)
     buf.extend(type_and_data^)
     _append_u32_be(buf, crc)
 
@@ -441,25 +445,21 @@ def read_png(path: String) raises -> Canvas:
         pos += 4
         if pos + 4 > len(data):
             raise Error("png: truncated chunk header")
-        var type_bytes = List[UInt8](capacity=4)
-        for i in range(4):
-            type_bytes.append(data[pos + i])
         var chunk_type = String()
-        for b in type_bytes:
-            chunk_type += chr(Int(b))
+        for i in range(4):
+            chunk_type += chr(Int(data[pos + i]))
+        var type_start = pos
         pos += 4
 
         if pos + length + 4 > len(data):
             raise Error(String("png: truncated '", chunk_type, "' chunk data"))
 
-        var type_and_data = List[UInt8](capacity=4 + length)
-        for b in type_bytes:
-            type_and_data.append(b)
-        for i in range(length):
-            type_and_data.append(data[pos + i])
-
+        # The CRC covers type + data, which sit together in the file,
+        # so it is checked over a view of `data` rather than a copy.
         var expected_crc = _read_u32_be(data, pos + length)
-        var actual_crc = Int(_crc32(type_and_data, crc_table))
+        var actual_crc = Int(
+            _crc32(Span(data)[type_start : pos + length], crc_table)
+        )
         if actual_crc != expected_crc:
             raise Error(
                 String(
@@ -505,8 +505,7 @@ def read_png(path: String) raises -> Canvas:
         elif chunk_type == "IDAT":
             if not have_ihdr:
                 raise Error("png: IDAT chunk before IHDR")
-            for i in range(length):
-                idat.append(data[pos + i])
+            idat.extend(data[pos : pos + length])
         elif chunk_type == "IEND":
             seen_iend = True
         # Any other chunk type (PLTE, or ancillary ones like
@@ -526,8 +525,7 @@ def read_png(path: String) raises -> Canvas:
     if len(idat) < 6:
         raise Error("png: IDAT data too short to be a valid zlib stream")
     var deflate_data = List[UInt8](capacity=len(idat) - 6)
-    for i in range(2, len(idat) - 4):
-        deflate_data.append(idat[i])
+    deflate_data.extend(idat[2 : len(idat) - 4])
     var expected_adler = _read_u32_be(idat, len(idat) - 4)
 
     var raw = inflate(deflate_data^)

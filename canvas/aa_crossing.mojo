@@ -451,6 +451,8 @@ def _sweep_edges_to_mask(
     mut mask: List[UInt8],
     mask_width: Int,
     mask_height: Int,
+    origin_x: Int,
+    origin_y: Int,
     edges: _EdgeTable,
     min_x: Int,
     min_y: Int,
@@ -464,8 +466,10 @@ def _sweep_edges_to_mask(
     blended onto a canvas as alpha.
 
     `mask` is expected to be `mask_width * mask_height` bytes, already
-    zeroed. Anything the shape does not cover keeps its zero, which is
-    what makes the mask read as "clipped out" there.
+    zeroed, covering canvas pixels [origin_x, origin_x + mask_width) x
+    [origin_y, origin_y + mask_height). Anything the shape does not
+    cover keeps its zero, which is what makes the mask read as "clipped
+    out" there.
     """
     var s = supersample
     var total_samples = s * s
@@ -479,7 +483,8 @@ def _sweep_edges_to_mask(
     var suffix = List[Int]()
 
     for py in range(min_y - 1, max_y + 2):
-        if py < 0 or py >= mask_height:
+        var my = py - origin_y
+        if my < 0 or my >= mask_height:
             continue
         for pxi in range(row_width):
             row_covered[pxi] = 0
@@ -496,14 +501,14 @@ def _sweep_edges_to_mask(
             suffix,
         )
 
-        var row_base = py * mask_width
+        var row_base = my * mask_width
         for pxi in range(row_width):
             var covered = row_covered[pxi]
             if covered == 0:
                 continue
-            var px = row_first_px + pxi
-            if px < 0 or px >= mask_width:
+            var mx = row_first_px + pxi - origin_x
+            if mx < 0 or mx >= mask_width:
                 continue
-            mask[row_base + px] = UInt8(
+            mask[row_base + mx] = UInt8(
                 Int(Float64(covered) / Float64(total_samples) * 255.0 + 0.5)
             )
