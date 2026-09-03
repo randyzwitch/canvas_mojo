@@ -13,8 +13,6 @@
 # and would change what every existing caller of `get_pixel` sees.
 comptime BYTES_PER_PIXEL = 4
 
-from std.memory import unsafe_memcpy
-
 from canvas.color import Color, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
@@ -47,6 +45,22 @@ struct _ClipRect(ImplicitlyCopyable, Movable):
         self.y = y
         self.width = width
         self.height = height
+
+
+def _pack_rgba(color: Color) -> UInt32:
+    """`color`'s four bytes as the one 32-bit word a pixel occupies in
+    memory, so a solid fill is one store per pixel rather than four.
+
+    Little-endian, r in the low byte, which is every platform this
+    package builds for (linux-64, osx-arm64); a big-endian target would
+    need the bytes swapped.
+    """
+    return (
+        UInt32(color.r)
+        | (UInt32(color.g) << 8)
+        | (UInt32(color.b) << 16)
+        | (UInt32(color.a) << 24)
+    )
 
 
 def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
@@ -126,10 +140,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.width = width
         self.height = height
 
-        # One scratch row is built byte by byte, then copied into
-        # every row of the canvas. A separate `row` list rather than
-        # the canvas's first row: Mojo rejects a `memcpy` whose source
-        # and destination share an origin, `unsafe_memcpy` included.
+        # One 32-bit store per pixel of the packed colour (see
+        # _pack_rgba and _store_packed). The buffer's base is
+        # allocator-aligned and every pixel sits at a multiple of four
+        # bytes, so the 32-bit stores are aligned; the vector stores
+        # make no alignment assumption.
         var total = width * height * BYTES_PER_PIXEL
         self.pixels = List[UInt8](length=total, fill=0)
         self._clip_stack = List[_ClipRect]()
@@ -138,22 +153,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         if total == 0:
             return
 
-        var row_bytes = width * BYTES_PER_PIXEL
-        var row = List[UInt8](length=row_bytes, fill=0)
-        var rp = row.unsafe_ptr()
-        for i in range(0, row_bytes, BYTES_PER_PIXEL):
-            rp[unsafe_offset=i] = fill.r
-            rp[unsafe_offset=i + 1] = fill.g
-            rp[unsafe_offset=i + 2] = fill.b
-            rp[unsafe_offset=i + 3] = fill.a
-
-        var p = self.pixels.unsafe_ptr()
-        for y in range(height):
-            unsafe_memcpy(
-                dest=p.unsafe_offset(y * row_bytes),
-                src=rp,
-                count=row_bytes,
-            )
+        self._store_packed(0, width * height, _pack_rgba(fill))
 
     def __init__(
         out self, width: Int, height: Int, var pixels: List[UInt8]
@@ -405,6 +405,25 @@ struct Canvas(Copyable, DrawTarget, Movable):
             ),
         )
 
+    def _store_packed(mut self, start: Int, count: Int, packed: UInt32):
+        """Write `packed` (see `_pack_rgba`) to `count` consecutive
+        pixels from pixel index `start`, eight at a time through vector
+        stores and one at a time for the remainder. This is what a
+        solid fill costs per row: no scratch span to build or free, and
+        the wide stores keep a canvas-wide row at memcpy speed.
+        """
+        comptime LANES = 8
+        var p32 = self.pixels.unsafe_ptr().unsafe_bitcast[UInt32]()
+        var vec = SIMD[DType.uint32, LANES](packed)
+        var idx = start
+        var end = start + count
+        while idx + LANES <= end:
+            p32.unsafe_offset(idx).unsafe_store(vec)
+            idx += LANES
+        while idx < end:
+            p32[unsafe_offset=idx] = packed
+            idx += 1
+
     def write_pixel(mut self, x: Int, y: Int, color: Color):
         """Write `color` at (x, y) *without* set_pixel's in_bounds/
         in_clip checks. The caller must already know (x, y) is inside
@@ -586,26 +605,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
 
         var p = self.pixels.unsafe_ptr()
-        var span_bytes = rw * BYTES_PER_PIXEL
         var stride = self.width * BYTES_PER_PIXEL
 
         if color.a == 255:
-            # One scratch span, copied into every row of the
-            # rectangle. Separate from the canvas for the reason the
-            # constructor gives: a same-origin memcpy is rejected.
-            var span = List[UInt8](length=span_bytes, fill=0)
-            var sp = span.unsafe_ptr()
-            for i in range(0, span_bytes, BYTES_PER_PIXEL):
-                sp[unsafe_offset=i] = color.r
-                sp[unsafe_offset=i + 1] = color.g
-                sp[unsafe_offset=i + 2] = color.b
-                sp[unsafe_offset=i + 3] = 255
+            # One 32-bit store per pixel of the packed colour, and no
+            # scratch span to allocate per call -- fill_circle_aa and
+            # fill_ellipse_aa call this once per interior row.
+            var packed = _pack_rgba(color)
             for y in range(ry, ry + rh):
-                unsafe_memcpy(
-                    dest=p.unsafe_offset(y * stride + rx * BYTES_PER_PIXEL),
-                    src=sp,
-                    count=span_bytes,
-                )
+                self._store_packed(y * self.width + rx, rw, packed)
             return
 
         if color.a == 0:
