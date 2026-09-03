@@ -1070,6 +1070,56 @@ def test_transformed_flattens_an_arc_under_unequal_scales() raises:
         )
 
 
+def test_flatten_arc_to_sweeps_backwards_when_end_is_below_start() raises:
+    # From angle 0 down to -pi/2: the quarter above the centre (y is
+    # down), traversed from (10, 0) to (0, -10). Every sample stays on
+    # the circle and in that quarter, in that order.
+    var p = Path()
+    p.move_to(10.0, 0.0)
+    p.arc_to(0.0, 0.0, 10.0, 0.0, -pi / 2.0)
+    var pts = _flat_points(p)
+    assert_true(len(pts) > 4, "the arc was sampled, not dropped")
+    assert_true(
+        abs(pts[0].x - 10.0) < 1.0e-9 and abs(pts[0].y) < 1.0e-9,
+        "starts at angle 0",
+    )
+    var last = pts[len(pts) - 1]
+    assert_true(
+        abs(last.x) < 1.0e-9 and abs(last.y + 10.0) < 1.0e-9,
+        "ends at angle -pi/2",
+    )
+    for i in range(len(pts)):
+        assert_true(
+            abs(sqrt(pts[i].x * pts[i].x + pts[i].y * pts[i].y) - 10.0)
+            < 1.0e-9,
+            "on the circle",
+        )
+        assert_true(
+            pts[i].x >= -1.0e-9 and pts[i].y <= 1.0e-9,
+            "in the upper-right quarter",
+        )
+
+
+def test_transformed_keeps_a_half_turn_arc_exact() raises:
+    # Both scales negative is a half turn, not a reflection: the arc
+    # stays an arc_to (two commands: the move and the arc), its angles
+    # shifted by pi. The original quarter from (10, 0) to (0, 10) maps
+    # to (-10, 0) to (0, -10) about the origin.
+    var t = Transform2D(-1.0, -1.0, 0.0, 0.0)
+    var p = Path()
+    p.move_to(10.0, 0.0)
+    p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
+    var moved = p.transformed(t)
+    assert_equal(len(moved.commands), 2, "still a move_to and an arc_to")
+    var pts = _flat_points(moved)
+    var first = pts[0]
+    var last = pts[len(pts) - 1]
+    assert_true(abs(first.x + 10.0) < 1.0e-9 and abs(first.y) < 1.0e-9)
+    assert_true(abs(last.x) < 1.0e-9 and abs(last.y + 10.0) < 1.0e-9)
+    for i in range(len(pts)):
+        assert_true(pts[i].x <= 1.0e-9 and pts[i].y <= 1.0e-9, "third quarter")
+
+
 def test_transformed_arc_survives_a_y_flip() raises:
     # A y-flip is the transform a chart actually uses, and it reflects:
     # the sweep runs backwards, so the angles have to be negated and
@@ -1079,12 +1129,15 @@ def test_transformed_arc_survives_a_y_flip() raises:
     p.move_to(10.0, 0.0)
     p.arc_to(0.0, 0.0, 10.0, 0.0, pi / 2.0)
 
-    var pts = _flat_points(p.transformed(t))
+    var moved = p.transformed(t)
+    assert_equal(
+        len(moved.commands), 2, "a reflected arc stays an arc_to, not lines"
+    )
+    var pts = _flat_points(moved)
     # The original quarter sweeps from (10, 0) to (0, 10). Flipped and
     # scaled about (50, 50) that is (70, 50) to (50, 30) -- and it must
-    # come out in that order. Re-emitting it as an arc_to instead of
-    # flattening would reverse it, because arc_to only sweeps in
-    # increasing angle and a reflection runs the other way.
+    # come out in that order: the reflection runs the sweep the other
+    # way, which the re-emitted arc_to carries as a decreasing angle.
     var first = pts[0]
     var last = pts[len(pts) - 1]
     assert_true(

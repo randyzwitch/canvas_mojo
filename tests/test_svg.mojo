@@ -404,6 +404,23 @@ def test_fill_path_aa_handles_arc_to_command() raises:
     )
 
 
+def test_fill_path_aa_arc_to_backwards_sweep_clears_sweep_flag() raises:
+    # The same quarter as the test above swept the other way, from
+    # angle 0 down to -pi/2: same radius and large-arc-flag, endpoint
+    # (50, 40) instead of (50, 80), and sweep-flag 0.
+    var path = Path()
+    path.move_to(70.0, 60.0)
+    path.arc_to(50.0, 60.0, 20.0, 0.0, -1.5707963267948966)
+    var svg = SvgCanvas(100, 100)
+    svg.fill_path_aa(path, Color(0, 255, 0))
+    assert_true(
+        '<path d="M70.000,60.000 A20.000,20.000 0 0,0 50.000,40.000"'
+        ' fill="#00ff00"/>'
+        in svg.to_string(),
+        "arc_to backwards: sweep-flag 0, hand-derived endpoint",
+    )
+
+
 def test_fill_path_aa_arc_to_wide_span_sets_large_arc_flag() raises:
     # test_fill_arc_aa_wide_wedge_sets_large_arc_flag's parameters and
     # endpoint.

@@ -134,11 +134,11 @@ def _arc_fpoints(
     start_angle: Float64,
     end_angle: Float64,
 ) -> List[FPoint]:
-    """Sample points along a circular arc (radians, start_angle <=
-    end_angle expected; pass end_angle = start_angle + 2*pi for a full
-    circle) at roughly 1-pixel arc-length spacing. Step count scales
-    with radius * angle span, so a tiny wedge and a full-page donut
-    both sample smoothly.
+    """Sample points along a circular arc (radians; an end_angle
+    below start_angle sweeps the other way; pass end_angle =
+    start_angle + 2*pi for a full circle) at roughly 1-pixel arc-length
+    spacing. Step count scales with radius * angle span, so a tiny
+    wedge and a full-page donut both sample smoothly.
 
     Step count comes from the radius and sweep directly, since a
     circular arc's geometry is known exactly here; `Path.arc_to`
