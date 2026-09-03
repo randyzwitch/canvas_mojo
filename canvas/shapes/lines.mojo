@@ -22,7 +22,7 @@ from canvas.buffer import Canvas
 from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
 from canvas.fill_rule import FillRule
-from canvas.shapes.dash import _is_dash_on, _dash_next_boundary
+from canvas.shapes.dash import _DashPattern
 
 comptime _SQRT2 = 1.4142135623730951
 
@@ -70,8 +70,7 @@ def _draw_line_core(
     color: Color,
     skip_first: Bool,
     skip_last: Bool,
-    dashes: List[Float64] = List[Float64](),
-    dash_offset: Float64 = 0.0,
+    pattern: _DashPattern,
     dash_start_distance: Float64 = 0.0,
 ) -> Float64:
     """Bresenham's line algorithm -- integer-only, works for any slope
@@ -97,7 +96,7 @@ def _draw_line_core(
 
     while True:
         var is_last = x == x1 and y == y1
-        var on_dash = _is_dash_on(distance, dashes, dash_offset)
+        var on_dash = pattern.is_on(distance)
         if on_dash and not ((first and skip_first) or (is_last and skip_last)):
             canvas.set_pixel(x, y, color)
         first = False
@@ -148,9 +147,8 @@ def draw_line(
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
     """
-    _ = _draw_line_core(
-        canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0
-    )
+    var pattern = _DashPattern(dashes, dash_offset)
+    _ = _draw_line_core(canvas, x0, y0, x1, y1, color, False, False, pattern)
 
 
 def draw_line_aa(
@@ -292,22 +290,13 @@ def draw_polyline(
         canvas.set_pixel(points[0].x, points[0].y, color)
         return
 
+    var pattern = _DashPattern(dashes, dash_offset)
     var distance = 0.0
     for i in range(len(points) - 1):
         var a = points[i]
         var b = points[i + 1]
         distance = _draw_line_core(
-            canvas,
-            a.x,
-            a.y,
-            b.x,
-            b.y,
-            color,
-            i > 0,
-            False,
-            dashes,
-            dash_offset,
-            distance,
+            canvas, a.x, a.y, b.x, b.y, color, i > 0, False, pattern, distance
         )
 
 
@@ -354,22 +343,13 @@ def draw_polygon(
         )
         return
 
+    var pattern = _DashPattern(dashes, dash_offset)
     var distance = 0.0
     for i in range(n - 1):
         var a = points[i]
         var b = points[i + 1]
         distance = _draw_line_core(
-            canvas,
-            a.x,
-            a.y,
-            b.x,
-            b.y,
-            color,
-            i > 0,
-            False,
-            dashes,
-            dash_offset,
-            distance,
+            canvas, a.x, a.y, b.x, b.y, color, i > 0, False, pattern, distance
         )
 
     var last = points[n - 1]
@@ -383,8 +363,7 @@ def draw_polygon(
         color,
         True,
         True,
-        dashes,
-        dash_offset,
+        pattern,
         distance,
     )
 
@@ -698,10 +677,9 @@ def _stroke_edges(
     if count == 0 or half_width <= 0.0:
         return edges^
 
+    var pattern = _DashPattern(dashes, dash_offset)
     if count == 1:
-        if _is_dash_on(0.0, dashes, dash_offset) and (
-            closed or cap == LineCap.ROUND
-        ):
+        if pattern.is_on(0.0) and (closed or cap == LineCap.ROUND):
             _add_disk(edges, points[0].x, points[0].y, half_width)
         return edges^
 
@@ -755,7 +733,7 @@ def _stroke_edges(
             # A repeated point still contributes a disk: anything
             # within half_width of it is covered when that distance is
             # drawn.
-            if _is_dash_on(seg_start[seg], dashes, dash_offset):
+            if pattern.is_on(seg_start[seg]):
                 _add_disk(edges, ax[seg], ay[seg], half_width)
             continue
 
@@ -769,8 +747,8 @@ def _stroke_edges(
         var last_piece_start = seg_start[seg]
         var d = seg_start[seg]
         while d < seg_end_d:
-            var on = _is_dash_on(d, dashes, dash_offset)
-            var next_d = _dash_next_boundary(d, dashes, dash_offset)
+            var on = pattern.is_on(d)
+            var next_d = pattern.next_boundary(d)
             if next_d > seg_end_d:
                 next_d = seg_end_d
             if on:
@@ -793,11 +771,11 @@ def _stroke_edges(
 
         # The open stroke's start cap, on the first segment only.
         if seg == 0 and not closed:
-            if (not capped) and _is_dash_on(seg_start[0], dashes, dash_offset):
+            if (not capped) and pattern.is_on(seg_start[0]):
                 _add_disk(edges, ax[0], ay[0], half_width)
 
         # ...and the segment's far endpoint.
-        if not _is_dash_on(seg_end_d, dashes, dash_offset):
+        if not pattern.is_on(seg_end_d):
             continue  # nothing is drawn at this endpoint
 
         var is_last = seg == num_segments - 1
@@ -826,7 +804,7 @@ def _stroke_edges(
         # dash piece is exactly that case, so the drawn run on each
         # side has to be long enough before the disk can be skipped.
         var before = seg_end_d - last_piece_start
-        var after_end = _dash_next_boundary(seg_end_d, dashes, dash_offset)
+        var after_end = pattern.next_boundary(seg_end_d)
         var next_seg_end = seg_end_d + seg_len[nxt]
         if after_end > next_seg_end:
             after_end = next_seg_end
