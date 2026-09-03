@@ -18,6 +18,7 @@ from std.runtime.asyncrt import TaskGroup, parallelism_level
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import Point, FPoint, _round_to_int
+from canvas.aa_crossing import _CoverageAlpha
 from canvas.shapes.lines import draw_polyline, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon
 
@@ -583,6 +584,7 @@ def _fill_arc_band(
     color: Color,
 ):
     """Fill rows [first_row, last_row) of a wedge."""
+    var coverage_alpha = _CoverageAlpha(total_samples, color.a)
     for py in range(first_row, last_row):
         var oy = Float64(py) - cy
         var dy = abs(oy)
@@ -623,16 +625,10 @@ def _fill_arc_band(
                         if span.contains(fx, fy):
                             covered += 1
             if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
                 canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
+                    px,
+                    py,
+                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
                 )
 
 
@@ -860,6 +856,7 @@ def _fill_ring_band(
     color: Color,
 ):
     """Fill rows [first_row, last_row) of a ring sector."""
+    var coverage_alpha = _CoverageAlpha(total_samples, color.a)
     for py in range(first_row, last_row):
         var oy = Float64(py) - cy
         var dy = abs(oy)
@@ -906,14 +903,8 @@ def _fill_ring_band(
                         if span.contains(fx, fy):
                             covered += 1
             if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
                 canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
+                    px,
+                    py,
+                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
                 )

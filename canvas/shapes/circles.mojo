@@ -10,6 +10,7 @@ from std.math import ceil, floor, sqrt
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import _round_to_int
+from canvas.aa_crossing import _CoverageAlpha
 
 
 def draw_circle(
@@ -183,7 +184,7 @@ def fill_circle_aa(
 
     var r2 = radius * radius
     var n = supersample
-    var total_samples = n * n
+    var coverage_alpha = _CoverageAlpha(n * n, color.a)
     var step = 1.0 / Float64(n)
 
     # Widened outward to whole pixels, so a pixel the disk only partly
@@ -293,16 +294,12 @@ def fill_circle_aa(
                         if fx * fx + fy * fy <= r2:
                             covered += 1
                 if covered > 0:
-                    var alpha = UInt8(
-                        Int(
-                            Float64(covered)
-                            / Float64(total_samples)
-                            * Float64(color.a)
-                            + 0.5
-                        )
-                    )
                     canvas.set_pixel(
-                        px, py, Color(color.r, color.g, color.b, alpha)
+                        px,
+                        py,
+                        Color(
+                            color.r, color.g, color.b, coverage_alpha[covered]
+                        ),
                     )
 
 
@@ -341,7 +338,7 @@ def draw_circle_aa(
     var inner2 = inner * inner
     var outer2 = outer * outer
     var n = supersample
-    var total_samples = n * n
+    var coverage_alpha = _CoverageAlpha(n * n, color.a)
     var step = 1.0 / Float64(n)
 
     for py in range(cy - radius - 1, cy + radius + 2):
@@ -368,14 +365,8 @@ def draw_circle_aa(
                     if d2 >= inner2 and d2 < outer2:
                         covered += 1
             if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
                 canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
+                    px,
+                    py,
+                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
                 )
