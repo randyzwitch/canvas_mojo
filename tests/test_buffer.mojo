@@ -143,6 +143,22 @@ def test_fill_respects_the_active_clip() raises:
             _assert_pixel_eq(c, x, y, expected)
 
 
+def test_annotated_group_methods_are_no_ops_on_a_canvas() raises:
+    # DrawTarget declares these so a caller can name what it draws
+    # without knowing which backend it holds. A raster canvas has
+    # nowhere to put the name, so both are no-ops -- what matters is
+    # that generic code bracketing its drawing with them still draws,
+    # and that an unbalanced call cannot break anything.
+    var c = Canvas(6, 6, Color(0, 0, 0))
+    c.begin_annotated_group("a series")
+    c.fill_rect(1, 1, 2, 2, Color(255, 255, 255))
+    c.end_annotated_group()
+    c.end_annotated_group()  # unbalanced, still nothing
+
+    _assert_pixel_eq(c, 1, 1, 255)
+    _assert_pixel_eq(c, 5, 5, 0)
+
+
 def _assert_pixel_eq(c: Canvas, x: Int, y: Int, expected_r: UInt8) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected_r)

@@ -665,6 +665,23 @@ struct Canvas(Copyable, DrawTarget, Movable):
                     p[unsafe_offset=idx + 3] = blended.a
                 idx += BYTES_PER_PIXEL
 
+    def begin_annotated_group(mut self, title: String):
+        """`DrawTarget`'s group label, which a raster canvas has
+        nowhere to put: a no-op, so code written against the trait runs
+        unchanged on either backend. `SvgCanvas` emits
+        `<g><title>` here.
+
+        Args:
+            title: Ignored.
+        """
+        pass
+
+    def end_annotated_group(mut self):
+        """Closes what `begin_annotated_group` did not open: a no-op,
+        for the same reason.
+        """
+        pass
+
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
     ):
