@@ -415,10 +415,6 @@ def _draw_polyline_core_aa(
     one closed outline via `_stroke_edges` and is filled once with
     FillRule.NONZERO, so a pixel under two overlapping segments is
     written exactly once.
-
-    Dashing happens during that conversion: `_stroke_edges` emits a
-    separate outline per dash "on" region and carries the phase across
-    joints, so the fill sees ordinary geometry.
     """
     var count = len(points)
     if count == 0:
@@ -578,9 +574,6 @@ def _add_join(
 ):
     """The wedge a stroke leaves on the outside of a corner at (vx, vy),
     arriving along unit (ux, uy) and leaving along unit (wx, wy).
-
-    ROUND fills it with a disk, the shape the min-distance definition
-    produces.
 
     BEVEL and MITER need to know which side is outside: the side away
     from the turn, found from the cross product of the two directions.

@@ -209,9 +209,6 @@ struct _AngleSpan(ImplicitlyCopyable, Movable):
     - a wider span is the complement of the gap it leaves, which is
       itself narrower than pi, so the same test runs on the gap and the
       answer is negated.
-
-    All multiplies and compares -- the only trigonometry is the four
-    values computed once per wedge here.
     """
 
     var cos_start: Float64
@@ -587,11 +584,7 @@ def _fill_arc_band(
     total_samples: Int,
     color: Color,
 ):
-    """Fill rows [first_row, last_row) of a wedge.
-
-    Bands write disjoint rows, so no two ever touch the same pixel --
-    the basis on which `canvas` is shared mutably between them.
-    """
+    """Fill rows [first_row, last_row) of a wedge."""
     for py in range(first_row, last_row):
         var oy = Float64(py) - cy
         var dy = abs(oy)
@@ -868,10 +861,7 @@ def _fill_ring_band(
     total_samples: Int,
     color: Color,
 ):
-    """Fill rows [first_row, last_row) of a ring sector.
-
-    Bands write disjoint rows, so no two ever touch the same pixel.
-    """
+    """Fill rows [first_row, last_row) of a ring sector."""
     for py in range(first_row, last_row):
         var oy = Float64(py) - cy
         var dy = abs(oy)

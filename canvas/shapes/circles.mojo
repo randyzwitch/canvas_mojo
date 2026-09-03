@@ -107,11 +107,6 @@ def fill_circle_aa(
 ):
     """Anti-aliased filled disk.
 
-    For every pixel near the circle, samples an NxN sub-pixel grid and
-    tests each sub-sample against the real-valued disk, turning the
-    coverage fraction into that pixel's alpha. Each output pixel is
-    visited exactly once.
-
     Pixel (px, py) is centered AT (px, py), the convention the hard-edged
     draw_circle/fill_circle use, not a unit square with (px, py) at its
     corner. That is what makes supersample=1 degenerate to the hard-edged
@@ -158,10 +153,6 @@ comptime _MIN_SPAN_RADIUS = 8.0
 def _pixel_inside(px: Int, cx: Float64, far_dy: Float64, r2: Float64) -> Bool:
     """Whether the pixel square centred at `px` on a row whose farthest
     vertical reach is `far_dy` lies entirely within the disk.
-
-    Exactly the test `fill_circle_aa`'s per-pixel loop applied before
-    the span solve replaced it -- kept as a function so the span's
-    endpoint nudging and the fallback path cannot drift apart.
     """
     var far_dx = abs(Float64(px) - cx) + 0.5
     return far_dx * far_dx + far_dy * far_dy <= r2

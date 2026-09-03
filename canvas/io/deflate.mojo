@@ -640,12 +640,6 @@ def _build_codes(lengths: List[Int]) -> List[Int]:
     """RFC 1951 3.2.2's canonical-Huffman code generation, transcribed
     from the spec's pseudocode: given a per-symbol length (0 = unused),
     returns each symbol's numeric code, indexed by symbol.
-
-    This is a separate encode-oriented representation of the same
-    canonical assignment `_construct` builds sorted by length for
-    decoding -- two implementations of one spec, not two views of
-    shared state, which is what makes round-tripping through the
-    decoder a real check rather than a circular one.
     """
     var max_len = 0
     for l in lengths:

@@ -81,9 +81,6 @@ def _adler32(data: List[UInt8]) -> UInt32:
     for that in 32 bits: the largest n with
     255*n*(n+1)/2 + (n+1)*(BASE-1) < 2^32, so a block of that length
     cannot carry s2 past the end of the type.
-
-    Bytes are read through `unsafe_ptr`; the loop bound is `len(data)`
-    itself, so the index cannot leave the buffer.
     """
     comptime BASE = UInt32(65521)
     comptime NMAX = 5552

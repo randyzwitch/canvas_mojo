@@ -72,10 +72,6 @@ struct Canvas(Copyable, DrawTarget, Movable):
     BYTES_PER_PIXEL), so a canvas can carry a transparent background and
     `write_png` can emit real transparency.
 
-    Conforms to `DrawTarget` through the ten methods below `fill`, each
-    delegating to the matching free function in
-    `canvas.shapes`/`canvas.path`. Calling those directly works the same.
-
     There is no `draw_text` method, since `DrawTarget` has none. Call
     `canvas.text.draw_text(canvas, ...)`.
     """
@@ -414,10 +410,6 @@ struct Canvas(Copyable, DrawTarget, Movable):
         active, as `_fill_region` and the gradient rect fills in
         canvas.shapes.rects do.
 
-        set_pixel stays the checked entry point for pixel-at-a-time
-        primitives (draw_line_aa, fill_circle_aa, ...), which have no
-        single valid region to precompute.
-
         Writes go through `pixels.unsafe_ptr()`, unchecked. The index is
         computed from `width` and the caller's validated (x, y), so it
         cannot leave the buffer. The blend path reads the background
@@ -568,10 +560,6 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """Fill an already-clipped, already-bounds-checked rectangle --
         the region `effective_fill_rect` returns, so every coordinate in
         it is known drawable and no per-pixel check is needed.
-
-        The pointer and row base are computed once per row, and the
-        opaque case builds one span of bytes and bulk-copies it into
-        every row.
 
         The translucent case blends per pixel but hoists what does not
         vary: the source colour's premultiplied terms and the

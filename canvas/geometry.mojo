@@ -73,9 +73,6 @@ struct Transform2D(ImplicitlyCopyable, Movable):
 
         pixel = rotate(data * scale, rotation) + translate
 
-    Nothing beyond that fixed pipeline: no general matrix composition
-    and no "map this data range onto this pixel range" constructor.
-
     scale_y is commonly negative: pixel-space y increases downward while
     data-space y conventionally increases upward, so a negative scale_y
     with a matching translate_y flips a vertical axis.
@@ -85,10 +82,6 @@ struct Transform2D(ImplicitlyCopyable, Movable):
     translate_x/translate_y puts that origin in pixel space. There is no
     pivot parameter; to rotate around another point, shift the data
     coordinates or the translation. Defaults to 0.0.
-
-    draw_text's `rotation` is a different thing: it angles one rendered
-    label around its own anchor, where this tilts the whole coordinate
-    frame.
     """
 
     var scale_x: Float64

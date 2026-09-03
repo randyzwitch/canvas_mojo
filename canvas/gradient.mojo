@@ -45,11 +45,6 @@ def _color_at_t(
     arrives already clamped to [0, 1]: each gradient kind clamps
     differently (a radial distance can't go negative to begin with), so
     the clamp stays with the projection.
-
-    `lowest`/`highest` -- the smallest- and largest-offset stops --
-    come in already found. They never change for a fixed stop list, and
-    color_at runs once per pixel of a gradient fill, so each gradient
-    tracks them incrementally in add_stop rather than rescanning here.
     """
     if len(stops) == 0:
         return Color(0, 0, 0, 0)
@@ -100,10 +95,6 @@ def _color_at_t(
 trait ColorSource:
     """Anything that can answer "what colour is at this point?" -- the
     fill source a gradient-filled shape queries per pixel.
-
-    `LinearGradient` and `RadialGradient` both conform. The fills in
-    `canvas.path` need nothing else from a gradient, so each is written
-    once against this trait rather than once per gradient type.
 
     Conformance is nominal per Mojo's trait rule, so a new fill source
     has to declare `ColorSource` explicitly to be usable as one.
@@ -217,9 +208,6 @@ struct RadialGradient(ColorSource, Movable):
 
     The single-circle form (center + radius) only, not the two-circle
     form SVG/Cairo/HTML5 Canvas offer with an off-center focal point.
-
-    Stops need not be in insertion order, as in LinearGradient; both
-    share `_color_at_t`.
     """
 
     var cx: Float64

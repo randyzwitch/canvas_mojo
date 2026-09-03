@@ -195,9 +195,6 @@ def _pixel_inside(
     """Whether the pixel square centred at `px`, on a row whose
     `far_y^2 * rx^2` term is `far_y_term`, lies entirely within the
     ellipse.
-
-    Exactly the test the per-pixel path applies, kept as a function so
-    the span's endpoint nudging cannot drift from it.
     """
     var far_x = abs(Float64(px) - cx) + 0.5
     return far_x * far_x * ry2 + far_y_term <= limit
@@ -398,9 +395,6 @@ def draw_ellipse_aa(
 
         (dx/outer_rx)^2 + (dy/outer_ry)^2 <  1   (strictly inside outer)
         (dx/inner_rx)^2 + (dy/inner_ry)^2 >= 1   (on or outside inner)
-
-    `rx, ry >= 1` by the time this runs, so `inner_rx`/`inner_ry` are
-    always positive.
 
     Applying +/-0.5 to rx and ry independently, rather than offsetting
     along the ellipse's normal, makes the ring's width vary around the

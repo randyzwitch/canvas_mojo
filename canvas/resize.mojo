@@ -152,10 +152,6 @@ def _downsample_band(
     Bands write disjoint output rows and only read the source, so no
     two ever touch the same byte -- which is the basis on which
     `pixels` is shared mutably between them.
-
-    Every coordinate here comes from out_width/out_height times
-    `factor`, which is how the output dimensions were derived, so each
-    read is on-canvas by construction -- see Canvas.read_pixel.
     """
     for oy in range(first_row, last_row):
         var out_idx = oy * out_width * BYTES_PER_PIXEL

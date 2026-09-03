@@ -247,10 +247,6 @@ def _resolve_glyph(
     Both the fallback path and the parsed fallback face are cached by
     `cache`, so several fallback glyphs for the same codepoint cost one
     lookup and one parse.
-
-    Metrics and outline come back together, from the same face, so the
-    two glyph-walking sites (_measure_line, draw_text's render pass)
-    can't disagree about which face's data they used.
     """
     if has_glyph(primary, codepoint):
         return _PositionedGlyph(
@@ -663,11 +659,6 @@ def draw_text(
     `rotation` (radians) rotates the whole block -- every line together
     -- around the `(x, y)` anchor. Transform2D's `rotation`
     (geometry.mojo) instead tilts a whole data-to-pixel mapping.
-
-    Two passes: _layout_block measures each line's ink extents and its
-    local baseline position and horizontal offset, then each line's
-    glyphs are walked again, built in local space, placed by
-    _place_glyph_path and filled via fill_path_aa. No scratch surface.
 
     Resolves its font fresh once per pass, so twice per call; the
     `cache=` overload below collapses that to one.

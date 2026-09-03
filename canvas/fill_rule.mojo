@@ -39,10 +39,6 @@ def _is_inside(winding: Int, fill_rule: FillRule) -> Bool:
     `fill_rule` -- the one place the two rules differ. Every fill in the
     package routes its membership decision through here, so a hard-edged
     fill and its anti-aliased counterpart agree on where a boundary sits.
-
-    Lives in this module because both `canvas.shapes.polygon_fill` and
-    `canvas.aa_crossing` need it and the former imports the latter; this
-    module imports nothing.
     """
     if fill_rule == FillRule.NONZERO:
         return winding != 0

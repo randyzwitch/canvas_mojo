@@ -55,10 +55,6 @@ def _spans_from_crossings(
     sort by x and scan left to right accumulating a signed winding
     number, returning the resulting filled spans under `fill_rule`.
 
-    Shared by fill_polygon and fill_path and their gradient variants,
-    which differ only in how they collect a row's crossings and what
-    they do with each span.
-
     Under EVEN_ODD this matches plain sort-and-pair (1st-2nd, 3rd-4th,
     ...) for any non-self-intersecting polygon, since winding parity
     flips once per crossing regardless of sign.
@@ -110,11 +106,6 @@ def fill_polygon(
     fill_rule: FillRule = FillRule.EVEN_ODD,
 ):
     """Fill a polygon's interior with the scanline algorithm.
-
-    For each row, find where every edge crosses it and accumulate a
-    signed winding number left to right (see _spans_from_crossings).
-    `fill_rule` (EVEN_ODD by default) decides which regions count as
-    inside -- see fill_rule.mojo.
 
     Y-extent per edge is half-open, [min(y0,y1), max(y0,y1)), the rule
     real rasterizers use (OpenGL/DirectX's "top-left fill rule"), so
@@ -225,11 +216,6 @@ def fill_polygon_aa(
     Pixels are centered at their integer coordinate, as in every other AA
     primitive here, and `fill_rule` shares `_is_inside` with fill_polygon
     so the two agree on the boundary.
-
-    The sweep is `canvas.aa_crossing`'s `_sweep_edges_aa`, shared with
-    `fill_path_aa`; this function contributes the polygon's bounding box
-    and its edges. `_point_in_polygon` is the reference implementation
-    the sweep's output must match pixel for pixel.
 
     Args:
         canvas: Canvas to fill into.

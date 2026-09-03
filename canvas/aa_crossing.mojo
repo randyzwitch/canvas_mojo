@@ -56,29 +56,12 @@ def _sample_x(x0: Float64, g: Int, s: Int) -> Float64:
     is a contiguous integer range -- which is what lets `fill_path_aa`
     and `fill_polygon_aa` count an inside run instead of testing each
     position in it.
-
-    Here rather than in either caller for the same reason `_AACrossing`
-    is: `path.mojo` already imports from `polygon_fill`, so anything
-    they share has to live somewhere neither imports.
     """
     return x0 + (Float64(g) + 0.5) / Float64(s)
 
 
 struct _EdgeTable(Movable):
-    """Every non-horizontal edge of a shape, as flat arrays.
-
-    Both AA sweeps ask each sub-scanline which edges cross it -- four
-    questions per pixel row at the default supersample. Read from the
-    caller's own point lists, each edge would cost two bounds-checked
-    reads, a modulo to wrap the closing edge and two integer-to-float
-    conversions per row, none of it varying with the row. The table
-    hoists that out once per fill, storing the values the crossing
-    computation already used.
-
-    Edges are added one at a time, since the two callers describe their
-    geometry differently -- one walks sub-paths, the other a single point
-    ring -- while the scan over the result is identical.
-    """
+    """Every non-horizontal edge of a shape, as flat arrays."""
 
     var y_lo: List[Float64]
     var y_hi: List[Float64]
@@ -162,10 +145,6 @@ def _accumulate_row_coverage(
     """Sub-sample coverage counts for one pixel row of `edges`, written
     into `row_covered` (which the caller has already cleared and sized to
     `row_width`).
-
-    Separate from its two consumers so both can share it:
-    `_sweep_edges_aa` blends the counts onto a canvas as alpha, and
-    `_sweep_edges_to_mask` stores them as a clip mask.
 
     `crossings` and `suffix` are caller-owned scratch, reused across
     every row of a sweep rather than reallocated per row.
@@ -270,15 +249,6 @@ def _sweep_edges_aa(
     own `_EdgeTable` and bounding box and then runs this.
     `min_x`/`min_y`/`max_x`/`max_y` are unpadded integer bounds -- the
     one-pixel AA skirt is added here.
-
-    The sweep runs per sub-scanline, not per sub-pixel sample. Rescanning
-    every edge per sub-sample, as the reference tests `_point_in_subpaths`
-    and `_point_in_polygon` do, is O(pixels * supersample^2 * edges).
-    Collecting a sub-scanline's crossings once removes the `* edges`
-    factor: sort by x, precompute each crossing's suffix winding sum, then
-    sweep every sub-sample's x -- strictly increasing across the row --
-    against that sorted list with one forward-only pointer. The math per
-    sample is the same ray cast either way.
 
     Keep `edges` borrowed. Making it `var` hands `create_task` an
     aggregate owned by this frame, which makes the golden suite hang or
@@ -389,11 +359,6 @@ def _sweep_band(
 ):
     """Sweep rows [first_row, last_row) of `edges` onto `canvas`.
 
-    One band of a fill. Every buffer here is local to the band rather
-    than shared across the whole sweep, which is what makes bands
-    independent -- and costs nothing, since the allocation was always
-    per-sweep and there are only ever a handful of bands.
-
     Bands write disjoint rows, so no two ever touch the same pixel.
     `canvas` is shared mutably between them on exactly that basis.
     """
@@ -464,11 +429,6 @@ def _sweep_edges_to_mask(
     `mask` is expected to be `mask_width * mask_height` bytes, already
     zeroed. Anything the shape does not cover keeps its zero, which is
     what makes the mask read as "clipped out" there.
-
-    Coverage, not a hard in/out test, is the point: a clip path's own
-    edge is anti-aliased exactly as a filled path's would be, so
-    clipping a shape to a circle gives a smooth boundary rather than a
-    staircase.
     """
     var s = supersample
     var total_samples = s * s

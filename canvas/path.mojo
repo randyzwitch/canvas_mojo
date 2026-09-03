@@ -388,11 +388,6 @@ struct Path(Movable):
     def transformed(self, transform: Transform2D) raises -> Path:
         """This path mapped through `transform`, as a new path.
 
-        Returns a new path rather than mutating in place, unlike every
-        other method here: `Path` is not copyable, so a mutating version
-        would leave a caller no way to draw one shape at several
-        positions.
-
         Bezier control points map directly, since an affine transform of
         a Bezier is the Bezier of the transformed control points.
         `arc_to` describes a *circular* arc by centre, radius and angles,
@@ -522,9 +517,6 @@ def _auto_steps(second_diff: Float64, scale: Float64) -> Int:
     where `scale` folds in the constant from B'' for the degree in
     question (2 for a quadratic, 6 for a cubic) and `second_diff` is the
     largest second difference of the control points.
-
-    That is a bound rather than an estimate, so the result is never
-    under-sampled; guessing low produces a visibly faceted curve.
     """
     var bound = scale * second_diff / (8.0 * _FLATTEN_TOLERANCE)
     if bound <= 0.0:
@@ -830,11 +822,6 @@ def _subpath_edges(subpaths: List[_Subpath]) -> _EdgeTable:
     """Every sub-path's edges in one table, so their winding
     contributions combine before the fill rule is applied -- which is
     what makes an inner sub-path punch a hole rather than fill solid.
-
-    Handed over unrounded, which is why `_Subpath` carries FPoint: an
-    edge running from x = 10.4 to x = 13.7 covers a different set of
-    sub-samples than one snapped to 10 -> 14, and it is that difference
-    the coverage sweep turns into alpha.
     """
     var edges = _EdgeTable()
     for sp_idx in range(len(subpaths)):
@@ -900,11 +887,6 @@ def fill_path_aa(
     FillRule.NONZERO, work as in fill_path: every sub-path's winding
     contribution is combined before the fill rule is applied, rather than
     per-sub-path independently.
-
-    The sweep is `canvas.aa_crossing`'s `_sweep_edges_aa`, shared with
-    `fill_polygon_aa`; this function contributes the flattened path's
-    bounding box and its edges. `_point_in_subpaths` is the reference
-    implementation the sweep's output must match pixel for pixel.
 
     Args:
         canvas: Canvas to fill into.
@@ -999,11 +981,6 @@ def _fill_path_source[
 ):
     """`fill_path`'s hard-edged scanline fill, taking each pixel's
     colour from `source` instead of one flat Color.
-
-    Generic over the source rather than written once per gradient type:
-    `fill_path_gradient` and `fill_path_radial_gradient` had
-    byte-for-byte identical bodies, differing only in the type of the
-    argument they queried.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:

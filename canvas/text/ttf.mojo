@@ -470,10 +470,6 @@ struct TTFFace(Movable):
     ) raises -> ArcPointer[RawGlyphOutline]:
         """This glyph's decoded outline, shared rather than copied.
 
-        Decoding walks `loca`, reads contours, points and flags, and
-        recurses through composite components. Cached, since the result
-        depends only on the glyph and text repeats characters.
-
         Args:
             glyph_index: Glyph to decode.
 
