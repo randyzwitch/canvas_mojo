@@ -3,19 +3,15 @@
 here (`fill_polygon`, `fill_polygon_aa`), and `_point_in_polygon`, the
 real-valued membership test the anti-aliased sweep is checked against.
 
-Not `draw_polygon`/`draw_polygon_aa` in canvas.shapes.lines, which
-stroke a polygon's *outline* through a different algorithm entirely.
+The *outline* strokes, `draw_polygon`/`draw_polygon_aa`, are a
+different algorithm in canvas.shapes.lines.
 
-`fill_polygon_aa` describes its geometry as an `_EdgeTable` and hands
-that to `canvas.aa_crossing`'s `_sweep_edges_aa`, the coverage sweep it
-shares with `fill_path_aa` -- the two differ in how they collect their
-edges, not in how those edges become pixels.
-
-path.mojo imports `_Crossing`/`_spans_from_crossings` for
-fill_path/fill_path_gradient: those hard-edged fills likewise differ in
-how they collect a row's crossings, not in how those crossings become
-spans. `_is_inside` itself lives in `canvas.fill_rule` -- see there for
-why it has to.
+`fill_polygon_aa` describes its geometry as an `_EdgeTable` and hands it
+to `canvas.aa_crossing`'s `_sweep_edges_aa`, shared with `fill_path_aa`.
+path.mojo imports `_Crossing`/`_spans_from_crossings` for its own
+hard-edged fills. In both cases the callers differ in how they collect
+edges or crossings, not in what happens after. `_is_inside` lives in
+`canvas.fill_rule`, which both can see.
 """
 
 from std.math import ceil, floor
@@ -59,24 +55,16 @@ def _spans_from_crossings(
     sort by x and scan left to right accumulating a signed winding
     number, returning the resulting filled spans under `fill_rule`.
 
-    Shared by fill_polygon and fill_path (and their gradient variants,
-    see path.mojo) -- they differ only in how they collect a row's
-    crossings (one polygon's edges vs. every sub-path's edges
-    combined) and what they do with each resulting span (set_pixel one
-    flat color, or query a gradient per pixel), not in this scan.
+    Under EVEN_ODD this matches plain sort-and-pair (1st-2nd, 3rd-4th,
+    ...) for any non-self-intersecting polygon, since winding parity
+    flips once per crossing regardless of sign.
 
-    Under EVEN_ODD this gives byte-identical spans to plain
-    sort-and-pair (1st-2nd, 3rd-4th, ...) for any non-self-intersecting
-    polygon: winding parity flips once per crossing regardless of sign,
-    which is what alternating in/out pairing assumes.
-
-    One step beyond the plain winding scan: adjacent spans merge
-    wherever one's end_x touches or overlaps the next one's start_x.
-    In a self-intersecting shape, two unrelated edges can cross one
-    scanline at the same rounded x, dipping winding to "outside" and
-    straight back to "inside" there. Unmerged, that yields two spans
-    both including that x -- correct under the inclusive X-fill
-    convention, but a double blend for a translucent color.
+    Beyond the plain winding scan, adjacent spans merge wherever one's
+    end_x touches or overlaps the next one's start_x. In a
+    self-intersecting shape two unrelated edges can cross one scanline at
+    the same rounded x, dipping winding to outside and straight back;
+    unmerged that yields two spans both including that x, which
+    double-blends a translucent color.
     """
     for i in range(1, len(crossings)):
         var key = crossings[i]
@@ -119,35 +107,24 @@ def fill_polygon(
 ):
     """Fill a polygon's interior with the scanline algorithm.
 
-    For each row, find where every edge crosses it and accumulate a
-    signed winding number left to right (see _spans_from_crossings).
-    `fill_rule` (EVEN_ODD by default) decides which regions count as
-    inside -- see fill_rule.mojo.
+    Y-extent per edge is half-open, [min(y0,y1), max(y0,y1)), the rule
+    real rasterizers use (OpenGL/DirectX's "top-left fill rule"), so
+    adjacent shapes sharing an edge tile without a gap or a
+    double-covered seam. Without it a vertex shared by two edges running
+    in opposite y-directions counts twice, and a local extremum such as
+    a triangle's apex has to contribute zero net crossings.
 
-    Y-extent per edge uses the half-open [min(y0,y1), max(y0,y1))
-    convention, which correctness depends on: without it a vertex
-    shared by two edges running in opposite y-directions counts as a
-    crossing twice, while a local extremum such as a triangle's apex
-    must contribute zero net crossings rather than two. This is the
-    same rule real rasterizers use (OpenGL/DirectX's "top-left fill
-    rule"), so adjacent shapes sharing an edge tile without a gap or a
-    double-covered seam.
+    One consequence: a polygon's bottom-most row, when it is a
+    horizontal edge (as in any axis-aligned rectangle), is not filled --
+    both adjacent edges have that y as their excluded "max" endpoint.
+    Matching fill_rect(x, y, width, height) exactly therefore needs
+    *asymmetric* corners: (x, y), (x+width-1, y), (x+width-1, y+height),
+    (x, y+height) -- inclusive on the last column, one-past on the last
+    row. The X-fill between a row's crossing pair is fully inclusive;
+    only the Y-extent is half-open.
 
-    One concrete, surprising-if-undocumented consequence: a polygon's
-    bottom-most row, when it's a horizontal edge (as in any axis-
-    aligned rectangle), does not get filled -- both adjacent edges
-    have that y as their excluded "max" endpoint. This means matching
-    fill_rect(x, y, width, height) exactly requires *asymmetric*
-    polygon corners: (x, y), (x+width-1, y), (x+width-1, y+height),
-    (x, y+height) -- inclusive on the last column, one-past on the
-    last row. (The X-fill between a row's crossing pair is fully
-    inclusive; only the Y-extent per edge is half-open. Verified
-    exactly against fill_rect with those corners.)
-
-    A self-intersecting polygon is fully supported: under either fill
-    rule every pixel gets exactly one set_pixel call per row, including
-    at the intersection itself -- see _spans_from_crossings on the
-    span-merge step that guarantees it.
+    Under either fill rule every pixel gets exactly one set_pixel call
+    per row, including at a self-intersection.
 
     Args:
         canvas: Canvas to fill into.
@@ -230,36 +207,22 @@ def fill_polygon_aa(
     fill_rule: FillRule = FillRule.EVEN_ODD,
     supersample: Int = 4,
 ):
-    """Anti-aliased filled polygon -- fill_polygon's counterpart the
-    same way fill_circle_aa is fill_circle's: for every pixel near the
-    polygon, samples an NxN sub-pixel grid and turns the coverage
-    fraction directly into that pixel's alpha. Each output pixel is
-    visited exactly once, so there's no double-blend hazard the way a
-    naive per-edge fill would have.
+    """Anti-aliased filled polygon: for every pixel near the polygon,
+    samples an NxN sub-pixel grid and turns the coverage fraction into
+    that pixel's alpha. Each output pixel is visited exactly once, so a
+    translucent color cannot double-blend. `draw_polygon_aa` is the AA
+    *outline*.
 
-    Distinct from `draw_polygon_aa`, which is an AA *outline*.
-
-    Same pixel-centered-at-its-integer-coordinate convention as every
-    other AA primitive here, and the same `fill_rule` fill_polygon
-    takes, sharing `_is_inside` so the two agree on the boundary.
-
-    The sweep itself is `canvas.aa_crossing`'s `_sweep_edges_aa`,
-    shared with `fill_path_aa` -- see there for why it works per
-    sub-scanline rather than per sub-pixel sample. All this function
-    contributes is the polygon's bounding box and its edges.
-    `_point_in_polygon` remains the reference implementation that
-    sweep's output must match pixel for pixel.
-
-    Not fused with fill_polygon behind an `antialias: Bool`, for the
-    reason canvas.shapes.lines gives.
+    Pixels are centered at their integer coordinate, as in every other AA
+    primitive here, and `fill_rule` shares `_is_inside` with fill_polygon
+    so the two agree on the boundary.
 
     Args:
         canvas: Canvas to fill into.
         points: Polygon vertices, in order. Implicitly closed.
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     var n = len(points)
     if n < 3:
@@ -297,8 +260,7 @@ def fill_polygon_aa(
     the pixel grid.
 
     This is the real implementation; the whole-pixel overload above
-    converts and calls it. See `draw_line_aa`'s sub-pixel overload
-    (canvas.shapes.lines) for why a chart wants this one.
+    converts and calls it.
 
     Args:
         canvas: Canvas to fill into.
@@ -306,8 +268,7 @@ def fill_polygon_aa(
             Implicitly closed.
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     var n = len(points)
     if n < 3:

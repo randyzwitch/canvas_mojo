@@ -77,11 +77,6 @@ def _is_dash_on(
     An empty `dashes` list -- the default everywhere this is called
     from -- means "no dash pattern," always on: a draw_line/
     draw_polyline/etc. call that doesn't pass dashes= draws solid.
-
-    An odd-length list is doubled (Cairo's convention, matched
-    here for anyone porting a pattern from it): [5, 2, 1] means the
-    same as [5, 2, 1, 5, 2, 1] -- an odd count otherwise couldn't
-    alternate on/off evenly around the repeat.
     """
     if len(dashes) == 0:
         return True

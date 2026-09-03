@@ -1,44 +1,36 @@
-"""Text rendering, native the whole way down: font matching from
-`font_discovery.mojo`, glyph outlines and metrics from `ttf.mojo` via
+"""Text rendering: font matching from `font_discovery.mojo`, glyph
+outlines and metrics from `ttf.mojo` via
 `glyph_outline.mojo`, and rasterization from `fill_path_aa`
-(`path.mojo`). No FFI, in this module or anywhere below it. The glyph
-path is unhinted -- see ttf.mojo for what that means for exact
-metrics.
-
-Glyphs fill onto the target `Canvas` through the same `fill_path_aa`
-every other filled shape uses, so translucent text composites through
-`set_pixel` like any other fill.
+(`path.mojo`). The glyph path is unhinted. Glyphs fill through the same
+`fill_path_aa` every other shape uses, so translucent text composites
+through `set_pixel` like any other fill.
 
 `draw_text`'s (x, y) is the baseline's left end for LEFT alignment, not
 a top-left corner like fill_rect's. CENTER/RIGHT shift each line
-horizontally relative to that same anchor -- see TextAlign.
+horizontally against that same anchor.
 
-Rotation and multi-line share one code path with the plain single-line
-case. `_layout_block` (measurement) and draw_text's render pass both
-walk each line's glyphs from a shared anchor-relative local layout;
-each glyph's pen position and outline are rotated around `(x, y)` and
-translated into place in one pass (`_place_glyph_path`). At
-rotation=0.0 with one line, cos=1/sin=0 leaves every point unchanged.
+Rotation and multi-line share one code path with the single-line case.
+`_layout_block` and draw_text's render pass both walk each line's glyphs
+from a shared anchor-relative local layout, and each glyph's pen
+position and outline are rotated around `(x, y)` and translated in one
+pass (`_place_glyph_path`). At rotation=0.0 with one line, cos=1/sin=0
+leaves every point unchanged.
 
-Each line's codepoints go through `bidi.visual_order` before
-measurement or drawing sees them (`_visual_codepoints`), so mixed
-Hebrew/Arabic/Latin/digit text lays out in reading order without
-draw_text or _measure_line handling direction themselves. bidi.mojo
-documents what's covered: Hebrew fully; Arabic ordering and mirroring
-but not contextual letter-shaping.
+Each line's codepoints pass through `bidi.visual_order` first
+(`_visual_codepoints`), so mixed Hebrew/Arabic/Latin/digit text lays out
+in reading order without draw_text or _measure_line handling direction.
 
 Every glyph also goes through font fallback (`_resolve_glyph`). If the
 requested family has no real glyph for a codepoint (`has_glyph`
-distinguishes a real glyph from ".notdef", index 0), that one character
-resolves through `resolve_font_file_for_char`, which ranks a font
-whose `cmap` actually maps that codepoint above every other matching
-term. This package bundles no fonts, so a CJK/Cyrillic/symbol character
-requested under a Latin-only family renders through whatever font on
-the system has it; a character missing everywhere degrades to the
-unconstrained best match rather than an error. Fallback faces cache alongside the primary face.
+distinguishes one from ".notdef", index 0), that character resolves
+through `resolve_font_file_for_char`. This package bundles no fonts, so
+a CJK/Cyrillic/symbol character requested under a Latin-only family
+renders through whatever installed font has it; one missing everywhere
+degrades to the unconstrained best match. Fallback faces cache alongside
+the primary face.
 
-FontSlant/FontWeight are defined in font_discovery.mojo and re-exported
-here, as TextAlign is from text_align.mojo.
+FontSlant/FontWeight come from font_discovery.mojo and TextAlign from
+text_align.mojo, both re-exported here.
 """
 
 from std.math import cos, sin
@@ -255,10 +247,6 @@ def _resolve_glyph(
     Both the fallback path and the parsed fallback face are cached by
     `cache`, so several fallback glyphs for the same codepoint cost one
     lookup and one parse.
-
-    Metrics and outline come back together, from the same face, so the
-    two glyph-walking sites (_measure_line, draw_text's render pass)
-    can't disagree about which face's data they used.
     """
     if has_glyph(primary, codepoint):
         return _PositionedGlyph(
@@ -422,15 +410,14 @@ def measure_text(
     slant: FontSlant = FontSlant.NORMAL,
     weight: FontWeight = FontWeight.NORMAL,
 ) raises -> TextMetrics:
-    """Measure `text` at `size` points in `family` without drawing it,
-    so a caller can lay text out before committing to draw it.
+    """Measure `text` at `size` points in `family` without drawing it.
 
     Treats `text` as a single line: embedded "\\n" gets no line-break
-    handling. For per-line metrics of a multi-line string, split on
-    "\\n" and call this per line.
+    handling. Split on "\\n" and call this per line for a multi-line
+    string.
 
-    Resolves its font fresh every call. For repeated calls sharing a
-    font, use the `cache=` overload below.
+    Resolves its font fresh every call; the `cache=` overload below
+    reuses one.
 
     Args:
         text: Text to measure, treated as a single line.
@@ -455,10 +442,8 @@ def measure_text(
     *,
     mut cache: FontCache,
 ) raises -> TextMetrics:
-    """Like measure_text above, but resolving fonts through `cache`
-    rather than fresh every call -- for measuring many strings that share a
-    font, e.g. every tick label on one axis. Pass the same `FontCache`
-    to every call in the batch.
+    """Like measure_text above, but resolving fonts through `cache`.
+    Pass the same `FontCache` to every call in a batch.
 
     Args:
         text: Text to measure, treated as a single line.
@@ -530,8 +515,7 @@ def measure_text_block(
     without drawing -- see TextBlockBounds.
 
     A string with no ink (empty, or every line whitespace-only) returns
-    a zero-sized box at the anchor, matching draw_text's no-op for the
-    same input rather than an "advance" box with no ink in it.
+    a zero-sized box at the anchor, matching draw_text's no-op.
 
     Resolves its font fresh every call; see the `cache=` overload
     below.
@@ -672,18 +656,9 @@ def draw_text(
     `color`. AA coverage combines with `color.a` through the same
     set_pixel() blend every other filled shape uses.
 
-    `rotation` (radians) rotates the whole block -- every line
-    together -- around the `(x, y)` anchor, e.g. for an angled
-    axis-tick label. Transform2D's `rotation` (geometry.mojo) is a
-    different feature: that tilts a whole data-to-pixel mapping.
-
-    Two passes. _layout_block measures each line's ink extents and
-    computes its local baseline position (line index * line_height) and
-    horizontal offset (see TextAlign). Then each line's glyphs are
-    walked again, every outline built in local space
-    (glyph_outline.glyph_path), placed into canvas space by
-    _place_glyph_path, and filled onto `canvas` via fill_path_aa -- no
-    intermediate scratch surface.
+    `rotation` (radians) rotates the whole block -- every line together
+    -- around the `(x, y)` anchor. Transform2D's `rotation`
+    (geometry.mojo) instead tilts a whole data-to-pixel mapping.
 
     Resolves its font fresh once per pass, so twice per call; the
     `cache=` overload below collapses that to one.
@@ -829,26 +804,18 @@ def draw_text(
     *,
     mut cache: FontCache,
 ) raises:
-    """The implementation every other `draw_text` overload delegates
-    to: sub-pixel anchor, fonts resolved through `cache` rather than
-    fresh every call.
+    """The implementation every other `draw_text` overload delegates to:
+    sub-pixel anchor, fonts resolved through `cache` rather than fresh
+    every call.
 
-    A sub-pixel anchor is what lets a caller place a label relative to
-    something that is itself at a fractional position -- a tick at
-    x = 103.7, a label centered on a bar whose midpoint is not a whole
-    pixel. Rounding the anchor first shifts the whole string, which at
-    text sizes is a visible change in spacing against whatever it
-    labels. The glyph outlines themselves have been sub-pixel since
-    they reach `fill_path_aa` unrounded; this extends that to where the
-    string is placed.
+    A sub-pixel anchor places a label against something itself at a
+    fractional position -- a tick at x = 103.7, a label centered on a bar
+    whose midpoint is not a whole pixel. Rounding the anchor first shifts
+    the whole string.
 
-    Resolving through the cache also collapses the two resolutions a
-    single call makes -- _layout_block's measuring pass and the render
-    pass below both want the same face -- into one lookup plus a cache
-    hit. This also collapses the two resolutions a
-    single call makes -- _layout_block's measuring pass and the render
-    pass below both want the same face -- into one lookup plus a cache
-    hit.
+    Resolving through the cache collapses the two resolutions a single
+    call makes, the measuring pass and the render pass, into one lookup
+    plus a hit.
 
     Args:
         canvas: Canvas to draw into.

@@ -162,9 +162,9 @@ def test_fill_ring_sector_aa_fills_past_the_outer_arcs_own_bounding_box() raises
     angular gap.
 
     cx=cy=100, outer_radius=100, inner_radius=50, start_angle=pi/6
-    (30deg), end_angle=pi/3 (60deg) -- deliberately round angles so the
-    geometry is exact. Computed via Python's `math` module, not taken
-    from this package's `_arc_bounds`/`cos`/`sin`:
+    (30deg), end_angle=pi/3 (60deg) -- round angles, so the geometry is
+    exact. Computed via Python's `math` module, not taken from this
+    package's `_arc_bounds`/`cos`/`sin`:
 
     - The outer arc's y-range over that span is exactly
       [150, 186.60...], just the two endpoints, since no cardinal

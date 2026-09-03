@@ -94,22 +94,16 @@ struct Color(ImplicitlyCopyable, Movable):
 
     def blend_over_opaque(self, bg_r: UInt8, bg_g: UInt8, bg_b: UInt8) -> Color:
         """`blend_over` specialized to a background already known
-        opaque -- the overwhelmingly common case, since a canvas
-        created with an opaque fill has every pixel at alpha 255 until
-        something translucent is drawn onto it. `Canvas.write_pixel`
-        checks the destination alpha and calls this when it is 255,
-        falling back to `blend_over` when it is not (see buffer.mojo).
+        opaque. `Canvas.write_pixel` checks the destination alpha and
+        calls this when it is 255, falling back to `blend_over` when it
+        is not (see buffer.mojo).
 
-        Two things drop out of knowing that. The result's alpha is
-        always exactly 255: with bg.a == 255 the general formula gives
-        sa + (255 * inv) // 255 == sa + inv == 255, so the fourth
-        division is not an approximation to skip but a value already
-        determined. And the caller can pass the three background bytes
-        it just read, instead of packing them into a `Color` for this
-        to immediately take apart again.
-
-        Returns exactly what `blend_over` would against
-        `Color(bg_r, bg_g, bg_b)`.
+        With bg.a == 255 the general formula's output alpha reduces to
+        sa + (255 * inv) // 255 == sa + inv == 255, so the result is
+        always fully opaque and the per-pixel division drops out. The
+        caller passes the three background bytes it already read rather
+        than packing them into a `Color`. The result is exactly what
+        `blend_over` returns against `Color(bg_r, bg_g, bg_b)`.
 
         Args:
             bg_r: Background red channel.

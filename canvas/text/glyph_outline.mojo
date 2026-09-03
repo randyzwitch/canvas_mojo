@@ -1,31 +1,17 @@
-"""Glyph outlines and metrics, backed by the native TrueType parser
-(`ttf.mojo`) -- job 2 of the three text-rendering jobs (font discovery
-/ glyph resolution & metrics / rasterization). `font_discovery.mojo`
-resolves a family/slant/weight to a file; `ttf.mojo` parses that
-file's binary tables directly. This module is the thin adapter
-between the two: it exposes the `LineMetrics`/`GlyphMetrics`/
-`face_line_metrics`/`has_glyph`/`glyph_metrics`/`glyph_path` surface
-`render.mojo` calls, implemented against `ttf.mojo`'s `TTFFace` --
-no linked library in this module, or anywhere else in this package.
+"""Glyph outlines and metrics: the adapter between
+`font_discovery.mojo`, which resolves a family/slant/weight to a file,
+and `ttf.mojo`, which parses that file's binary tables. Exposes the
+`LineMetrics`/`GlyphMetrics`/`face_line_metrics`/`has_glyph`/
+`glyph_metrics`/`glyph_path` surface `render.mojo` calls.
 
-No hinting: `ttf.mojo` implements no hinting bytecode interpreter, a
-deliberate scope decision documented there. Every glyph renders
-through `fill_path_aa`'s supersampled coverage AA regardless, which is
-what keeps unhinted outlines correct at the sizes a chart uses.
-
-Locked-in font values: DejaVu Sans reads
-`units_per_EM`/`num_glyphs`/`ascender`/`descender` as
-2048/6253/1901/-483, and capital "I" decomposes to 1 contour, 4
-points, all on-curve -- both confirmed against `ttf.mojo`'s Python
-oracle. Glyph metrics (advance/bearing/width/height) differ slightly
-from what a hinting rasterizer such as FreeType reports for the same
-glyph at the same size, since hinting rounds and this never does; see
-tests/test_glyph_outline.mojo for the exact numbers.
+Outlines are unhinted (`ttf.mojo` runs no hinting bytecode), so glyph
+metrics differ slightly from a hinting rasterizer's such as FreeType's;
+tests/test_glyph_outline.mojo has the exact numbers.
 
 TrueType outline space has y increasing upward, the
 PDF/PostScript/font-design convention. `ttf.mojo`'s `outline_to_path`
 applies the y-flip into this package's y-down raster space, so this
-module doesn't repeat it.
+module does not repeat it.
 """
 
 from canvas.path import Path
@@ -120,11 +106,9 @@ struct GlyphMetrics(ImplicitlyCopyable, Movable):
 
 def has_glyph(mut face: TTFFace, codepoint: Int) raises -> Bool:
     """Whether `face` has a real glyph for `codepoint`. Glyph index 0
-    is TrueType's ".notdef", what `cmap` returns for any codepoint the
-    font doesn't map. A plain `cmap` lookup with no outline decode, so
-    it's cheaper than `glyph_metrics`/`glyph_path` for
-    `render.mojo`'s fallback logic, which only needs to know whether to
-    keep this face or resolve another.
+    is TrueType's ".notdef", what `cmap` returns for an unmapped
+    codepoint. A plain `cmap` lookup with no outline decode, which is
+    all `render.mojo`'s fallback logic needs.
 
     Args:
         face: Face to check.
@@ -177,14 +161,12 @@ def glyph_path(
     mut face: TTFFace, codepoint: Int, pen_x: Float64, pen_y: Float64
 ) raises -> Path:
     """One character's outline as a `Path`, positioned so its local
-    (0, 0) -- the glyph origin -- lands at (pen_x, pen_y) in pixel
-    space. The caller advances the pen by
-    `glyph_metrics(face, codepoint).advance` before the next character;
-    this doesn't, matching Path's convention that the caller positions
-    everything explicitly.
+    (0, 0) -- the glyph origin -- lands at (pen_x, pen_y) in pixel space.
+    The caller advances the pen by
+    `glyph_metrics(face, codepoint).advance` before the next character.
 
-    A glyph with no outline (whitespace maps to a valid glyph index
-    with zero contours) returns an empty Path rather than an error.
+    A glyph with no outline (whitespace maps to a valid glyph index with
+    zero contours) returns an empty Path.
 
     Args:
         face: Face to read the glyph from, with a pixel size already

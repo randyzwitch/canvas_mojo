@@ -1,20 +1,16 @@
-"""Minimal geometric types shared by the primitives that need more
-than a single (x, y) pair -- polylines/polygons take a sequence of
-points, where two parallel List[Int]s would be error-prone to keep in
-sync.
+"""Geometric types shared by the primitives that take more than a
+single (x, y) pair.
 
 Two point types, because the package rasterizes at two precisions.
 `Point` is whole pixels, what the hard-edged primitives address.
-`FPoint` is sub-pixel, what the anti-aliased ones need: an edge that
-crosses a pixel at x = 10.4 has to stay at 10.4 all the way to the
-coverage sweep, since rounding it to 10 first throws away exactly the
-detail the supersampling exists to resolve.
+`FPoint` is sub-pixel, what the anti-aliased ones need: an edge crossing
+a pixel at x = 10.4 has to stay at 10.4 all the way to the coverage
+sweep.
 
-`FPoint` lives here rather than in `path.mojo` (where it was first
-defined, and from which it is still exported for compatibility)
-because `canvas.shapes.arcs` samples arcs at sub-pixel precision too,
-and `path.mojo` imports *from* arcs -- so the shared type has to sit
-below both.
+`FPoint` lives here rather than in `path.mojo`, which still re-exports
+it, because `canvas.shapes.arcs` samples arcs at sub-pixel precision too
+and `path.mojo` imports *from* arcs, so the shared type has to sit below
+both.
 """
 
 from std.math import cos, sin
@@ -77,27 +73,15 @@ struct Transform2D(ImplicitlyCopyable, Movable):
 
         pixel = rotate(data * scale, rotation) + translate
 
-    Minimal beyond that fixed pipeline: no general matrix composition
-    and no "map this data range onto this pixel range" constructor.
-    Domain/range awareness belongs a layer up, in a charting layer's
-    scale types, which would compute a Transform2D's scale/translate
-    from a domain and a range. This type knows only the affine math.
+    scale_y is commonly negative: pixel-space y increases downward while
+    data-space y conventionally increases upward, so a negative scale_y
+    with a matching translate_y flips a vertical axis.
 
-    scale_y is commonly negative in practice: pixel-space y increases
-    downward while data-space y conventionally increases upward, so
-    flipping a chart's vertical axis is exactly what a negative
-    scale_y (with a matching translate_y) does.
-
-    `rotation` is radians, applied around the origin of the *scaled*
-    data space -- before translation, not around wherever
-    translate_x/translate_y places that origin in pixel space. There's
-    no pivot parameter; to rotate around another point, shift the data
-    coordinates or the translation the way a
-    translate-rotate-translate-back composition would. Defaults to 0.0.
-
-    Distinct from draw_text's `rotation`, which angles one rendered
-    label around its own anchor. This tilts the whole coordinate frame
-    every data point passes through.
+    `rotation` is radians, applied around the origin of the *scaled* data
+    space -- before translation, not around wherever
+    translate_x/translate_y puts that origin in pixel space. There is no
+    pivot parameter; to rotate around another point, shift the data
+    coordinates or the translation. Defaults to 0.0.
     """
 
     var scale_x: Float64
@@ -145,10 +129,9 @@ struct Transform2D(ImplicitlyCopyable, Movable):
         """Map a data-space point to sub-pixel canvas space.
 
         The same pipeline `to_pixel` applies, without the final
-        rounding. This is the one the anti-aliased primitives want: a
-        marker at y = 44.3 should be drawn there, not at 44 (see
-        `draw_line_aa`'s sub-pixel overload). `to_pixel` rounds this,
-        so the two cannot drift apart.
+        rounding -- what the anti-aliased primitives want, so a marker at
+        y = 44.3 is drawn there rather than at 44. `to_pixel` rounds this
+        result, so the two cannot drift apart.
 
         Args:
             x: Data-space x.

@@ -1,14 +1,13 @@
-"""Demo: a transparent background, and what it is for.
+"""Demo: a transparent background.
 
 `Canvas` stores per-pixel alpha, so a canvas can start fully
 transparent -- `Color(0, 0, 0, 0)` -- rather than on an opaque sheet of
 white. Shapes drawn onto it keep their own alpha, and `write_png`
 notices and emits a real alpha channel (PNG colour type 6).
 
-That matters for anything meant to sit on top of something else: a
-chart dropped into a document whose page colour you do not control, or
-one that has to work on both a light and a dark background. Flattened
-onto white it would carry a white box with it.
+That is what a chart dropped into a document of unknown page colour
+needs, or one that has to work on both a light and a dark background:
+flattened onto white it would carry a white box with it.
 
 Writes two files from the same drawing so the difference is visible:
 

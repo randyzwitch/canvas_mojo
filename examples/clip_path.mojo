@@ -1,21 +1,20 @@
 """Demo: clipping to an arbitrary shape.
 
-`push_clip` cuts drawing to a rectangle. `push_clip_path` cuts it to
-any `Path` -- which is what a chart needs to confine a series to a
-non-rectangular plot area, or to mask a gradient into a shape.
+`push_clip` cuts drawing to a rectangle. `push_clip_path` cuts it to any
+`Path`, which is what confines a series to a non-rectangular plot area
+or masks a gradient into a shape.
 
-The clip is anti-aliased, not a hard in/out stencil: the path's
-coverage becomes a 0-255 mask, so a pixel the boundary half covers lets
-half the drawing through. That is why the clipped edges below are as
-smooth as a filled edge would be, and it is the whole reason the mask
-stores coverage rather than a flag.
+The clip is anti-aliased, not a hard in/out stencil: the path's coverage
+becomes a 0-255 mask, so a pixel the boundary half covers lets half the
+drawing through. That is why the clipped edges below are as smooth as a
+filled edge would be.
 
 Three panels:
 
   left    a dense stripe pattern clipped to a rounded blob
   middle  a linear gradient masked into the same blob
   right   nested clips -- a circle inside the blob, showing that a
-          nested clip can only ever restrict, never escape its parent
+          nested clip can only restrict, never escape its parent
 
 Writes examples/out_clip_path.png.
 """
@@ -38,8 +37,8 @@ comptime PANEL = 220
 
 
 def _blob(cx: Float64, cy: Float64, r: Float64) raises -> Path:
-    """A closed wobbly shape -- deliberately not a circle, so the clip
-    boundary is somewhere `push_clip`'s rectangle could never reach.
+    """A closed wobbly shape, not a circle, so the clip boundary is
+    somewhere `push_clip`'s rectangle could never reach.
     """
     var p = Path()
     var lobes = 5

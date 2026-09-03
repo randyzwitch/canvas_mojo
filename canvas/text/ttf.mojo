@@ -1,39 +1,25 @@
 """Native TrueType (`sfnt`/`glyf`) font file parser: reads a font file's
 binary tables directly (table directory, `head`, `maxp`, `hhea`,
 `hmtx`, `cmap`, `glyf`, `loca`) rather than linking a font library.
-Every field offset and decode algorithm below is transcribed from
-Microsoft's OpenType 1.9.1 specification (learn.microsoft.com/
-typography/opentype/spec/{otff,head,maxp,hhea,hmtx,cmap,loca,glyf}) and
-cross-checked against a real font file through an independent Python
-oracle using only `struct.unpack` -- the same faithful-translation
-discipline `io/deflate.mojo` applies to zlib's `puff.c`.
+Field offsets and decode algorithms follow Microsoft's OpenType 1.9.1
+specification (learn.microsoft.com/typography/opentype/spec/{otff,head,
+maxp,hhea,hmtx,cmap,loca,glyf}).
 
-Scope, in the same spirit as `io/png.mojo`'s:
+Scope:
 
 - **TrueType (`glyf`) outlines only.** A font whose `sfntVersion` is
-  `OTTO` (CFF/OpenType-CFF outlines) raises a clear error rather than
-  being misread. CFF's outline encoding is a different Type 2
-  charstring bytecode, natively cubic where TrueType is
+  `OTTO` (CFF outlines) raises rather than being misread; CFF is a
+  different Type 2 charstring bytecode, natively cubic where TrueType is
   quadratic-with-implied-midpoints.
-- **No hinting.** A hinting bytecode interpreter (plus an auto-hinter
-  for unhinted fonts) is a large separate subsystem. Hinting mostly
-  matters for crisp rendering at small sizes on non-antialiased
-  displays, and every glyph here goes through `fill_path_aa`'s
-  supersampled coverage AA, which keeps unhinted outlines correct at
-  the sizes a chart uses.
-- **Variable fonts** (`fvar`/`gvar`) need no special handling:
-  `glyf`/`loca` hold the default non-varied outlines, and this module
-  never reads `gvar`'s per-instance deltas, so a variable font's
-  default instance is what gets read.
-- **Composite glyphs** (accented characters built from a base plus a
-  mark, "é" = "e" + combining acute) are supported, including the
-  scale/2x2-transform component flags. Point-matching placement
-  (`ARGS_ARE_XY_VALUES` unset) raises: every composite glyph found in
-  real fonts here used the far more common xy-offset mode.
-
-Locked in by this module's tests: parsing DejaVu Sans gives
-`unitsPerEm=2048`, `numGlyphs=6253`, `ascender=1901`, `descender=-483`,
-the same values a Python oracle reads from the same bytes.
+- **No hinting.** Every glyph goes through `fill_path_aa`'s supersampled
+  coverage AA instead, which keeps unhinted outlines correct at the sizes
+  a chart uses.
+- **Variable fonts** (`fvar`/`gvar`) read as their default instance:
+  `glyf`/`loca` hold the non-varied outlines and `gvar`'s per-instance
+  deltas are never read.
+- **Composite glyphs** ("é" = "e" + combining acute) are supported,
+  including the scale/2x2-transform component flags. Point-matching
+  placement (`ARGS_ARE_XY_VALUES` unset) raises.
 """
 
 from std.memory import ArcPointer
@@ -176,27 +162,19 @@ struct TTFFace(Movable):
     var _glyph_cache: Dict[Int, ArcPointer[RawGlyphOutline]]
     """Decoded outlines, keyed by glyph index.
 
-    `glyph_outline` walks `loca`, decodes contours, points and flags,
-    and recurses through composite components -- work that depends only
-    on the glyph, not on the size it is drawn at, since a
-    `RawGlyphOutline` is in font design units and only scaled later.
-    Text repeats characters, so without this a page of labels decodes
-    the same handful of glyphs hundreds of times.
-
-    `ArcPointer` for the same reason `FontCache` holds faces that way:
-    `RawGlyphOutline` owns its point lists and is Movable only, so a
-    hit returns a refcount bump rather than a copy of the contours.
+    Decoding depends only on the glyph, not the size it is drawn at,
+    since a `RawGlyphOutline` is in font design units and scaled later.
+    `ArcPointer`, because `RawGlyphOutline` owns its point lists and is
+    Movable only, so a hit is a refcount bump rather than a copy.
     """
 
     var _cmap_cache: Dict[Int, Int]
     """Codepoint -> glyph index, memoizing the `cmap` subtable scan."""
 
     var _pixel_size: Int
-    """-1 until `set_pixel_size` is called -- deliberately not a valid
-    size by default. A rasterizer that defaults an unset size doesn't
-    fail loudly; it silently measures and draws at a small,
-    wrong-looking one, so every read of this goes through `scale()`,
-    which raises instead.
+    """-1 until `set_pixel_size` is called, so an unset size is not a
+    valid one. Every read goes through `scale()`, which raises rather
+    than measuring and drawing at a defaulted size.
     """
 
     def __init__(out self, path: String) raises:
@@ -340,14 +318,11 @@ struct TTFFace(Movable):
 
     def glyph_index_for_codepoint(mut self, codepoint: Int) raises -> Int:
         """Look up `codepoint` in the `cmap` table, preferring a
-        full-Unicode format 12 subtable (which covers supplementary
-        planes: emoji, some CJK) over a BMP-only format 4 one, the
-        encoding-record priority real text stacks use. Returns 0
-        (".notdef") when no subtable maps the codepoint, `cmap`'s
-        not-found convention.
+        full-Unicode format 12 subtable (covering supplementary planes:
+        emoji, some CJK) over a BMP-only format 4 one. Returns 0
+        (".notdef") when no subtable maps it, `cmap`'s convention.
 
-        Memoized: text repeats characters, and the subtable scan below
-        is the same work every time for a given codepoint.
+        Memoized, since text repeats characters.
 
         Args:
             codepoint: Unicode codepoint to look up.
@@ -479,10 +454,8 @@ struct TTFFace(Movable):
     def glyph_outline(mut self, glyph_index: Int) raises -> RawGlyphOutline:
         """This glyph's decoded outline, in font design units.
 
-        Returns an owned outline, so it copies the cached one's point
-        lists. `glyph_outline_shared` avoids that and is what the
-        rendering path uses; this stays for callers that want a value
-        of their own.
+        Returns an owned outline, copying the cached one's point lists.
+        `glyph_outline_shared` is what the rendering path uses.
 
         Args:
             glyph_index: Glyph to decode.
@@ -496,13 +469,6 @@ struct TTFFace(Movable):
         mut self, glyph_index: Int
     ) raises -> ArcPointer[RawGlyphOutline]:
         """This glyph's decoded outline, shared rather than copied.
-
-        Decoding walks `loca`, reads contours, points and flags, and
-        recurses through composite components -- work that depends only
-        on the glyph, not the size, since the result is in font design
-        units and scaled later. Text repeats characters, so a page of
-        labels would otherwise decode the same handful of glyphs
-        hundreds of times.
 
         Args:
             glyph_index: Glyph to decode.

@@ -1,59 +1,50 @@
 """Whole-image regression tests against committed reference renders.
 
 Every other test in this repo asserts individual pixels at hand-derived
-coordinates. That is precise, and it is what caught most of the real
-bugs here -- but it cannot notice that an entire glyph moved half a
-pixel, that a fill lost its last column, or that a change to the blend
-shifted every anti-aliased edge by one. Those are exactly the failures
-a rasterizer produces, and until now the only thing catching them was
-rendering the examples before and after a change and comparing
-checksums by hand.
+coordinates. That catches a wrong value at a known place; it does not
+catch an entire glyph moving half a pixel, a fill losing its last
+column, or a blend change shifting every anti-aliased edge by one.
 
-This file does that automatically. Each scene below draws a small
-figure, and its render is compared against a PNG committed under
-tests/golden/. A scene is deliberately dense -- overlapping shapes,
-partial coverage everywhere, translucency -- because the point is to
-cover a lot of the renderer per image, not to isolate anything. When
-one fails, the per-pixel tests say what broke; this one says that
-something did.
+Each scene below draws a small figure, and its render is compared
+against a PNG committed under tests/golden/. A scene is dense --
+overlapping shapes, partial coverage everywhere, translucency -- to
+cover as much of the renderer per image as possible rather than to
+isolate anything. When one fails, the per-pixel tests say what broke;
+this one says that something did.
 
 ## Tolerance: how many pixels, not how far
 
-Two thresholds, and the important one is the count.
+Two thresholds, of which the count is the load-bearing one.
 
-The obvious design -- allow a small per-channel difference and compare
-nothing else -- was tried first and is wrong. Injecting a real
-regression (coverage-to-alpha truncating instead of rounding to
-nearest, a plausible one-character mistake) shifted 207 to 238 pixels
-per scene by *exactly one level* each. A per-channel tolerance of 2
-passed it silently. A whole class of subtle rasterizer bug moves many
-pixels a little, so a magnitude-only threshold is blind to precisely
-what a golden suite exists to catch.
+Allowing a small per-channel difference and comparing nothing else does
+not work here. Injecting a real regression (coverage-to-alpha truncating
+instead of rounding to nearest, a plausible one-character mistake)
+shifted 207 to 238 pixels per scene by *exactly one level* each, which a
+per-channel tolerance of 2 passes silently. Subtle rasterizer bugs move
+many pixels a little, so a magnitude-only threshold does not see them.
 
-What legitimately differs between platforms has the opposite shape.
-IEEE 754 pins +, -, *, / and sqrt exactly, so the only cross-platform
-freedom here is in `cos`/`sin`, which the arcs and circles use to place
-vertices. A ULP difference there moves a vertex by ~1e-16 of a pixel,
-which changes nothing at all unless a sub-sample happens to sit that
-close to an edge -- and if one does, that pixel's coverage jumps by a
-whole sub-sample step (1/16 at the default supersample, so ~16 levels),
-not by one.
+What legitimately differs between platforms has the opposite shape. IEEE
+754 pins +, -, *, / and sqrt exactly, so the only cross-platform freedom
+here is in `cos`/`sin`, which the arcs and circles use to place vertices.
+A ULP difference there moves a vertex by ~1e-16 of a pixel, which changes
+nothing unless a sub-sample happens to sit that close to an edge -- and
+if one does, that pixel's coverage jumps by a whole sub-sample step
+(1/16 at the default supersample, so ~16 levels), not by one.
 
-So: a handful of pixels differing by a lot is the platform's noise
-floor, and many pixels differing by a little is a bug. The thresholds
-follow that shape rather than a single fuzzy radius.
+So a handful of pixels differing by a lot is the platform's noise floor,
+and many pixels differing by a little is a bug. The thresholds follow
+that shape rather than a single fuzzy radius.
 
 _MAX_DIFFERING_PIXELS is 8 out of 19200 -- roughly 25x below the
 injected regression above, and well above the zero-to-few a
-transcendental disagreement could plausibly produce.
+transcendental disagreement could produce.
 
 ## No text
 
-Text is excluded on purpose. It depends on which fonts are installed
-and on their exact version, neither of which this repo controls, so a
-text golden would fail for reasons that are not regressions.
-`tests/test_text.mojo` covers text with 29 assertions that do not have
-that problem.
+Text is excluded. It depends on which fonts are installed and on their
+exact version, neither of which this repo controls, so a text golden
+would fail for reasons that are not regressions. `tests/test_text.mojo`
+covers text with 29 assertions that do not have that problem.
 
 ## Updating the goldens
 
@@ -63,13 +54,11 @@ When a change is *supposed* to alter output:
 
 That rewrites every reference from the current renderer and passes
 trivially, so the diff it produces is the thing to review -- committing
-a regenerated golden is asserting that the new pixels are correct. Do
-it deliberately, never to make a red test go green.
+a regenerated golden asserts that the new pixels are correct.
 
 Regeneration lives in this file rather than a separate script so the
 scenes are defined exactly once; a script that drew them separately
-could drift from what the test checks, which would make the goldens
-worse than useless.
+could drift from what the test checks.
 """
 
 from std.math import cos, pi, sin

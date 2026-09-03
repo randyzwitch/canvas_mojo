@@ -1,18 +1,17 @@
 """Demo: write_png/read_png -- a second, stdlib-only image format
-alongside BMP (see canvas/io/png.mojo's module docstring for why
-PNG earns its place: it previews well in essentially every viewer, not
-just ones with raw BMP support, and its pixel data is really
-compressed rather than stored raw). Both directions go through
-canvas/io/deflate.mojo -- this package's own native LZ77 +
-fixed-Huffman encoder on the way out, and its own decoder on the way
-in, which has to handle whatever a real encoder produced.
+alongside BMP. PNG previews in essentially every viewer, not just ones
+with raw BMP support, and its pixel data is compressed rather than
+stored raw (see canvas/io/png.mojo's module docstring). Both directions
+go through canvas/io/deflate.mojo -- this package's own native LZ77 +
+fixed-Huffman encoder on the way out, and its own decoder on the way in,
+which has to handle whatever a real encoder produced.
 
-One scene, written out through both encoders from the same canvas, so
-comparing out_png_output.bmp against out_png_output.png (once
-decoded) is a real cross-encoder consistency check, not just "it ran".
-The PNG is then read back in with read_png() and compared pixel-for-
-pixel against the original canvas, demonstrating the full write/read
-round trip through this package's own code on both ends.
+One scene is written out through both encoders from the same canvas, so
+comparing out_png_output.bmp against out_png_output.png (once decoded)
+is a cross-encoder consistency check. The PNG is then read back in with
+read_png() and compared pixel-for-pixel against the original canvas,
+covering the full write/read round trip through this package's own code
+on both ends.
 
 Run with:
     pixi run example

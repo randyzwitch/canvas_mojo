@@ -1,10 +1,9 @@
-"""TextAlign -- kept in its own module, separate from render.mojo, so
-it can be referenced (by `canvas.vector.draw_target`, and
-transitively by `canvas.buffer`'s `Canvas` -- see that trait for
-why) without pulling in render.mojo's heavier
-font-touching imports (font_discovery.mojo/ttf.mojo/glyph_outline.mojo/
-bidi.mojo). `from canvas.text.render import TextAlign` also works
--- render.mojo re-exports this same type.
+"""TextAlign, in its own module so it can be referenced by
+`canvas.vector.draw_target` -- and transitively by `canvas.buffer`'s
+`Canvas` -- without pulling in render.mojo's font-touching imports
+(font_discovery.mojo/ttf.mojo/glyph_outline.mojo/bidi.mojo).
+`from canvas.text.render import TextAlign` also works: render.mojo
+re-exports this same type.
 """
 
 
@@ -12,11 +11,10 @@ struct TextAlign(Copyable, ImplicitlyCopyable, Movable):
     """Horizontal alignment of each line relative to draw_text's
     (x, y) anchor.
 
-    Measured against a line's *advance* width (TextMetrics.advance --
-    the logical cursor-advance distance), not its tight ink bounds --
-    matching HTML5 Canvas's textAlign and every mainstream text API,
-    so trailing whitespace still shifts centering the way it visually
-    should, not the way a tight ink-bounds measurement would ignore.
+    Measured against a line's *advance* width (TextMetrics.advance, the
+    logical cursor-advance distance) rather than its tight ink bounds,
+    matching HTML5 Canvas's textAlign, so trailing whitespace shifts
+    centering instead of being ignored.
     """
 
     var _value: Int

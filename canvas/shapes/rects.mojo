@@ -48,10 +48,6 @@ def fill_rect(
 ):
     """Fill a solid rectangle (x, y is the top-left corner).
 
-    Clamps to the canvas bounds and active clip once up front through
-    `Canvas.effective_fill_rect`, rather than per pixel through
-    set_pixel: every pixel in the loop shares the same bounds check.
-
     Args:
         canvas: Canvas to fill into.
         x: Rectangle's left edge.

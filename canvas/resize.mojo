@@ -1,12 +1,10 @@
-"""Box-filter downsampling -- shrink a Canvas by an integer factor,
-each output pixel the average of the corresponding factor x factor
-block of input pixels. This is the actual mechanism behind
-supersampled anti-aliasing: render `factor` times larger than the
-intended final size, then `downsample()` back to it, and every output
-pixel averages `factor * factor` real source samples instead of one.
-The result has the same pixel dimensions as an unsupersampled render,
-with finer edges baked into the file rather than left to whatever
-displays it.
+"""Box-filter downsampling: shrink a Canvas by an integer factor, each
+output pixel the average of the corresponding factor x factor block of
+input pixels.
+
+This is the mechanism behind supersampled anti-aliasing -- render
+`factor` times larger than the final size, then `downsample()` back --
+so every output pixel averages `factor * factor` real source samples.
 """
 
 from std.runtime.asyncrt import TaskGroup, parallelism_level
@@ -27,8 +25,9 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     around 1.
 
     Each output pixel is the *rounded* mean (see the `+ n // 2` below)
-    of its `factor x factor` source block, per r/g/b channel. Alpha
-    isn't involved: Canvas stores none per pixel.
+    of its `factor x factor` source block, per channel. Alpha is
+    averaged alongside r/g/b -- see the comment on `pixels` below for
+    what that does and does not hold for.
 
     Args:
         source: Canvas to shrink.
@@ -153,10 +152,6 @@ def _downsample_band(
     Bands write disjoint output rows and only read the source, so no
     two ever touch the same byte -- which is the basis on which
     `pixels` is shared mutably between them.
-
-    Every coordinate here comes from out_width/out_height times
-    `factor`, which is how the output dimensions were derived, so each
-    read is on-canvas by construction -- see Canvas.read_pixel.
     """
     for oy in range(first_row, last_row):
         var out_idx = oy * out_width * BYTES_PER_PIXEL

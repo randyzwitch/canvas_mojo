@@ -2,27 +2,23 @@
 `Canvas` (raster, pixels) and `SvgCanvas` (vector, markup) -- by writing
 it against the `DrawTarget` trait rather than either concrete type.
 
-`draw_scene` below never learns which backend it holds. That is the
-whole point of the trait: a charting layer writes its rendering core
-once, and picking raster or vector becomes the caller's decision. This
-example writes both out, so out_vector.png and out_vector.svg are the
-same scene through two entirely different mechanisms -- supersampled
-coverage math on one side, `<rect>`/`<ellipse>`/`<path>` elements on the
-other.
+`draw_scene` below never learns which backend it holds, so a charting
+layer writes its rendering core once and picking raster or vector
+becomes the caller's decision. This example writes both out:
+out_vector.png and out_vector.svg are the same scene through
+supersampled coverage math on one side and
+`<rect>`/`<ellipse>`/`<path>` elements on the other.
 
-Translucent colors are used deliberately here: alpha is the one place
-the two backends do genuinely different work to reach the same picture.
-Raster blends per pixel through `set_pixel`; vector emits a
-`fill-opacity` attribute and leaves the compositing to whatever renders
-the markup.
+The scene uses translucent colors, which is where the two backends do
+the most different work to reach the same picture: raster blends per
+pixel through `set_pixel`, while vector emits a `fill-opacity`
+attribute and leaves compositing to whatever renders the markup.
 
 A title and tagline are drawn after draw_scene() returns, once per
-backend, rather than from inside it: text is deliberately excluded
-from `DrawTarget` (see that trait's own docstring), so there is no
-generic call `draw_scene` could make. This is that exclusion's other
-side -- a caller that knows which concrete backend it holds calls
-`canvas.text.draw_text` or `SvgCanvas.draw_text` directly, exactly
-as documented.
+backend, rather than from inside it. Text is excluded from `DrawTarget`
+(see that trait's docstring), so there is no generic call `draw_scene`
+could make; a caller that knows its concrete backend calls
+`canvas.text.draw_text` or `SvgCanvas.draw_text` directly.
 
 Run with:
     pixi run example

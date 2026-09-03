@@ -1,24 +1,18 @@
 """Read and write uncompressed BMP files.
 
-BMP is natively previewable by most editors (including VS Code's
-built-in image preview) and OS file browsers, while still being
-trivial to encode with nothing but stdlib byte I/O and no
-compression.
+BMP previews natively in most editors and OS file browsers, and encodes
+with nothing but stdlib byte I/O.
 
 `write_bmp` emits 24-bit BGR, bottom-up, rows padded to a 4-byte
-boundary. `read_bmp` accepts 24-bit and 32-bit uncompressed
-(BI_RGB) files in either row order, which covers what an editor or a
-screenshot tool actually produces. Compressed variants (RLE4/RLE8),
-palettized depths (1/4/8-bit) and the BI_BITFIELDS channel-mask forms
-raise a clear error rather than misreading pixels -- the same scope
-line `read_png` draws, and for the same reason.
+boundary. `read_bmp` accepts 24-bit and 32-bit uncompressed (BI_RGB)
+files in either row order. Compressed variants (RLE4/RLE8), palettized
+depths (1/4/8-bit) and the BI_BITFIELDS channel-mask forms raise rather
+than misreading pixels.
 
-BMP has no alpha in its 24-bit form, and its 32-bit form has a fourth
-byte that is very often padding rather than a real alpha channel --
-files written by tools that leave it zero would decode as fully
-transparent if it were trusted. `read_bmp` therefore returns opaque
-pixels always; a caller wanting real transparency should be using PNG,
-which `canvas.io.png` reads and writes with a genuine alpha channel.
+`read_bmp` always returns opaque pixels: 24-bit BMP has no alpha, and a
+32-bit file's fourth byte is often padding, so a file that leaves it
+zero would decode as fully transparent if it were trusted. Use PNG for
+real transparency.
 """
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -172,9 +166,6 @@ def _read_i32_le(data: List[UInt8], pos: Int) raises -> Int:
 
 def read_bmp(path: String) raises -> Canvas:
     """Read an uncompressed 24- or 32-bit BMP into a new Canvas.
-
-    The counterpart to `write_bmp`, and the BMP half of what
-    `canvas.io.png` already offered both directions of.
 
     Handles both row orders. BMP conventionally stores rows
     bottom-up, which is what `write_bmp` emits, but a negative height

@@ -1,14 +1,13 @@
-"""Demo: push_clip/pop_clip restrict drawing to a sub-rectangle, with
-zero changes needed to any primitive -- they all write through
-Canvas.set_pixel already. Content that would normally spill past the
-boundary (a big circle, a full-width diagonal line) gets cut off
-cleanly at the clip edge.
+"""Demo: push_clip/pop_clip restrict drawing to a sub-rectangle, with no
+changes to any primitive -- they all write through Canvas.set_pixel
+already. Content that would normally spill past the boundary (a big
+circle, a full-width diagonal line) is cut off cleanly at the clip edge.
 
 Also demonstrates nesting: a second, oversized clip pushed inside the
-first still can't draw outside the parent's region, because push_clip
+first still cannot draw outside the parent's region, because push_clip
 intersects with whatever is already active rather than replacing it --
-the point of a stack over a single settable rect (see
-canvas/buffer.mojo's push_clip).
+what a stack gives over a single settable rect (see canvas/buffer.mojo's
+push_clip).
 
 Run with:
     pixi run example
