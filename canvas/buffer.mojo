@@ -15,9 +15,23 @@
 # and would change what every existing caller of `get_pixel` sees.
 comptime BYTES_PER_PIXEL = 4
 
+# Pixels blended per pass in _fill_region's vector loop, and the lane
+# count that implies (one lane per byte). Two pixels is one 8-byte
+# load, whose int32 expansion is 256 bits -- one native vector on the
+# AVX2 baseline this package builds for.
+#
+# Four was measured and rejected: its int32 expansion is 512 bits,
+# which legalizes into multiple operations and roughly doubled this
+# function's code. That bought a further ~14 points on a translucent
+# whole-canvas fill and cost 30% on write_png, which touches none of
+# this code and regressed purely on the larger footprint. Re-benchmark
+# the fill *and* the PNG cases before widening it.
+comptime _FILL_PIXELS = 2
+comptime _FILL_LANES = _FILL_PIXELS * BYTES_PER_PIXEL
+
 from std.memory import unsafe_memcpy
 
-from canvas.color import Color, _div255
+from canvas.color import Color, _div255, _div255_simd
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.fill_rule import FillRule
@@ -633,9 +647,45 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var cr = Int(color.r) * sa
         var cg = Int(color.g) * sa
         var cb = Int(color.b) * sa
+
+        # The scalar blend below, widened to _FILL_PIXELS pixels per
+        # pass. The source term is premultiplied once for the whole
+        # rectangle, the same hoist the scalar path makes.
+        #
+        # Each alpha lane carries 255 * sa rather than being handled
+        # separately, which is what lets one uniform blend across every
+        # lane leave an opaque destination opaque: that lane evaluates
+        # to _div255(255 * sa + 255 * inv) == _div255(255 * 255) == 255.
+        var quad = SIMD[DType.int32, 4](
+            Int32(cr), Int32(cg), Int32(cb), Int32(255 * sa)
+        )
+        var src_pre = quad.join(quad)
+        var invv = SIMD[DType.int32, _FILL_LANES](Int32(inv))
+        var vector_cols = rw - (rw % _FILL_PIXELS)
+
         for y in range(ry, ry + rh):
             var idx = y * stride + rx * BYTES_PER_PIXEL
-            for _ in range(rw):
+            var col = 0
+            while col < vector_cols:
+                var dst = p.unsafe_load[width=_FILL_LANES](idx)
+                # Whole groups only. A group holding any translucent
+                # destination needs blend_over's per-pixel divide,
+                # which has no lane-wise form, so it falls through to
+                # the scalar loop below rather than being blended
+                # wrongly.
+                if dst[3] == 255 and dst[7] == 255:
+                    p.unsafe_store(
+                        idx,
+                        _div255_simd[_FILL_LANES](
+                            src_pre + dst.cast[DType.int32]() * invv
+                        ).cast[DType.uint8](),
+                    )
+                    idx += _FILL_LANES
+                    col += _FILL_PIXELS
+                    continue
+                break
+
+            for _ in range(rw - col):
                 if p[unsafe_offset=idx + 3] == 255:
                     # Opaque destination: the hoisted division-free
                     # form, and the result stays opaque.

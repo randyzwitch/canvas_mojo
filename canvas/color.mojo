@@ -22,6 +22,30 @@ def _div255(value: Int) -> Int:
     return (value * _DIV255_MUL) >> _DIV255_SHIFT
 
 
+def _div255_simd[
+    width: Int
+](value: SIMD[DType.int32, width]) -> SIMD[DType.int32, width]:
+    """`_div255` applied to every lane at once, and exactly the same
+    identity, so a vectorized blend lands on the same bytes a scalar
+    one does.
+
+    int32 lanes rather than a narrower type because the multiply needs
+    the room: the widest numerator a blend forms is 255 * 255 = 65025,
+    and 65025 * 32897 = 2139127425, which fits int32's 2147483647 with
+    8356222 to spare.
+
+    Parameters:
+        width: Lane count.
+
+    Args:
+        value: Numerators, each in [0, 65025].
+
+    Returns:
+        Each lane divided by 255, truncating.
+    """
+    return (value * _DIV255_MUL) >> _DIV255_SHIFT
+
+
 struct Color(ImplicitlyCopyable, Movable):
     """An 8-bit-per-channel RGBA color."""
 
@@ -96,7 +120,8 @@ struct Color(ImplicitlyCopyable, Movable):
         """`blend_over` specialized to a background already known
         opaque. `Canvas.write_pixel` checks the destination alpha and
         calls this when it is 255, falling back to `blend_over` when it
-        is not (see buffer.mojo).
+        is not (see buffer.mojo). `Canvas._fill_region` runs the same
+        arithmetic across SIMD lanes for a bulk fill.
 
         With bg.a == 255 the general formula's output alpha reduces to
         sa + (255 * inv) // 255 == sa + inv == 255, so the result is

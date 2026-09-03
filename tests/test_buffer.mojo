@@ -143,6 +143,111 @@ def test_fill_respects_the_active_clip() raises:
             _assert_pixel_eq(c, x, y, expected)
 
 
+def test_write_pixel_blend_matches_blend_over() raises:
+    # test_color.mojo checks blend_over_opaque's arithmetic in
+    # isolation; this checks what a caller actually gets after
+    # set_pixel has routed through write_pixel and the buffer
+    # indexing, across the whole alpha range rather than a sample.
+    var bg = Color(17, 200, 90)
+    for a in range(256):
+        var c = Canvas(1, 1, bg)
+        var src = Color(240, 30, 130, UInt8(a))
+        c.set_pixel(0, 0, src)
+        var expected = src.blend_over(bg)
+        var got = c.get_pixel(0, 0)
+        assert_equal(got.r, expected.r, "red matches blend_over")
+        assert_equal(got.g, expected.g, "green matches blend_over")
+        assert_equal(got.b, expected.b, "blue matches blend_over")
+        assert_equal(got.a, 255, "an opaque destination stays opaque")
+
+
+def test_write_pixel_blend_onto_a_translucent_destination() raises:
+    # The other branch: a destination carrying its own alpha needs
+    # blend_over's per-pixel divide, and an output alpha that actually
+    # varies rather than staying pinned at 255.
+    var bg = Color(17, 200, 90, 128)
+    for a in range(256):
+        var c = Canvas(1, 1, bg)
+        var src = Color(240, 30, 130, UInt8(a))
+        c.set_pixel(0, 0, src)
+        var expected = src.blend_over(bg)
+        var got = c.get_pixel(0, 0)
+        assert_equal(got.r, expected.r, "red matches blend_over")
+        assert_equal(got.g, expected.g, "green matches blend_over")
+        assert_equal(got.b, expected.b, "blue matches blend_over")
+        assert_equal(got.a, expected.a, "output alpha tracks blend_over")
+
+
+def test_translucent_fill_matches_blend_over_at_every_width() raises:
+    # _fill_region blends four pixels per vector pass and leaves the
+    # remainder to its scalar loop, so every width mod 4 has to land on
+    # the same bytes. 1..17 covers each remainder several times,
+    # including the widths below one whole group.
+    var bg = Color(17, 200, 90)
+    var src = Color(240, 30, 130, 128)
+    var expected = src.blend_over(bg)
+    for w in range(1, 18):
+        var c = Canvas(w, 2, bg)
+        c.fill(src)
+        for y in range(2):
+            for x in range(w):
+                var got = c.get_pixel(x, y)
+                assert_equal(got.r, expected.r, "red at width " + String(w))
+                assert_equal(got.g, expected.g, "green at width " + String(w))
+                assert_equal(got.b, expected.b, "blue at width " + String(w))
+                assert_equal(got.a, 255, "stays opaque at width " + String(w))
+
+
+def test_translucent_fill_onto_a_translucent_canvas() raises:
+    # A destination carrying its own alpha sends every group to the
+    # scalar path, since blend_over's per-pixel divide has no lane-wise
+    # form. The result is still blend_over's, output alpha included.
+    var bg = Color(17, 200, 90, 128)
+    var src = Color(240, 30, 130, 200)
+    var expected = src.blend_over(bg)
+    var c = Canvas(9, 2, bg)
+    c.fill(src)
+    for y in range(2):
+        for x in range(9):
+            var got = c.get_pixel(x, y)
+            assert_equal(got.r, expected.r, "red")
+            assert_equal(got.g, expected.g, "green")
+            assert_equal(got.b, expected.b, "blue")
+            assert_equal(got.a, expected.a, "output alpha tracks blend_over")
+
+
+def test_translucent_fill_over_mixed_destination_alpha() raises:
+    # The boundary case between the two: one translucent pixel inside
+    # the first group of four makes that group unblendable across
+    # lanes, so the row falls to the scalar path partway through.
+    # Every pixel must still match blend_over against what it actually
+    # held, on both sides of the switch.
+    var opaque_bg = Color(17, 200, 90)
+    var clear_bg = Color(60, 10, 220, 128)
+    var src = Color(240, 30, 130, 128)
+
+    # Built through the pixels constructor: write_pixel would blend the
+    # translucent pixel in rather than store it.
+    var pixels = List[UInt8]()
+    for x in range(10):
+        var seed = clear_bg if x == 2 else opaque_bg
+        pixels.append(seed.r)
+        pixels.append(seed.g)
+        pixels.append(seed.b)
+        pixels.append(seed.a)
+    var c = Canvas(10, 1, pixels^)
+    c.fill(src)
+
+    for x in range(10):
+        var seed = clear_bg if x == 2 else opaque_bg
+        var expected = src.blend_over(seed)
+        var got = c.get_pixel(x, 0)
+        assert_equal(got.r, expected.r, "red at x=" + String(x))
+        assert_equal(got.g, expected.g, "green at x=" + String(x))
+        assert_equal(got.b, expected.b, "blue at x=" + String(x))
+        assert_equal(got.a, expected.a, "alpha at x=" + String(x))
+
+
 def _assert_pixel_eq(c: Canvas, x: Int, y: Int, expected_r: UInt8) raises:
     var p = c.get_pixel(x, y)
     assert_equal(p.r, expected_r)
