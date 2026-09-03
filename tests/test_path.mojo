@@ -1163,6 +1163,38 @@ def test_transformed_arc_survives_a_y_flip() raises:
         )
 
 
+def test_bounds_follow_the_flattened_curve_not_the_control_point() raises:
+    # A quadratic from (0, 0) to (20, 0) pulled toward (10, 20) peaks
+    # at t=0.5, where y = 0.25*0 + 0.5*20 + 0.25*0 = 10: half the
+    # control point's height. The box must reach that apex (within
+    # the flattening's step) and stop well short of the control point.
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.quad_curve_to(10.0, 20.0, 20.0, 0.0)
+    var b = p.bounds()
+    assert_equal(b[0], 0.0, "min_x is the start point")
+    assert_equal(b[1], 0.0, "min_y is the baseline")
+    assert_equal(b[2], 20.0, "max_x is the end point")
+    assert_true(b[3] > 9.9 and b[3] <= 10.0, "max_y is the apex, not 20")
+
+
+def test_bounds_span_every_sub_path() raises:
+    var p = Path()
+    p.rect(5.0, 5.0, 10.0, 10.0)
+    p.rect(-3.0, 40.0, 2.0, 2.0)
+    var b = p.bounds()
+    assert_equal(b[0], -3.0)
+    assert_equal(b[1], 5.0)
+    assert_equal(b[2], 15.0)
+    assert_equal(b[3], 42.0)
+
+
+def test_bounds_of_an_empty_path_are_zero() raises:
+    var b = Path().bounds()
+    assert_equal(b[0], 0.0)
+    assert_equal(b[2], 0.0)
+
+
 def test_transformed_leaves_the_original_alone() raises:
     # It returns a new path precisely so the source can be reused.
     var t = Transform2D(2.0, 2.0, 10.0, 10.0)
