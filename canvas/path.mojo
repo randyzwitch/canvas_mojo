@@ -224,10 +224,12 @@ struct Path(Movable):
         start_angle: Float64,
         end_angle: Float64,
     ) raises:
-        """A circular arc segment, center (cx, cy), from `start_angle`
-        to `end_angle` (radians, start_angle <= end_angle) -- the same
-        angle convention as draw_arc/fill_arc/fill_ring_sector, and
-        flattened through that family's `_arc_fpoints`.
+        """A circular arc segment, center (cx, cy), swept from
+        `start_angle` to `end_angle` in radians -- the same angle
+        convention as draw_arc/fill_arc/fill_ring_sector, flattened
+        through that family's `_arc_fpoints`. An `end_angle` below
+        `start_angle` sweeps the other way round, which is what a
+        counter-clockwise corner or a reflected shape needs.
 
         Unlike Cairo's `arc()`, this inserts no connecting line from the
         current point to the arc's start. To join without a seam, call
@@ -240,7 +242,8 @@ struct Path(Movable):
             cy: Arc's center y.
             radius: Arc's radius in pixels.
             start_angle: Sweep start, radians, 0 pointing along +x.
-            end_angle: Sweep end, radians. Must be >= start_angle.
+            end_angle: Sweep end, radians. Below `start_angle` sweeps
+                in decreasing angle.
 
         Raises:
             Error: No move_to() has been called yet on this path.
@@ -394,14 +397,12 @@ struct Path(Movable):
         and only a transform that maps circles to circles folds back into
         those five numbers:
 
-        - Equal scale magnitudes, same sign: exact. The centre maps, the
-          radius scales, and the angles shift by the transform's
-          rotation.
-        - A reflection (the axis scales differing in sign, as a y-flip
-          does): flattened. The image is still a circular arc, but the
-          sweep runs backwards, and `arc_to` only expresses increasing
-          angles, so re-emitting it as an arc would reverse its endpoints
-          and detach it from the current point.
+        - Equal scale magnitudes: exact. The centre maps, the radius
+          scales, and the angles shift by the transform's rotation. A
+          negative scale mirrors the angles first -- a y-flip maps an
+          angle a to -a, an x-flip to pi - a, and both together to
+          a + pi -- so a reflected arc comes out swept the other way,
+          which `arc_to` expresses as a decreasing angle.
         - Unequal magnitudes: flattened. The arc becomes an *elliptical*
           arc, which `arc_to` cannot express and no primitive here draws.
 
@@ -421,12 +422,11 @@ struct Path(Movable):
         """
         var out = Path()
 
-        # Equal magnitudes mean circles stay circles; the sign
-        # difference is a reflection, handled by mirroring the angles.
+        # Equal magnitudes mean circles stay circles; a negative sign
+        # mirrors the angles, handled below.
         var sx = abs(transform.scale_x)
         var sy = abs(transform.scale_y)
         var uniform = sx == sy
-        var reflected = (transform.scale_x < 0.0) != (transform.scale_y < 0.0)
 
         for cmd in self.commands:
             if cmd.kind == _MOVE_TO:
@@ -447,14 +447,25 @@ struct Path(Movable):
             elif cmd.kind == _ARC_TO:
                 # p1 = (cx, cy), p2 = (radius, start_angle),
                 # p3.x = end_angle -- see _PathCommand.
-                if uniform and not reflected:
+                if uniform:
                     var centre = transform.to_point(cmd.p1.x, cmd.p1.y)
+                    var start = cmd.p2.y
+                    var end = cmd.p3.x
+                    if transform.scale_x < 0.0 and transform.scale_y < 0.0:
+                        start += pi
+                        end += pi
+                    elif transform.scale_y < 0.0:
+                        start = -start
+                        end = -end
+                    elif transform.scale_x < 0.0:
+                        start = pi - start
+                        end = pi - end
                     out.arc_to(
                         centre.x,
                         centre.y,
                         cmd.p2.x * sx,
-                        cmd.p2.y + transform.rotation,
-                        cmd.p3.x + transform.rotation,
+                        start + transform.rotation,
+                        end + transform.rotation,
                     )
                 else:
                     var arc = _arc_fpoints(
@@ -469,6 +480,43 @@ struct Path(Movable):
             else:  # _CLOSE
                 out.close()
         return out^
+
+    def bounds(
+        self, curve_steps: Int = 0
+    ) -> Tuple[Float64, Float64, Float64, Float64]:
+        """The axis-aligned box the path's flattened outline spans, as
+        (min_x, min_y, max_x, max_y) in canvas coordinates.
+
+        Measured on the same flattening the fills draw, so a curve's
+        box follows the curve and not its control points, which can
+        lie well outside it. An empty path returns all zeros.
+
+        Args:
+            curve_steps: Straight-line segments per quad/cubic Bezier;
+                0 (the default) chooses per segment, as the fills do.
+
+        Returns:
+            (min_x, min_y, max_x, max_y).
+        """
+        var subpaths = _flatten(self, curve_steps)
+        if len(subpaths) == 0:
+            return (0.0, 0.0, 0.0, 0.0)
+        var min_x = subpaths[0].points[0].x
+        var max_x = min_x
+        var min_y = subpaths[0].points[0].y
+        var max_y = min_y
+        for sp_idx in range(len(subpaths)):
+            ref sp = subpaths[sp_idx]
+            for p in sp.points:
+                if p.x < min_x:
+                    min_x = p.x
+                if p.x > max_x:
+                    max_x = p.x
+                if p.y < min_y:
+                    min_y = p.y
+                if p.y > max_y:
+                    max_y = p.y
+        return (min_x, min_y, max_x, max_y)
 
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's move_to and

@@ -373,48 +373,94 @@ def draw_ellipse_aa(
     ry: Int,
     color: Color,
     supersample: Int = 4,
+    width: Float64 = 1.0,
 ):
-    """Anti-aliased ellipse outline, ~1px wide -- draw_circle_aa's
-    generalization to independent x/y radii.
+    """Anti-aliased ellipse outline, `width` pixels wide (default 1) --
+    draw_circle_aa's generalization to independent x/y radii.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x.
+        cy: Center y.
+        rx: Horizontal radius in pixels, to the middle of the stroke.
+        ry: Vertical radius in pixels, to the middle of the stroke.
+        color: Outline color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        width: Stroke width in pixels.
+    """
+    if rx <= 0 or ry <= 0:
+        canvas.set_pixel(cx, cy, color)
+        return
+    draw_ellipse_aa(
+        canvas,
+        Float64(cx),
+        Float64(cy),
+        Float64(rx),
+        Float64(ry),
+        color,
+        supersample,
+        width,
+    )
+
+
+def draw_ellipse_aa(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+    supersample: Int = 4,
+    width: Float64 = 1.0,
+):
+    """`draw_ellipse_aa` at a sub-pixel center and radii; the
+    whole-pixel overload above converts and calls this.
 
     No single distance value serves both boundaries here: an ellipse's
-    `(rx-0.5, ry-0.5)` and `(rx+0.5, ry+0.5)` rings are two different
+    `(rx-w/2, ry-w/2)` and `(rx+w/2, ry+w/2)` rings are two different
     ellipses, where a circle's are concentric offsets of one curve. Each
     sample is tested against both in their own normalized space:
 
         (dx/outer_rx)^2 + (dy/outer_ry)^2 <  1   (strictly inside outer)
         (dx/inner_rx)^2 + (dy/inner_ry)^2 >= 1   (on or outside inner)
 
-    Applying +/-0.5 to rx and ry independently, rather than offsetting
+    Applying +/-w/2 to rx and ry independently, rather than offsetting
     along the ellipse's normal, makes the ring's width vary around the
-    ellipse: exactly 1px at the four axis extremes, narrower elsewhere. A
-    normal-offset ring would need the perimeter parameterization.
+    ellipse: exactly `width` at the four axis extremes, narrower
+    elsewhere. A normal-offset ring would need the perimeter
+    parameterization. A stroke wider than the shorter diameter leaves
+    no hole and draws the filled ellipse.
 
     Args:
         canvas: Canvas to draw into.
-        cx: Center x.
-        cy: Center y.
-        rx: Horizontal radius in pixels.
-        ry: Vertical radius in pixels.
+        cx: Center x, sub-pixel.
+        cy: Center y, sub-pixel.
+        rx: Horizontal radius in pixels, to the middle of the stroke.
+        ry: Vertical radius in pixels, to the middle of the stroke.
         color: Outline color.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        width: Stroke width in pixels.
     """
-    if rx <= 0 or ry <= 0:
-        canvas.set_pixel(cx, cy, color)
+    if rx <= 0.0 or ry <= 0.0:
+        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
         return
 
-    var outer_rx = Float64(rx) + 0.5
-    var outer_ry = Float64(ry) + 0.5
-    var inner_rx = Float64(rx) - 0.5
-    var inner_ry = Float64(ry) - 0.5
+    var half = width / 2.0
+    var outer_rx = rx + half
+    var outer_ry = ry + half
+    var inner_rx = rx - half
+    var inner_ry = ry - half
+    var has_hole = inner_rx > 0.0 and inner_ry > 0.0
     var n = supersample
     var coverage_alpha = _CoverageAlpha(n * n, color.a)
     var step = 1.0 / Float64(n)
 
-    for py in range(cy - ry - 1, cy + ry + 2):
-        for px in range(cx - rx - 1, cx + rx + 2):
-            var dx = abs(Float64(px - cx))
-            var dy = abs(Float64(py - cy))
+    for py in range(Int(floor(cy - outer_ry)), Int(ceil(cy + outer_ry)) + 1):
+        for px in range(
+            Int(floor(cx - outer_rx)), Int(ceil(cx + outer_rx)) + 1
+        ):
+            var dx = abs(Float64(px) - cx)
+            var dy = abs(Float64(py) - cy)
 
             # draw_circle_aa's "provably fully outside the ring band"
             # skip, generalized to the two independent normalized-space
@@ -425,22 +471,25 @@ def draw_ellipse_aa(
             if near_onx * near_onx + near_ony * near_ony >= 1.0:
                 continue  # whole pixel square is outside the outer ellipse
 
-            var far_inx = (dx + 0.5) / inner_rx
-            var far_iny = (dy + 0.5) / inner_ry
-            if far_inx * far_inx + far_iny * far_iny < 1.0:
-                continue  # whole pixel square is inside the inner ellipse
+            if has_hole:
+                var far_inx = (dx + 0.5) / inner_rx
+                var far_iny = (dy + 0.5) / inner_ry
+                if far_inx * far_inx + far_iny * far_iny < 1.0:
+                    continue  # whole pixel square is inside the inner ellipse
 
             var covered = 0
             for sy in range(n):
-                var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
+                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
                 for sx in range(n):
-                    var fx = Float64(px - cx) + (Float64(sx) + 0.5) * step - 0.5
+                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
                     var onx = fx / outer_rx
                     var ony = fy / outer_ry
-                    var inx = fx / inner_rx
-                    var iny = fy / inner_ry
                     var inside_outer = onx * onx + ony * ony < 1.0
-                    var inside_inner = inx * inx + iny * iny < 1.0
+                    var inside_inner = False
+                    if has_hole:
+                        var inx = fx / inner_rx
+                        var iny = fy / inner_ry
+                        inside_inner = inx * inx + iny * iny < 1.0
                     if inside_outer and not inside_inner:
                         covered += 1
             if covered > 0:

@@ -19,7 +19,12 @@ from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import Point, FPoint, _round_to_int
 from canvas.aa_crossing import _CoverageAlpha
-from canvas.shapes.lines import draw_polyline, draw_polyline_aa
+from canvas.shapes.lines import (
+    LineCap,
+    LineJoin,
+    draw_polyline,
+    draw_polyline_aa,
+)
 from canvas.shapes.polygon_fill import fill_polygon
 
 
@@ -129,11 +134,11 @@ def _arc_fpoints(
     start_angle: Float64,
     end_angle: Float64,
 ) -> List[FPoint]:
-    """Sample points along a circular arc (radians, start_angle <=
-    end_angle expected; pass end_angle = start_angle + 2*pi for a full
-    circle) at roughly 1-pixel arc-length spacing. Step count scales
-    with radius * angle span, so a tiny wedge and a full-page donut
-    both sample smoothly.
+    """Sample points along a circular arc (radians; an end_angle
+    below start_angle sweeps the other way; pass end_angle =
+    start_angle + 2*pi for a full circle) at roughly 1-pixel arc-length
+    spacing. Step count scales with radius * angle span, so a tiny
+    wedge and a full-page donut both sample smoothly.
 
     Step count comes from the radius and sweep directly, since a
     circular arc's geometry is known exactly here; `Path.arc_to`
@@ -355,8 +360,16 @@ def draw_arc_aa(
     color: Color,
     width: Float64 = 1.0,
     supersample: Int = 4,
+    dashes: List[Float64] = List[Float64](),
+    dash_offset: Float64 = 0.0,
+    cap: LineCap = LineCap.ROUND,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
 ):
-    """Anti-aliased version of draw_arc -- see draw_polyline_aa.
+    """Anti-aliased version of draw_arc: the arc's sub-pixel samples
+    (`_arc_fpoints`) stroked through draw_polyline_aa, so the stroke
+    follows the circle rather than a grid-snapped copy of it, and takes
+    the same dash, cap and join options.
 
     Args:
         canvas: Canvas to draw into.
@@ -368,12 +381,32 @@ def draw_arc_aa(
         color: Outline color.
         width: Stroke width in pixels.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        dashes: On/off segment lengths in pixels, cycled along the
+            arc. Empty (default) draws a solid line.
+        dash_offset: Distance into the dash pattern the arc starts at.
+        cap: How the two ends are finished -- see LineCap.
+        join: How the corners between samples are turned -- see
+            LineJoin. Adjacent samples are nearly collinear, so only a
+            visibly wide stroke shows any difference.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
     """
     if radius <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
         return
-    var points = _arc_points(cx, cy, radius, start_angle, end_angle)
-    draw_polyline_aa(canvas, points, color, width, supersample)
+    var points = _arc_fpoints(cx, cy, radius, start_angle, end_angle)
+    draw_polyline_aa(
+        canvas,
+        points,
+        color,
+        width,
+        supersample,
+        dashes,
+        dash_offset,
+        cap,
+        join,
+        miter_limit,
+    )
 
 
 def fill_arc(

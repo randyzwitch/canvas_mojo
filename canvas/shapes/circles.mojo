@@ -310,41 +310,82 @@ def draw_circle_aa(
     radius: Int,
     color: Color,
     supersample: Int = 4,
+    width: Float64 = 1.0,
 ):
-    """Anti-aliased circle outline, ~1px wide.
+    """Anti-aliased circle outline, `width` pixels wide (default 1).
 
     fill_circle_aa's supersampled coverage technique, including the
     pixel-centered-at-(px,py) convention, testing each sub-sample against
-    a thin ring (radius +/- 0.5) rather than the filled disk.
-
-    A 1-unit-wide ring never contains a whole pixel square, so there is
-    no provably-inside fast path. Most of the bounding square is provably
-    outside, through the same AABB nearest/farthest-point test.
+    a ring (radius +/- width/2) rather than the filled disk.
 
     Args:
         canvas: Canvas to draw into.
         cx: Center x.
         cy: Center y.
-        radius: Circle radius in pixels.
+        radius: Circle radius in pixels, to the middle of the stroke.
         color: Outline color.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        width: Stroke width in pixels.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
         return
+    draw_circle_aa(
+        canvas,
+        Float64(cx),
+        Float64(cy),
+        Float64(radius),
+        color,
+        supersample,
+        width,
+    )
 
-    var inner = Float64(radius) - 0.5
-    var outer = Float64(radius) + 0.5
+
+def draw_circle_aa(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    color: Color,
+    supersample: Int = 4,
+    width: Float64 = 1.0,
+):
+    """`draw_circle_aa` at a sub-pixel center and radius -- the same
+    ring, placed and sized to a fraction of a pixel rather than snapped
+    to the pixel grid.
+
+    This is the real implementation; the whole-pixel overload above
+    converts and calls it. A stroke wider than the diameter leaves no
+    hole and draws a disk. A ring never contains a whole pixel square
+    unless it is wide, so the only fast path is the "provably outside"
+    AABB nearest/farthest-point test fill_circle_aa uses.
+
+    Args:
+        canvas: Canvas to draw into.
+        cx: Center x, sub-pixel.
+        cy: Center y, sub-pixel.
+        radius: Circle radius in pixels, to the middle of the stroke.
+        color: Outline color.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        width: Stroke width in pixels.
+    """
+    if radius <= 0.0:
+        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
+        return
+
+    var half = width / 2.0
+    var inner = max(0.0, radius - half)
+    var outer = radius + half
     var inner2 = inner * inner
     var outer2 = outer * outer
     var n = supersample
     var coverage_alpha = _CoverageAlpha(n * n, color.a)
     var step = 1.0 / Float64(n)
 
-    for py in range(cy - radius - 1, cy + radius + 2):
-        for px in range(cx - radius - 1, cx + radius + 2):
-            var dx = abs(Float64(px - cx))
-            var dy = abs(Float64(py - cy))
+    for py in range(Int(floor(cy - outer)), Int(ceil(cy + outer)) + 1):
+        for px in range(Int(floor(cx - outer)), Int(ceil(cx + outer)) + 1):
+            var dx = abs(Float64(px) - cx)
+            var dy = abs(Float64(py) - cy)
 
             var near_dx = max(0.0, dx - 0.5)
             var near_dy = max(0.0, dy - 0.5)
@@ -358,9 +399,9 @@ def draw_circle_aa(
 
             var covered = 0
             for sy in range(n):
-                var fy = Float64(py - cy) + (Float64(sy) + 0.5) * step - 0.5
+                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
                 for sx in range(n):
-                    var fx = Float64(px - cx) + (Float64(sx) + 0.5) * step - 0.5
+                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
                     var d2 = fx * fx + fy * fy
                     if d2 >= inner2 and d2 < outer2:
                         covered += 1
