@@ -52,8 +52,7 @@ environment — Mojo's own toolchain finds it there automatically, no
 `-I` flag needed. Then:
 
 ```mojo
-from canvas import Canvas, Color, fill_circle_aa
-from canvas.io.bmp import write_bmp
+from canvas import Canvas, Color, fill_circle_aa, write_bmp
 
 def main() raises:
     var c = Canvas(200, 200, Color(255, 255, 255))
