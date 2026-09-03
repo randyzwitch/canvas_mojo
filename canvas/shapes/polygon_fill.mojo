@@ -228,20 +228,6 @@ def fill_polygon_aa(
     if n < 3:
         return
 
-    var min_x = points[0].x
-    var max_x = points[0].x
-    var min_y = points[0].y
-    var max_y = points[0].y
-    for i in range(1, n):
-        if points[i].x < min_x:
-            min_x = points[i].x
-        if points[i].x > max_x:
-            max_x = points[i].x
-        if points[i].y < min_y:
-            min_y = points[i].y
-        if points[i].y > max_y:
-            max_y = points[i].y
-
     var fpoints = List[FPoint](capacity=n)
     for i in range(n):
         fpoints.append(FPoint(Float64(points[i].x), Float64(points[i].y)))

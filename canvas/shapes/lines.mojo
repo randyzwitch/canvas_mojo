@@ -15,7 +15,7 @@ O(radius^2 * supersample^2) -- and in which parameters apply, since
 Bresenham is definitionally 1px and takes no `width`.
 """
 
-from std.math import ceil, cos, floor, sin, sqrt
+from std.math import ceil, cos, floor, pi, sin, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
@@ -643,7 +643,7 @@ def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
     # uses: at radius 1 an inscribed 8-gon sits up to 0.076px inside the
     # true circle, which is a third of a sub-sample and shows up as tens
     # of alpha levels on a boundary pixel.
-    var steps = Int(12.566370614359172 * radius)
+    var steps = Int(4.0 * pi * radius)
     if steps < 16:
         steps = 16
 
@@ -651,7 +651,7 @@ def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
     # circle. An inscribed polygon only ever under-covers; splitting
     # the difference centres the error instead of biasing every join
     # and cap thin.
-    var r = radius * (1.0 + 1.0 / cos(3.141592653589793 / Float64(steps))) * 0.5
+    var r = radius * (1.0 + 1.0 / cos(pi / Float64(steps))) * 0.5
     # Wound the same way `_add_quad` winds, which for a segment along
     # +x comes out negative (clockwise in the standard orientation, y
     # running down the screen here). Sampling the disk the other way
@@ -661,7 +661,7 @@ def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
     var px = cx + r
     var py = cy
     for i in range(1, steps + 1):
-        var t = -Float64(i) / Float64(steps) * 6.283185307179586
+        var t = -Float64(i) / Float64(steps) * (2.0 * pi)
         var qx = cx + r * cos(t)
         var qy = cy + r * sin(t)
         edges.add_edge(px, py, qx, qy)

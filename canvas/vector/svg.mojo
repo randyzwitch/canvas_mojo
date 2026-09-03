@@ -206,9 +206,7 @@ def _path_d(path: Path) -> String:
             var end_angle = cmd.p3.x
             var x1 = cx + radius * cos(end_angle)
             var y1 = cy + radius * sin(end_angle)
-            var large_arc_flag = (
-                1 if (end_angle - cmd.p2.y) > 3.14159265358979 else 0
-            )
+            var large_arc_flag = 1 if (end_angle - cmd.p2.y) > pi else 0
             d += (
                 "A"
                 + _format_svg_float(radius)
@@ -494,9 +492,7 @@ struct SvgCanvas(DrawTarget, Movable):
         var y0 = cy + radius * sin(start_angle)
         var x1 = cx + radius * cos(end_angle)
         var y1 = cy + radius * sin(end_angle)
-        var large_arc_flag = (
-            1 if (end_angle - start_angle) > 3.14159265358979 else 0
-        )
+        var large_arc_flag = 1 if (end_angle - start_angle) > pi else 0
         self._body += (
             '<path d="M'
             + _format_svg_float(cx)
@@ -556,9 +552,7 @@ struct SvgCanvas(DrawTarget, Movable):
         var inner_y1 = cy + inner_radius * sin(end_angle)
         var inner_x0 = cx + inner_radius * cos(start_angle)
         var inner_y0 = cy + inner_radius * sin(start_angle)
-        var large_arc_flag = (
-            1 if (end_angle - start_angle) > 3.14159265358979 else 0
-        )
+        var large_arc_flag = 1 if (end_angle - start_angle) > pi else 0
         self._body += (
             '<path d="M'
             + _format_svg_float(outer_x0)

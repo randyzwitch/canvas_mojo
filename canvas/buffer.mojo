@@ -77,7 +77,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     var width: Int
     var height: Int
     var pixels: List[UInt8]
-    var clip_stack: List[_ClipRect]
+    var _clip_stack: List[_ClipRect]
     # Coverage masks pushed by push_clip_path, innermost last. Each is
     # width*height bytes: 255 fully inside the clip, 0 fully outside,
     # and the values between are what make a clip path's own edge
@@ -132,7 +132,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # and destination share an origin, `unsafe_memcpy` included.
         var total = width * height * BYTES_PER_PIXEL
         self.pixels = List[UInt8](length=total, fill=0)
-        self.clip_stack = List[_ClipRect]()
+        self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
         if total == 0:
@@ -190,7 +190,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.width = width
         self.height = height
         self.pixels = pixels^
-        self.clip_stack = List[_ClipRect]()
+        self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
 
@@ -224,11 +224,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
             height: Clip rectangle's height.
         """
         var new_rect = _ClipRect(x, y, width, height)
-        if len(self.clip_stack) > 0:
+        if len(self._clip_stack) > 0:
             new_rect = _intersect_clip(
-                self.clip_stack[len(self.clip_stack) - 1], new_rect
+                self._clip_stack[len(self._clip_stack) - 1], new_rect
             )
-        self.clip_stack.append(new_rect)
+        self._clip_stack.append(new_rect)
 
     def pop_clip(mut self):
         """Remove the most recently pushed clip, reverting to the parent
@@ -238,8 +238,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         in_bounds' handling of out-of-range requests: a stack alone
         cannot distinguish an unbalanced pop from "nothing to undo".
         """
-        if len(self.clip_stack) > 0:
-            _ = self.clip_stack.pop()
+        if len(self._clip_stack) > 0:
+            _ = self._clip_stack.pop()
 
     def push_clip_path(
         mut self,
@@ -346,9 +346,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
             True if no clip is active, or (x, y) is inside the
             innermost pushed clip rectangle.
         """
-        if len(self.clip_stack) == 0:
+        if len(self._clip_stack) == 0:
             return True
-        var top = self.clip_stack[len(self.clip_stack) - 1]
+        var top = self._clip_stack[len(self._clip_stack) - 1]
         return (
             x >= top.x
             and x < top.x + top.width
@@ -495,8 +495,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var top = max(0, y)
         var right = min(self.width, x + width)
         var bottom = min(self.height, y + height)
-        if len(self.clip_stack) > 0:
-            var top_clip = self.clip_stack[len(self.clip_stack) - 1]
+        if len(self._clip_stack) > 0:
+            var top_clip = self._clip_stack[len(self._clip_stack) - 1]
             left = max(left, top_clip.x)
             top = max(top, top_clip.y)
             right = min(right, top_clip.x + top_clip.width)
@@ -515,13 +515,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         if not self.in_bounds(x, y):
             return Color(0, 0, 0)
-        var idx = (y * self.width + x) * BYTES_PER_PIXEL
-        return Color(
-            self.pixels[idx],
-            self.pixels[idx + 1],
-            self.pixels[idx + 2],
-            self.pixels[idx + 3],
-        )
+        return self.read_pixel(x, y)
 
     def read_pixel(self, x: Int, y: Int) -> Color:
         """Read (x, y) *without* `get_pixel`'s in_bounds check, the

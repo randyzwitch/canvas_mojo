@@ -604,9 +604,7 @@ def _rounded_points(sp: _Subpath) -> List[Point]:
     """
     var points = List[Point](capacity=len(sp.points))
     for i in range(len(sp.points)):
-        points.append(
-            Point(_round_to_int(sp.points[i].x), _round_to_int(sp.points[i].y))
-        )
+        points.append(_round_point(sp.points[i]))
     return points^
 
 

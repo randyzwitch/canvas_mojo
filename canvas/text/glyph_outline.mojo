@@ -15,7 +15,6 @@ module does not repeat it.
 """
 
 from canvas.path import Path
-from canvas.text.font_discovery import resolve_font_file_for_char
 from canvas.text.ttf import TTFFace, outline_to_path
 
 
