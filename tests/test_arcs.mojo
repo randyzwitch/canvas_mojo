@@ -12,6 +12,7 @@ from canvas.shapes.arcs import (
     _angle_in_span,
     _arc_points,
     draw_arc,
+    draw_arc_aa,
     fill_arc,
     fill_arc_aa,
     fill_ring_sector,
@@ -29,6 +30,30 @@ def _assert_pixel(
     assert_equal(p.r, expected.r, label + " (r)")
     assert_equal(p.g, expected.g, label + " (g)")
     assert_equal(p.b, expected.b, label + " (b)")
+
+
+def _ink(c: Canvas) -> Int:
+    """Total red written to the canvas -- a whole-image fingerprint,
+    since BG is black and every arc below draws a red-channel color.
+    """
+    var total = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            total += Int(c.get_pixel(x, y).r)
+    return total
+
+
+def _max_red(c: Canvas) -> Int:
+    """The brightest red on the canvas -- the ceiling a translucent
+    stroke must not blow past by blending a pixel twice.
+    """
+    var highest = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            var v = Int(c.get_pixel(x, y).r)
+            if v > highest:
+                highest = v
+    return highest
 
 
 def test_arc_points_matches_hand_derived_quarter_circle() raises:
@@ -262,6 +287,60 @@ def test_ring_sector_fast_fill_keeps_its_inner_hole() raises:
     _assert_pixel(c, 60, 60, BG, "the centre stays empty")
     _assert_pixel(c, 68, 63, BG, "and so does the rest of the hole")
     _assert_pixel(c, 85, 70, FG, "while the band itself is solid")
+
+
+def test_draw_arc_aa_degenerate_radius_plots_center() raises:
+    var c = Canvas(5, 5, BG)
+    draw_arc_aa(c, 2.0, 2.0, 0.0, 0.0, pi, FG)
+    _assert_pixel(c, 2, 2, FG, "radius<=0 falls back to a single pixel")
+
+
+def test_draw_arc_aa_draws_the_boundary_without_filling_the_wedge() raises:
+    # The curved boundary only: no radii back to the center, and no
+    # fill. cx=cy=50, radius=25, sweeping 0 -> pi/2, so the arc runs
+    # from (75, 50) round to (50, 75) through its bisector at pi/4,
+    # 50 + 25*cos(pi/4) = 67.68 in both axes.
+    var c = Canvas(100, 100, BG)
+    draw_arc_aa(c, 50.0, 50.0, 25.0, 0.0, pi / 2.0, FG)
+
+    assert_true(
+        Int(c.get_pixel(68, 68).r) > 0, "the arc itself is drawn at radius"
+    )
+    _assert_pixel(c, 50, 50, BG, "no radii meet at the center")
+    _assert_pixel(c, 58, 58, BG, "the wedge interior is not filled")
+    _assert_pixel(c, 32, 32, BG, "same radius, outside the angular span")
+
+
+def test_draw_arc_aa_respects_translucent_input_color() raises:
+    # An arc is a polyline whose segments share endpoints, so a stroke
+    # that drew segment by segment would blend those joints twice --
+    # the "every pixel gets exactly one set_pixel" rule. Color
+    # (200, 0, 0, 128) over black blends once to
+    # _div255(200 * 128) = 100, and a second blend of the same color
+    # over that would give 150. So 100 is both the value a fully
+    # covered pixel must reach and the ceiling no pixel may exceed.
+    #
+    # Width 5 rather than 1 so the band is wide enough to guarantee at
+    # least one fully covered pixel for the equality to land on.
+    var c = Canvas(100, 100, BG)
+    draw_arc_aa(
+        c, 50.0, 50.0, 30.0, 0.0, pi / 2.0, Color(200, 0, 0, 128), width=5.0
+    )
+    assert_equal(
+        _max_red(c),
+        100,
+        "the arc blends exactly once everywhere along its length",
+    )
+
+
+def test_draw_arc_aa_width_widens_the_stroke() raises:
+    # `width` is forwarded to draw_polyline_aa rather than dropped: a
+    # thicker stroke over the same arc lays down strictly more ink.
+    var thin = Canvas(100, 100, BG)
+    draw_arc_aa(thin, 50.0, 50.0, 30.0, 0.0, pi / 2.0, FG, width=1.0)
+    var thick = Canvas(100, 100, BG)
+    draw_arc_aa(thick, 50.0, 50.0, 30.0, 0.0, pi / 2.0, FG, width=4.0)
+    assert_true(_ink(thick) > _ink(thin), "width=4 draws more ink than width=1")
 
 
 def main() raises:
