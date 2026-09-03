@@ -333,6 +333,46 @@ def test_draw_arc_aa_respects_translucent_input_color() raises:
     )
 
 
+def test_draw_arc_aa_keeps_sub_pixel_radius() raises:
+    # Two arcs a third of a pixel apart in radius must lay down
+    # different ink: a stroke over samples snapped to whole pixels
+    # would round most of them onto the same pixels. Both arcs are
+    # drawn on their own canvas and compared pixel by pixel.
+    var a = Canvas(100, 100, BG)
+    draw_arc_aa(a, 50.0, 50.0, 30.0, 0.0, pi / 2.0, FG)
+    var b = Canvas(100, 100, BG)
+    draw_arc_aa(b, 50.0, 50.0, 30.33, 0.0, pi / 2.0, FG)
+    var differing = 0
+    for y in range(100):
+        for x in range(100):
+            if a.get_pixel(x, y).r != b.get_pixel(x, y).r:
+                differing += 1
+    assert_true(differing > 20, "a sub-pixel radius change moves the stroke")
+
+
+def test_draw_arc_aa_dashes_leave_gaps() raises:
+    # A dashed arc draws strictly less ink than the solid one, and the
+    # gap between dashes is a real gap: the pattern's off stretch has
+    # at least one pixel on the arc left untouched.
+    var solid = Canvas(100, 100, BG)
+    draw_arc_aa(solid, 50.0, 50.0, 30.0, 0.0, pi / 2.0, FG, width=3.0)
+    var dashed = Canvas(100, 100, BG)
+    var dashes: List[Float64] = [8.0, 8.0]
+    draw_arc_aa(
+        dashed, 50.0, 50.0, 30.0, 0.0, pi / 2.0, FG, width=3.0, dashes=dashes
+    )
+    assert_true(_ink(dashed) < _ink(solid), "dashes remove ink")
+    var gaps = 0
+    for y in range(100):
+        for x in range(100):
+            if (
+                solid.get_pixel(x, y).r == FG.r
+                and dashed.get_pixel(x, y).r == BG.r
+            ):
+                gaps += 1
+    assert_true(gaps > 0, "and leave pixels of the solid arc unpainted")
+
+
 def test_draw_arc_aa_width_widens_the_stroke() raises:
     # `width` is forwarded to draw_polyline_aa rather than dropped: a
     # thicker stroke over the same arc lays down strictly more ink.
