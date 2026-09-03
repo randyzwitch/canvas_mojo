@@ -266,7 +266,7 @@ def test_every_color_taking_method_carries_alpha() raises:
 
     var s = svg.to_string()
     var opacity_attrs = 0
-    for part in s.split("-opacity="):
+    for _ in s.split("-opacity="):
         opacity_attrs += 1
     # 9 calls -> 9 attributes -> 10 pieces after splitting on the
     # attribute name.
