@@ -132,6 +132,43 @@ struct _EdgeTable(Movable):
 comptime _MIN_PARALLEL_PIXELS = 40000
 
 
+struct _CoverageAlpha(Movable):
+    """The alpha a covered-sample count maps to, tabulated once per
+    fill. Entry `covered` is
+    `Int(Float64(covered) / Float64(total_samples) * Float64(alpha) + 0.5)`,
+    the expression the sampled primitives (circles, ellipses, arcs)
+    evaluate for each pixel they touch; tabulating it replaces a
+    divide, a multiply and a float-to-int per pixel with one load, and
+    produces the same bytes.
+
+    The edge sweep below keeps the inline expression: through the table
+    it measured slower, not faster (#125), so it is not used there.
+    """
+
+    var _table: List[UInt8]
+
+    def __init__(out self, total_samples: Int, alpha: UInt8):
+        self._table = List[UInt8](capacity=total_samples + 1)
+        for covered in range(total_samples + 1):
+            self._table.append(
+                UInt8(
+                    Int(
+                        Float64(covered)
+                        / Float64(total_samples)
+                        * Float64(alpha)
+                        + 0.5
+                    )
+                )
+            )
+
+    def __getitem__(self, covered: Int) -> UInt8:
+        """Alpha for `covered` samples, 0 <= covered <= total_samples.
+        Unchecked: a coverage count cannot exceed the grid it was
+        counted on.
+        """
+        return self._table.unsafe_ptr()[unsafe_offset=covered]
+
+
 def _accumulate_row_coverage(
     edges: _EdgeTable,
     py: Int,

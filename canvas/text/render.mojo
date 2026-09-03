@@ -244,6 +244,28 @@ def _resolve_glyph(
     )
 
 
+def _resolve_glyph_metrics(
+    mut primary: TTFFace,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    size: Float64,
+    codepoint: Int,
+    mut cache: FontCache,
+) raises -> GlyphMetrics:
+    """`_resolve_glyph` without the outline: the same primary-or-
+    fallback face choice, returning only the metrics. The measuring
+    pass needs nothing else, so it skips building a Path per glyph that
+    the render pass would build again anyway.
+    """
+    if has_glyph(primary, codepoint):
+        return glyph_metrics(primary, codepoint)
+    var fallback = cache.resolve_face_for_char(
+        family, slant, weight, codepoint, size
+    )
+    return glyph_metrics(fallback[], codepoint)
+
+
 def _measure_line(
     mut face: TTFFace,
     line_text: String,
@@ -267,9 +289,9 @@ def _measure_line(
     var max_y = -1.0e18
     var any_ink = False
     for cp in _visual_codepoints(line_text):
-        var gm = _resolve_glyph(
-            face, family, slant, weight, size, Int(cp), pen_x, 0.0, cache
-        ).metrics
+        var gm = _resolve_glyph_metrics(
+            face, family, slant, weight, size, Int(cp), cache
+        )
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
             var right = left + gm.width

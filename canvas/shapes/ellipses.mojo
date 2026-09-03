@@ -11,6 +11,7 @@ from std.math import ceil, floor, sqrt
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import _round_to_int
+from canvas.aa_crossing import _CoverageAlpha
 
 
 def _plot_ellipse_points(
@@ -232,7 +233,7 @@ def fill_ellipse_aa(
     var rx_f = rx
     var ry_f = ry
     var n = supersample
-    var total_samples = n * n
+    var coverage_alpha = _CoverageAlpha(n * n, color.a)
     var step = 1.0 / Float64(n)
 
     # The membership test is (x/rx)^2 + (y/ry)^2 <= 1, multiplied
@@ -355,16 +356,12 @@ def fill_ellipse_aa(
                         if fx * fx * ry2 + fy_term <= limit:
                             covered += 1
                 if covered > 0:
-                    var alpha = UInt8(
-                        Int(
-                            Float64(covered)
-                            / Float64(total_samples)
-                            * Float64(color.a)
-                            + 0.5
-                        )
-                    )
                     canvas.set_pixel(
-                        px, py, Color(color.r, color.g, color.b, alpha)
+                        px,
+                        py,
+                        Color(
+                            color.r, color.g, color.b, coverage_alpha[covered]
+                        ),
                     )
 
 
@@ -411,7 +408,7 @@ def draw_ellipse_aa(
     var inner_rx = Float64(rx) - 0.5
     var inner_ry = Float64(ry) - 0.5
     var n = supersample
-    var total_samples = n * n
+    var coverage_alpha = _CoverageAlpha(n * n, color.a)
     var step = 1.0 / Float64(n)
 
     for py in range(cy - ry - 1, cy + ry + 2):
@@ -447,14 +444,8 @@ def draw_ellipse_aa(
                     if inside_outer and not inside_inner:
                         covered += 1
             if covered > 0:
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
-                )
                 canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
+                    px,
+                    py,
+                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
                 )
