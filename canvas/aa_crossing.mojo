@@ -289,6 +289,32 @@ def _sweep_edges_aa(
     output pixel is written exactly once, so a translucent color can't
     double-blend anywhere -- including where a shape crosses itself.
 
+    `edges` is borrowed, and should stay that way. The band tasks below
+    read it while it lives in the caller's frame. Making it `var`, so
+    this function can preprocess the table before sweeping it, passes
+    `create_task` an aggregate owned by this frame -- canvas_mojo#97.
+    Preprocess in the caller, or take the parameter `mut`.
+
+    What that change does, recorded here because it is the fullest
+    observation of #97 this package has and it is not visible from a
+    smaller test:
+
+    - Mojo 1.0.0, 64 cores, `parallelism_level()` 64, so the loop below
+      dispatches 64 band tasks over one `_EdgeTable`.
+    - Two sets of six consecutive runs of `tests/test_golden.mojo`:
+      none passed. Each run either did not terminate or rendered
+      output differing from the goldens, and which of the two comes up
+      varies between runs -- the sets split 4/2 and 3/3. The scene is
+      always `downsampled_supersample`, the only one whose bounding box
+      is large enough to band.
+    - Neither outcome names the argument. The mismatched renders are
+      caught only because the golden suite exists; a per-pixel test of
+      a small shape never bands and always passes.
+    - A smaller reproduction was looked for and not found. An owned
+      struct-of-`List` passed to 64 tasks behaves correctly on its own,
+      with and without mutating it between construction and dispatch,
+      so reproducing this appears to need the real workload.
+
     `fill_path_aa` and `fill_polygon_aa` are the callers; each builds
     its own `_EdgeTable` and bounding box from its own geometry and
     then runs this. `min_x`/`min_y`/`max_x`/`max_y` are the integer
