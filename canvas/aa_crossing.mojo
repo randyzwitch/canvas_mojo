@@ -118,14 +118,30 @@ struct _EdgeTable(Movable):
     var order: List[Int]
     var order_row: List[Int]
 
-    def __init__(out self):
-        self.y_lo = List[Float64]()
-        self.y_hi = List[Float64]()
-        self.x0 = List[Float64]()
-        self.y0 = List[Float64]()
-        self.dx = List[Float64]()
-        self.dy = List[Float64]()
-        self.direction = List[Int]()
+    def __init__(out self, capacity: Int = 0):
+        """An empty table, its seven per-edge lists pre-sized to
+        `capacity` edges.
+
+        `capacity` is a hint, not a limit -- `add_edge` still grows a
+        list past it if the caller under-counted, the same as any
+        other `List`. Passing the caller's own upper bound (a
+        polygon's point count, a stroke's segment count times its
+        quad's four edges) turns what would otherwise be several
+        doubling reallocations per list into at most one.
+
+        Args:
+            capacity: Edges to reserve room for, 0 (the default) for
+                no reservation.
+        """
+        self.y_lo = List[Float64](capacity=capacity)
+        self.y_hi = List[Float64](capacity=capacity)
+        self.x0 = List[Float64](capacity=capacity)
+        self.y0 = List[Float64](capacity=capacity)
+        self.dx = List[Float64](capacity=capacity)
+        self.dy = List[Float64](capacity=capacity)
+        self.direction = List[Int](capacity=capacity)
+        # Sized exactly by sort_by_top, once the edge count is final --
+        # no benefit to reserving these up front.
         self.order = List[Int]()
         self.order_row = List[Int]()
 

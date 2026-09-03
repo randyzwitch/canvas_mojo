@@ -672,19 +672,26 @@ def _stroke_edges(
     end disks make a dash's ends round regardless of `cap`, which
     describes the two ends of the *stroke*, not of every dash.
     """
-    var edges = _EdgeTable()
     var count = len(points)
     if count == 0 or half_width <= 0.0:
-        return edges^
+        return _EdgeTable()
 
     var pattern = _DashPattern(dashes, dash_offset)
     if count == 1:
+        var single = _EdgeTable()
         if pattern.is_on(0.0) and (closed or cap == LineCap.ROUND):
-            _add_disk(edges, points[0].x, points[0].y, half_width)
-        return edges^
+            _add_disk(single, points[0].x, points[0].y, half_width)
+        return single^
 
     var num_segments = count if closed else count - 1
     var capped = (not closed) and cap != LineCap.ROUND
+    # 4 edges per segment's quad body is the guaranteed lower bound;
+    # joins and caps add more only where a join isn't skipped by the
+    # sagitta test below, which for a flattened curve is most of them.
+    # Reserving the guaranteed part turns what would otherwise be
+    # several doubling reallocations per list, across tens of
+    # thousands of edges for a long stroked series, into at most one.
+    var edges = _EdgeTable(4 * num_segments)
 
     # Endpoints per segment, with SQUARE's extension already folded in
     # so distances below are measured along the geometry actually

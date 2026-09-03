@@ -854,7 +854,10 @@ struct _FillEdges(Movable):
         var max_x = min_x
         var min_y = subpaths[0].points[0].y
         var max_y = min_y
-        self.edges = _EdgeTable()
+        var point_count = 0
+        for sp_idx in range(len(subpaths)):
+            point_count += len(subpaths[sp_idx].points)
+        self.edges = _EdgeTable(point_count)
         for sp_idx in range(len(subpaths)):
             ref sp = subpaths[sp_idx]
             var pn = len(sp.points)
