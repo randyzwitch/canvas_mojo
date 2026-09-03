@@ -100,14 +100,31 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
     def __init__(
         out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)
-    ):
+    ) raises:
         """Allocate a `width x height` canvas, every pixel set to `fill`.
+
+        A zero width or height gives an empty canvas and is allowed; a
+        negative one raises, since the allocation below sizes itself
+        from `width * height * 4` and a negative length is not a
+        buffer this type can represent.
 
         Args:
             width: Canvas width in pixels.
             height: Canvas height in pixels.
             fill: Initial color for every pixel.
+
+        Raises:
+            Error: `width` or `height` is negative.
         """
+        if width < 0 or height < 0:
+            raise Error(
+                "Canvas(width, height, fill): dimensions must be"
+                " non-negative (got "
+                + String(width)
+                + "x"
+                + String(height)
+                + ")"
+            )
         self.width = width
         self.height = height
 
