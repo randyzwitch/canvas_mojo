@@ -609,10 +609,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         if color.a == 0:
             return
 
-        # Unit-stride inner loop with the index carried along, rather
-        # than a strided `range`: the strided form measured slower than
-        # the per-pixel `write_pixel` loop this replaced, which is the
-        # opposite of the point.
+        # Unit-stride inner loop with the index carried along rather
+        # than a strided `range`, which benchmarked slower (#78).
         var sa = Int(color.a)
         var inv = 255 - sa
         var cr = Int(color.r) * sa

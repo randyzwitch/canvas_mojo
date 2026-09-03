@@ -140,13 +140,9 @@ def fill_circle_aa(
 
 # Below this radius the interior span is not worth solving for: the
 # sqrt, the endpoint nudging and the bulk-fill call cost more per row
-# than simply testing the handful of pixels the row contains.
-#
-# Measured, not guessed. A scatter plot's markers are the case that
-# suffers -- 2000 disks at r=3.5 went from ~1800us to ~2300us when the
-# span path ran unconditionally, while one r=250 disk went from ~1500us
-# to ~460us. 8 sits comfortably above the marker sizes a chart uses and
-# far below any radius where the interior dominates.
+# than testing the handful of pixels the row contains. Set by benchmark
+# (#83, which has the numbers) -- re-benchmark the small-marker and
+# large-disk cases before changing it.
 comptime _MIN_SPAN_RADIUS = 8.0
 
 
@@ -211,10 +207,7 @@ def fill_circle_aa(
         # the disk: (|dx| + 0.5)^2 + (|dy| + 0.5)^2 <= r^2. For a fixed
         # row that rearranges to |dx| <= sqrt(r^2 - far_dy^2) - 0.5, a
         # closed-form span -- so the interior is written in one bulk
-        # fill and only the ends need testing. At radius 250 that
-        # interior is ~196,000 pixels which were each paying a full
-        # `set_pixel` call to write a colour the row already knew:
-        # ~1500us -> ~510us for that case.
+        # fill and only the ends need testing.
         var span_lo = 1
         var span_hi = 0  # empty unless this row reaches the interior
         if solve_span:
@@ -266,17 +259,12 @@ def fill_circle_aa(
             edge_resume = span_hi + 1
 
         # Everything the run did not cover: the segment before it and
-        # the segment after. Two explicit ranges rather than scanning
-        # the whole row and skipping -- a per-pixel "am I in the span"
-        # test measured ~14% slower on a 2000-marker scatter, and that
-        # is a cost every small disk pays for a branch that can never
-        # be true. With no run (edge_end == edge_resume == hi_x) the
-        # first segment is the whole row and the second is empty.
-        #
-        # The body sits inside the segment loop rather than in a helper
-        # called twice: extracting it measured worse on both cases
-        # (markers ~2060us -> ~2380us, the large disk ~510us ->
-        # ~780us), so the call was not folding away.
+        # the segment after. Two explicit ranges rather than one scan
+        # with a per-pixel "am I in the span" test, and the body inline
+        # rather than in a helper called twice -- both benchmarked (#83),
+        # both slower the other way. With no run
+        # (edge_end == edge_resume == hi_x) the first segment is the
+        # whole row and the second is empty.
         for seg in range(2):
             var seg_lo = lo_x if seg == 0 else edge_resume
             var seg_hi = edge_end if seg == 0 else hi_x

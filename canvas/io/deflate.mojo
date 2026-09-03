@@ -738,10 +738,8 @@ struct _HashChains(Movable):
         self.head = List[Int32](length=size, fill=-1)
         # _WINDOW entries, not one per input byte. A match may never
         # reach further back than _WINDOW, so a link out of that range
-        # could never be used -- making this array proportional to the
-        # input instead would allocate and zero ~8 bytes per byte
-        # compressed (15MB for an 800x600 RGBA image), which measured
-        # slower than the dictionary this replaced.
+        # could never be used, and sizing this to the input instead
+        # measured slower (#104).
         self.prev = List[Int32](length=_WINDOW, fill=-1)
         self.mask = size - 1
 

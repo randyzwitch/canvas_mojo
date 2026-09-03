@@ -282,6 +282,28 @@ arithmetic behind them*, and any rule a reader would otherwise break
 (`fill_polygon`'s half-open Y-extent is the standing example — skip it
 and you write a bug).
 
+### Tuned constants
+
+A constant whose value came from a benchmark says so, and points at the
+pull request that measured it — the PR body has the before/after table,
+so the source doesn't repeat it:
+
+```mojo
+# Below this radius the interior span is not worth solving for: the
+# sqrt, the endpoint nudging and the bulk-fill call cost more per row
+# than testing the handful of pixels the row contains. Set by benchmark
+# (#83, which has the numbers) -- re-benchmark the small-marker and
+# large-disk cases before changing it.
+comptime _MIN_SPAN_RADIUS = 8.0
+```
+
+That marker is the whole convention, and it cuts both ways: **a
+threshold, ordering or inlining choice carrying no such note has not
+been measured, and is fair game to change on judgement alone.** Don't
+add the note without running `pixi run bench` first, and don't argue in
+a comment for a faster approach nobody benchmarked — either measure it
+or leave the observation out.
+
 Docstrings are rendered into the docs site by `mojo doc` + modo, so
 public ones are user-facing documentation, not just internal notes.
 
