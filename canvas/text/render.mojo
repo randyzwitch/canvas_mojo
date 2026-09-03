@@ -30,12 +30,12 @@ but not contextual letter-shaping.
 Every glyph also goes through font fallback (`_resolve_glyph`). If the
 requested family has no real glyph for a codepoint (`has_glyph`
 distinguishes a real glyph from ".notdef", index 0), that one character
-resolves through `resolve_font_file_for_char`, which ranks a font
-whose `cmap` actually maps that codepoint above every other matching
-term. This package bundles no fonts, so a CJK/Cyrillic/symbol character
-requested under a Latin-only family renders through whatever font on
-the system has it; a character missing everywhere degrades to the
-unconstrained best match rather than an error. Fallback faces cache alongside the primary face.
+resolves through `resolve_font_file_for_char`, which ranks a font whose
+`cmap` maps that codepoint above every other matching term. This package
+bundles no fonts, so a CJK/Cyrillic/symbol character requested under a
+Latin-only family renders through whatever font on the system has it; a
+character missing everywhere degrades to the unconstrained best match
+rather than an error. Fallback faces cache alongside the primary face.
 
 FontSlant/FontWeight are defined in font_discovery.mojo and re-exported
 here, as TextAlign is from text_align.mojo.
@@ -829,26 +829,21 @@ def draw_text(
     *,
     mut cache: FontCache,
 ) raises:
-    """The implementation every other `draw_text` overload delegates
-    to: sub-pixel anchor, fonts resolved through `cache` rather than
-    fresh every call.
+    """The implementation every other `draw_text` overload delegates to:
+    sub-pixel anchor, fonts resolved through `cache` rather than fresh
+    every call.
 
-    A sub-pixel anchor is what lets a caller place a label relative to
-    something that is itself at a fractional position -- a tick at
-    x = 103.7, a label centered on a bar whose midpoint is not a whole
-    pixel. Rounding the anchor first shifts the whole string, which at
-    text sizes is a visible change in spacing against whatever it
-    labels. The glyph outlines themselves have been sub-pixel since
-    they reach `fill_path_aa` unrounded; this extends that to where the
-    string is placed.
+    A sub-pixel anchor places a label relative to something that is
+    itself at a fractional position -- a tick at x = 103.7, a label
+    centered on a bar whose midpoint is not a whole pixel. Rounding the
+    anchor first shifts the whole string, which at text sizes is a
+    visible change in spacing against whatever it labels. The glyph
+    outlines are already sub-pixel, since they reach `fill_path_aa`
+    unrounded; this extends that to where the string is placed.
 
-    Resolving through the cache also collapses the two resolutions a
-    single call makes -- _layout_block's measuring pass and the render
-    pass below both want the same face -- into one lookup plus a cache
-    hit. This also collapses the two resolutions a
-    single call makes -- _layout_block's measuring pass and the render
-    pass below both want the same face -- into one lookup plus a cache
-    hit.
+    Resolving through the cache collapses the two resolutions a single
+    call makes -- _layout_block's measuring pass and the render pass
+    below both want the same face -- into one lookup plus a cache hit.
 
     Args:
         canvas: Canvas to draw into.

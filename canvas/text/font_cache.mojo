@@ -3,32 +3,31 @@ file-path resolution `font_discovery.mojo` does, and of the parsed,
 sized `TTFFace` behind each resolved path.
 
 The path half saves a rescan of the machine's font directories on every
-`resolve_font_file` call -- and, more concretely, draw_text()'s internal
-duplication, since one call resolves its font twice (measuring via
-_layout_block, then rendering) unless a FontCache threads through both
-passes. Fallback glyphs (resolve_font_file_for_char) resolve
-independently too, so a string with several fallback glyphs for one
-missing codepoint asks once instead of per glyph.
+`resolve_font_file` call, including draw_text()'s internal duplication:
+one call resolves its font twice (measuring via _layout_block, then
+rendering) unless a FontCache threads through both passes. Fallback
+glyphs (resolve_font_file_for_char) resolve independently too, so a
+string with several fallback glyphs for one missing codepoint asks once
+instead of per glyph.
 
-Behind both halves sits one `FontDatabase`, built in `__init__`: the
+Behind both halves sits one `FontDatabase`, built in `__init__`. The
 directory walk and per-file table reads are the whole cost of a
-resolution, and paying it once at construction rather than per call is
-what this cache is for. Constructing a FontCache therefore does real
-work -- a few milliseconds -- so construct one per run of many labels,
-not one per label.
+resolution, and they are paid once at construction rather than per call.
+Constructing a FontCache therefore does real work -- a few milliseconds
+-- so construct one per run of many labels, not one per label.
 
 The face half saves TTFFace's parse + set_pixel_size, ~0.127ms against
 a ~0.00015ms cache hit, which draw_text's two passes pay twice per
 call. TTFFace owns the font file's raw bytes (`data: List[UInt8]`,
 Movable only), so the Dict holds `ArcPointer[TTFFace]`: one
 heap-allocated face per (path, pixel size), and every hit bumps a
-refcount and copies the pointer, not the payload. `set_pixel_size` --
-the one mutating method -- runs once, at insert, so keying by
-`path + "@" + pixel_size` rather than path alone is what keeps two
-callers at different sizes from corrupting each other's scale state.
+refcount and copies the pointer, not the payload. `set_pixel_size`, the
+one mutating method, runs once at insert, and keying by
+`path + "@" + pixel_size` rather than path alone keeps two callers at
+different sizes from corrupting each other's scale state.
 
 Mojo has no mutable global state (declaring one raises "global
-variables are not supported"), so this can't live behind the scenes as
+variables are not supported"), so this cannot sit behind the scenes as
 a lazily-initialized global would elsewhere. A caller rendering many
 labels off the same fonts -- a chart's axis ticks and legend, say --
 creates one FontCache and passes it to
@@ -208,7 +207,8 @@ struct FontCache(Movable):
     ) raises -> ArcPointer[TTFFace]:
         """`resolve_face`'s fallback-glyph counterpart, for
         `render.mojo`'s `_resolve_glyph`. `resolve_for_char` already
-        deduplicates the path lookup for repeated fallback glyphs; this stops each from re-parsing the fallback file too.
+        deduplicates the path lookup for repeated fallback glyphs; this
+        stops each from re-parsing the fallback file too.
 
         Args:
             family: Font family name or generic alias.

@@ -27,8 +27,9 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     around 1.
 
     Each output pixel is the *rounded* mean (see the `+ n // 2` below)
-    of its `factor x factor` source block, per r/g/b channel. Alpha
-    isn't involved: Canvas stores none per pixel.
+    of its `factor x factor` source block, per channel. Alpha is
+    averaged alongside r/g/b -- see the comment on `pixels` below for
+    what that does and does not hold for.
 
     Args:
         source: Canvas to shrink.

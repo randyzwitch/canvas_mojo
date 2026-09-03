@@ -1,8 +1,8 @@
-"""Demo: the full pipeline Transform2D exists for -- map a data
-coordinate through a transform, then call a primitive. Nothing here
-knows about "charts"; this is exactly the raw mechanism a charting
-layer built on top of this package would use, exercised directly with
-a small line-plus-markers plot.
+"""Demo: the pipeline Transform2D exists for -- map a data coordinate
+through a transform, then call a primitive. Nothing here knows about
+"charts"; this is the raw mechanism a charting layer built on top of
+this package would use, exercised directly with a small line-plus-
+markers plot.
 
 Note scale_y is negative: pixel-space y increases downward, but the
 data's y increases upward, so the transform flips it -- data point
@@ -10,9 +10,8 @@ data's y increases upward, so the transform flips it -- data point
 (x, 100) lands near the top.
 
 Two panels, same data: the left uses a plain transform, the right adds
-a small rotation, which makes clear what that parameter does -- tilts
-a whole coordinate frame, axes and all, not a single label, which is
-draw_text's separate feature.
+a small rotation, which tilts a whole coordinate frame, axes and all.
+Rotating a single label is draw_text's separate feature.
 
 Run with:
     pixi run example

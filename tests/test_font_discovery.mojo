@@ -3,32 +3,28 @@
 Needs a "Sans"-resolvable system font (the generic sans-serif alias),
 the same real-machine dependency tests/test_text.mojo documents.
 
-What's tested is what this module is responsible for, which is the
-whole of font matching: resolving a family/slant/weight request to some
-real, existing font file, expanding the generic and metric aliases,
-matching family names case- and blank-insensitively, and constraining a
-match to a font that actually has a given codepoint.
-The one thing still out of scope is a *specific* font being the right
-aesthetic answer on an arbitrary machine; assertions are about which
-properties the answer has, except where a machine-specific fact is
-called out below.
+What's tested is the whole of font matching: resolving a
+family/slant/weight request to some real, existing font file, expanding
+the generic and metric aliases, matching family names case- and
+blank-insensitively, and constraining a match to a font that actually
+has a given codepoint. Assertions are about which properties the answer
+has, not about a specific font being the right aesthetic answer on an
+arbitrary machine, except where a machine-specific fact is called out
+below.
 
 Three machine-specific facts hold these up. DejaVu Sans ships separate
-Regular/Bold files, which is what makes BOLD differ from NORMAL -- a
-failure on a different CI image is an environment difference to look
-at, not a test to loosen. DejaVu Sans Mono ships a separate Oblique
-file, which is what makes an oblique monospace request observable. And
-the "Ubuntu" font lacks a snowman glyph (U+2603) that "DejaVu Sans"
-has; if a future image's Ubuntu font gains it, the fallback assertion
-needs a different missing character rather than the mechanism being
-broken.
+Regular/Bold files, which is what makes BOLD differ from NORMAL. DejaVu
+Sans Mono ships a separate Oblique file, which is what makes an oblique
+monospace request observable. And the "Ubuntu" font lacks a snowman
+glyph (U+2603) that "DejaVu Sans" has; if a future image's Ubuntu font
+gains it, the fallback assertion needs a different missing character.
 
-What is deliberately *not* assumed is which *style* files a family
-ships beyond those: fonts-dejavu-core includes DejaVuSans-Oblique.ttf
-on a GitHub runner and not on every desktop install, so a slant request
-for DejaVu Sans lands on a different file depending on the image. Tests
-that would otherwise encode that read the matched face's family back
-out of the FontDatabase (`_matched_face_answers_to`) instead.
+Which *style* files a family ships beyond those is not assumed:
+fonts-dejavu-core includes DejaVuSans-Oblique.ttf on a GitHub runner and
+not on every desktop install, so a slant request for DejaVu Sans lands
+on a different file depending on the image. Tests that would otherwise
+encode that read the matched face's family back out of the FontDatabase
+(`_matched_face_answers_to`) instead.
 
 That third fact needs the "Ubuntu" font family actually installed.
 Without it, "Ubuntu" resolves through the default sans list like any

@@ -5,19 +5,17 @@ dash-aware cores they share (_draw_line_core, _draw_polyline_core_aa).
 
 `draw_polygon`/`draw_polygon_aa` here draw the *outline* only -- this
 file's line machinery closed into a loop. `fill_polygon`/
-`fill_polygon_aa` in canvas.shapes.polygon_fill fill the
-*interior* by an entirely different scanline algorithm. Two different
-operations sharing half a name, kept in separate files so the module
-layout says so.
+`fill_polygon_aa` in canvas.shapes.polygon_fill fill the *interior* by
+an entirely different scanline algorithm, and live in a separate file.
 
-Naming convention, followed by every file in canvas.shapes/:
-hard-edged and anti-aliased variants stay separate functions
-(draw_circle vs. draw_circle_aa), never one function behind an
-`antialias: Bool`. A shared name invites parameters meaningful in only
-one branch (draw_line_aa's `width` has no hard-edged equivalent --
-Bresenham is definitionally 1px) and hides a complexity jump
-(hard-edged circle drawing is O(radius); AA is O(radius^2 *
-supersample^2)) behind what looks like a toggle.
+Naming convention, followed by every file in canvas.shapes/: hard-edged
+and anti-aliased variants stay separate functions (draw_circle vs.
+draw_circle_aa) rather than one function behind an `antialias: Bool`. A
+shared name would take parameters meaningful in only one branch
+(draw_line_aa's `width` has no hard-edged equivalent -- Bresenham is
+definitionally 1px) and would put a complexity jump behind what looks
+like a toggle (hard-edged circle drawing is O(radius); AA is
+O(radius^2 * supersample^2)).
 """
 
 from std.math import ceil, cos, floor, sin, sqrt
@@ -35,18 +33,16 @@ comptime _SQRT2 = 1.4142135623730951
 struct LineCap(Copyable, ImplicitlyCopyable, Movable):
     """How an open stroke ends.
 
-    ROUND (the default, and what this package has always drawn) caps
-    with a half-disk of the stroke's own radius, so a stroke extends
-    half its width past each endpoint. BUTT stops exactly at the
-    endpoint. SQUARE stops half a width past it, with a flat end rather
-    than a curved one.
+    ROUND, the default, caps with a half-disk of the stroke's own radius,
+    so a stroke extends half its width past each endpoint. BUTT stops
+    exactly at the endpoint. SQUARE stops half a width past it, with a
+    flat end rather than a curved one.
 
-    The distinction matters more than it sounds. An axis rule drawn
-    from x=40 to x=560 with a 4px round cap actually spans 38 to 562,
-    so it overshoots its own tick marks; a bar drawn as a thick line
-    ends in a dome rather than flush with the baseline. Neither is
-    fixable by shortening the line, because the overshoot scales with
-    stroke width.
+    The overshoot is visible at chart scale. An axis rule drawn from
+    x=40 to x=560 with a 4px round cap spans 38 to 562, past its own tick
+    marks, and a bar drawn as a thick line ends in a dome rather than
+    flush with the baseline. Shortening the line does not fix it, since
+    the overshoot scales with stroke width.
 
     Caps apply only to the two ends of an *open* stroke. A closed
     polygon has no ends, and passing a cap for one changes nothing.
@@ -194,15 +190,13 @@ def draw_line_aa(
     A one-segment polyline, and drawn as one: `_draw_polyline_core_aa`
     turns the stroke into an outline and fills it, so the cost follows
     the stroke's own area rather than its bounding box. Scanning the
-    bounding box directly, as this used to, costs the same for a
-    1-pixel line as for the rectangle it spans -- a full-width diagonal
-    covers a few thousand pixels inside a box of nearly a million.
+    bounding box instead costs the same for a 1-pixel line as for the
+    rectangle it spans -- a full-width diagonal covers a few thousand
+    pixels inside a box of nearly a million.
 
-    Confirmed byte-identical to the previous implementation across
-    horizontal, vertical, diagonal, thick and dashed cases before the
-    switch: the coverage test is the same minimum-distance-to-segment
-    with the same round caps, since a single segment has no joint for
-    the core's minimum to do anything different with.
+    The coverage test is minimum-distance-to-segment with round caps; a
+    single segment has no joint, so the core's per-sample minimum reduces
+    to that.
 
     Args:
         canvas: Canvas to draw into.
@@ -536,17 +530,16 @@ comptime _JOIN_DISK_TOLERANCE = 0.02
 struct LineJoin(Copyable, ImplicitlyCopyable, Movable):
     """How a stroke turns a corner.
 
-    ROUND (the default, and what this package has always drawn) fills
-    the corner with a disk of the stroke's own radius. BEVEL cuts it
-    off flat, joining the two outer corners directly. MITER extends
-    both outer edges until they meet, giving the sharp point a drawn
-    box or axis frame is usually expected to have.
+    ROUND, the default, fills the corner with a disk of the stroke's own
+    radius. BEVEL cuts it off flat, joining the two outer corners
+    directly. MITER extends both outer edges until they meet, giving the
+    sharp point a drawn box or axis frame is usually expected to have.
 
-    MITER needs a limit. As a corner tightens the apex runs away
-    towards infinity -- at 10 degrees it already sticks out more than
-    eleven times the stroke's half-width -- so past `miter_limit` the
-    join falls back to BEVEL. That is SVG's rule and its default of 4,
-    which trips at about 29 degrees.
+    MITER needs a limit. As a corner tightens the apex runs away towards
+    infinity -- at 10 degrees it already sticks out more than eleven
+    times the stroke's half-width -- so past `miter_limit` the join falls
+    back to BEVEL. That is SVG's rule, and its default of 4 trips at
+    about 29 degrees.
 
     Joins apply only where a stroke actually turns. The two ends of an
     open stroke are a cap, not a join -- see LineCap.
@@ -749,28 +742,22 @@ def _stroke_edges(
 ) -> _EdgeTable:
     """A stroke expressed as the outline of a filled region.
 
-    The min-distance formulation `_draw_polyline_core_aa` used to
-    rasterize directly defines a stroke as every point within
-    `half_width` of some *drawn* part of the path. That is exactly the
+    The min-distance formulation defines a stroke as every point within
+    `half_width` of some *drawn* part of the path, which is exactly the
     union of one rectangle per drawn stretch and one disk per vertex it
-    turns through -- so the same shape can be handed to the ordinary
-    path fill, which is what that function now does instead.
+    turns through. Expressed that way, the shape goes to the ordinary
+    path fill: `_sweep_edges_aa` is already parallel across cores, where
+    banding a stroke sweep directly runs into the known issue in how
+    Mojo tasks receive aggregate arguments (canvas_mojo#97).
 
-    Which is the point: `_sweep_edges_aa` is already parallel across
-    cores and already correct, where the stroke sweep's own banding is
-    blocked by a Mojo defect in how tasks receive aggregate arguments
-    (see canvas_mojo#97).
+    Dashing is geometric rather than per-sample: each segment is split at
+    its dash boundaries once and only the drawn pieces are emitted. That
+    matches a per-sample on-dash test, since the parameter split on here
+    is the same projection such a test computes.
 
-    Dashing is geometric here rather than per-sample. The old core
-    asked, for every sub-sample, whether the point it projected to was
-    on-dash; this splits each segment at its dash boundaries once and
-    emits only the drawn pieces. The rendered shape is the same because
-    the old test's projection is exactly the parameter this splits on.
-
-    A drawn piece is a stadium: a quad plus a disk at each end. Those
-    end disks are what made the old formulation's dash ends round, and
-    they stay round here regardless of `cap` -- `cap` describes the two
-    ends of the *stroke*, not of every dash.
+    A drawn piece is a stadium -- a quad plus a disk at each end. Those
+    end disks make a dash's ends round regardless of `cap`, which
+    describes the two ends of the *stroke*, not of every dash.
     """
     var edges = _EdgeTable()
     var count = len(points)
@@ -1015,8 +1002,9 @@ def draw_polyline_aa(
     join: LineJoin = LineJoin.ROUND,
     miter_limit: Float64 = 4.0,
 ):
-    """`draw_polyline_aa` at sub-pixel vertices -- the same polyline, placed
-    to a fraction of a pixel rather than snapped to the pixel grid.
+    """`draw_polyline_aa` at sub-pixel vertices -- the same polyline,
+    placed to a fraction of a pixel rather than snapped to the pixel
+    grid.
 
     This is the real implementation; the whole-pixel overload above
     converts and calls it. See `draw_line_aa`'s sub-pixel overload for
@@ -1111,8 +1099,9 @@ def draw_polygon_aa(
     join: LineJoin = LineJoin.ROUND,
     miter_limit: Float64 = 4.0,
 ):
-    """`draw_polygon_aa` at sub-pixel vertices -- the same polygon outline, placed
-    to a fraction of a pixel rather than snapped to the pixel grid.
+    """`draw_polygon_aa` at sub-pixel vertices -- the same polygon
+    outline, placed to a fraction of a pixel rather than snapped to the
+    pixel grid.
 
     This is the real implementation; the whole-pixel overload above
     converts and calls it. See `draw_line_aa`'s sub-pixel overload for

@@ -1,10 +1,7 @@
-"""Compositing one canvas onto another.
+"""Compositing one canvas onto another: everything else in this package
+draws *shapes* into a buffer, and this draws a buffer into a buffer.
 
-The operation `Canvas` had no way to express: take a rendered image and
-place it into another one. Everything else in this package draws
-*shapes* into a buffer; this draws a buffer into a buffer.
-
-Three things need it, and none of them were possible before:
+Three things use it:
 
 - Layers. Render a chart's grid, series and annotations onto separate
   transparent canvases and compose them in order, so a layer can be
@@ -13,13 +10,13 @@ Three things need it, and none of them were possible before:
   times. Rasterizing it once at the size it is needed and stamping the
   result costs a copy per point instead of a full supersampled fill.
 - Supersampling a region. Render an area at 3x onto its own canvas,
-  `downsample` it, and place the result -- without having to
-  supersample the entire figure to get one part of it clean.
+  `downsample` it, and place the result, without supersampling the
+  entire figure to get one part of it clean.
 
 `draw_canvas` composites through the same straight-alpha src-over every
-primitive uses (`Color.blend_over`), so a translucent source blends
-into the destination exactly as a translucent shape would, and a
-transparent source pixel leaves the destination untouched.
+primitive uses (`Color.blend_over`), so a translucent source blends into
+the destination exactly as a translucent shape would, and a transparent
+source pixel leaves the destination untouched.
 """
 
 from std.memory import unsafe_memcpy

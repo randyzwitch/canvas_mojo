@@ -7,9 +7,9 @@ the byte layout: header fields, little-endian packing, the BGR
 channel swap, bottom-up row order, and per-row padding to a 4-byte
 boundary.
 
-The canvas is deliberately 3 pixels wide (9 bytes/row) so padding is
-actually exercised -- a width whose row bytes already land on a 4-byte
-boundary (64*3=192, say) would never reach that code at all.
+The canvas is 3 pixels wide (9 bytes/row) so the padding path is
+exercised: a width whose row bytes already land on a 4-byte boundary
+(64*3=192, say) never reaches that code.
 """
 
 from std.testing import assert_raises, assert_equal, TestSuite

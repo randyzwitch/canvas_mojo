@@ -3,11 +3,11 @@
 docs page without anyone hand-writing one.
 
 The shown snippet is the whole example file minus its leading module
-docstring -- nothing is extracted or trimmed out of the "real" logic,
-because every example here *is* the pattern being taught, start to
-finish: imports, any helper, `main()`, and the write_bmp()/write_png()
-call producing the picture above the snippet. The docstring becomes the
-page's hook sentence and prose instead (see `_first_sentence()`).
+docstring: nothing is extracted or trimmed, because each example is the
+pattern being taught start to finish -- imports, any helper, `main()`,
+and the write_bmp()/write_png() call producing the picture above the
+snippet. The docstring becomes the page's hook sentence and prose
+instead (see `_first_sentence()`).
 
 A Mojo script rather than Python, so this repo's tooling stays in the
 language it showcases. String primitives (`.strip()`, `.startswith()`,
@@ -15,8 +15,8 @@ language it showcases. String primitives (`.strip()`, `.startswith()`,
 
 Adding an example: list it in both `_titles()` and exactly one category
 in `_categories()`. `main()`'s assertions catch either omission -- a
-file with no category, or a category naming a file that doesn't exist
--- rather than skipping it silently or failing deep in formatting.
+file with no category, or a category naming a file that doesn't exist --
+rather than skipping it silently or failing deep in formatting.
 """
 
 from std.collections import Dict

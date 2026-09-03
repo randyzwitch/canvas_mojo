@@ -159,17 +159,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def __init__(
         out self, width: Int, height: Int, var pixels: List[UInt8]
     ) raises:
-        """Wrap an already-built RGB pixel buffer, skipping the
+        """Wrap an already-built RGBA pixel buffer, skipping the
         solid-fill loop the (width, height, fill) constructor pays for.
-        For a caller about to write every pixel itself -- downsample()
-        in canvas/resize.mojo, which computes and appends every
-        output pixel before handing the canvas back -- filling first
-        would double the call's pixel-write cost.
+        For a caller about to write every pixel itself -- `downsample()`
+        in canvas/resize.mojo, which computes and appends every output
+        pixel before handing the canvas back -- filling first would
+        double the call's pixel-write cost.
 
-        Raises unless `pixels` is exactly width * height * 4 bytes
-        (RGBA, row-major, the layout get_pixel/set_pixel assume). A
-        wrong size is a caller bug, and wrapping it anyway would
-        corrupt every later index.
+        Raises unless `pixels` is exactly width * height * 4 bytes (RGBA,
+        row-major, the layout get_pixel/set_pixel assume); wrapping a
+        wrong-sized buffer would corrupt every later index.
 
         Args:
             width: Canvas width in pixels.
@@ -242,9 +241,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         clip if one exists or to the whole canvas if not.
 
         A no-op on an empty stack rather than an error, matching
-        in_bounds' fail-safe handling of out-of-range requests: a stack
-        alone can't distinguish an unbalanced pop from "nothing to
-        undo".
+        in_bounds' handling of out-of-range requests: a stack alone
+        cannot distinguish an unbalanced pop from "nothing to undo".
         """
         if len(self.clip_stack) > 0:
             _ = self.clip_stack.pop()
@@ -257,26 +255,21 @@ struct Canvas(Copyable, DrawTarget, Movable):
         curve_steps: Int = 0,
     ):
         """Restrict subsequent drawing to `path`'s interior -- the
-        arbitrary-shape counterpart of `push_clip`, which can only cut
-        to a rectangle.
-
-        What a chart wants this for is clipping a series to a
-        non-rectangular plot area, or masking a gradient to a shape.
-        Doing it by drawing into a scratch canvas and compositing back
-        works but costs a full extra surface; this costs one byte per
-        pixel and no second render.
+        arbitrary-shape counterpart of `push_clip`, which can only cut to
+        a rectangle. A chart uses it to clip a series to a
+        non-rectangular plot area, or to mask a gradient to a shape. It
+        costs one byte per pixel and no second render, where drawing into
+        a scratch canvas and compositing back costs a full extra surface.
 
         The clip is *anti-aliased*, not a hard in/out test: the path's
         coverage becomes a 0-255 mask, and a pixel the path half covers
-        lets half the drawing through. A hard test would put a
-        staircase along the boundary of every clipped shape, which is
-        precisely what this package's rasterizer exists to avoid.
+        lets half the drawing through.
 
-        Composes with everything already pushed. A new mask is
-        multiplied into the current one, so a nested clip can only ever
-        restrict further, never escape its parent -- the rule
-        `push_clip` follows for rectangles, and the rectangle clips
-        still apply independently on top.
+        It composes with everything already pushed. A new mask is
+        multiplied into the current one, so a nested clip can only
+        restrict further, never escape its parent -- the rule `push_clip`
+        follows for rectangles, and the rectangle clips still apply
+        independently on top.
 
         Pair with `pop_clip_path`.
 
@@ -314,10 +307,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """Whether a clip path is currently active.
 
         The check a caller writing through `write_pixel` needs: that
-        method deliberately skips every per-pixel test, and a clip
-        path's coverage is per-pixel by nature, so a bulk writer must
-        route through `set_pixel` while one is pushed. See
-        `write_pixel` and `_fill_region`.
+        method skips every per-pixel test, and a clip path's coverage is
+        per-pixel by nature, so a bulk writer routes through `set_pixel`
+        while one is pushed. See `write_pixel` and `_fill_region`.
 
         Returns:
             True if at least one clip path is pushed.
@@ -434,15 +426,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """Write `color` at (x, y) *without* set_pixel's in_bounds/
         in_clip checks. The caller must already know (x, y) is inside
         both the canvas and the active clip, typically from a range
-        effective_fill_rect (below) intersected against both.
+        `effective_fill_rect` (below) intersected against both.
 
         This also skips the clip *path* mask, which `effective_fill_rect`
-        cannot fold in: a rectangle clip is a range, but a path clip is
-        a per-pixel coverage value, so there is nothing to intersect a
-        loop range against. A bulk writer must therefore check
-        `has_clip_mask()` and fall back to `set_pixel` when one is
-        active -- `_fill_region` and the gradient rect fills in
-        canvas.shapes.rects both do.
+        cannot fold in: a rectangle clip is a range, but a path clip is a
+        per-pixel coverage value, so there is nothing to intersect a loop
+        range against. A bulk writer therefore checks `has_clip_mask()`
+        and falls back to `set_pixel` when one is active --
+        `_fill_region` and the gradient rect fills in canvas.shapes.rects
+        both do.
 
         set_pixel stays the checked entry point for pixel-at-a-time
         primitives (draw_line_aa, fill_circle_aa, ...), which have no
@@ -452,18 +444,14 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Writes through `pixels.unsafe_ptr()` rather than indexing the
         `List`. Checked indexing costs about 1.7ns per byte against
         0.26ns unchecked, measured directly, and at four bytes a pixel
-        that bounds check was roughly half the cost of a solid fill.
-        It was also redundant with this method's own contract: a caller
-        that has not already established the coordinate is in range is
-        misusing it, and `set_pixel` above is the entry point that
-        establishes exactly that. The index is computed from `width`
-        and the caller's validated (x, y), so it cannot leave the
-        buffer.
+        that bounds check was roughly half the cost of a solid fill. The
+        index is computed from `width` and the caller's validated (x, y),
+        so it cannot leave the buffer.
 
-        The blend path reads the background bytes straight from the
-        same pointer instead of going through `get_pixel`, which would
-        recompute the identical index and build a `Color` only to have
-        it immediately destructured.
+        The blend path reads the background bytes straight from the same
+        pointer instead of going through `get_pixel`, which would
+        recompute the identical index and build a `Color` only to have it
+        immediately destructured.
 
         Args:
             x: Column to write. Must already be known in-bounds.
@@ -573,11 +561,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
         typically because the loop bounds came from `width`/`height`.
 
         `get_pixel` stays the checked entry point, and returns opaque
-        black off-canvas rather than reading out of range. This exists
-        because whole-image passes -- downsampling, encoding a file --
-        derive every coordinate from the canvas's own dimensions, so
-        the check re-establishes what the loop already guarantees, and
-        at four bytes a pixel it is most of what such a pass costs.
+        black off-canvas rather than reading out of range. Whole-image
+        passes -- downsampling, encoding a file -- derive every
+        coordinate from the canvas's own dimensions, so there the check
+        re-establishes what the loop already guarantees, and at four
+        bytes a pixel it is most of what such a pass costs.
 
         Args:
             x: Column to read. Must already be known in-bounds.
@@ -610,18 +598,17 @@ struct Canvas(Copyable, DrawTarget, Movable):
         mut self, rx: Int, ry: Int, rw: Int, rh: Int, color: Color
     ):
         """Fill an already-clipped, already-bounds-checked rectangle --
-        the region `effective_fill_rect` returns, so every coordinate
-        in it is known drawable and no per-pixel check is needed.
+        the region `effective_fill_rect` returns, so every coordinate in
+        it is known drawable and no per-pixel check is needed.
 
-        Two things this does that a `write_pixel` loop cannot. The
-        pointer and the row base are computed once per row rather than
-        once per pixel, and the opaque case builds one span of bytes
-        and bulk-copies it into every row -- the same trick the
-        constructor uses, and for the same reason.
+        The pointer and the row base are computed once per row rather
+        than once per pixel, and the opaque case builds one span of bytes
+        and bulk-copies it into every row, the same way the constructor
+        does.
 
         The translucent case still blends per pixel, since each output
-        depends on what was already there, but it hoists everything
-        that does not: the source colour's premultiplied terms and the
+        depends on what was already there, but it hoists everything that
+        does not: the source colour's premultiplied terms and the
         complementary alpha are computed once for the whole rectangle,
         leaving one multiply-add and one `_div255` per channel wherever
         the destination pixel is opaque. That branch is

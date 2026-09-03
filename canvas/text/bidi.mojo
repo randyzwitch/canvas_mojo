@@ -1,41 +1,33 @@
-"""Bidirectional text layout -- a practical, deliberately partial
-implementation of the Unicode Bidirectional Algorithm (UAX #9), just
-enough to lay out real mixed Hebrew/Arabic/Latin/digit text correctly:
-classify each codepoint's direction, assign it an embedding level,
-reorder the line into visual (left-to-right-drawable) order via the
-same run-reversal technique UAX #9's rule L2 uses, and mirror
-paired characters (parens/brackets/comparisons) that end up inside a
-right-to-left run.
+"""Bidirectional text layout: a partial implementation of the Unicode
+Bidirectional Algorithm (UAX #9), covering what real mixed
+Hebrew/Arabic/Latin/digit text needs. Each codepoint is classified by
+direction and assigned an embedding level, the line is reordered into
+visual (left-to-right-drawable) order by the run-reversal technique of
+UAX #9's rule L2, and paired characters (parens, brackets, comparisons)
+that land inside a right-to-left run are mirrored.
 
-What this does NOT implement: UAX #9's full weak/neutral-type
-resolution (rules W1-W7, N0-N2) collapses here into one simplified
-rule -- a neutral/weak run takes the level of the strong text next to
-it, or the paragraph's base level -- correct for digits, punctuation
-and spaces between words, not for every adjacency UAX #9 enumerates.
-Explicit directional formatting characters (LRE/RLE/PDF/LRI/RLI/FSI/
-PDI/LRM/RLM) aren't recognized at all -- a real, separable feature for
-callers that need explicit direction overrides, not a silent gap in
-the common case this targets. Combining marks aren't specially kept
-attached to their base character during reordering -- a base+diacritic
-pair used with an RTL script here (Hebrew niqqud, Arabic tashkeel)
-would have its mark's relative position affected by the same per-
-codepoint reversal every other character gets, which is a real,
-visible limitation for vocalized/diacritic-heavy text specifically,
-not for plain consonantal text.
+Not implemented here:
 
-Font/glyph-shaping note: this module only reorders and mirrors
-*existing* codepoints -- it does not perform Arabic's contextual
-letter-shaping (selecting a letter's isolated/initial/medial/final
-glyph form and connecting it to its neighbors). Hebrew has no
-contextual shaping at all (each codepoint always maps to the same
-glyph), so Hebrew text laid out through this module renders fully
-correctly. Arabic text laid out through this module gets the correct
-right-to-left *order* and correctly-mirrored punctuation, but each
-letter renders in its isolated form, disconnected from its neighbors
--- directionally correct, not visually shaped. Real Arabic shaping
-(a per-letter joining-type table, contextual glyph selection, and
-mapping to the font's Arabic Presentation Forms glyphs) is a
-separate, larger feature, not attempted here.
+- UAX #9's full weak/neutral-type resolution (rules W1-W7, N0-N2), which
+  collapses into one rule: a neutral/weak run takes the level of the
+  strong text next to it, or the paragraph's base level. That is correct
+  for digits, punctuation and spaces between words, not for every
+  adjacency UAX #9 enumerates.
+- Explicit directional formatting characters
+  (LRE/RLE/PDF/LRI/RLI/FSI/PDI/LRM/RLM), which are not recognized at
+  all.
+- Keeping combining marks attached to their base character during
+  reordering. A base+diacritic pair in an RTL script (Hebrew niqqud,
+  Arabic tashkeel) has its mark repositioned by the same per-codepoint
+  reversal every other character gets.
+- Arabic contextual letter-shaping: selecting a letter's
+  isolated/initial/medial/final glyph form and connecting it to its
+  neighbors. This module reorders and mirrors existing codepoints only.
+
+Hebrew has no contextual shaping -- each codepoint always maps to the
+same glyph -- so Hebrew text laid out through this module renders fully.
+Arabic gets the correct right-to-left order and correctly mirrored
+punctuation, with each letter in its isolated form.
 """
 
 

@@ -1,84 +1,68 @@
-"""Font discovery -- resolves a family/slant/weight request to an actual
-font file path on disk, natively, with no linked library. This is one of
-three jobs text rendering needs: font discovery (this module), glyph
-resolution & metrics (`ttf.mojo`), and rasterization (`fill_path_aa` --
-see `path.mojo`).
+"""Font discovery: resolves a family/slant/weight request to a font file
+path on disk, with no linked library. One of the three parts of text
+rendering, alongside glyph resolution and metrics (`ttf.mojo`) and
+rasterization (`fill_path_aa`, see `path.mojo`).
 
-Nothing here is linked or dlopen'd; this module is the reason the
-package has no FFI at all. What `libfontconfig` does, reduced to what a
-drawing library actually asks of it, is four things, and all four are
-here:
+Four steps, covering what `libfontconfig` does for a drawing library:
 
 1. **Enumerate the installed fonts.** Walk each platform's font
    directories (`_font_directories`), collect every `sfnt` container
    found (`.ttf`/`.ttc`/`.otf`/`.otc`), and read each one's identity out
-   of its own `name`/`OS/2`/`head`/`post` tables (`_parse_face`). No
-   binary cache file, no XML: the tables in the font files *are* the
+   of its own `name`/`OS/2`/`head`/`post` tables (`_parse_face`). There
+   is no cache file and no XML; the tables in the font files are the
    database.
-2. **Expand generic families.** "sans-serif"/"serif"/"monospace" (plus
-   the classic metric aliases -- Helvetica, Arial, Times, Courier) are
-   ordered preference lists, not real families (`_family_candidates`),
+2. **Expand generic families.** "sans-serif"/"serif"/"monospace" and the
+   classic metric aliases (Helvetica, Arial, Times, Courier) are ordered
+   preference lists rather than real families (`_family_candidates`) --
    the job fontconfig's `/etc/fonts/conf.d/*.conf` rules do.
 3. **Score, don't filter.** Every installed face is ranked against the
-   request and the best one wins, so a request always resolves to
-   *something* as long as one font is installed (`_score`). The scoring
-   terms and their priority order follow fontconfig's own
-   (`FcCompare*`): family, then spacing, slant, weight, width.
+   request and the best one wins, so a request resolves as long as one
+   font is installed (`_score`). The scoring terms run in fontconfig's
+   own priority order (`FcCompare*`): family, spacing, slant, weight,
+   width.
 4. **Fall back per character.** `resolve_font_file_for_char` ranks a
-   font that actually maps the codepoint above every other
-   consideration, reading candidate `cmap` tables in score order
-   (`_face_covers_codepoint`) -- fontconfig's `FC_CHARSET` constraint.
+   font that maps the codepoint above every other consideration, reading
+   candidate `cmap` tables in score order (`_face_covers_codepoint`) --
+   fontconfig's `FC_CHARSET` constraint.
 
-Deliberately *not* reimplemented, because a drawing library never asks
-for them: fontconfig's XML rule engine, its `~/.cache/fontconfig` binary
-cache, per-language coverage matching, and named-instance expansion of
-variable fonts (a variable font is matched as its default instance).
+Not covered here: fontconfig's XML rule engine, its
+`~/.cache/fontconfig` binary cache, per-language coverage matching, and
+named-instance expansion of variable fonts (a variable font matches as
+its default instance).
 
-Where it looks: each platform's usual font directories -- on Linux the
-user's `~/.local/share/fonts` and `~/.fonts` plus `/usr/share/fonts`,
-`/usr/local/share/fonts` and `/usr/share/X11/fonts`; on macOS
-`~/Library/Fonts`, `/Library/Fonts`, `/System/Library/Fonts` (and its
-`Supplemental`) plus Homebrew's font prefixes. Set
-**`CANVAS_MOJO_FONT_PATH`** (colon-separated directories) to add font
+Where it looks: on Linux `~/.local/share/fonts` and `~/.fonts` plus
+`/usr/share/fonts`, `/usr/local/share/fonts` and `/usr/share/X11/fonts`;
+on macOS `~/Library/Fonts`, `/Library/Fonts`, `/System/Library/Fonts`
+(and its `Supplemental`) plus Homebrew's font prefixes.
+**`CANVAS_MOJO_FONT_PATH`** (colon-separated directories) adds font
 trees in a nonstandard prefix -- a container image, a test fixture, a
-font vendored beside an application. Those are searched ahead of the
-platform defaults. Fonts still have to be installed for text to
-render; this package bundles none.
+font vendored beside an application -- and is searched ahead of the
+platform defaults. Fonts have to be installed for text to render; this
+package bundles none.
 
-Cost, measured on this machine (51 installed faces, warm page cache):
-a scan is ~3.3ms, two thirds of it the directory walk rather than the
-font files -- each file is read a few hundred bytes at a time (a table
-directory and three or four small tables), never whole, which
-`ttf.mojo` does later for the one font that wins. The equivalent
-`libfontconfig` call measures ~0.21ms, because fontconfig answers from
-a prebuilt binary cache in `~/.cache/fontconfig` rather than looking at
-the fonts -- and a cache with its own file format, staleness rules and
-write-permission problems is not worth owning here.
+A scan measures ~3.3ms on this machine (51 installed faces, warm page
+cache), two thirds of it the directory walk rather than the font files;
+each file is read a few hundred bytes at a time -- a table directory and
+three or four small tables -- never whole, which `ttf.mojo` does later
+for the one font that wins. Matching against an already-built
+`FontDatabase` is arithmetic over a list, so the scan is paid once per
+`FontDatabase` rather than once per lookup. `FontCache` holds one, and
+`render.mojo`'s cache-less entry points each build one FontCache for the
+duration of the call, so a `draw_text` scans once. A caller drawing many
+labels through a single `FontCache` pays ~3.3ms in total.
 
-What makes that a non-issue in practice is reuse: matching against an
-already-built `FontDatabase` is arithmetic over a list, so the scan is
-paid once per `FontDatabase`, not once per lookup. `FontCache` holds
-one, and `render.mojo`'s cache-less entry points each build one
-FontCache for the duration of the call, so a `draw_text` still scans
-once, not once per pass. A caller drawing many labels passes one
-`FontCache` to all of them and pays ~3.3ms in total; a caller that
-draws one label per FontCache pays it per label.
+This module imports nothing from `canvas.text`, which is why
+`FontSlant`/`FontWeight` and the small binary readers below live here
+rather than being imported from a module that uses them: Mojo resolves a
+struct's method surface, and whatever it imports, eagerly rather than
+lazily. It is also why `_face_covers_codepoint` walks a `cmap` here
+rather than calling `ttf.mojo`'s -- this one answers "is this codepoint
+mapped" from a byte range read off disk, where `TTFFace` needs the whole
+parsed, `glyf`-bearing file it refuses to build for a CFF font.
 
-This module imports nothing from `canvas.text`, and that
-independence is why `FontSlant`/`FontWeight` and the small binary
-readers below live here rather than being imported from a module that
-uses them -- a struct's method surface (and whatever it imports)
-resolves eagerly, not lazily, the same lesson `canvas/vector/
-draw_target.mojo` documents for `DrawTarget` excluding `draw_text`. It
-is also why `_face_covers_codepoint` walks a `cmap` here rather than
-calling `ttf.mojo`'s: this one answers "is this codepoint mapped" from a
-byte range read off disk, where `TTFFace` needs the whole parsed,
-`glyf`-bearing file it deliberately refuses to build for a CFF font.
-
-This module resolves a font *file*, nothing more -- it does not parse
-that file's outlines, measure text, hint, or rasterize anything.
-`render.mojo` drives it, together with `ttf.mojo` and `fill_path_aa`, to
-actually draw text.
+This module resolves a font *file* and nothing more: it does not parse
+that file's outlines, measure text, hint, or rasterize. `render.mojo`
+drives it, together with `ttf.mojo` and `fill_path_aa`, to draw text.
 """
 
 from std.os import getenv, listdir
@@ -355,10 +339,10 @@ def _font_directories() -> List[String]:
 
 
 def _has_sfnt_extension(name: String) -> Bool:
-    """The container formats `_parse_face` can read. Deliberately
-    excludes the bitmap and Type 1 formats a Linux font tree is also
-    full of (`.pcf.gz`, `.pfb`, `.afm`): they carry no `sfnt` tables to
-    read an identity out of, and `ttf.mojo` could not draw them anyway.
+    """The container formats `_parse_face` can read. Excludes the
+    bitmap and Type 1 formats a Linux font tree is also full of
+    (`.pcf.gz`, `.pfb`, `.afm`): they carry no `sfnt` tables to read an
+    identity out of, and `ttf.mojo` cannot draw them.
     """
     var lowered = name.lower()
     return (
@@ -390,16 +374,15 @@ def _collect_font_files() -> List[String]:
     """Every readable `sfnt` file under `_font_directories`, resolved
     through symlinks and deduplicated.
 
-    Resolving symlinks is not tidiness: a distro package like
-    `fonts-ubuntu` ships `Ubuntu-B.ttf`, `Ubuntu-R.ttf` and half a dozen
-    more as links onto one variable `Ubuntu[wdth,wght].ttf`, and without
-    this every one of them enters the database as a separate face with
-    identical properties, making which file a request resolves to a
-    coin-flip on directory order.
+    A distro package like `fonts-ubuntu` ships `Ubuntu-B.ttf`,
+    `Ubuntu-R.ttf` and half a dozen more as links onto one variable
+    `Ubuntu[wdth,wght].ttf`. Without resolving them each enters the
+    database as a separate face with identical properties, and which file
+    a request resolves to comes down to directory order.
 
-    Sorted, for the same reason: `listdir` returns filesystem order, so
-    two equally-good faces would otherwise tie-break differently on
-    different machines.
+    The list is sorted because `listdir` returns filesystem order, so two
+    equally-good faces would otherwise tie-break differently on different
+    machines.
     """
     var files = List[String]()
     var seen = Dict[String, Bool]()
@@ -876,8 +859,8 @@ def _generic_expansion(key: String) -> List[String]:
 
 def _metric_aliases(key: String) -> List[String]:
     """Substitutes for the handful of families whose *metrics* other
-    families deliberately clone, so a document asking for one lays out
-    the same under another. fontconfig ships this as
+    families clone, so a document asking for one lays out the same under
+    another. fontconfig ships this as
     `30-metric-aliases.conf`; these are the entries that matter for
     text a chart draws.
     """
@@ -1162,17 +1145,16 @@ def resolve_font_file_for_char(
     weight: FontWeight,
     codepoint: Int,
 ) raises -> String:
-    """Like `resolve_font_file`, but constrained to a font that actually
-    contains `codepoint`. This is the fallback lookup `render.mojo` uses
-    when the requested family has no glyph for a character -- CJK text
-    under a Latin-only "Sans", say -- and it searches every installed
-    font the same way a desktop text stack's fallback chain does.
+    """Like `resolve_font_file`, but constrained to a font that contains
+    `codepoint`. This is the fallback lookup `render.mojo` uses when the
+    requested family has no glyph for a character -- CJK text under a
+    Latin-only "Sans", say -- and it searches every installed font, the
+    way a desktop text stack's fallback chain does.
 
-    If no installed font has `codepoint`, the unconstrained best match
-    is returned: a real font file that, like every other installed font,
-    lacks the glyph. A caller that must distinguish "found a font with
-    the glyph" from "gave up" checks the result with
-    `glyph_outline.has_glyph` rather than trusting the return value.
+    If no installed font has `codepoint`, the unconstrained best match is
+    returned. A caller that must distinguish "found a font with the
+    glyph" from "gave up" checks the result with
+    `glyph_outline.has_glyph`.
 
     Args:
         family: Font family name or generic alias (e.g. "sans-serif").

@@ -101,12 +101,9 @@ trait ColorSource:
     """Anything that can answer "what colour is at this point?" -- the
     fill source a gradient-filled shape queries per pixel.
 
-    `LinearGradient` and `RadialGradient` both conform. The point is
-    that the fills in `canvas.path` need nothing else from a gradient,
-    so they can be written once against this instead of once per
-    gradient type -- which is what `fill_path_gradient` and
-    `fill_path_radial_gradient` were before, two functions whose
-    bodies were byte-for-byte identical.
+    `LinearGradient` and `RadialGradient` both conform. The fills in
+    `canvas.path` need nothing else from a gradient, so each is written
+    once against this trait rather than once per gradient type.
 
     Conformance is nominal per Mojo's trait rule, so a new fill source
     has to declare `ColorSource` explicitly to be usable as one.
@@ -218,10 +215,9 @@ struct RadialGradient(ColorSource, Movable):
     Add stops with add_stop(), then pass to fill_rect_radial_gradient/
     fill_path_radial_gradient (or query color_at() directly).
 
-    The simple single-circle form (center + radius), not the
-    two-circle form SVG/Cairo/HTML5 Canvas offer, where the focal point
-    can sit off-center with its own radius. That generality mostly
-    fakes a 3D-lit-sphere look; bubble centers, donut centers and
+    The simple single-circle form (center + radius), not the two-circle
+    form SVG/Cairo/HTML5 Canvas offer, where the focal point can sit
+    off-center with its own radius. Bubble centers, donut centers and
     radial legend swatches all want a concentric gradient.
 
     Stops need not be in insertion order, as in LinearGradient; both

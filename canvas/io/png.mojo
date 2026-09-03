@@ -21,24 +21,19 @@ big-endian, but DEFLATE's stored-block LEN/NLEN fields are
 little-endian.
 
 `write_png` emits color type 6 (truecolor + alpha) when the canvas
-actually contains a pixel that is not fully opaque, and color type 2
-(truecolor, no alpha) when it does not. Picking the narrower format
-when the wider one carries no information is what an encoder is
-supposed to do, and it means a render that never used transparency
-produces exactly the same file it always did -- no size regression, no
-change to any existing output.
+contains a pixel that is not fully opaque, and color type 2 (truecolor,
+no alpha) when it does not, so a render that never used transparency
+carries no alpha channel in the file.
 
 `read_png` accepts color types 0/2/4/6 (grayscale, truecolor,
 grayscale+alpha, truecolor+alpha) at 8-bit depth, non-interlaced.
-Indexed/palette color (type 3), other bit depths, and Adam7
-interlacing raise a clear error rather than misreading pixels -- a
-deliberate scope limit covering what the overwhelming majority of real
-PNGs are.
+Indexed/palette color (type 3), other bit depths, and Adam7 interlacing
+raise a clear error rather than misreading pixels.
 
-A PNG with an alpha channel now keeps it: `Canvas` stores per-pixel
-alpha (see buffer.mojo), so `read_png` writes each pixel's alpha
-straight through instead of compositing it away onto white, and a
-file round-trips through `read_png` -> `write_png` unchanged.
+A PNG's alpha channel is kept: `Canvas` stores per-pixel alpha (see
+buffer.mojo), so `read_png` writes each pixel's alpha straight through
+instead of compositing it away onto white, and a file round-trips
+through `read_png` -> `write_png` unchanged.
 """
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -99,8 +94,7 @@ def _adler32(data: List[UInt8]) -> UInt32:
     accumulators cannot overflow in between. NMAX is the standard bound
     for that in 32 bits: the largest n with
     255*n*(n+1)/2 + (n+1)*(BASE-1) < 2^32, so a block of that length
-    cannot carry s2 past the end of the type. Same answer, proven
-    rather than measured, and the reason every real zlib does it.
+    cannot carry s2 past the end of the type.
 
     Bytes are read through `unsafe_ptr` because the loop bound is
     `len(data)` itself, so the index cannot leave the buffer, and a
@@ -382,11 +376,10 @@ def _canvas_from_scanlines(
     """Converts already-unfiltered scanline bytes into a Canvas.
 
     Builds the RGBA buffer directly and hands it to the
-    `(width, height, pixels)` constructor, rather than writing pixels
-    into a blank canvas one at a time. That is not just faster: a
-    `write_pixel` walk would *composite* each pixel onto the canvas's
-    initial background, which is exactly how alpha used to be lost
-    here. Decoding a file is a replace, not a draw.
+    `(width, height, pixels)` constructor rather than writing pixels into
+    a blank canvas one at a time: a `write_pixel` walk would *composite*
+    each pixel onto the canvas's initial background, losing alpha.
+    Decoding a file is a replace, not a draw.
     """
     var bpp = _bytes_per_pixel(color_type)
     var row_bytes = width * bpp
@@ -434,8 +427,8 @@ def read_png(path: String) raises -> Canvas:
         path: File path to read.
 
     Returns:
-        The decoded image as a Canvas (alpha, if any, composited onto
-        white -- see this module's docstring).
+        The decoded image as a Canvas, with any alpha channel preserved
+        per pixel.
 
     Raises:
         Error: `path` can't be read, isn't a valid PNG, uses an

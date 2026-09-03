@@ -5,20 +5,19 @@ tests/test_font_discovery.mojo documents.
 
 What's tested: FontCache.resolve/resolve_for_char return the path a
 cache miss would, and resolve_face/resolve_face_for_char render and
-measure identically to an uncached call. The cache must never change
-*what* gets resolved, only how often the installed fonts get scanned
-and how often a file is parsed.
+measure identically to an uncached call. The cache changes only how
+often the installed fonts get scanned and how often a file is parsed,
+never what gets resolved.
 
-Special attention to the failure mode a face cache invites that a
-path-only cache can't: `set_pixel_size` mutates a `TTFFace` in place,
-so a cache keyed on path alone would share one instance across two
-sizes and silently corrupt whichever lost the race. The two
-interleaved-size tests below exist for that, deliberately alternating
-sizes rather than testing each in isolation.
+A face cache has one failure mode a path-only cache does not:
+`set_pixel_size` mutates a `TTFFace` in place, so a cache keyed on path
+alone would share one instance across two sizes and corrupt whichever
+lost the race. The two interleaved-size tests below cover that, and
+alternate sizes rather than testing each in isolation for that reason.
 
 Not tested: the font-directory scan and TTFFace-parse time this cache
 exists to avoid. A wall-clock assertion would be flaky across machines
-and CI load; font_cache.mojo documents the measured cost instead.
+and CI load; font_cache.mojo records the measured cost instead.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite

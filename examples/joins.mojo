@@ -1,19 +1,18 @@
 """Demo: how a stroke ends, and how it turns a corner.
 
 `LineCap` decides what happens at an open stroke's two ends; `LineJoin`
-decides what happens where it changes direction. Both matter more at
-chart-sized stroke widths than they sound: a 6px round cap makes an
-axis rule overshoot its own ticks by 3px at each end, and a mitred
-corner on a plot frame looks like a frame where a round one looks like
-a lozenge.
+decides what happens where it changes direction. Both are visible at
+chart-sized stroke widths: a 6px round cap makes an axis rule overshoot
+its own ticks by 3px at each end, and a mitred corner on a plot frame
+reads as a frame where a round one reads as a lozenge.
 
 Top row: the three caps on a thick horizontal bar, with tick marks
 showing where the stroke was actually asked to start and stop. Only
 BUTT lands on them.
 
-Bottom row: the three joins on a right-angle corner, plus a sharp
-corner where MITER exceeds its limit and falls back to BEVEL -- without
-that fallback the spike would run off the canvas.
+Bottom row: the three joins on a right-angle corner, plus a sharp corner
+where MITER exceeds its limit and falls back to BEVEL -- without that
+fallback the spike would run off the canvas.
 
 Writes examples/out_joins.png.
 """

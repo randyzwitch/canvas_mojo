@@ -1,31 +1,25 @@
 """DEFLATE (RFC 1951), both directions.
 
-`inflate()` is a direct translation of zlib's `puff.c` reference
-decoder (Mark Adler, zlib-licensed; "a simple inflate written to be an
+`inflate()` is a direct translation of zlib's `puff.c` reference decoder
+(Mark Adler, zlib-licensed; "a simple inflate written to be an
 unambiguous way to specify the deflate format") rather than a
 re-derivation from the RFC alone. `deflate()` is a from-scratch LZ77 +
 fixed-Huffman encoder built against the RFC's text, with `inflate()`
-already in place to round-trip against. DEFLATE is a closed, formally
-specified, decades-stable algorithm, so it belongs in this package the
-way Bresenham lines and glyph outlines do -- unlike font
-discovery/shaping, which font_discovery.mojo explains is an
-open-ended, system-dependent subsystem better left to a linked
-library.
+already in place to round-trip against.
 
 `inflate()` is puff.c's "SLOW" (readable, bit-at-a-time) `decode()`
-variant rather than its faster table-driven one: chart-sized images,
-not a video codec. `deflate()` makes the same trade -- a single
-fixed-Huffman block (RFC 1951 3.2.6, BTYPE=01, no dynamic tree to
-build or transmit) over a hash-chain LZ77 match finder with bounded
-search depth (`_MAX_CHAIN`). Real compression, not maximal.
-canvas.io.png's `write_png` is the caller.
+variant rather than its faster table-driven one: chart-sized images, not
+a video codec. `deflate()` makes the same trade -- a single
+fixed-Huffman block (RFC 1951 3.2.6, BTYPE=01, no dynamic tree to build
+or transmit) over a hash-chain LZ77 match finder with bounded search
+depth (`_MAX_CHAIN`). canvas.io.png's `write_png` is the caller.
 
-Verified against real zlib output: every `inflate()` stage
-round-trips actual `zlib.compress()` output (stored, fixed-Huffman and
-dynamic-Huffman blocks each separately) back to the original bytes,
-and `deflate()`'s output goes back through both `inflate()` and
-Python's `zlib.decompress()` -- a separate implementation, so a shared
-bug can't hide. See tests/test_deflate.mojo.
+Verified against real zlib output: every `inflate()` stage round-trips
+actual `zlib.compress()` output (stored, fixed-Huffman and
+dynamic-Huffman blocks each separately) back to the original bytes, and
+`deflate()`'s output goes back through both `inflate()` and Python's
+`zlib.decompress()` -- a separate implementation, so a shared bug cannot
+hide. See tests/test_deflate.mojo.
 """
 
 comptime _MAX_BITS = 15
@@ -741,14 +735,9 @@ struct _HashChains(Movable):
     LZ77 chain structure, and the reason a match search does not need a
     dictionary.
 
-    This replaced a `Dict[Int, List[Int]]` whose per-position insert
-    hashed a key, risked an allocation, and called `pop(0)` on the
-    bucket -- an O(bucket) memmove -- once per byte of every image
-    written. Here an insert is two array stores, and the _MAX_CHAIN cap
-    moves from the insert (bounding what is stored) to the search
-    (bounding what is walked), which is where it was always doing the
-    real work: `_find_match` never looked past that many candidates
-    anyway.
+    An insert is two array stores. The _MAX_CHAIN cap sits on the search
+    (bounding what is walked) rather than on the insert (bounding what is
+    stored), since `_find_match` never looks past that many candidates.
 
     Walking `prev` from `head` yields positions in most-recent-first
     order, which is what makes `_find_match`'s "nearest among equal
@@ -885,10 +874,10 @@ def _find_match(chains: _HashChains, data: List[UInt8], pos: Int) -> _Match:
 
 def deflate(data: List[UInt8]) raises -> List[UInt8]:
     """Compress `data` into a raw DEFLATE stream (RFC 1951): LZ77 +
-    fixed-Huffman, one block, head/prev hash-chain match search
-    (see _HashChains) capped at _MAX_CHAIN candidates. Not a zlib stream (RFC 1950) -- a caller
-    needing one, such as write_png, adds the 2-byte header and 4-byte
-    Adler-32 trailer itself.
+    fixed-Huffman, one block, head/prev hash-chain match search (see
+    _HashChains) capped at _MAX_CHAIN candidates. Not a zlib stream
+    (RFC 1950) -- a caller needing one, such as write_png, adds the
+    2-byte header and 4-byte Adler-32 trailer itself.
 
     Always one block (BFINAL=1 from the start). RFC 1951 caps a stored
     block at 65535 bytes but puts no upper bound on a compressed one,

@@ -9,9 +9,9 @@ between the two: it exposes the `LineMetrics`/`GlyphMetrics`/
 no linked library in this module, or anywhere else in this package.
 
 No hinting: `ttf.mojo` implements no hinting bytecode interpreter, a
-deliberate scope decision documented there. Every glyph renders
-through `fill_path_aa`'s supersampled coverage AA regardless, which is
-what keeps unhinted outlines correct at the sizes a chart uses.
+scope decision documented there. Every glyph renders through
+`fill_path_aa`'s supersampled coverage AA regardless, which keeps
+unhinted outlines correct at the sizes a chart uses.
 
 Locked-in font values: DejaVu Sans reads
 `units_per_EM`/`num_glyphs`/`ascender`/`descender` as

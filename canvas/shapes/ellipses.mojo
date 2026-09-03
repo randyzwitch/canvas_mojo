@@ -420,14 +420,12 @@ def draw_ellipse_aa(
     positive -- no degenerate-inner-ellipse case to guard, same as
     draw_circle_aa never needing one either.
 
-    Known, accepted imprecision: applying +/-0.5 to rx and ry
-    independently, rather than offsetting along the ellipse's true
-    normal direction, means the resulting ring's actual physical width
-    varies slightly around the ellipse (exactly 1px at the four axis
-    extremes, narrower elsewhere) instead of being uniformly 1px like
-    the circle's ring. Good enough for a ~1px hairline outline; a
-    normal-offset ring would need the ellipse's actual perimeter
-    parameterization, unjustified complexity for what this is for.
+    Applying +/-0.5 to rx and ry independently, rather than offsetting
+    along the ellipse's true normal direction, makes the ring's physical
+    width vary around the ellipse -- exactly 1px at the four axis
+    extremes, narrower elsewhere, where the circle's ring is uniformly
+    1px. A normal-offset ring would need the ellipse's actual perimeter
+    parameterization.
 
     Args:
         canvas: Canvas to draw into.

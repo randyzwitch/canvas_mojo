@@ -2,15 +2,13 @@
 of rasterizing into a pixel buffer. No anti-aliasing math, no coverage
 sampling, no fill-rule scanline algorithm -- an SVG renderer (browser,
 image viewer, PDF exporter) does all of that at whatever resolution it
-displays at. Content drawn through this has no fixed pixel size to get
-wrong the way a raster target, which must pick a resolution up front,
-can when scaled after the fact.
+displays at, so content drawn through this carries no fixed pixel size.
 
-Minimal, matching `DrawTarget`'s ten methods one for one. Not a
-general-purpose SVG builder: no gradients, no general groups or
-transforms, no clipping. `draw_text`'s `rotation` is the one exception,
-a per-`<text>` `transform="rotate(...)"` rather than a transform stack,
-because a chart's rotated y-axis title needs it.
+The surface matches `DrawTarget`'s ten methods one for one. It is not a
+general-purpose SVG builder: no gradients beyond `fill_rect_gradient`'s,
+no general groups or transforms, no clipping. `draw_text`'s `rotation`
+is the one exception, a per-`<text>` `transform="rotate(...)"` rather
+than a transform stack, for a chart's rotated y-axis title.
 """
 
 from std.math import cos, pi, sin
@@ -105,17 +103,15 @@ def _opacity_attr(name: String, color: Color) -> String:
     `color`'s alpha, or `""` when it is fully opaque.
 
     SVG carries alpha in a separate attribute rather than in the color,
-    since `#rrggbb` has nowhere to put it -- so without this a
-    translucent color renders fully opaque here while the raster
-    backend blends it, and the same `DrawTarget` call produces two
-    different pictures.
+    since `#rrggbb` has nowhere to put it, so without this a translucent
+    color renders fully opaque here while the raster backend blends it,
+    and the same `DrawTarget` call produces two different pictures.
 
     Omitted entirely at `a == 255`, matching the omit-at-default
-    convention `rotation` and `weight` already follow in `draw_text`, so
-    opaque output carries no opacity attribute at all. Alpha is
-    expressed as SVG wants it, a 0-1 fraction at `_format_svg_float`'s
-    3 decimals, which is the same shape `fill_rect_gradient` already
-    emits for `stop-opacity`.
+    convention `rotation` and `weight` already follow in `draw_text`.
+    Alpha is written the way SVG wants it, a 0-1 fraction at
+    `_format_svg_float`'s 3 decimals, which is the same shape
+    `fill_rect_gradient` emits for `stop-opacity`.
     """
     if color.a == 255:
         return ""
@@ -130,18 +126,17 @@ def _opacity_attr(name: String, color: Color) -> String:
 
 def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
     """`LinearGradient.stops` in ascending-offset order. `add_stop`
-    guarantees insertion order doesn't matter, and the raster lookup
-    honors that, but SVG's `<stop>` clamps each offset to be no less
-    than the previous sibling's -- so descending offsets would emit
-    every stop after the first at the first stop's offset, flattening
-    the gradient to one color in every viewer. Sorting here, right
-    before emitting, keeps that guarantee without touching add_stop's
-    contract or LinearGradient's storage.
+    accepts stops in any order and the raster lookup honors that, but
+    SVG's `<stop>` clamps each offset to be no less than the previous
+    sibling's -- so descending offsets would emit every stop after the
+    first at the first stop's offset, flattening the gradient to one
+    color in every viewer. Sorting here, right before emitting, leaves
+    `add_stop`'s contract and `LinearGradient`'s storage untouched.
 
-    Insertion sort rather than stdlib `sort()`: `stops` is typically
-    2-4 entries, and stability matters -- two stops at the same offset
-    are a deliberate hard color transition, and a merely
-    offset-correct sort could swap which color owns which side of it.
+    Insertion sort rather than stdlib `sort()`: `stops` is typically 2-4
+    entries, and the sort has to be stable -- two stops at the same
+    offset are a hard color transition, and an unstable sort could swap
+    which color owns which side of it.
     """
     var sorted_stops = List[_GradientStop](capacity=len(stops))
     for stop in stops:
@@ -310,11 +305,9 @@ struct SvgCanvas(DrawTarget, Movable):
         `userSpaceOnUse` -- SVG's escape from its default shape-relative
         `objectBoundingBox` units -- carries that axis over untranslated.
 
-        Emits a fresh `<defs><linearGradient id="gradN">` per call
-        rather than deduping a gradient reused across calls. That
-        duplicates markup, but SVG readers dedupe identical `<defs>`
-        at parse time, and a chart draws a given gradient once per
-        legend or bar anyway.
+        Emits a fresh `<defs><linearGradient id="gradN">` per call rather
+        than deduping a gradient reused across calls; SVG readers dedupe
+        identical `<defs>` at parse time.
 
         `<stop>` elements come out in ascending-offset order regardless
         of insertion order -- see _stops_sorted_by_offset.
@@ -668,44 +661,38 @@ struct SvgCanvas(DrawTarget, Movable):
         rotation: Float64 = 0.0,
         weight: FontWeight = FontWeight.NORMAL,
     ):
-        """Not part of `DrawTarget`, which excludes text -- call this
-        directly once a caller knows it holds an `SvgCanvas`, the way
-        raster code calls `canvas.text.draw_text` on a `Canvas`.
+        """Draw a `<text>` element. Not part of `DrawTarget`, which
+        excludes text -- call this directly once a caller knows it holds
+        an `SvgCanvas`, the way raster code calls `canvas.text.draw_text`
+        on a `Canvas`.
 
-        `family` becomes a literal `font-family` attribute, always
-        emitted: without one, a viewer falls back to its own undefined
-        default (some pick a serif face), which reads as inconsistent
-        with the raster `draw_text`, where matching always resolves a
-        real font. Defaults to `"sans-serif"`, a generic CSS keyword
-        every viewer supports.
+        `family` becomes a literal `font-family` attribute and is always
+        emitted; without one a viewer falls back to its own default,
+        which varies between viewers. It defaults to `"sans-serif"`, a
+        generic CSS keyword every viewer supports. Despite the shared
+        name and position, this is a different kind of value from raster
+        draw_text's `family`: raster's is a family or generic alias
+        resolved to one concrete font *file*, while this is a literal CSS
+        `font-family` -- keyword, face name, or comma-separated stack --
+        interpreted by whatever renders the SVG. A caller driving both
+        backends maps between the two itself.
 
-        This `family` is a different kind of value from raster
-        draw_text's, despite the shared name and position: raster's is
-        a family or generic alias resolved to one concrete font
-        *file*; this
-        is a literal CSS `font-family` -- keyword, face name, or
-        comma-separated stack -- interpreted by whatever renders the
-        SVG. A caller driving both backends needs its own mapping
-        between the two.
-
-        `(x, y)` is the baseline anchor, matching raster draw_text:
-        SVG `<text>` anchors `y` to the alphabetic baseline already, so
+        `(x, y)` is the baseline anchor, matching raster draw_text: SVG
+        `<text>` anchors `y` to the alphabetic baseline already, so
         nothing adjusts for glyph tops. `text-anchor`
         (`start`/`middle`/`end`) is the direct equivalent of `align`'s
         three values, also measured from `(x, y)`.
 
         `rotation` is radians, as in raster draw_text, and rotates the
         whole `<text>` around its `(x, y)` anchor via
-        `transform="rotate(<degrees> <x> <y>)"`. Omitted entirely at
-        0.0. No sign flip: raster space and SVG's viewport space both
-        put y downward, so a positive angle is clockwise in both.
+        `transform="rotate(<degrees> <x> <y>)"`, omitted entirely at 0.0.
+        No sign flip: raster space and SVG's viewport space both put y
+        downward, so a positive angle is clockwise in both.
 
         `weight` mirrors raster draw_text's `weight` -- same
-        `FontWeight`, same `NORMAL` default -- so one call site can
-        drive both backends. Emits `font-weight="bold"` for
-        FontWeight.BOLD (SVG/CSS's two-value keyword; `FontWeight`
-        distinguishes nothing finer), omitted at `NORMAL`.
-
+        `FontWeight`, same `NORMAL` default -- so one call site can drive
+        both backends. It emits `font-weight="bold"` for FontWeight.BOLD,
+        SVG/CSS's two-value keyword, and is omitted at `NORMAL`.
         Args:
             x: Anchor x -- baseline left end for TextAlign.LEFT.
             y: Anchor y -- baseline.

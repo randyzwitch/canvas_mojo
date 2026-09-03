@@ -2,14 +2,14 @@
 anti-aliased primitives.
 
 Each of these draws the same shape twice, a fraction of a pixel apart,
-and asserts the two renders differ. That is the whole point of the
-overloads: the whole-pixel entry points cannot express the difference
-at all, so under them every pair here would be byte-identical.
+and asserts the two renders differ. The whole-pixel entry points cannot
+express that difference at all, so under them every pair here would be
+byte-identical.
 
 Where a coverage value is hand-derivable it is pinned exactly rather
 than merely compared. A pixel centered at x=p spans [p-0.5, p+0.5], and
 at the default 4x supersample its sub-sample columns sit at p-0.375,
-p-0.125, p+0.125 and p+0.375 -- so an edge landing on a quarter-pixel
+p-0.125, p+0.125 and p+0.375, so an edge landing on a quarter-pixel
 boundary admits an exact expected count.
 """
 

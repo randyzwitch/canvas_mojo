@@ -192,11 +192,9 @@ struct TTFFace(Movable):
     """Codepoint -> glyph index, memoizing the `cmap` subtable scan."""
 
     var _pixel_size: Int
-    """-1 until `set_pixel_size` is called -- deliberately not a valid
-    size by default. A rasterizer that defaults an unset size doesn't
-    fail loudly; it silently measures and draws at a small,
-    wrong-looking one, so every read of this goes through `scale()`,
-    which raises instead.
+    """-1 until `set_pixel_size` is called, so an unset size is not a
+    valid one. Every read goes through `scale()`, which raises rather
+    than measuring and drawing at a defaulted size.
     """
 
     def __init__(out self, path: String) raises:

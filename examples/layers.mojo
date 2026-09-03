@@ -1,16 +1,15 @@
 """Demo: composing separate layers into one image.
 
 Each part of this figure is drawn onto its own transparent canvas and
-composed onto the sheet in order with `draw_canvas`. Nothing here needs
-compositing to render -- the point is that each layer is independent:
-the series can be redrawn, reordered, or faded without touching the
-grid under it, which is exactly what an interactive or incrementally
-updated chart wants.
+composed onto the sheet in order with `draw_canvas`. None of it requires
+compositing to render; what compositing buys is that each layer is
+independent -- the series can be redrawn, reordered, or faded without
+touching the grid under it.
 
 The last layer is drawn at partial opacity to show the difference
 between a layer's own alpha and the opacity it is composed at. The
-annotation band is opaque within its own canvas; it is the composite
-that makes it translucent.
+annotation band is opaque within its own canvas; the composite is what
+makes it translucent.
 
 Writes examples/out_layers.png.
 """

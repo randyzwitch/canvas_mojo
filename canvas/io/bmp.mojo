@@ -173,8 +173,7 @@ def _read_i32_le(data: List[UInt8], pos: Int) raises -> Int:
 def read_bmp(path: String) raises -> Canvas:
     """Read an uncompressed 24- or 32-bit BMP into a new Canvas.
 
-    The counterpart to `write_bmp`, and the BMP half of what
-    `canvas.io.png` already offered both directions of.
+    The counterpart to `write_bmp`.
 
     Handles both row orders. BMP conventionally stores rows
     bottom-up, which is what `write_bmp` emits, but a negative height

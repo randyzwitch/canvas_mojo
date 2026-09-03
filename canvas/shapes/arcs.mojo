@@ -57,42 +57,42 @@ def _arc_bounds(
     """The tight axis-aligned bounding box (min_x, min_y, max_x, max_y)
     the arc/wedge (cx, cy, radius, start_angle, end_angle) occupies.
     fill_arc_aa/fill_ring_sector_aa scan this instead of the full
-    circumscribing square, which badly overestimates anything short of
-    a near-full circle -- a thin 10-degree slice covers a sliver of it.
+    circumscribing square, which overestimates anything short of a
+    near-full circle -- a thin 10-degree slice covers a sliver of it.
     Coverage is unchanged: every excluded pixel is one the per-pixel
     angle/radius tests would have scored zero.
 
-    Rigorous, not a heuristic: an arc's x and y are each monotonic in
-    angle *between* the four cardinal angles (0, pi/2, pi, 3*pi/2,
-    where cos/sin's derivative is zero), the only places either can
-    reach a local extreme. So the bounds are those of the two endpoints
-    plus whichever cardinal points fall inside [start_angle, end_angle].
+    The bounds are exact rather than heuristic. An arc's x and y are each
+    monotonic in angle *between* the four cardinal angles (0, pi/2, pi,
+    3*pi/2, where cos/sin's derivative is zero), the only places either
+    can reach a local extreme, so the bounds are those of the two
+    endpoints plus whichever cardinal points fall inside
+    [start_angle, end_angle].
 
     `include_center` covers the wedge case: fill_arc_aa's shape is
-    bounded by two straight radii back to (cx, cy), so the center can
-    be its extreme point -- a thin slice near angle 0 has both arc
-    endpoints near x = cx + radius, but its straight edges still reach
-    back to x = cx.
+    bounded by two straight radii back to (cx, cy), so the center can be
+    its extreme point -- a thin slice near angle 0 has both arc endpoints
+    near x = cx + radius, but its straight edges still reach back to
+    x = cx.
 
     fill_ring_sector_aa has no center point (inner_radius > 0) but does
     have two radial edges, each running from the outer endpoint at an
     angle to the inner endpoint at that same angle, which a call given
     only the outer radius knows nothing about. A straight line's bounds
-    are exactly its endpoints' bounds, so covering both endpoints
-    covers the edge -- hence two calls, one per radius, both with
+    are exactly its endpoints' bounds, so covering both endpoints covers
+    the edge -- hence two calls, one per radius, both with
     `include_center=False`, unioned.
 
-    Outer-radius bounds alone are not enough: "the inner arc's bounds
-    are a subset of the outer arc's" is false in general. Whenever
+    Outer-radius bounds alone are not enough: the inner arc's bounds are
+    not in general a subset of the outer arc's. Whenever
     [start_angle, end_angle] reaches no cardinal angle, the inner arc's
-    extreme point -- at whichever endpoint angle sits nearest a
-    cardinal one -- lies closer to (cx, cy) than anything on the outer
-    arc, past the outer bound rather than inside it. Counterexample:
-    cx=270, cy=185, start_angle=-pi/2, end_angle=-pi/6,
-    outer_radius=148.5, inner_radius=74.25 -- the outer arc's y-range
-    is [36.5, 110.75], but the inner endpoint at end_angle sits at
-    y=147.875, and single-radius bounds cut a rectangular notch out of
-    the rendered ring.
+    extreme point -- at whichever endpoint angle sits nearest a cardinal
+    one -- lies closer to (cx, cy) than anything on the outer arc, past
+    the outer bound rather than inside it. Counterexample: cx=270,
+    cy=185, start_angle=-pi/2, end_angle=-pi/6, outer_radius=148.5,
+    inner_radius=74.25 -- the outer arc's y-range is [36.5, 110.75], but
+    the inner endpoint at end_angle sits at y=147.875, and single-radius
+    bounds cut a rectangular notch out of the rendered ring.
     """
     var start_x = cx + radius * cos(start_angle)
     var start_y = cy + radius * sin(start_angle)
@@ -213,19 +213,19 @@ struct _AngleSpan(ImplicitlyCopyable, Movable):
     """`_angle_in_span` precomputed for one wedge, so a sample's
     membership is decided by sign tests instead of `atan2`.
 
-    The old form asked for a sample's angle and then normalized it into
-    the span's own 2*pi window. That needs `atan2` per sub-sample --
-    5.8 million of them for a single radius-300 wedge at the default
-    supersample -- for a question that never actually needs the angle,
-    only which side of the two boundary rays the sample falls on.
+    Asking for a sample's angle and normalizing it into the span's own
+    2*pi window needs `atan2` per sub-sample -- 5.8 million of them for a
+    single radius-300 wedge at the default supersample -- for a question
+    that never needs the angle, only which side of the two boundary rays
+    the sample falls on.
 
     Rotating the sample into the frame where the span starts at 0 turns
     that into cross products. With `theta` the sample's angle in that
     frame, membership is `theta <= span`, and:
 
     - a span of at most pi is the intersection of two half-planes:
-      counterclockwise of the start ray (`ry >= 0`) and clockwise of
-      the end ray (`cross_span >= 0`);
+      counterclockwise of the start ray (`ry >= 0`) and clockwise of the
+      end ray (`cross_span >= 0`);
     - a wider span is the complement of the gap it leaves, which is
       itself narrower than pi, so the same test runs on the gap and the
       answer is negated.
@@ -314,20 +314,19 @@ def _square_in_cone(span: _AngleSpan, ox: Float64, oy: Float64) -> Bool:
     the wedge's own centre lies within the wedge's angular sweep.
 
     Only sound for a sweep of at most half a turn, which the caller
-    checks. The reason: an angular sector is the intersection of two
-    half-planes through the centre, and that intersection is convex
-    exactly while the sweep stays within pi. A convex set containing
-    all four corners of a square contains the square -- so four
-    `contains` calls settle it. Past pi the sector is non-convex and
-    four corners prove nothing, which is why a wider wedge gets no fast
-    path rather than a subtly wrong one.
+    checks. An angular sector is the intersection of two half-planes
+    through the centre, and that intersection is convex exactly while the
+    sweep stays within pi; a convex set containing all four corners of a
+    square contains the square, so four `contains` calls settle it. Past
+    pi the sector is non-convex and four corners prove nothing, so a
+    wider wedge gets no fast path.
 
-    The square that straddles the centre is excluded outright. The
-    centre is the cone's apex, where an angle is not defined at all
-    (`_AngleSpan` decides that degenerate case separately, by fiat),
-    and a square around the apex is anyway not contained in any sector
-    narrower than a half turn. At most one pixel per wedge is affected
-    and it falls through to sampling.
+    The square that straddles the centre is excluded outright. The centre
+    is the cone's apex, where an angle is not defined (`_AngleSpan`
+    decides that degenerate case separately), and a square around the
+    apex is not contained in any sector narrower than a half turn. At
+    most one pixel per wedge is affected, and it falls through to
+    sampling.
     """
     var lx = ox - 0.5
     var hx = ox + 0.5

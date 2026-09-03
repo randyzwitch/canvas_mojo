@@ -2,18 +2,18 @@
 self-overlapping shape -- two same-direction-wound squares as two
 sub-paths of one Path.
 
-EVEN_ODD (the default) counts crossings; the overlap region has been
-crossed twice, so it's "outside" again -- a hole appears exactly where
+EVEN_ODD, the default, counts crossings: the overlap region has been
+crossed twice, so it reads as outside and a hole appears exactly where
 the two squares cover each other. NONZERO tracks signed winding
 instead; both squares wind the same direction, so the overlap's signed
-count is 2 (not 0) -- nonzero, so filled solid, no hole. One input
-shape with only the rule changed, so the divergence is visible without
-comparing two different shapes.
+count is 2, nonzero, and it fills solid. One input shape with only the
+rule changed, so the divergence is visible without comparing two
+different shapes.
 
-This matters for chart rendering: overlapping regions -- stacked or
-unioned areas, self-crossing paths from data with duplicate or looping
-segments -- need NONZERO to render as one solid region rather than
-showing a spurious seam.
+Chart rendering hits this with overlapping regions -- stacked or unioned
+areas, self-crossing paths from data with duplicate or looping segments
+-- which need NONZERO to render as one solid region rather than showing
+a spurious seam.
 
 Run with:
     pixi run example

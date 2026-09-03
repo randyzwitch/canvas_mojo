@@ -1,31 +1,27 @@
 """A benchmark suite for the drawing primitives, run with
 `pixi run bench`.
 
-Why this exists: the source carries a lot of specific performance
-claims -- "1.7ns per byte against 0.26 unchecked", "roughly 5x the
-per-pixel cost", "~844ms down to a small fraction of it" -- every one
-of them from a measurement made once, by hand, and then thrown away.
-None of them could be reproduced, and nothing would notice if a change
-undid one. This file is where those numbers go to stay honest.
+The source carries specific performance claims -- "1.7ns per byte
+against 0.26 unchecked", "roughly 5x the per-pixel cost", "~844ms down
+to a small fraction of it". This file is where those numbers are
+reproduced.
 
 It is a stopwatch, not a statistics package. Each case runs a warmup
-pass, then `iters` timed passes, and reports nanoseconds per
-iteration. There is no distribution, no outlier rejection, and no
-claim of significance for small differences -- treat a change under
-about 10% as noise unless it repeats. What it is good for is the thing
-it was built for: running it before and after a change and seeing
-which way a number moved.
+pass, then `iters` timed passes, and reports nanoseconds per iteration.
+There is no distribution, no outlier rejection, and no significance
+test; treat a change under about 10% as noise unless it repeats. Its use
+is running it before and after a change and seeing which way a number
+moved.
 
 Every case ends by reading a pixel back out of the canvas it drew into
-and folding that into a checksum the suite prints. That is not a
-correctness check -- it is there so the optimizer cannot delete the
-drawing it was asked to time. An empty loop measured 50ns for a
-million iterations here before the sink was added.
+and folding that into a checksum the suite prints. That is a sink rather
+than a correctness check: without it the optimizer can delete the
+drawing it was asked to time. An empty loop measured 50ns for a million
+iterations here before the sink was added.
 
 Sizes are chart-shaped rather than maximal: an 800x600 surface, a
 scatter of a few thousand markers, a series with a few thousand
-segments, a paragraph of real text. A rasterizer can be tuned to win
-at 4K fills while getting slower at everything a plot actually does.
+segments, a paragraph of real text.
 """
 
 from std.math import cos, sin

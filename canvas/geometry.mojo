@@ -77,7 +77,7 @@ struct Transform2D(ImplicitlyCopyable, Movable):
 
         pixel = rotate(data * scale, rotation) + translate
 
-    Minimal beyond that fixed pipeline: no general matrix composition
+    Nothing beyond that fixed pipeline: no general matrix composition
     and no "map this data range onto this pixel range" constructor.
     Domain/range awareness belongs a layer up, in a charting layer's
     scale types, which would compute a Transform2D's scale/translate
@@ -85,12 +85,12 @@ struct Transform2D(ImplicitlyCopyable, Movable):
 
     scale_y is commonly negative in practice: pixel-space y increases
     downward while data-space y conventionally increases upward, so
-    flipping a chart's vertical axis is exactly what a negative
-    scale_y (with a matching translate_y) does.
+    flipping a chart's vertical axis is exactly what a negative scale_y
+    (with a matching translate_y) does.
 
     `rotation` is radians, applied around the origin of the *scaled*
     data space -- before translation, not around wherever
-    translate_x/translate_y places that origin in pixel space. There's
+    translate_x/translate_y places that origin in pixel space. There is
     no pivot parameter; to rotate around another point, shift the data
     coordinates or the translation the way a
     translate-rotate-translate-back composition would. Defaults to 0.0.
