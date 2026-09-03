@@ -634,25 +634,131 @@ def _sweep_edges_to_mask(
     [origin_y, origin_y + mask_height). Anything the shape does not
     cover keeps its zero, which is what makes the mask read as "clipped
     out" there.
+
+    Banded across cores above `_MIN_PARALLEL_PIXELS` exactly as
+    `_sweep_edges_aa` is, with the same single-band-only top-sort:
+    bands write disjoint rows of `mask` and only read `edges`.
+    """
+    var s = supersample
+    var row_first_px = min_x - 1
+    var row_width = (max_x + 2) - row_first_px
+    # The sweep's padded rows, cut to the rows the mask can hold.
+    var first_row = max(min_y - 1, origin_y)
+    var last_row = min(max_y + 2, origin_y + mask_height)  # exclusive
+    var row_count = last_row - first_row
+    if row_count <= 0 or row_width <= 0:
+        return
+
+    var bands = 1
+    if row_count * row_width >= _MIN_PARALLEL_PIXELS:
+        bands = parallelism_level()
+        if bands > row_count:
+            bands = row_count
+        if bands < 1:
+            bands = 1
+
+    if bands == 1:
+        edges.sort_by_top()
+        _mask_band(
+            mask,
+            mask_width,
+            origin_x,
+            origin_y,
+            edges,
+            first_row,
+            last_row,
+            row_first_px,
+            row_width,
+            fill_rule,
+            s,
+        )
+        return
+
+    var per_band = (row_count + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var band_start = first_row + b * per_band
+        var band_end = band_start + per_band
+        if band_end > last_row:
+            band_end = last_row
+        if band_start >= band_end:
+            continue
+        tg.create_task(
+            _mask_band_async(
+                mask,
+                mask_width,
+                origin_x,
+                origin_y,
+                edges,
+                band_start,
+                band_end,
+                row_first_px,
+                row_width,
+                fill_rule,
+                s,
+            )
+        )
+    tg.wait()
+
+
+async def _mask_band_async(
+    mut mask: List[UInt8],
+    mask_width: Int,
+    origin_x: Int,
+    origin_y: Int,
+    edges: _EdgeTable,
+    first_row: Int,
+    last_row: Int,
+    row_first_px: Int,
+    row_width: Int,
+    fill_rule: FillRule,
+    supersample: Int,
+):
+    """`_mask_band` as a task; see `_sweep_band_async`."""
+    _mask_band(
+        mask,
+        mask_width,
+        origin_x,
+        origin_y,
+        edges,
+        first_row,
+        last_row,
+        row_first_px,
+        row_width,
+        fill_rule,
+        supersample,
+    )
+
+
+def _mask_band(
+    mut mask: List[UInt8],
+    mask_width: Int,
+    origin_x: Int,
+    origin_y: Int,
+    edges: _EdgeTable,
+    first_row: Int,
+    last_row: Int,
+    row_first_px: Int,
+    row_width: Int,
+    fill_rule: FillRule,
+    supersample: Int,
+):
+    """Write rows [first_row, last_row) of `edges`' coverage into
+    `mask`. Rows are in canvas coordinates and already inside the
+    mask; columns are still clipped to it here.
     """
     var s = supersample
     var total_samples = s * s
-    var row_first_px = min_x - 1
-    var row_width = (max_x + 2) - row_first_px
 
     var row_covered = List[Int](capacity=row_width)
     for _ in range(row_width):
         row_covered.append(0)
     var crossings = List[_AACrossing]()
     var suffix = List[Int]()
-    edges.sort_by_top()
     var cursor = 0
     var active = List[Int]()
 
-    for py in range(min_y - 1, max_y + 2):
-        var my = py - origin_y
-        if my < 0 or my >= mask_height:
-            continue
+    for py in range(first_row, last_row):
         for pxi in range(row_width):
             row_covered[pxi] = 0
 
@@ -670,7 +776,7 @@ def _sweep_edges_to_mask(
             suffix,
         )
 
-        var row_base = my * mask_width
+        var row_base = (py - origin_y) * mask_width
         for pxi in range(row_width):
             var covered = row_covered[pxi]
             if covered == 0:
