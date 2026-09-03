@@ -1,6 +1,20 @@
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.compose import draw_canvas
+from canvas.resize import downsample
+from canvas.io.bmp import read_bmp, write_bmp
+from canvas.io.png import read_png, write_png
+from canvas.vector.draw_target import DrawTarget
+from canvas.vector.svg import SvgCanvas, write_svg
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import (
+    FontDatabase,
+    FontFace,
+    FontSlant,
+    FontWeight,
+    resolve_font_file,
+    resolve_font_file_for_char,
+)
 from canvas.geometry import Point, Transform2D
 from canvas.gradient import ColorSource, LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule

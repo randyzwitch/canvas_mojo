@@ -239,18 +239,6 @@ struct _BitWriter(Movable):
             self.bitbuf >>= 8
             self.bitcnt -= 8
 
-    def write_code(mut self, code: Int, nbits: Int):
-        """Huffman codes pack *most*-significant-bit first (RFC 1951
-        3.2.2) -- the one field in the format that isn't LSB-first like
-        BFINAL, BTYPE and the length/distance extra bits. Writes one
-        bit at a time, top bit first, each through the ordinary
-        write_bits (a single bit has no ordering ambiguity). This
-        matches _decode's read order, which treats the first bit read
-        as the value's most-significant one.
-        """
-        for i in range(nbits - 1, -1, -1):
-            self.write_bits((code >> i) & 1, 1)
-
     def finish(mut self) raises -> List[UInt8]:
         """Flush any partial final byte. DEFLATE zero-pads the last
         byte's unused high bits, which is what already sits in `bitbuf`
@@ -647,10 +635,28 @@ def _fixed_dist_lengths() -> List[Int]:
     return lengths^
 
 
+def _reverse_bits(code: Int, nbits: Int) -> Int:
+    """`code`'s low `nbits` bits in the opposite order."""
+    var out = 0
+    var rest = code
+    for _ in range(nbits):
+        out = (out << 1) | (rest & 1)
+        rest >>= 1
+    return out
+
+
 def _build_codes(lengths: List[Int]) -> List[Int]:
     """RFC 1951 3.2.2's canonical-Huffman code generation, transcribed
     from the spec's pseudocode: given a per-symbol length (0 = unused),
-    returns each symbol's numeric code, indexed by symbol.
+    returns each symbol's code, indexed by symbol.
+
+    Each code comes back *bit-reversed*. Huffman codes pack
+    most-significant-bit first (RFC 1951 3.2.2), the one field in the
+    format that isn't LSB-first like BFINAL, BTYPE and the extra bits,
+    and `_BitWriter.write_bits` packs LSB-first. Reversing once here
+    lets the encoder emit a code with one `write_bits` call instead of
+    one per bit, and matches `_decode`'s read order, which treats the
+    first bit read as the value's most-significant one.
     """
     var max_len = 0
     for l in lengths:
@@ -678,7 +684,7 @@ def _build_codes(lengths: List[Int]) -> List[Int]:
     for n in range(len(lengths)):
         var l = lengths[n]
         if l != 0:
-            codes[n] = next_code[l]
+            codes[n] = _reverse_bits(next_code[l], l)
             next_code[l] += 1
     return codes^
 
@@ -895,11 +901,11 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
         var m = _find_match(chains, data, i)
         if m.length >= _MIN_MATCH:
             var lsym = _length_symbol(m.length, lens)
-            writer.write_code(lit_codes[257 + lsym], lit_lengths[257 + lsym])
+            writer.write_bits(lit_codes[257 + lsym], lit_lengths[257 + lsym])
             writer.write_bits(m.length - lens[lsym], lext[lsym])
 
             var dsym = _distance_symbol(m.distance, dists)
-            writer.write_code(dist_codes[dsym], dist_lengths[dsym])
+            writer.write_bits(dist_codes[dsym], dist_lengths[dsym])
             writer.write_bits(m.distance - dists[dsym], dext[dsym])
 
             # Only the match's starting position is indexed, not every
@@ -911,10 +917,10 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
             i += m.length
         else:
             var byte = Int(data[i])
-            writer.write_code(lit_codes[byte], lit_lengths[byte])
+            writer.write_bits(lit_codes[byte], lit_lengths[byte])
             if i + _MIN_MATCH <= n:
                 chains.insert(data, i)
             i += 1
 
-    writer.write_code(lit_codes[256], lit_lengths[256])  # end-of-block
+    writer.write_bits(lit_codes[256], lit_lengths[256])  # end-of-block
     return writer.finish()
