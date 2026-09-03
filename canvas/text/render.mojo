@@ -416,8 +416,11 @@ def measure_text(
     handling. Split on "\\n" and call this per line for a multi-line
     string.
 
-    Resolves its font fresh every call; the `cache=` overload below
-    reuses one.
+    Builds a `FontCache` per call, which rescans every font file
+    installed on the machine -- tens of milliseconds, against tens of
+    microseconds once a cache exists. Fine for a one-off string; for
+    more than a couple, construct one `FontCache` and use the `cache=`
+    overload below.
 
     Args:
         text: Text to measure, treated as a single line.
@@ -517,8 +520,9 @@ def measure_text_block(
     A string with no ink (empty, or every line whitespace-only) returns
     a zero-sized box at the anchor, matching draw_text's no-op.
 
-    Resolves its font fresh every call; see the `cache=` overload
-    below.
+    Builds a `FontCache` per call, which rescans every font file
+    installed on the machine. See the `cache=` overload below, and
+    `draw_text` for what the difference costs.
 
     Args:
         text: Text to lay out, "\\n"-separated lines.
@@ -660,8 +664,13 @@ def draw_text(
     -- around the `(x, y)` anchor. Transform2D's `rotation`
     (geometry.mojo) instead tilts a whole data-to-pixel mapping.
 
-    Resolves its font fresh once per pass, so twice per call; the
-    `cache=` overload below collapses that to one.
+    Builds a `FontCache` per call and throws it away, so every call
+    rescans every font file installed on the machine. That scan is tens
+    of milliseconds where a cached label is tens of microseconds, and it
+    does not shrink with the length of the string -- a chart labelling
+    its axes through this overload spends nearly all of its time in font
+    discovery. Construct one `FontCache` and pass it to the `cache=`
+    overload below for anything past a couple of strings.
 
     Args:
         canvas: Canvas to draw into.
@@ -757,7 +766,8 @@ def draw_text(
 ) raises:
     """`draw_text` anchored at a sub-pixel position, resolving fonts
     fresh. See the sub-pixel cached overload below for what the anchor
-    buys.
+    buys, and the whole-pixel overload above for what resolving fresh
+    costs.
 
     Args:
         canvas: Canvas to draw into.

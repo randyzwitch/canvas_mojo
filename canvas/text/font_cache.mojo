@@ -8,9 +8,15 @@ call resolves its font twice, measuring then rendering, unless a
 FontCache threads through both passes.
 
 Behind both halves sits one `FontDatabase`, built in `__init__`, which is
-where the directory walk and per-file table reads are paid. Constructing
-a FontCache therefore does a few milliseconds of real work: construct
-one per run of many labels, not one per label.
+where the directory walk and per-file table reads are paid. That cost
+scales with how many fonts are installed, not with what is being drawn:
+on a machine with a few hundred font files it is tens of milliseconds,
+against tens of *micro*seconds for a cached label. Construct one per run
+of many labels, never one per label.
+
+The overloads that take no `cache=` build one of these per call, so they
+carry that whole scan every time. See `canvas.text.render`, whose
+docstrings say what that costs.
 
 The face half saves TTFFace's parse + set_pixel_size. TTFFace owns the
 font file's raw bytes (`data: List[UInt8]`, Movable only), so the Dict
