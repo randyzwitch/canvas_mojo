@@ -721,6 +721,20 @@ def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
     return crossings^
 
 
+struct _SolidColor(ColorSource, ImplicitlyCopyable, Movable):
+    """One flat colour as a `ColorSource`, so the solid fills share
+    the gradient fills' bodies.
+    """
+
+    var color: Color
+
+    def __init__(out self, color: Color):
+        self.color = color
+
+    def color_at(self, x: Float64, y: Float64) -> Color:
+        return self.color
+
+
 def fill_path(
     mut canvas: Canvas,
     path: Path,
@@ -748,12 +762,14 @@ def fill_path(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
-    var subpaths = _flatten(path, curve_steps)
-    if len(subpaths) == 0:
-        return
+    _fill_path_source(canvas, path, _SolidColor(color), fill_rule, curve_steps)
 
-    # Integer bounds over the rounded points, matching the rounding
-    # _row_crossings does -- this is the hard-edged scanline fill.
+
+def _rounded_y_range(subpaths: List[_Subpath]) -> Tuple[Int, Int]:
+    """(min_y, max_y) over the rounded points, matching the rounding
+    `_row_crossings` does -- the row range a hard-edged scanline fill
+    walks.
+    """
     var min_y = _round_to_int(subpaths[0].points[0].y)
     var max_y = min_y
     for sp_idx in range(len(subpaths)):
@@ -764,74 +780,54 @@ def fill_path(
                 min_y = py
             if py > max_y:
                 max_y = py
-
-    for y in range(min_y, max_y):
-        var crossings = _row_crossings(subpaths, y)
-        var spans = _spans_from_crossings(crossings, fill_rule)
-        for span_idx in range(len(spans)):
-            ref span = spans[span_idx]
-            for x in range(span.start_x, span.end_x + 1):
-                canvas.set_pixel(x, y, color)
+    return (min_y, max_y)
 
 
-struct _FBounds(ImplicitlyCopyable, Movable):
-    """A flattened path's real-valued extent."""
+struct _FillEdges(Movable):
+    """A flattened path as the anti-aliased sweep consumes it: every
+    sub-path's edges in one table, so their winding contributions
+    combine before the fill rule is applied (which is what makes an
+    inner sub-path punch a hole rather than fill solid), plus the
+    real-valued bounds widened outward to whole pixels.
 
-    var min_x: Float64
-    var max_x: Float64
-    var min_y: Float64
-    var max_y: Float64
-
-    def __init__(
-        out self, min_x: Float64, max_x: Float64, min_y: Float64, max_y: Float64
-    ):
-        self.min_x = min_x
-        self.max_x = max_x
-        self.min_y = min_y
-        self.max_y = max_y
-
-
-def _subpath_bounds(subpaths: List[_Subpath]) -> _FBounds:
-    """The bounding box of every point in `subpaths`, unrounded.
-
-    Callers widen this to whole pixels themselves (floor/ceil, not
-    round): an edge at x = 10.2 has to have pixel 10 swept for it to
-    pick up any partial coverage there.
+    Widened with floor/ceil, not round: an edge at x = 10.2 has to have
+    pixel 10 swept for it to pick up any partial coverage there. The
+    sweep pads by a further pixel on each side on top of this.
     """
-    var min_x = subpaths[0].points[0].x
-    var max_x = min_x
-    var min_y = subpaths[0].points[0].y
-    var max_y = min_y
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        for p in sp.points:
-            if p.x < min_x:
-                min_x = p.x
-            if p.x > max_x:
-                max_x = p.x
-            if p.y < min_y:
-                min_y = p.y
-            if p.y > max_y:
-                max_y = p.y
-    return _FBounds(min_x, max_x, min_y, max_y)
 
+    var edges: _EdgeTable
+    var min_x: Int
+    var min_y: Int
+    var max_x: Int
+    var max_y: Int
 
-def _subpath_edges(subpaths: List[_Subpath]) -> _EdgeTable:
-    """Every sub-path's edges in one table, so their winding
-    contributions combine before the fill rule is applied -- which is
-    what makes an inner sub-path punch a hole rather than fill solid.
-    """
-    var edges = _EdgeTable()
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        var pn = len(sp.points)
-        if pn < 2:
-            continue
-        for i in range(pn):
-            var a = sp.points[i]
-            var b = sp.points[(i + 1) % pn]
-            edges.add_edge(a.x, a.y, b.x, b.y)
-    return edges^
+    def __init__(out self, subpaths: List[_Subpath]):
+        var min_x = subpaths[0].points[0].x
+        var max_x = min_x
+        var min_y = subpaths[0].points[0].y
+        var max_y = min_y
+        self.edges = _EdgeTable()
+        for sp_idx in range(len(subpaths)):
+            ref sp = subpaths[sp_idx]
+            var pn = len(sp.points)
+            for i in range(pn):
+                var a = sp.points[i]
+                if a.x < min_x:
+                    min_x = a.x
+                if a.x > max_x:
+                    max_x = a.x
+                if a.y < min_y:
+                    min_y = a.y
+                if a.y > max_y:
+                    max_y = a.y
+                if pn < 2:
+                    continue
+                var b = sp.points[(i + 1) % pn]
+                self.edges.add_edge(a.x, a.y, b.x, b.y)
+        self.min_x = Int(floor(min_x))
+        self.min_y = Int(floor(min_y))
+        self.max_x = Int(ceil(max_x))
+        self.max_y = Int(ceil(max_y))
 
 
 def _point_in_subpaths(
@@ -899,25 +895,14 @@ def fill_path_aa(
     if len(subpaths) == 0:
         return
 
-    var fb = _subpath_bounds(subpaths)
-    var min_x = fb.min_x
-    var max_x = fb.max_x
-    var min_y = fb.min_y
-    var max_y = fb.max_y
-    var edges = _subpath_edges(subpaths)
-
-    # The sweep works in whole pixels, so the real-valued bounds widen
-    # outward to the pixels that contain them (floor/ceil, not round):
-    # an edge at x = 10.2 has to have pixel 10 swept for it to pick up
-    # any partial coverage there. The sweep pads by a further pixel on
-    # each side on top of this.
+    var fe = _FillEdges(subpaths)
     _sweep_edges_aa(
         canvas,
-        edges,
-        Int(floor(min_x)),
-        Int(floor(min_y)),
-        Int(ceil(max_x)),
-        Int(ceil(max_y)),
+        fe.edges,
+        fe.min_x,
+        fe.min_y,
+        fe.max_x,
+        fe.max_y,
         color,
         fill_rule,
         supersample,
@@ -946,22 +931,16 @@ def _path_coverage_mask(
     if len(subpaths) == 0:
         return mask^
 
-    var fb = _subpath_bounds(subpaths)
-    var min_x = fb.min_x
-    var max_x = fb.max_x
-    var min_y = fb.min_y
-    var max_y = fb.max_y
-    var edges = _subpath_edges(subpaths)
-
+    var fe = _FillEdges(subpaths)
     _sweep_edges_to_mask(
         mask,
         width,
         height,
-        edges,
-        Int(floor(min_x)),
-        Int(floor(min_y)),
-        Int(ceil(max_x)),
-        Int(ceil(max_y)),
+        fe.edges,
+        fe.min_x,
+        fe.min_y,
+        fe.max_x,
+        fe.max_y,
         fill_rule,
         supersample,
     )
@@ -984,20 +963,8 @@ def _fill_path_source[
     if len(subpaths) == 0:
         return
 
-    # Integer bounds over the rounded points, matching the rounding
-    # _row_crossings does -- this is the hard-edged scanline fill.
-    var min_y = _round_to_int(subpaths[0].points[0].y)
-    var max_y = min_y
-    for sp_idx in range(len(subpaths)):
-        ref sp = subpaths[sp_idx]
-        for p in sp.points:
-            var py = _round_to_int(p.y)
-            if py < min_y:
-                min_y = py
-            if py > max_y:
-                max_y = py
-
-    for y in range(min_y, max_y):
+    var y_range = _rounded_y_range(subpaths)
+    for y in range(y_range[0], y_range[1]):
         var crossings = _row_crossings(subpaths, y)
         var spans = _spans_from_crossings(crossings, fill_rule)
         for span_idx in range(len(spans)):
@@ -1032,33 +999,27 @@ def _fill_path_source_aa[
     if len(subpaths) == 0:
         return
 
-    var fb = _subpath_bounds(subpaths)
-    var edges = _subpath_edges(subpaths)
-    var min_x = Int(floor(fb.min_x))
-    var min_y = Int(floor(fb.min_y))
-    var max_x = Int(ceil(fb.max_x))
-    var max_y = Int(ceil(fb.max_y))
-
+    var fe = _FillEdges(subpaths)
     var mask = List[UInt8](length=canvas.width * canvas.height, fill=0)
     _sweep_edges_to_mask(
         mask,
         canvas.width,
         canvas.height,
-        edges,
-        min_x,
-        min_y,
-        max_x,
-        max_y,
+        fe.edges,
+        fe.min_x,
+        fe.min_y,
+        fe.max_x,
+        fe.max_y,
         fill_rule,
         supersample,
     )
 
     # The same one-pixel skirt the sweep pads by, clamped to the canvas
     # so the read below stays inside the mask.
-    var lo_x = max(0, min_x - 1)
-    var hi_x = min(canvas.width, max_x + 2)
-    var lo_y = max(0, min_y - 1)
-    var hi_y = min(canvas.height, max_y + 2)
+    var lo_x = max(0, fe.min_x - 1)
+    var hi_x = min(canvas.width, fe.max_x + 2)
+    var lo_y = max(0, fe.min_y - 1)
+    var hi_y = min(canvas.height, fe.max_y + 2)
     for py in range(lo_y, hi_y):
         var row = py * canvas.width
         for px in range(lo_x, hi_x):
