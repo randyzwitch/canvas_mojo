@@ -18,7 +18,7 @@ A title and tagline are drawn after draw_scene() returns, once per
 backend, rather than from inside it. Text is excluded from `DrawTarget`
 (see that trait's docstring), so there is no generic call `draw_scene`
 could make; a caller that knows its concrete backend calls
-`canvas.text.draw_text` or `SvgCanvas.draw_text` directly.
+`canvas.text.render.draw_text` or `SvgCanvas.draw_text` directly.
 
 Run with:
     pixi run example

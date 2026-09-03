@@ -236,18 +236,11 @@ def fill_ellipse_aa(
     var step = 1.0 / Float64(n)
 
     # The membership test is (x/rx)^2 + (y/ry)^2 <= 1, multiplied
-    # through by (rx*ry)^2 to give x^2*ry^2 + y^2*rx^2 <= (rx*ry)^2.
-    # Speed is the reason that survives sub-pixel radii: the divided
-    # form runs four divisions per pixel in the bounds test and two
-    # more per sub-sample, and division is an order of magnitude more
-    # expensive than multiply.
-    #
-    # It used to be exact as well, back when radii were necessarily
-    # whole pixels: every term was then a product of Float64-exact
-    # values staying far below 2^53, so the comparison carried no
-    # rounding at all. A sub-pixel radius ends that -- but the
-    # multiplied form still rounds no more than the divided one would,
-    # so allowing it regressed nothing.
+    # through by (rx*ry)^2 to give x^2*ry^2 + y^2*rx^2 <= (rx*ry)^2:
+    # the divided form runs four divisions per pixel in the bounds test
+    # and two more per sub-sample. With whole-pixel radii every term is
+    # exact in Float64; with sub-pixel radii the multiplied form rounds
+    # no more than the divided one would.
     var rx2 = rx_f * rx_f
     var ry2 = ry_f * ry_f
     var limit = rx2 * ry2

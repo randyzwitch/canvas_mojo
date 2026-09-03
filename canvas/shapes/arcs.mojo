@@ -245,9 +245,8 @@ struct _AngleSpan(ImplicitlyCopyable, Movable):
         self.wide = span > pi
         # A sample exactly on the center has no angle to speak of, and
         # `atan2(0, 0)` is 0 -- which is inside this span only for some
-        # start/end pairs. Decided once here rather than reasoned about
-        # per sample, so the degenerate case matches the old form
-        # exactly instead of falling out of the cross products.
+        # start/end pairs. Decided once here, by the exact angle form,
+        # rather than left to the cross products per sample.
         self.center_inside = _angle_in_span(0.0, start_angle, end_angle)
 
     def contains(self, fx: Float64, fy: Float64) -> Bool:
@@ -454,9 +453,8 @@ def fill_arc_aa(
     # Whether a "whole pixel square is provably inside" test is sound
     # for this wedge. See _square_in_cone: the argument needs the
     # angular cone to be convex, which it is exactly when the sweep is
-    # at most half a turn. A wider sweep gets no fast path -- its
-    # interior is still filled correctly, just one sub-sample grid at a
-    # time, as the whole wedge used to be.
+    # at most half a turn. A wider sweep gets no fast path and is
+    # filled one sub-sample grid at a time.
     var can_fast_fill = span.always_inside or not span.wide
 
     # Rows are independent -- each tests its own pixels against the
@@ -600,10 +598,10 @@ def _fill_arc_band(
             if near_dx * near_dx + near_dy * near_dy > r2:
                 continue
 
-            # ...and the converse, which this wedge fill never had.
-            # Without it every interior pixel of a pie slice paid a
-            # full supersample^2 grid to arrive at total coverage,
-            # which for a large wedge is nearly all of its area.
+            # ...and the converse: a square provably inside both the
+            # radius and the cone takes full coverage without visiting
+            # the sample grid, which for a large wedge is nearly all of
+            # its area.
             if can_fast_fill:
                 var far_dx = dx + 0.5
                 if far_dx * far_dx + far_dy * far_dy <= r2:
@@ -883,8 +881,8 @@ def _fill_ring_band(
             if far_d2 < inner_r2:
                 continue
 
-            # Provably inside, the converse this fill never had. The
-            # square sits within the annulus when its nearest point to
+            # Provably inside. The square sits within the annulus when
+            # its nearest point to
             # the centre already clears the inner radius and its
             # farthest stays inside the outer -- an exact test needing
             # no convexity, since it is a distance range. Combined with

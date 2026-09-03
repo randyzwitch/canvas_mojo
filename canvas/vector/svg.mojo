@@ -4,9 +4,9 @@ sampling, no fill-rule scanline algorithm -- an SVG renderer (browser,
 image viewer, PDF exporter) does all of that at whatever resolution it
 displays at, so content drawn through this carries no fixed pixel size.
 
-The surface matches `DrawTarget`'s ten methods one for one. It is not a
+The surface implements every `DrawTarget` method. It is not a
 general-purpose SVG builder: no gradients beyond `fill_rect_gradient`'s,
-no general groups or transforms, no clipping. `draw_text`'s `rotation`
+no transforms, no clipping, and no groups beyond `begin_annotated_group`. `draw_text`'s `rotation`
 is the one exception, a per-`<text>` `transform="rotate(...)"` rather
 than a transform stack, for a chart's rotated y-axis title.
 """
@@ -681,8 +681,8 @@ struct SvgCanvas(DrawTarget, Movable):
     ):
         """Draw a `<text>` element. Not part of `DrawTarget`, which
         excludes text -- call this directly once a caller knows it holds
-        an `SvgCanvas`, the way raster code calls `canvas.text.draw_text`
-        on a `Canvas`.
+        an `SvgCanvas`, the way raster code calls
+        `canvas.text.render.draw_text` on a `Canvas`.
 
         `family` is always emitted, defaulting to `"sans-serif"`, since
         a viewer without one falls back to its own varying default. Note

@@ -4,10 +4,8 @@
 #
 # The alpha channel is what lets a canvas have a transparent
 # background -- `Canvas(w, h, Color(0, 0, 0, 0))` -- and therefore what
-# lets `write_png` emit a PNG with real transparency rather than
-# whatever the image was flattened onto. Storing it also makes
-# `read_png` able to keep the alpha of a file that has one, which it
-# previously composited away.
+# lets `write_png` emit a PNG with real transparency and `read_png`
+# keep the alpha of a file that has one.
 #
 # Straight rather than premultiplied, so `get_pixel` returns the colour
 # a caller would recognise: premultiplying is the better representation
@@ -73,7 +71,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     `write_png` can emit real transparency.
 
     There is no `draw_text` method, since `DrawTarget` has none. Call
-    `canvas.text.draw_text(canvas, ...)`.
+    `canvas.text.render.draw_text(canvas, ...)`.
     """
 
     var width: Int
@@ -129,16 +127,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.height = height
 
         # One scratch row is built byte by byte, then copied into
-        # every row of the canvas. The obvious version -- three
-        # `append`s per pixel -- pays a capacity check and a length
-        # update per byte across the whole buffer; this pays them for
-        # one row and lets the bulk copy do the rest.
-        #
-        # Via a separate `row` list rather than copying the canvas's
-        # own first row down: Mojo rejects a `memcpy` whose source and
-        # destination share an origin, `unsafe_memcpy` included, so a
-        # self-copy is not expressible here however the pointers are
-        # offset.
+        # every row of the canvas. A separate `row` list rather than
+        # the canvas's first row: Mojo rejects a `memcpy` whose source
+        # and destination share an origin, `unsafe_memcpy` included.
         var total = width * height * BYTES_PER_PIXEL
         self.pixels = List[UInt8](length=total, fill=0)
         self.clip_stack = List[_ClipRect]()
