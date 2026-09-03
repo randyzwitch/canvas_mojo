@@ -365,36 +365,44 @@ def _canvas_from_scanlines(
     a blank canvas one at a time: a `write_pixel` walk would *composite*
     each pixel onto the canvas's initial background, losing alpha.
     Decoding a file is a replace, not a draw.
+
+    Through pointers: `unfiltered` is exactly `height * row_bytes`
+    (what `_unfilter_scanlines` returns) and `pixels` is sized to the
+    canvas up front, so every index below is inside both.
     """
     var bpp = _bytes_per_pixel(color_type)
     var row_bytes = width * bpp
-    var pixels = List[UInt8](capacity=width * height * BYTES_PER_PIXEL)
+    var pixels = List[UInt8](length=width * height * BYTES_PER_PIXEL, fill=0)
+    var src = unfiltered.unsafe_ptr()
+    var dst = pixels.unsafe_ptr()
+    var di = 0
     for y in range(height):
-        var row_start = y * row_bytes
-        for x in range(width):
-            var px = row_start + x * bpp
+        var si = y * row_bytes
+        for _ in range(width):
             if color_type == 0:
-                var gray = unfiltered[px]
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(255)
+                var gray = src[unsafe_offset=si]
+                dst[unsafe_offset=di] = gray
+                dst[unsafe_offset=di + 1] = gray
+                dst[unsafe_offset=di + 2] = gray
+                dst[unsafe_offset=di + 3] = 255
             elif color_type == 2:
-                pixels.append(unfiltered[px])
-                pixels.append(unfiltered[px + 1])
-                pixels.append(unfiltered[px + 2])
-                pixels.append(255)
+                dst[unsafe_offset=di] = src[unsafe_offset=si]
+                dst[unsafe_offset=di + 1] = src[unsafe_offset=si + 1]
+                dst[unsafe_offset=di + 2] = src[unsafe_offset=si + 2]
+                dst[unsafe_offset=di + 3] = 255
             elif color_type == 4:
-                var gray = unfiltered[px]
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(unfiltered[px + 1])
+                var gray = src[unsafe_offset=si]
+                dst[unsafe_offset=di] = gray
+                dst[unsafe_offset=di + 1] = gray
+                dst[unsafe_offset=di + 2] = gray
+                dst[unsafe_offset=di + 3] = src[unsafe_offset=si + 1]
             else:  # 6 -- _bytes_per_pixel already rejected anything else
-                pixels.append(unfiltered[px])
-                pixels.append(unfiltered[px + 1])
-                pixels.append(unfiltered[px + 2])
-                pixels.append(unfiltered[px + 3])
+                dst[unsafe_offset=di] = src[unsafe_offset=si]
+                dst[unsafe_offset=di + 1] = src[unsafe_offset=si + 1]
+                dst[unsafe_offset=di + 2] = src[unsafe_offset=si + 2]
+                dst[unsafe_offset=di + 3] = src[unsafe_offset=si + 3]
+            si += bpp
+            di += BYTES_PER_PIXEL
     return Canvas(width, height, pixels^)
 
 

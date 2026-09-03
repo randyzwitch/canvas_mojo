@@ -1,8 +1,8 @@
 """DEFLATE (RFC 1951), both directions.
 
 `inflate()` is a translation of zlib's `puff.c` reference decoder (Mark
-Adler, zlib-licensed), using its "SLOW" bit-at-a-time `decode()` variant
-rather than the faster table-driven one. `deflate()` is a from-scratch
+Adler, zlib-licensed), with a first-level lookup table in front of its
+bit-at-a-time `decode()` (`_decode_fast`). `deflate()` is a from-scratch
 LZ77 + fixed-Huffman encoder built against the RFC: one fixed-Huffman
 block (RFC 1951 3.2.6, BTYPE=01, no dynamic tree to build or transmit)
 over a hash-chain match finder with bounded search depth (`_MAX_CHAIN`).
@@ -200,6 +200,24 @@ struct _BitReader(Movable):
         self.bitcnt -= need
         return val & ((1 << need) - 1)
 
+    def peek_bits(mut self, want: Int) -> Int:
+        """The next `want` bits without consuming them, low bit first,
+        buffering input as needed. Unlike `read_bits` this does not
+        raise at the end of the input: whatever is left is returned
+        zero-padded, and `bitcnt` says how many of the bits are real.
+        `_decode_fast` checks that before trusting a table entry.
+        """
+        while self.bitcnt < want and self.pos < len(self.data):
+            self.bitbuf |= Int(self.data[self.pos]) << self.bitcnt
+            self.pos += 1
+            self.bitcnt += 8
+        return self.bitbuf & ((1 << want) - 1)
+
+    def drop_bits(mut self, count: Int):
+        """Consume `count` bits `peek_bits` already buffered."""
+        self.bitbuf >>= count
+        self.bitcnt -= count
+
     def align_to_byte(mut self):
         """Discard any partial byte in the bit buffer: stored blocks
         (RFC 1951 3.2.4) always start byte-aligned.
@@ -329,6 +347,72 @@ def _construct(
     return _Huffman(counts^, symbols^)
 
 
+# Code bits resolved by one table lookup in `_decode_fast`. Every
+# fixed-Huffman literal code is at most 9 bits, so the fixed tables
+# decode every literal in one lookup; dynamic tables commonly fit too,
+# and longer codes fall through to the bit-at-a-time `_decode`.
+comptime _FAST_BITS = 9
+
+
+def _reverse_bits(code: Int, nbits: Int) -> Int:
+    """`code`'s low `nbits` bits in the opposite order."""
+    var out = 0
+    var rest = code
+    for _ in range(nbits):
+        out = (out << 1) | (rest & 1)
+        rest >>= 1
+    return out
+
+
+def _fast_table(table: _Huffman) -> List[Int]:
+    """A 2^_FAST_BITS-entry lookup for `table`, indexed by the next
+    _FAST_BITS bits of the stream as `peek_bits` returns them: entry
+    `(symbol << 4) | length` for every code of at most _FAST_BITS
+    bits, 0 where the next bits begin a longer code.
+
+    Canonical codes of length L are `first_L + k` in symbol order,
+    where `first_L` accumulates exactly as `_decode` accumulates it;
+    the stream's bits arrive low bit first while a code's do most
+    significant first, so each code is stored bit-reversed and
+    replicated across every completion of the unused high bits.
+    """
+    var size = 1 << _FAST_BITS
+    var fast = List[Int](length=size, fill=0)
+    var first = 0
+    var index = 0
+    for length in range(1, _FAST_BITS + 1):
+        var count = table.counts[length]
+        for k in range(count):
+            var symbol = table.symbols[index + k]
+            var key = _reverse_bits(first + k, length)
+            var entry = (symbol << 4) | length
+            var stride = 1 << length
+            var slot = key
+            while slot < size:
+                fast[slot] = entry
+                slot += stride
+        index += count
+        first = (first + count) << 1
+    return fast^
+
+
+def _decode_fast(
+    mut reader: _BitReader, table: _Huffman, fast: List[Int]
+) raises -> Int:
+    """`_decode` with a first-level table: one lookup resolves any
+    code of at most _FAST_BITS bits; a longer code, or a table hit
+    that would need bits past the end of the input, takes the
+    bit-at-a-time path, which reads from the same buffer `peek_bits`
+    filled.
+    """
+    var entry = fast[reader.peek_bits(_FAST_BITS)]
+    var length = entry & 0xF
+    if length != 0 and length <= reader.bitcnt:
+        reader.drop_bits(length)
+        return entry >> 4
+    return _decode(reader, table)
+
+
 def _decode(mut reader: _BitReader, table: _Huffman) raises -> Int:
     """Direct translation of puff.c's readable (`#ifdef SLOW`)
     `decode()`: reads a bit at a time, building a code value the way
@@ -357,6 +441,8 @@ def _codes(
     mut out: List[UInt8],
     lencode: _Huffman,
     distcode: _Huffman,
+    lenfast: List[Int],
+    distfast: List[Int],
 ) raises:
     """Direct translation of puff.c's `codes()`: decode literal/length
     and distance symbols until the end-of-block symbol (256). The
@@ -371,7 +457,7 @@ def _codes(
     var dext = _distance_extra_bits()
 
     while True:
-        var symbol = _decode(reader, lencode)
+        var symbol = _decode_fast(reader, lencode, lenfast)
         if symbol < 256:
             out.append(UInt8(symbol))
         elif symbol == 256:
@@ -382,7 +468,7 @@ def _codes(
                 raise Error("deflate: invalid length code")
             var length = lens[symbol] + reader.read_bits(lext[symbol])
 
-            var dsymbol = _decode(reader, distcode)
+            var dsymbol = _decode_fast(reader, distcode, distfast)
             if dsymbol >= 30:
                 raise Error("deflate: invalid distance code")
             var dist = dists[dsymbol] + reader.read_bits(dext[dsymbol])
@@ -392,11 +478,21 @@ def _codes(
             # Forward, one byte at a time, not a bulk copy: overlapping
             # copies (length > distance) are legal and common -- dist=1
             # repeats the last byte `length` times -- so each iteration
-            # has to read from the already-growing `out`. puff.c warns
-            # explicitly that memcpy/memmove are wrong here.
+            # has to read what the previous one wrote. puff.c warns
+            # explicitly that memcpy/memmove are wrong here. The list
+            # grows once per match rather than once per byte, and the
+            # copy runs through a pointer: `start >= 0` was checked
+            # just above and `write + length` is the new length.
             var start = len(out) - dist
+            var write = len(out)
+            if out.capacity() < write + length:
+                # Geometric growth, as append gives; a bare resize to
+                # the exact size reallocates on every match.
+                out.reserve(max(out.capacity() * 2, write + length))
+            out.resize(write + length, 0)
+            var op = out.unsafe_ptr()
             for i in range(length):
-                out.append(out[start + i])
+                op[unsafe_offset=write + i] = op[unsafe_offset=start + i]
 
 
 def _stored_block(mut reader: _BitReader, mut out: List[UInt8]) raises:
@@ -420,8 +516,12 @@ def _stored_block(mut reader: _BitReader, mut out: List[UInt8]) raises:
 struct _CodeTables(Movable):
     var lencode: _Huffman
     var distcode: _Huffman
+    var lenfast: List[Int]
+    var distfast: List[Int]
 
     def __init__(out self, var lencode: _Huffman, var distcode: _Huffman):
+        self.lenfast = _fast_table(lencode)
+        self.distfast = _fast_table(distcode)
         self.lencode = lencode^
         self.distcode = distcode^
 
@@ -566,10 +666,24 @@ def inflate(var compressed: List[UInt8]) raises -> List[UInt8]:
             _stored_block(reader, out)
         elif block_type == 1:
             var tables = _fixed_tables()
-            _codes(reader, out, tables.lencode, tables.distcode)
+            _codes(
+                reader,
+                out,
+                tables.lencode,
+                tables.distcode,
+                tables.lenfast,
+                tables.distfast,
+            )
         elif block_type == 2:
             var tables = _dynamic_tables(reader)
-            _codes(reader, out, tables.lencode, tables.distcode)
+            _codes(
+                reader,
+                out,
+                tables.lencode,
+                tables.distcode,
+                tables.lenfast,
+                tables.distfast,
+            )
         else:
             raise Error("deflate: invalid block type (3, reserved)")
         if last == 1:
@@ -633,16 +747,6 @@ def _fixed_dist_lengths() -> List[Int]:
     for _ in range(_MAX_D_CODES):
         lengths.append(5)
     return lengths^
-
-
-def _reverse_bits(code: Int, nbits: Int) -> Int:
-    """`code`'s low `nbits` bits in the opposite order."""
-    var out = 0
-    var rest = code
-    for _ in range(nbits):
-        out = (out << 1) | (rest & 1)
-        rest >>= 1
-    return out
 
 
 def _build_codes(lengths: List[Int]) -> List[Int]:
