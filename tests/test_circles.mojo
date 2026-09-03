@@ -3,7 +3,7 @@ known inputs, verified against hand-traced runs of the same
 algorithms.
 """
 
-from std.testing import assert_equal, TestSuite
+from std.testing import assert_equal, TestSuite, assert_true
 
 from canvas.color import Color
 from canvas.buffer import Canvas
@@ -227,6 +227,39 @@ def test_draw_circle_aa_respects_translucent_input_color() raises:
     assert_equal(p.r, 100)
     assert_equal(p.g, 0)
     assert_equal(p.b, 0)
+
+
+def test_draw_circle_aa_width_widens_the_ring() raises:
+    # width=4 lays down more ink than width=1, and the ring's middle
+    # stays at the radius: the pixel at (cx + r, cy) sits under the
+    # stroke's centre line and is fully covered either way.
+    var thin = Canvas(60, 60, Color(0, 0, 0))
+    draw_circle_aa(thin, 30, 30, 20, Color(255, 255, 255))
+    var thick = Canvas(60, 60, Color(0, 0, 0))
+    draw_circle_aa(thick, 30, 30, 20, Color(255, 255, 255), width=4.0)
+    var thin_ink = 0
+    var thick_ink = 0
+    for y in range(60):
+        for x in range(60):
+            thin_ink += Int(thin.get_pixel(x, y).r)
+            thick_ink += Int(thick.get_pixel(x, y).r)
+    assert_true(thick_ink > thin_ink, "a wider ring is more ink")
+    assert_equal(thin.get_pixel(50, 30).r, 255, "on the stroke's centre")
+    assert_equal(thick.get_pixel(50, 30).r, 255)
+    assert_equal(thick.get_pixel(30, 30).r, 0, "the hole is untouched")
+
+
+def test_draw_circle_aa_sub_pixel_center_moves_the_ring() raises:
+    var a = Canvas(60, 60, Color(0, 0, 0))
+    draw_circle_aa(a, 30.0, 30.0, 20.0, Color(255, 255, 255))
+    var b = Canvas(60, 60, Color(0, 0, 0))
+    draw_circle_aa(b, 30.5, 30.0, 20.0, Color(255, 255, 255))
+    var differing = 0
+    for y in range(60):
+        for x in range(60):
+            if a.get_pixel(x, y).r != b.get_pixel(x, y).r:
+                differing += 1
+    assert_true(differing > 20, "half a pixel of centre shifts the ring")
 
 
 def main() raises:
