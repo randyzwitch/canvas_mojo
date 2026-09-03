@@ -4,9 +4,9 @@ sampling, no fill-rule scanline algorithm -- an SVG renderer (browser,
 image viewer, PDF exporter) does all of that at whatever resolution it
 displays at, so content drawn through this carries no fixed pixel size.
 
-The surface matches `DrawTarget`'s ten methods one for one. It is not a
+The surface implements every `DrawTarget` method. It is not a
 general-purpose SVG builder: no gradients beyond `fill_rect_gradient`'s,
-no general groups or transforms, no clipping. `draw_text`'s `rotation`
+no transforms, no clipping, and no groups beyond `begin_annotated_group`. `draw_text`'s `rotation`
 is the one exception, a per-`<text>` `transform="rotate(...)"` rather
 than a transform stack, for a chart's rotated y-axis title.
 """
@@ -206,9 +206,7 @@ def _path_d(path: Path) -> String:
             var end_angle = cmd.p3.x
             var x1 = cx + radius * cos(end_angle)
             var y1 = cy + radius * sin(end_angle)
-            var large_arc_flag = (
-                1 if (end_angle - cmd.p2.y) > 3.14159265358979 else 0
-            )
+            var large_arc_flag = 1 if (end_angle - cmd.p2.y) > pi else 0
             d += (
                 "A"
                 + _format_svg_float(radius)
@@ -494,9 +492,7 @@ struct SvgCanvas(DrawTarget, Movable):
         var y0 = cy + radius * sin(start_angle)
         var x1 = cx + radius * cos(end_angle)
         var y1 = cy + radius * sin(end_angle)
-        var large_arc_flag = (
-            1 if (end_angle - start_angle) > 3.14159265358979 else 0
-        )
+        var large_arc_flag = 1 if (end_angle - start_angle) > pi else 0
         self._body += (
             '<path d="M'
             + _format_svg_float(cx)
@@ -556,9 +552,7 @@ struct SvgCanvas(DrawTarget, Movable):
         var inner_y1 = cy + inner_radius * sin(end_angle)
         var inner_x0 = cx + inner_radius * cos(start_angle)
         var inner_y0 = cy + inner_radius * sin(start_angle)
-        var large_arc_flag = (
-            1 if (end_angle - start_angle) > 3.14159265358979 else 0
-        )
+        var large_arc_flag = 1 if (end_angle - start_angle) > pi else 0
         self._body += (
             '<path d="M'
             + _format_svg_float(outer_x0)
@@ -681,8 +675,8 @@ struct SvgCanvas(DrawTarget, Movable):
     ):
         """Draw a `<text>` element. Not part of `DrawTarget`, which
         excludes text -- call this directly once a caller knows it holds
-        an `SvgCanvas`, the way raster code calls `canvas.text.draw_text`
-        on a `Canvas`.
+        an `SvgCanvas`, the way raster code calls
+        `canvas.text.render.draw_text` on a `Canvas`.
 
         `family` is always emitted, defaulting to `"sans-serif"`, since
         a viewer without one falls back to its own varying default. Note

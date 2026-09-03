@@ -170,9 +170,9 @@ struct FontCache(Movable):
         weight: FontWeight,
         size: Float64,
     ) raises -> ArcPointer[TTFFace]:
-        """`resolve` plus `_face_for_path` in one call, wrapped by
-        `render.mojo`'s `_load_sized_face`. draw_text calls it twice per
-        invocation, so with a shared `cache` the second is a hit.
+        """`resolve` plus `_face_for_path` in one call. draw_text
+        calls it twice per invocation, so with a shared `cache` the
+        second is a hit.
 
         Args:
             family: Font family name or generic alias.

@@ -10,7 +10,7 @@
 #
 # Not the familiar `(t + 1 + (t >> 8)) >> 8` trick, which rounds rather
 # than truncates and would shift output values by one across the whole
-# package. This removes the division leaving every pixel unchanged.
+# package.
 comptime _DIV255_MUL = 32897
 comptime _DIV255_SHIFT = 23
 
@@ -80,7 +80,7 @@ struct Color(ImplicitlyCopyable, Movable):
         # alpha-weighted average of source and surviving background,
         # normalized by the output alpha. With an opaque background
         # dividing by `out_a` and by 255 coincide (bg_eff == inv,
-        # out_a == 255), so no existing render changes.
+        # out_a == 255), so this and `blend_over_opaque` agree.
         #
         # A real division, unlike the opaque path's `_div255`, because
         # the divisor varies per pixel. `blend_over_opaque` below is

@@ -4,10 +4,8 @@
 #
 # The alpha channel is what lets a canvas have a transparent
 # background -- `Canvas(w, h, Color(0, 0, 0, 0))` -- and therefore what
-# lets `write_png` emit a PNG with real transparency rather than
-# whatever the image was flattened onto. Storing it also makes
-# `read_png` able to keep the alpha of a file that has one, which it
-# previously composited away.
+# lets `write_png` emit a PNG with real transparency and `read_png`
+# keep the alpha of a file that has one.
 #
 # Straight rather than premultiplied, so `get_pixel` returns the colour
 # a caller would recognise: premultiplying is the better representation
@@ -73,13 +71,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
     `write_png` can emit real transparency.
 
     There is no `draw_text` method, since `DrawTarget` has none. Call
-    `canvas.text.draw_text(canvas, ...)`.
+    `canvas.text.render.draw_text(canvas, ...)`.
     """
 
     var width: Int
     var height: Int
     var pixels: List[UInt8]
-    var clip_stack: List[_ClipRect]
+    var _clip_stack: List[_ClipRect]
     # Coverage masks pushed by push_clip_path, innermost last. Each is
     # width*height bytes: 255 fully inside the clip, 0 fully outside,
     # and the values between are what make a clip path's own edge
@@ -129,19 +127,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.height = height
 
         # One scratch row is built byte by byte, then copied into
-        # every row of the canvas. The obvious version -- three
-        # `append`s per pixel -- pays a capacity check and a length
-        # update per byte across the whole buffer; this pays them for
-        # one row and lets the bulk copy do the rest.
-        #
-        # Via a separate `row` list rather than copying the canvas's
-        # own first row down: Mojo rejects a `memcpy` whose source and
-        # destination share an origin, `unsafe_memcpy` included, so a
-        # self-copy is not expressible here however the pointers are
-        # offset.
+        # every row of the canvas. A separate `row` list rather than
+        # the canvas's first row: Mojo rejects a `memcpy` whose source
+        # and destination share an origin, `unsafe_memcpy` included.
         var total = width * height * BYTES_PER_PIXEL
         self.pixels = List[UInt8](length=total, fill=0)
-        self.clip_stack = List[_ClipRect]()
+        self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
         if total == 0:
@@ -199,7 +190,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.width = width
         self.height = height
         self.pixels = pixels^
-        self.clip_stack = List[_ClipRect]()
+        self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
 
@@ -233,11 +224,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
             height: Clip rectangle's height.
         """
         var new_rect = _ClipRect(x, y, width, height)
-        if len(self.clip_stack) > 0:
+        if len(self._clip_stack) > 0:
             new_rect = _intersect_clip(
-                self.clip_stack[len(self.clip_stack) - 1], new_rect
+                self._clip_stack[len(self._clip_stack) - 1], new_rect
             )
-        self.clip_stack.append(new_rect)
+        self._clip_stack.append(new_rect)
 
     def pop_clip(mut self):
         """Remove the most recently pushed clip, reverting to the parent
@@ -247,8 +238,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         in_bounds' handling of out-of-range requests: a stack alone
         cannot distinguish an unbalanced pop from "nothing to undo".
         """
-        if len(self.clip_stack) > 0:
-            _ = self.clip_stack.pop()
+        if len(self._clip_stack) > 0:
+            _ = self._clip_stack.pop()
 
     def push_clip_path(
         mut self,
@@ -355,9 +346,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
             True if no clip is active, or (x, y) is inside the
             innermost pushed clip rectangle.
         """
-        if len(self.clip_stack) == 0:
+        if len(self._clip_stack) == 0:
             return True
-        var top = self.clip_stack[len(self.clip_stack) - 1]
+        var top = self._clip_stack[len(self._clip_stack) - 1]
         return (
             x >= top.x
             and x < top.x + top.width
@@ -504,8 +495,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var top = max(0, y)
         var right = min(self.width, x + width)
         var bottom = min(self.height, y + height)
-        if len(self.clip_stack) > 0:
-            var top_clip = self.clip_stack[len(self.clip_stack) - 1]
+        if len(self._clip_stack) > 0:
+            var top_clip = self._clip_stack[len(self._clip_stack) - 1]
             left = max(left, top_clip.x)
             top = max(top, top_clip.y)
             right = min(right, top_clip.x + top_clip.width)
@@ -524,13 +515,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         if not self.in_bounds(x, y):
             return Color(0, 0, 0)
-        var idx = (y * self.width + x) * BYTES_PER_PIXEL
-        return Color(
-            self.pixels[idx],
-            self.pixels[idx + 1],
-            self.pixels[idx + 2],
-            self.pixels[idx + 3],
-        )
+        return self.read_pixel(x, y)
 
     def read_pixel(self, x: Int, y: Int) -> Color:
         """Read (x, y) *without* `get_pixel`'s in_bounds check, the

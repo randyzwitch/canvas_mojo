@@ -19,6 +19,156 @@ comptime _MAX_CODES = _MAX_L_CODES + _MAX_D_CODES
 comptime _FIX_L_CODES = 288
 
 
+# --- RFC 1951 3.2.5 length/distance tables ----------------------------------
+# Built by function rather than held as module-level `comptime` lists:
+# `comptime List[Int]` doesn't materialize to a usable runtime value in
+# this Mojo version (the same limitation bidi.mojo's mirroring table
+# works around). Both the decoder (`_codes`) and the encoder (`deflate`)
+# read them, so they are defined once here.
+
+
+def _length_bases() -> List[Int]:
+    """Base match length for each of the 29 length codes 257..285."""
+    return [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        15,
+        17,
+        19,
+        23,
+        27,
+        31,
+        35,
+        43,
+        51,
+        59,
+        67,
+        83,
+        99,
+        115,
+        131,
+        163,
+        195,
+        227,
+        258,
+    ]
+
+
+def _length_extra_bits() -> List[Int]:
+    """Extra bits following each length code."""
+    return [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        4,
+        5,
+        5,
+        5,
+        5,
+        0,
+    ]
+
+
+def _distance_bases() -> List[Int]:
+    """Base distance for each of the 30 distance codes."""
+    return [
+        1,
+        2,
+        3,
+        4,
+        5,
+        7,
+        9,
+        13,
+        17,
+        25,
+        33,
+        49,
+        65,
+        97,
+        129,
+        193,
+        257,
+        385,
+        513,
+        769,
+        1025,
+        1537,
+        2049,
+        3073,
+        4097,
+        6145,
+        8193,
+        12289,
+        16385,
+        24577,
+    ]
+
+
+def _distance_extra_bits() -> List[Int]:
+    """Extra bits following each distance code."""
+    return [
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+        4,
+        4,
+        5,
+        5,
+        6,
+        6,
+        7,
+        7,
+        8,
+        8,
+        9,
+        9,
+        10,
+        10,
+        11,
+        11,
+        12,
+        12,
+        13,
+        13,
+    ]
+
+
 struct _BitReader(Movable):
     """Reads DEFLATE's bit-packed stream. Bits pack into bytes
     LSB-first (RFC 1951 3.1.1), so a byte is shifted into the buffer at
@@ -225,138 +375,12 @@ def _codes(
     length/distance base+extra-bits tables are RFC 1951 3.2.5's,
     transcribed from the spec and cross-checked against puff.c's.
 
-    The `List[Int]` literals are rebuilt per call rather than held as
-    module-level `comptime` constants: `comptime List[Int]` doesn't
-    materialize to a usable runtime value in this Mojo version (the
-    same limitation bidi.mojo's mirroring table works around). Four
-    small lists per block is a cheap way to avoid it.
+    The tables come from `_length_bases` and friends below.
     """
-    var lens: List[Int] = [
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        13,
-        15,
-        17,
-        19,
-        23,
-        27,
-        31,
-        35,
-        43,
-        51,
-        59,
-        67,
-        83,
-        99,
-        115,
-        131,
-        163,
-        195,
-        227,
-        258,
-    ]
-    var lext: List[Int] = [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        1,
-        1,
-        1,
-        1,
-        2,
-        2,
-        2,
-        2,
-        3,
-        3,
-        3,
-        3,
-        4,
-        4,
-        4,
-        4,
-        5,
-        5,
-        5,
-        5,
-        0,
-    ]
-    var dists: List[Int] = [
-        1,
-        2,
-        3,
-        4,
-        5,
-        7,
-        9,
-        13,
-        17,
-        25,
-        33,
-        49,
-        65,
-        97,
-        129,
-        193,
-        257,
-        385,
-        513,
-        769,
-        1025,
-        1537,
-        2049,
-        3073,
-        4097,
-        6145,
-        8193,
-        12289,
-        16385,
-        24577,
-    ]
-    var dext: List[Int] = [
-        0,
-        0,
-        0,
-        0,
-        1,
-        1,
-        2,
-        2,
-        3,
-        3,
-        4,
-        4,
-        5,
-        5,
-        6,
-        6,
-        7,
-        7,
-        8,
-        8,
-        9,
-        9,
-        10,
-        10,
-        11,
-        11,
-        12,
-        12,
-        13,
-        13,
-    ]
+    var lens = _length_bases()
+    var lext = _length_extra_bits()
+    var dists = _distance_bases()
+    var dext = _distance_extra_bits()
 
     while True:
         var symbol = _decode(reader, lencode)
@@ -416,28 +440,14 @@ struct _CodeTables(Movable):
 
 def _fixed_tables() raises -> _CodeTables:
     """RFC 1951 3.2.6: BTYPE=01's literal/length and distance Huffman
-    codes are fixed by the spec, not transmitted. The bit-length
-    breakpoints below (0-143 -> 8 bits, 144-255 -> 9, 256-279 -> 7,
-    280-287 -> 8; all 30 distance codes -> 5) are the spec's table, as
-    in puff.c's `fixed()`.
+    codes are fixed by the spec, not transmitted -- puff.c's `fixed()`,
+    over the length lists the encoder also uses.
     """
-    var lengths = List[Int](capacity=_FIX_L_CODES)
-    for _ in range(144):
-        lengths.append(8)
-    for _ in range(144, 256):
-        lengths.append(9)
-    for _ in range(256, 280):
-        lengths.append(7)
-    for _ in range(280, _FIX_L_CODES):
-        lengths.append(8)
     var lit_left = 0
-    var lit_table = _construct(lengths, _FIX_L_CODES, lit_left)
+    var lit_table = _construct(_fixed_lit_lengths(), _FIX_L_CODES, lit_left)
 
-    var dlengths = List[Int](capacity=_MAX_D_CODES)
-    for _ in range(_MAX_D_CODES):
-        dlengths.append(5)
     var dist_left = 0
-    var dist_table = _construct(dlengths, _MAX_D_CODES, dist_left)
+    var dist_table = _construct(_fixed_dist_lengths(), _MAX_D_CODES, dist_left)
 
     return _CodeTables(lit_table^, dist_table^)
 
@@ -613,9 +623,10 @@ comptime _HASH_MUL = 2654435761
 
 
 def _fixed_lit_lengths() -> List[Int]:
-    """RFC 1951 3.2.6's fixed code lengths in the shape the *encoder*
-    needs: a plain length-per-symbol list for _build_codes, rather than
-    _construct's decode-oriented counts/symbols table.
+    """RFC 1951 3.2.6's fixed literal/length code lengths, one per
+    symbol: 0-143 -> 8 bits, 144-255 -> 9, 256-279 -> 7, 280-287 -> 8.
+    `_construct` turns them into decode tables and `_build_codes` into
+    the encoder's codes.
     """
     var lengths = List[Int](capacity=_FIX_L_CODES)
     for _ in range(144):
@@ -870,135 +881,12 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     var dist_lengths = _fixed_dist_lengths()
     var dist_codes = _build_codes(dist_lengths)
 
-    # Same base-length/base-distance tables _codes() decodes against
-    # (RFC 1951 3.2.5), rebuilt per call for the `comptime List[Int]`
-    # reason _codes documents.
-    var lens: List[Int] = [
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        13,
-        15,
-        17,
-        19,
-        23,
-        27,
-        31,
-        35,
-        43,
-        51,
-        59,
-        67,
-        83,
-        99,
-        115,
-        131,
-        163,
-        195,
-        227,
-        258,
-    ]
-    var lext: List[Int] = [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        1,
-        1,
-        1,
-        1,
-        2,
-        2,
-        2,
-        2,
-        3,
-        3,
-        3,
-        3,
-        4,
-        4,
-        4,
-        4,
-        5,
-        5,
-        5,
-        5,
-        0,
-    ]
-    var dists: List[Int] = [
-        1,
-        2,
-        3,
-        4,
-        5,
-        7,
-        9,
-        13,
-        17,
-        25,
-        33,
-        49,
-        65,
-        97,
-        129,
-        193,
-        257,
-        385,
-        513,
-        769,
-        1025,
-        1537,
-        2049,
-        3073,
-        4097,
-        6145,
-        8193,
-        12289,
-        16385,
-        24577,
-    ]
-    var dext: List[Int] = [
-        0,
-        0,
-        0,
-        0,
-        1,
-        1,
-        2,
-        2,
-        3,
-        3,
-        4,
-        4,
-        5,
-        5,
-        6,
-        6,
-        7,
-        7,
-        8,
-        8,
-        9,
-        9,
-        10,
-        10,
-        11,
-        11,
-        12,
-        12,
-        13,
-        13,
-    ]
+    # The same base-length/base-distance tables _codes() decodes
+    # against.
+    var lens = _length_bases()
+    var lext = _length_extra_bits()
+    var dists = _distance_bases()
+    var dext = _distance_extra_bits()
 
     var n = len(data)
     var chains = _HashChains(n)

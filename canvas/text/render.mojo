@@ -34,7 +34,6 @@ text_align.mojo, both re-exported here.
 """
 
 from std.math import cos, sin
-from std.memory import ArcPointer
 
 from canvas.text.bidi import detect_base_level, visual_order
 from canvas.buffer import Canvas
@@ -51,7 +50,6 @@ from canvas.text.glyph_outline import (
 from canvas.text.ttf import TTFFace
 from canvas.path import (
     fill_path_aa,
-    FPoint,
     Path,
     _CLOSE,
     _CUBIC_TO,
@@ -152,23 +150,6 @@ struct _BlockLayout(Movable):
         self.rot_max_x = rot_max_x
         self.rot_min_y = rot_min_y
         self.rot_max_y = rot_max_y
-
-
-def _load_sized_face(
-    family: String,
-    slant: FontSlant,
-    weight: FontWeight,
-    size: Float64,
-    mut cache: FontCache,
-) raises -> ArcPointer[TTFFace]:
-    """Font match -> TTFFace, sized to `size` pixels: the one
-    place every entry point below gets a ready-to-use face. Both the
-    resolved path and the parsed, sized face are cached by `cache` (see
-    font_cache.mojo). Returns an `ArcPointer` so a cache hit is a
-    refcount bump rather than a copy of the face's font-file buffer;
-    call sites dereference with `[]`.
-    """
-    return cache.resolve_face(family, slant, weight, size)
 
 
 struct _LineMetrics(ImplicitlyCopyable, Movable):
@@ -332,7 +313,7 @@ def _layout_block(
     """
     var raw_lines = text.split("\n")
 
-    var face = _load_sized_face(family, slant, weight, size, cache)
+    var face = cache.resolve_face(family, slant, weight, size)
     var line_height = face_line_metrics(face[]).line_height
 
     var lines = List[_LineLayout](capacity=len(raw_lines))
@@ -459,7 +440,7 @@ def measure_text(
     Returns:
         `text`'s width/height/advance at that size.
     """
-    var face = _load_sized_face(family, slant, weight, size, cache)
+    var face = cache.resolve_face(family, slant, weight, size)
     var measured = _measure_line(
         face[], text, family, slant, weight, size, cache
     )
@@ -854,7 +835,7 @@ def draw_text(
         # Every line whitespace-only/empty -- nothing to draw.
         return
 
-    var face = _load_sized_face(family, slant, weight, size, cache)
+    var face = cache.resolve_face(family, slant, weight, size)
     var c = cos(rotation)
     var s = sin(rotation)
     var anchor_x = x

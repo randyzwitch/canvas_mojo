@@ -6,7 +6,7 @@ see gradient.mojo).
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.gradient import LinearGradient, RadialGradient
+from canvas.gradient import ColorSource, LinearGradient, RadialGradient
 from canvas.shapes.lines import draw_line
 
 
@@ -63,6 +63,39 @@ def fill_rect(
     canvas._fill_region(region[0], region[1], region[2], region[3], color)
 
 
+def _fill_rect_source[
+    S: ColorSource
+](mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, source: S):
+    """`fill_rect`'s clamp-once-then-sweep, taking each pixel's colour
+    from `source` instead of one flat Color. Both gradient rect fills
+    are this with a different source type.
+    """
+    if width <= 0 or height <= 0:
+        return
+
+    var region = canvas.effective_fill_rect(x, y, width, height)
+    var rx = region[0]
+    var ry = region[1]
+    var rw = region[2]
+    var rh = region[3]
+    # A clip path modulates each pixel by its own coverage, which
+    # `write_pixel` deliberately skips -- see its docstring. Nothing
+    # pays for this branch until a clip path is actually pushed.
+    if canvas.has_clip_mask():
+        for yy in range(ry, ry + rh):
+            for xx in range(rx, rx + rw):
+                canvas.set_pixel(
+                    xx, yy, source.color_at(Float64(xx), Float64(yy))
+                )
+        return
+
+    for yy in range(ry, ry + rh):
+        for xx in range(rx, rx + rw):
+            canvas.write_pixel(
+                xx, yy, source.color_at(Float64(xx), Float64(yy))
+            )
+
+
 def fill_rect_gradient(
     mut canvas: Canvas,
     x: Int,
@@ -83,30 +116,7 @@ def fill_rect_gradient(
         height: Rectangle's height.
         gradient: Fill source, projected across the rectangle.
     """
-    if width <= 0 or height <= 0:
-        return
-
-    var region = canvas.effective_fill_rect(x, y, width, height)
-    var rx = region[0]
-    var ry = region[1]
-    var rw = region[2]
-    var rh = region[3]
-    # A clip path modulates each pixel by its own coverage, which
-    # `write_pixel` deliberately skips -- see its docstring. Nothing
-    # pays for this branch until a clip path is actually pushed.
-    if canvas.has_clip_mask():
-        for yy in range(ry, ry + rh):
-            for xx in range(rx, rx + rw):
-                canvas.set_pixel(
-                    xx, yy, gradient.color_at(Float64(xx), Float64(yy))
-                )
-        return
-
-    for yy in range(ry, ry + rh):
-        for xx in range(rx, rx + rw):
-            canvas.write_pixel(
-                xx, yy, gradient.color_at(Float64(xx), Float64(yy))
-            )
+    _fill_rect_source(canvas, x, y, width, height, gradient)
 
 
 def fill_rect_radial_gradient(
@@ -130,27 +140,4 @@ def fill_rect_radial_gradient(
         height: Rectangle's height.
         gradient: Fill source, projected across the rectangle.
     """
-    if width <= 0 or height <= 0:
-        return
-
-    var region = canvas.effective_fill_rect(x, y, width, height)
-    var rx = region[0]
-    var ry = region[1]
-    var rw = region[2]
-    var rh = region[3]
-    # A clip path modulates each pixel by its own coverage, which
-    # `write_pixel` deliberately skips -- see its docstring. Nothing
-    # pays for this branch until a clip path is actually pushed.
-    if canvas.has_clip_mask():
-        for yy in range(ry, ry + rh):
-            for xx in range(rx, rx + rw):
-                canvas.set_pixel(
-                    xx, yy, gradient.color_at(Float64(xx), Float64(yy))
-                )
-        return
-
-    for yy in range(ry, ry + rh):
-        for xx in range(rx, rx + rw):
-            canvas.write_pixel(
-                xx, yy, gradient.color_at(Float64(xx), Float64(yy))
-            )
+    _fill_rect_source(canvas, x, y, width, height, gradient)

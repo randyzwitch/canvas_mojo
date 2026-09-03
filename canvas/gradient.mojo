@@ -1,7 +1,8 @@
 """Color gradients: `LinearGradient` and `RadialGradient`, consumed by
-fill_rect_gradient/fill_path_gradient and their radial counterparts
-(canvas.shapes.rects, path.mojo). Those four are the only
-gradient-aware fills; circle/ellipse/polygon variants aren't built.
+the gradient fills in canvas.shapes.rects (`fill_rect_gradient`,
+`fill_rect_radial_gradient`) and path.mojo (`fill_path_gradient`,
+`fill_path_radial_gradient` and their `_aa` variants). Those are the
+only gradient-aware fills; circle/ellipse/polygon variants aren't built.
 
 Both kinds reduce a point to a projected position `t` -- distance along
 an axis (linear) or from a center relative to a radius (radial) -- then
@@ -42,9 +43,8 @@ def _color_at_t(
 ) -> Color:
     """The "given a projected position, what color" half both
     LinearGradient.color_at and RadialGradient.color_at share. `t_in`
-    arrives already clamped to [0, 1]: each gradient kind clamps
-    differently (a radial distance can't go negative to begin with), so
-    the clamp stays with the projection.
+    is clamped to [0, 1] here -- the "pad" extend -- so neither
+    projection has to.
     """
     if len(stops) == 0:
         return Color(0, 0, 0, 0)

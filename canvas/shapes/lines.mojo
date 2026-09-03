@@ -15,7 +15,7 @@ O(radius^2 * supersample^2) -- and in which parameters apply, since
 Bresenham is definitionally 1px and takes no `width`.
 """
 
-from std.math import ceil, cos, floor, sin, sqrt
+from std.math import ceil, cos, floor, pi, sin, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
@@ -147,9 +147,6 @@ def draw_line(
         dashes: On/off segment lengths in pixels, cycled along the
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
-        cap: How the two ends are finished -- see LineCap.
-        join: Unused for a single segment, which has no corners.
-        miter_limit: Unused for a single segment.
     """
     _ = _draw_line_core(
         canvas, x0, y0, x1, y1, color, False, False, dashes, dash_offset, 0.0
@@ -171,13 +168,12 @@ def draw_line_aa(
     join: LineJoin = LineJoin.ROUND,
     miter_limit: Float64 = 4.0,
 ):
-    """Anti-aliased line, `width` pixels wide (default 1), with round
-    end caps.
+    """Anti-aliased line, `width` pixels wide (default 1), finished
+    with `cap` at each end.
 
     A one-segment polyline, and drawn as one: `_draw_polyline_core_aa`
     turns the stroke into an outline and fills it, so the cost follows
-    the stroke's area rather than its bounding box. The coverage test is
-    minimum-distance-to-segment with round caps.
+    the stroke's area rather than its bounding box.
 
     Args:
         canvas: Canvas to draw into.
@@ -338,9 +334,6 @@ def draw_polygon(
             around the polygon. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the polygon starts
             at.
-        join: How corners are turned -- see LineJoin.
-        miter_limit: Ratio past which a MITER join falls back to
-            BEVEL, as a multiple of half the stroke width.
     """
     var n = len(points)
     if n == 0:
@@ -428,17 +421,6 @@ def _draw_polyline_core_aa(
     var half_width = width / 2.0
     var pad = Int(half_width) + 2
 
-    # Each segment's start distance (cumulative length of everything
-    # before it) and length, precomputed so dash phase carries across
-    # joints. draw_polyline keeps the same running total, but this
-    # loop iterates samples rather than segments in path order.
-    #
-    # The same pass also keeps each segment's endpoint, direction and
-    # 1/|d|^2, which the per-sample distance test below needs. Those
-    # are fixed per segment, so computing them here rather than inside
-    # the sample loops is the difference between once per segment and
-    # once per (pixel, sample, segment) -- supersample^2 times more
-    # often, for a value that cannot change.
     # Real-valued extent, then widened outward to the pixels that
     # contain it (floor/ceil, not round) before the flat `pad` -- a
     # vertex at x = 10.2 has to have pixel 10 swept for it to pick up
@@ -651,20 +633,17 @@ def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
     """A round join or cap: a polygon approximating the disk of
     `radius` at (cx, cy).
 
-    Sampled at roughly one point per pixel of circumference, the same
-    radius-proportional rule `canvas.shapes.arcs` uses -- a hairline
-    stroke's joins cost eight edges, a thick one's cost enough to stay
-    smooth. The floor of 8 matters: a 4-gon inscribed in the disk would
-    cut visibly inside the segment quads it is meant to round off.
+    Sampled at two points per pixel of circumference with a floor of
+    16, so a hairline stroke's joins cost a handful of edges and a thick
+    one's cost enough to stay smooth.
     """
     if radius <= 0.0:
         return
-    # Two points per pixel of circumference, floor 16. The floor is
-    # what matters at the hairline widths a chart actually uses: at
-    # radius 1 an inscribed 8-gon sits up to 0.076px inside the true
-    # circle, which is a third of a sub-sample and shows up as tens of
-    # alpha levels on a boundary pixel.
-    var steps = Int(12.566370614359172 * radius)
+    # The floor is what matters at the hairline widths a chart actually
+    # uses: at radius 1 an inscribed 8-gon sits up to 0.076px inside the
+    # true circle, which is a third of a sub-sample and shows up as tens
+    # of alpha levels on a boundary pixel.
+    var steps = Int(4.0 * pi * radius)
     if steps < 16:
         steps = 16
 
@@ -672,7 +651,7 @@ def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
     # circle. An inscribed polygon only ever under-covers; splitting
     # the difference centres the error instead of biasing every join
     # and cap thin.
-    var r = radius * (1.0 + 1.0 / cos(3.141592653589793 / Float64(steps))) * 0.5
+    var r = radius * (1.0 + 1.0 / cos(pi / Float64(steps))) * 0.5
     # Wound the same way `_add_quad` winds, which for a segment along
     # +x comes out negative (clockwise in the standard orientation, y
     # running down the screen here). Sampling the disk the other way
@@ -682,7 +661,7 @@ def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
     var px = cx + r
     var py = cy
     for i in range(1, steps + 1):
-        var t = -Float64(i) / Float64(steps) * 6.283185307179586
+        var t = -Float64(i) / Float64(steps) * (2.0 * pi)
         var qx = cx + r * cos(t)
         var qy = cy + r * sin(t)
         edges.add_edge(px, py, qx, qy)
@@ -731,7 +710,7 @@ def _stroke_edges(
 
     # Endpoints per segment, with SQUARE's extension already folded in
     # so distances below are measured along the geometry actually
-    # drawn -- the same order the sampling core applied it in.
+    # drawn.
     var ax = List[Float64](capacity=num_segments)
     var ay = List[Float64](capacity=num_segments)
     var bx = List[Float64](capacity=num_segments)
@@ -765,24 +744,17 @@ def _stroke_edges(
 
     # Walk the path, emitting the drawn stretches.
     #
-    # A dash piece is a plain rectangle, not a stadium. The sampling
-    # core tested the dash at each sample's *clamped* projection, so a
-    # point lying past a dash's end -- however close it is to the last
-    # drawn point -- projects beyond it and is not drawn. Dash ends are
-    # therefore butt, and the only round ends in a dashed stroke are
-    # where the projection clamps: at the segments' own endpoints.
-    #
-    # Getting this wrong is not subtle in the output. Rounding every
-    # dash end extends each piece by half a width at both ends, which
-    # closes the gaps: a [5, 3] pattern at width 2 rendered as an
-    # almost-solid line.
+    # A dash piece is a plain rectangle, not a stadium: dash ends are
+    # butt, and the only round ends in a dashed stroke are at the
+    # segments' own endpoints. Rounding every dash end would extend
+    # each piece by half a width at both ends and close the gaps -- a
+    # [5, 3] pattern at width 2 would render as an almost-solid line.
     for seg in range(num_segments):
         var length = seg_len[seg]
         if length == 0.0:
-            # A repeated point. The sampling core still drew it: the
-            # projection is the point itself, so anything within
-            # half_width of it is covered when that distance is drawn.
-            # Skipping it outright loses a disk the reference has.
+            # A repeated point still contributes a disk: anything
+            # within half_width of it is covered when that distance is
+            # drawn.
             if _is_dash_on(seg_start[seg], dashes, dash_offset):
                 _add_disk(edges, ax[seg], ay[seg], half_width)
             continue
@@ -819,13 +791,12 @@ def _stroke_edges(
                 reached_end = False
             d = next_d
 
-        # The segment's start point, for the first segment only: this
-        # is where the path's own projection clamps backwards.
+        # The open stroke's start cap, on the first segment only.
         if seg == 0 and not closed:
             if (not capped) and _is_dash_on(seg_start[0], dashes, dash_offset):
                 _add_disk(edges, ax[0], ay[0], half_width)
 
-        # ...and its far endpoint, where the projection clamps forward.
+        # ...and the segment's far endpoint.
         if not _is_dash_on(seg_end_d, dashes, dash_offset):
             continue  # nothing is drawn at this endpoint
 
@@ -924,6 +895,10 @@ def draw_polyline_aa(
             whole polyline. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the polyline
             starts at.
+        cap: How the two open ends are finished -- see LineCap.
+        join: How corners are turned -- see LineJoin.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
     """
     var fpoints = List[FPoint](capacity=len(points))
     for i in range(len(points)):
@@ -1002,9 +977,8 @@ def draw_polygon_aa(
     miter_limit: Float64 = 4.0,
 ):
     """Anti-aliased polygon outline; draw_polygon is the hard-edged
-    version. The closing segment enters the minimum-distance test like
-    any other, so the closing vertex needs no special case and dash phase
-    carries across it.
+    version. The closing segment is stroked like any other, so dash
+    phase carries across the closing vertex.
 
     Args:
         canvas: Canvas to draw into.
@@ -1063,6 +1037,9 @@ def draw_polygon_aa(
         dashes: On/off segment lengths in pixels. Empty (default) draws
             a solid line.
         dash_offset: Distance into the dash pattern to start at.
+        join: How corners are turned -- see LineJoin.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
     """
     _draw_polyline_core_aa(
         canvas,

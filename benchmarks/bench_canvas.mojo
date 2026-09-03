@@ -1,10 +1,8 @@
 """A benchmark suite for the drawing primitives, run with
 `pixi run bench`.
 
-The source carries specific performance claims -- "1.7ns per byte
-against 0.26 unchecked", "roughly 5x the per-pixel cost", "~844ms down
-to a small fraction of it". This file is where those numbers are
-reproduced.
+Constants in the source marked "set by benchmark (#NN)" were tuned
+with this file; the named pull request carries the numbers.
 
 It is a stopwatch, not a statistics package. Each case runs a warmup
 pass, then `iters` timed passes, and reports nanoseconds per iteration.
