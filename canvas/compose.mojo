@@ -22,10 +22,10 @@ from canvas.color import Color, _div255
 def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int):
     """Composite `src` onto `dst` with its top-left corner at (x, y).
 
-    Clipped to `dst`'s bounds and to its active clip region, so a
-    source hanging off an edge draws its visible part rather than
-    raising or wrapping. Fully transparent source pixels leave the
-    destination untouched.
+    Clipped to `dst`'s bounds and to its active clip region -- both a
+    rectangle clip and a clip path -- so a source hanging off an edge
+    draws its visible part rather than raising or wrapping. Fully
+    transparent source pixels leave the destination untouched.
 
     Args:
         dst: Canvas composited onto.
@@ -68,10 +68,40 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8):
         return
 
     var sp = src.pixels.unsafe_ptr()
-    var dp = dst.pixels.unsafe_ptr()
     var src_stride = src.width * BYTES_PER_PIXEL
-    var dst_stride = dst.width * BYTES_PER_PIXEL
     var full = opacity == 255
+
+    # A clip path modulates each pixel individually, which the direct
+    # pointer writes below cannot express: `effective_fill_rect` folds
+    # in the rectangle clip, since that is a range, but a path clip is a
+    # per-pixel coverage value. Route through `set_pixel` while one is
+    # pushed, the same fallback `Canvas._fill_region` and the gradient
+    # rect fills in canvas.shapes.rects make -- see `Canvas.write_pixel`
+    # for the contract. Nothing pays for this until a clip path exists.
+    if dst.has_clip_mask():
+        for row in range(rh):
+            var s_idx = (ry + row - y) * src_stride + (rx - x) * BYTES_PER_PIXEL
+            for col in range(rw):
+                var sa = sp[unsafe_offset=s_idx + 3]
+                var effective_a = sa
+                if not full:
+                    effective_a = UInt8(_div255(Int(sa) * Int(opacity)))
+                if effective_a != 0:
+                    dst.set_pixel(
+                        rx + col,
+                        ry + row,
+                        Color(
+                            sp[unsafe_offset=s_idx],
+                            sp[unsafe_offset=s_idx + 1],
+                            sp[unsafe_offset=s_idx + 2],
+                            effective_a,
+                        ),
+                    )
+                s_idx += BYTES_PER_PIXEL
+        return
+
+    var dp = dst.pixels.unsafe_ptr()
+    var dst_stride = dst.width * BYTES_PER_PIXEL
 
     for row in range(rh):
         var s_idx = (ry + row - y) * src_stride + (rx - x) * BYTES_PER_PIXEL

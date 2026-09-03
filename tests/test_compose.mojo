@@ -11,6 +11,7 @@ from std.testing import assert_equal, assert_true, TestSuite
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import draw_canvas
+from canvas.path import Path
 from canvas.shapes.rects import fill_rect
 
 comptime CLEAR = Color(0, 0, 0, 0)
@@ -144,6 +145,89 @@ def test_layers_compose_in_order() raises:
     _assert_rgb(sheet, 10, 10, RED, "upper layer only")
     _assert_rgb(sheet, 5, 5, RED, "upper layer wins the overlap")
     _assert_rgb(sheet, 11, 0, WHITE, "neither layer covers this")
+
+
+def test_draw_canvas_respects_an_active_clip_path() raises:
+    # draw_canvas writes straight through the pixel pointer, using
+    # effective_fill_rect to pre-clip the region. That folds in a
+    # rectangle clip, which is a range, but a clip path is a per-pixel
+    # coverage value and cannot be folded into bounds -- so a path clip
+    # has to send the composite through set_pixel instead. Without
+    # that it draws over the whole overlap and the clip does nothing.
+    var clip = Path()
+    clip.move_to(0.0, 0.0)
+    clip.line_to(5.0, 0.0)
+    clip.line_to(5.0, 4.0)
+    clip.line_to(0.0, 4.0)
+    clip.close()
+
+    var dst = Canvas(10, 4, Color(0, 0, 0))
+    var src = Canvas(10, 4, Color(255, 255, 255))
+    dst.push_clip_path(clip)
+    draw_canvas(dst, src, 0, 0)
+    dst.pop_clip_path()
+
+    assert_equal(dst.get_pixel(2, 1).r, 255, "inside the clip path is drawn")
+    assert_equal(
+        dst.get_pixel(8, 1).r, 0, "outside the clip path is left alone"
+    )
+
+
+def test_draw_canvas_with_opacity_respects_a_clip_path() raises:
+    # The opacity overload takes the same path, so it needs the same
+    # cover: a faded layer must not escape the clip either.
+    var clip = Path()
+    clip.move_to(0.0, 0.0)
+    clip.line_to(5.0, 0.0)
+    clip.line_to(5.0, 4.0)
+    clip.line_to(0.0, 4.0)
+    clip.close()
+
+    var dst = Canvas(10, 4, Color(0, 0, 0))
+    var src = Canvas(10, 4, Color(255, 255, 255))
+    dst.push_clip_path(clip)
+    draw_canvas(dst, src, 0, 0, 128)
+    dst.pop_clip_path()
+
+    # 255 over black at alpha 128 is _div255(255 * 128) = 128.
+    assert_equal(dst.get_pixel(2, 1).r, 128, "inside the clip, faded")
+    assert_equal(
+        dst.get_pixel(8, 1).r, 0, "outside the clip path is left alone"
+    )
+
+
+def test_draw_canvas_clip_path_edge_is_antialiased() raises:
+    # A clip path's coverage is 0-255, not in/out, so a composite
+    # through a partly covered pixel must come out partial. That only
+    # happens by going through set_pixel, which consults the mask --
+    # the direct pointer write has no way to.
+    #
+    # The clip's right edge is x=4.25. A pixel is centered on its
+    # coordinate, so pixel 4 spans [3.5, 4.5] and at the default 4x
+    # supersample its sub-columns sit at 3.625, 3.875, 4.125 and 4.375.
+    # Three of those are inside the edge, so coverage is 3/4 and the
+    # composited value is round(0.75 * 255) = 191.
+    #
+    # The left edge x=0.0 halves pixel 0 the same way: sub-columns at
+    # -0.375 and -0.125 fall outside, 0.125 and 0.375 inside, giving
+    # 2/4 and round(0.5 * 255) = 128.
+    var clip = Path()
+    clip.move_to(0.0, 0.0)
+    clip.line_to(4.25, 0.0)
+    clip.line_to(4.25, 4.0)
+    clip.line_to(0.0, 4.0)
+    clip.close()
+
+    var dst = Canvas(10, 4, Color(0, 0, 0))
+    var src = Canvas(10, 4, Color(255, 255, 255))
+    dst.push_clip_path(clip)
+    draw_canvas(dst, src, 0, 0)
+    dst.pop_clip_path()
+
+    assert_equal(dst.get_pixel(0, 1).r, 128, "half-covered left edge pixel")
+    assert_equal(dst.get_pixel(2, 1).r, 255, "fully inside is unattenuated")
+    assert_equal(dst.get_pixel(4, 1).r, 191, "three-quarter-covered edge pixel")
+    assert_equal(dst.get_pixel(5, 1).r, 0, "fully outside is untouched")
 
 
 def main() raises:
