@@ -292,12 +292,13 @@ def _sweep_edges_aa(
     `edges` is borrowed, and should stay that way. The band tasks below
     read it while it lives in the caller's frame. Making it `var`, so
     this function can preprocess the table before sweeping it, passes
-    `create_task` an aggregate owned by this frame -- canvas_mojo#97.
-    Preprocess in the caller, or take the parameter `mut`.
+    `create_task` an aggregate owned by this frame -- canvas_mojo#97,
+    filed upstream as modular/modular#7075. Preprocess in the caller,
+    or take the parameter `mut`.
 
     What that change does, recorded here because it is the fullest
-    observation of #97 this package has and it is not visible from a
-    smaller test:
+    observation this package has of that issue and it is not visible
+    from a smaller test:
 
     - Mojo 1.0.0, 64 cores, `parallelism_level()` 64, so the loop below
       dispatches 64 band tasks over one `_EdgeTable`.
