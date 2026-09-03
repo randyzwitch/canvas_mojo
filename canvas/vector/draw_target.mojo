@@ -4,7 +4,7 @@ raster `Canvas` or a vector `SvgCanvas` without knowing which it holds.
 A vector backend has no fixed pixel resolution, so nothing rendered
 through the trait deals in supersampling.
 
-Ten primitives are declared -- `fill_rect`, `fill_rect_gradient`,
+Ten drawing primitives are declared -- `fill_rect`, `fill_rect_gradient`,
 `draw_line_aa`, `fill_circle_aa`, `fill_ellipse_aa`, `draw_ellipse_aa`,
 `fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa` and
 `fill_path_aa` -- a subset of `canvas.shapes`. `fill_polygon`, dashes,
@@ -22,6 +22,20 @@ Method parameters mirror the same-named function in
 `canvas.shapes`/`canvas.path`, minus `supersample`, `dashes` and
 `fill_rule`: a raster implementation picks its own supersample factor,
 and a vector one has no equivalent knob.
+
+Two further methods, `begin_annotated_group` and
+`end_annotated_group`, declare no drawing at all: they label whatever
+is drawn between them. A vector backend has somewhere to put that
+label and a raster one does not, so `SvgCanvas` wraps the run in
+`<g><title>` and `Canvas` implements both as no-ops. That asymmetry is
+the point rather than a wart -- a raster image has no per-shape
+metadata to carry, and a caller drawing through the trait should not
+have to know which backend it holds in order to name what it draws.
+
+They are scoped rather than a `title` parameter on each primitive
+because one datum is often several primitives: a box plot's box,
+whiskers, median and caps are one thing to a reader and four calls to
+this trait. A group spans however many a datum happens to need.
 
 Text is not on the trait. `Canvas` rasterizes glyph outlines through
 `fill_path_aa` while `SvgCanvas` emits `<text>` markup, so there is no
@@ -199,5 +213,34 @@ trait DrawTarget:
         Args:
             path: Path to fill.
             color: Fill color.
+        """
+        ...
+
+    def begin_annotated_group(mut self, title: String):
+        """Open a group labelled `title`, covering every primitive
+        drawn until `end_annotated_group`. A backend that can carry the
+        label does; one that cannot ignores it.
+
+        On `SvgCanvas` this emits `<g><title>...</title>`, which is
+        what a browser shows as a hover tooltip and what a screen
+        reader announces for the group. On `Canvas` it does nothing: a
+        raster image has nowhere to put a name.
+
+        Groups do not nest. Opening one while another is open closes
+        the first, so the markup stays well formed however a caller
+        pairs its calls, and a group left open when the document is
+        serialized is closed then.
+
+        Args:
+            title: Human-readable label for the drawing that follows.
+                Escaped by the backend; pass it raw.
+        """
+        ...
+
+    def end_annotated_group(mut self):
+        """Close the group opened by `begin_annotated_group`, a no-op
+        if none is open -- matching `Canvas.pop_clip`, which also
+        treats an unbalanced close as nothing to undo rather than an
+        error.
         """
         ...

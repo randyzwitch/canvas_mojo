@@ -238,6 +238,11 @@ struct SvgCanvas(DrawTarget, Movable):
     # a fresh `<defs>` id ("grad" + String(...)) per call so two
     # fill_rect_gradient calls never collide.
     var _gradient_count: Int
+    # Whether a `<g>` opened by begin_annotated_group is still waiting
+    # for its `</g>`. Groups do not nest, so one flag is the whole
+    # state; `to_string` consults it so an unclosed group cannot reach
+    # a file as malformed markup.
+    var _open_group: Bool
 
     def __init__(out self, width: Int, height: Int):
         """An empty `width x height` SVG document.
@@ -250,6 +255,7 @@ struct SvgCanvas(DrawTarget, Movable):
         self.height = height
         self._body = ""
         self._gradient_count = 0
+        self._open_group = False
 
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
@@ -628,6 +634,39 @@ struct SvgCanvas(DrawTarget, Movable):
             + "/>\n"
         )
 
+    def begin_annotated_group(mut self, title: String):
+        """Open `<g><title>title</title>`, labelling every element
+        emitted until `end_annotated_group`. Browsers show a `<title>`
+        inside a `<g>` as a hover tooltip over anything in the group,
+        which is what gives a chart per-datum tooltips without any
+        scripting.
+
+        `title` is escaped as element content, so it may contain `&`,
+        `<` and `>` freely.
+
+        Groups do not nest: opening one while another is open closes
+        the first. See the `DrawTarget` docstring for why the operation
+        is scoped rather than a parameter on each primitive.
+
+        Args:
+            title: Human-readable label, escaped here. Pass it raw.
+        """
+        if self._open_group:
+            self._body += "</g>\n"
+        self._body += "<g>\n<title>" + _escape_xml_text(title) + "</title>\n"
+        self._open_group = True
+
+    def end_annotated_group(mut self):
+        """Close the group `begin_annotated_group` opened, a no-op when
+        none is open. Emitting a stray `</g>` would make the document
+        malformed, which is worse than ignoring an unbalanced call, and
+        it matches `Canvas.pop_clip` treating an unbalanced close as
+        nothing to undo.
+        """
+        if self._open_group:
+            self._body += "</g>\n"
+            self._open_group = False
+
     def draw_text(
         mut self,
         x: Int,
@@ -738,6 +777,10 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(self.height)
             + '">\n'
             + self._body
+            # A group the caller never closed: closed here rather than
+            # emitted unbalanced, so `to_string` and `write_svg` always
+            # produce well-formed markup.
+            + ("</g>\n" if self._open_group else "")
             + "</svg>\n"
         )
 

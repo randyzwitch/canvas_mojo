@@ -39,7 +39,8 @@ defaults in `text/font_discovery.mojo` do not cover yours.
 ## The DrawTarget trait, and why the package works
 
 `DrawTarget` (`canvas/vector/draw_target.mojo`) is the load-bearing
-idea in this package. It declares ten drawing primitives:
+idea in this package. It declares ten drawing primitives, plus two
+methods that label rather than draw:
 
 ```mojo
 trait DrawTarget:
@@ -53,6 +54,8 @@ trait DrawTarget:
     def fill_ring_sector_aa(mut self, ...): ...
     def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0): ...
     def fill_path_aa(mut self, path: Path, color: Color): ...
+    def begin_annotated_group(mut self, title: String): ...
+    def end_annotated_group(mut self): ...
 ```
 
 Two backends implement it, and they work in completely different ways:
@@ -78,6 +81,26 @@ touches an outline. There is no shared operation to generalize, so
 for vector, and a generic caller collects text as plain data (position,
 string, color, size, alignment) and lets each backend draw it outside
 the generic path.
+
+`begin_annotated_group`/`end_annotated_group` look like a violation of
+that and are not, for a reason worth stating precisely. `SvgCanvas`
+emits `<g><title>`; `Canvas` does nothing at all. The line is whether a
+backend's *inability* is lossy:
+
+- Text is lossy to drop, and each backend has to do something
+  different, so there is nothing to generalize — it stays off the
+  trait.
+- A group label is lossless to drop. A raster image has no per-shape
+  metadata for a reader to lose, so ignoring the label costs nothing
+  that existed. The caller gets tooltips where tooltips are possible
+  and identical pixels where they are not, without branching on the
+  backend.
+
+So a no-op implementation is acceptable when the operation adds
+*metadata* a backend has no place for, and is not acceptable when it
+adds *drawing* a backend would then silently omit. If you are proposing
+a trait method one backend would no-op, that is the question to answer
+first.
 
 Two further consequences worth knowing before you propose an addition:
 

@@ -620,5 +620,92 @@ def test_to_string_wraps_body_in_svg_root_with_correct_dimensions() raises:
     assert_true(s.strip().endswith("</svg>"), "document is properly closed")
 
 
+def test_annotated_group_wraps_elements_with_an_escaped_title() raises:
+    # `<title>` as the first child of a `<g>` is what a browser shows
+    # as a hover tooltip for everything in that group, which is the
+    # point of the feature. The title is element content, so it takes
+    # _escape_xml_text's escaping.
+    var svg = SvgCanvas(100, 100)
+    svg.begin_annotated_group("Q1 <profit> & loss")
+    svg.fill_rect(0, 0, 10, 10, Color(1, 2, 3))
+    svg.end_annotated_group()
+    var s = svg.to_string()
+
+    assert_true(
+        "<g>\n<title>Q1 &lt;profit&gt; &amp; loss</title>\n" in s,
+        "group opens with its escaped title",
+    )
+    assert_true(
+        '<title>Q1 &lt;profit&gt; &amp; loss</title>\n<rect x="0"' in s,
+        "the drawn element follows the title inside the group",
+    )
+    assert_true("</g>\n" in s, "the group is closed")
+
+
+def test_drawing_after_end_annotated_group_is_outside_it() raises:
+    # The scope has to actually end, or every later element inherits a
+    # tooltip that does not belong to it.
+    var svg = SvgCanvas(100, 100)
+    svg.begin_annotated_group("inside")
+    svg.fill_rect(0, 0, 10, 10, Color(1, 2, 3))
+    svg.end_annotated_group()
+    svg.fill_rect(20, 0, 10, 10, Color(4, 5, 6))
+    var s = svg.to_string()
+
+    assert_true(
+        '</g>\n<rect x="20"' in s,
+        "an element drawn after the group closes falls outside it",
+    )
+    assert_equal(s.count("<g>"), 1, "exactly one group was opened")
+    assert_equal(s.count("</g>"), 1, "and exactly one was closed")
+
+
+def test_opening_a_group_inside_one_closes_the_first() raises:
+    # Groups do not nest. A second begin closes the first rather than
+    # nesting, which keeps one flag as the whole state and keeps the
+    # markup well formed however a caller pairs its calls.
+    var svg = SvgCanvas(100, 100)
+    svg.begin_annotated_group("first")
+    svg.fill_rect(0, 0, 5, 5, Color(0, 0, 0))
+    svg.begin_annotated_group("second")
+    svg.fill_rect(10, 0, 5, 5, Color(0, 0, 0))
+    svg.end_annotated_group()
+    var s = svg.to_string()
+
+    assert_true(
+        '<rect x="0" y="0" width="5" height="5" fill="#000000"/>\n</g>' in s,
+        "the first group closed before the second opened",
+    )
+    assert_equal(s.count("<g>"), 2, "two groups, not one nested in another")
+    assert_equal(s.count("</g>"), 2, "both closed")
+
+
+def test_an_unclosed_group_is_closed_by_to_string() raises:
+    # A caller that forgets end_annotated_group would otherwise get a
+    # document with an unbalanced <g>, which is malformed XML rather
+    # than merely untidy -- so serializing closes it.
+    var svg = SvgCanvas(100, 100)
+    svg.begin_annotated_group("never closed")
+    svg.fill_rect(0, 0, 10, 10, Color(1, 2, 3))
+    var s = svg.to_string()
+
+    assert_equal(s.count("<g>"), 1, "the group was opened")
+    assert_equal(s.count("</g>"), 1, "and closed on serialization")
+    assert_true("</g>\n</svg>" in s, "closed before the document ends")
+
+
+def test_end_annotated_group_without_a_group_emits_nothing() raises:
+    # A stray </g> is malformed, which is worse than ignoring an
+    # unbalanced call -- and it matches Canvas.pop_clip treating an
+    # unbalanced close as nothing to undo.
+    var svg = SvgCanvas(100, 100)
+    svg.end_annotated_group()
+    svg.fill_rect(0, 0, 10, 10, Color(1, 2, 3))
+    var s = svg.to_string()
+
+    assert_equal(s.count("</g>"), 0, "no stray closing tag")
+    assert_equal(s.count("<g>"), 0, "and no opening one either")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
