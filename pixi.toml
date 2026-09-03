@@ -7,8 +7,17 @@ version = "0.13.0"
 
 [dependencies]
 mojo = ">=1.0.0,<2"
+
+# hugo and go serve only the docs tasks, so they sit in their own
+# feature: installing the default environment for `test`/`example`
+# does not pull them, and `pixi run docs` selects the `docs`
+# environment (default feature plus this one) that does.
+[feature.docs.dependencies]
 hugo = ">=0.164.0,<0.165"
 go = ">=1.26.6,<2"
+
+[environments]
+docs = ["docs"]
 
 [tasks]
 # Both tasks run every file in parallel (scripts/run_parallel.sh).
@@ -31,6 +40,9 @@ bench = "mojo run -I . benchmarks/bench_canvas.mojo"
 # format.yml also runs this on every PR and commits the result back.
 fmt = "mojo format canvas/ tests/ examples/ scripts/"
 
+# The docs tasks live on the `docs` feature, so `pixi run docs` runs in
+# the environment that has hugo/go without anyone naming it.
+[feature.docs.tasks]
 # Regenerates docs/site/content. Nothing this produces is committed;
 # .gitignore lists what is generated and what is real source.
 #
