@@ -274,7 +274,7 @@ def fill_polygon_aa(
         if points[i].y > max_y:
             max_y = points[i].y
 
-    var edges = _EdgeTable()
+    var edges = _EdgeTable(n)
     for i in range(n):
         var a = points[i]
         var b = points[(i + 1) % n]
