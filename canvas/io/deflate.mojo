@@ -1,25 +1,15 @@
 """DEFLATE (RFC 1951), both directions.
 
-`inflate()` is a direct translation of zlib's `puff.c` reference decoder
-(Mark Adler, zlib-licensed; "a simple inflate written to be an
-unambiguous way to specify the deflate format") rather than a
-re-derivation from the RFC alone. `deflate()` is a from-scratch LZ77 +
-fixed-Huffman encoder built against the RFC's text, with `inflate()`
-already in place to round-trip against.
+`inflate()` is a translation of zlib's `puff.c` reference decoder (Mark
+Adler, zlib-licensed), using its "SLOW" bit-at-a-time `decode()` variant
+rather than the faster table-driven one. `deflate()` is a from-scratch
+LZ77 + fixed-Huffman encoder built against the RFC: one fixed-Huffman
+block (RFC 1951 3.2.6, BTYPE=01, no dynamic tree to build or transmit)
+over a hash-chain match finder with bounded search depth (`_MAX_CHAIN`).
+canvas.io.png's `write_png` is the caller.
 
-`inflate()` is puff.c's "SLOW" (readable, bit-at-a-time) `decode()`
-variant rather than its faster table-driven one: chart-sized images, not
-a video codec. `deflate()` makes the same trade -- a single
-fixed-Huffman block (RFC 1951 3.2.6, BTYPE=01, no dynamic tree to build
-or transmit) over a hash-chain LZ77 match finder with bounded search
-depth (`_MAX_CHAIN`). canvas.io.png's `write_png` is the caller.
-
-Verified against real zlib output: every `inflate()` stage round-trips
-actual `zlib.compress()` output (stored, fixed-Huffman and
-dynamic-Huffman blocks each separately) back to the original bytes, and
-`deflate()`'s output goes back through both `inflate()` and Python's
-`zlib.decompress()` -- a separate implementation, so a shared bug cannot
-hide. See tests/test_deflate.mojo.
+tests/test_deflate.mojo round-trips both directions against real
+`zlib.compress()`/`zlib.decompress()` output.
 """
 
 comptime _MAX_BITS = 15
@@ -151,16 +141,14 @@ def _construct(
 
     An *incomplete* code does not raise: a fixed block's distance code
     and a dynamic block's single-symbol code are both legitimately
-    incomplete (RFC 1951 3.2.7's "one distance code of one bit"). Only
-    the caller knows whether that's acceptable, so it comes back
-    through `left_out` -- 0 when complete, >0 when not, puff.c's
-    `construct()` return value.
+    incomplete (RFC 1951 3.2.7). Only the caller knows whether that is
+    acceptable, so it comes back through `left_out` -- 0 when complete,
+    >0 when not, puff.c's `construct()` return value.
 
-    `left_out` is an out-parameter rather than a returned struct field
-    because extracting a field from a local multi-field value hits a
-    Mojo ownership limitation: returning `_ConstructResult(table,
-    left)` makes every call site's `result.table^` fail to compile with
-    "field ... destroyed out of the middle of a value".
+    `left_out` is an out-parameter rather than a returned struct field:
+    returning `_ConstructResult(table, left)` makes every call site's
+    `result.table^` fail to compile with "field ... destroyed out of the
+    middle of a value".
     """
     var counts = List[Int](capacity=_MAX_BITS + 1)
     for _ in range(_MAX_BITS + 1):
@@ -560,8 +548,7 @@ def inflate(var compressed: List[UInt8]) raises -> List[UInt8]:
     first. Direct translation of puff.c's top-level `puff()` loop.
 
     Takes ownership of `compressed`, moving it into the bit reader
-    rather than copying: `List[UInt8]` isn't cheaply copyable and no
-    caller needs the buffer back.
+    rather than copying.
 
     Args:
         compressed: Raw DEFLATE bytes, no zlib wrapper.
@@ -735,13 +722,10 @@ struct _HashChains(Movable):
     LZ77 chain structure, and the reason a match search does not need a
     dictionary.
 
-    An insert is two array stores. The _MAX_CHAIN cap sits on the search
-    (bounding what is walked) rather than on the insert (bounding what is
-    stored), since `_find_match` never looks past that many candidates.
-
-    Walking `prev` from `head` yields positions in most-recent-first
-    order, which is what makes `_find_match`'s "nearest among equal
-    lengths" tie-break fall out for free.
+    The _MAX_CHAIN cap sits on the search rather than the insert, since
+    `_find_match` never looks past that many candidates. Walking `prev`
+    from `head` yields positions most-recent-first, which is what makes
+    `_find_match`'s "nearest among equal lengths" tie-break free.
     """
 
     # Int32, not Int: these are positions in a buffer DEFLATE already
@@ -798,16 +782,13 @@ def _find_match(chains: _HashChains, data: List[UInt8], pos: Int) -> _Match:
     byte.
 
     A bucket may hold positions whose 3 bytes merely *hash* the same
-    (see _hash3), so a candidate is not assumed to match; the
-    comparison below establishes it. A collision therefore costs a
-    rejected candidate, never a wrong match.
+    (see _hash3), so the comparison below establishes a real match; a
+    collision costs a rejected candidate, never a wrong match.
 
-    Length is measured by byte-by-byte comparison against the
-    *original* input array, not a partially-built output buffer, which
-    stays correct when candidate and current position overlap
-    (distance < length, e.g. a solid-color run at distance=1): every
-    byte compared already exists in `data`. That's the overlapping-copy
-    case _codes handles on the decode side.
+    Length is measured against the *original* input array, not a
+    partially-built output buffer, which stays correct when candidate and
+    current position overlap (distance < length, as in a solid-color run
+    at distance=1): every byte compared already exists in `data`.
     """
     var n = len(data)
     if pos + _MIN_MATCH > n:
@@ -879,9 +860,8 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     (RFC 1950) -- a caller needing one, such as write_png, adds the
     2-byte header and 4-byte Adler-32 trailer itself.
 
-    Always one block (BFINAL=1 from the start). RFC 1951 caps a stored
-    block at 65535 bytes but puts no upper bound on a compressed one,
-    so chart-sized images never need splitting.
+    Always one block (BFINAL=1 from the start): RFC 1951 caps a stored
+    block at 65535 bytes but puts no upper bound on a compressed one.
 
     Args:
         data: Bytes to compress.

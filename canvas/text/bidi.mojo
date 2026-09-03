@@ -8,26 +8,22 @@ that land inside a right-to-left run are mirrored.
 
 Not implemented here:
 
-- UAX #9's full weak/neutral-type resolution (rules W1-W7, N0-N2), which
-  collapses into one rule: a neutral/weak run takes the level of the
-  strong text next to it, or the paragraph's base level. That is correct
-  for digits, punctuation and spaces between words, not for every
-  adjacency UAX #9 enumerates.
+- UAX #9's full weak/neutral-type resolution (W1-W7, N0-N2), which
+  collapses into one rule here: a neutral/weak run takes the level of the
+  strong text next to it, or the paragraph's base level. Correct for
+  digits, punctuation and spaces between words, not for every adjacency
+  UAX #9 enumerates.
 - Explicit directional formatting characters
-  (LRE/RLE/PDF/LRI/RLI/FSI/PDI/LRM/RLM), which are not recognized at
-  all.
-- Keeping combining marks attached to their base character during
-  reordering. A base+diacritic pair in an RTL script (Hebrew niqqud,
-  Arabic tashkeel) has its mark repositioned by the same per-codepoint
-  reversal every other character gets.
-- Arabic contextual letter-shaping: selecting a letter's
-  isolated/initial/medial/final glyph form and connecting it to its
-  neighbors. This module reorders and mirrors existing codepoints only.
+  (LRE/RLE/PDF/LRI/RLI/FSI/PDI/LRM/RLM), not recognized at all.
+- Keeping combining marks attached to their base during reordering, so a
+  base+diacritic pair in an RTL script (Hebrew niqqud, Arabic tashkeel)
+  has its mark repositioned by the per-codepoint reversal.
+- Arabic contextual letter-shaping: this module reorders and mirrors
+  existing codepoints only.
 
-Hebrew has no contextual shaping -- each codepoint always maps to the
-same glyph -- so Hebrew text laid out through this module renders fully.
-Arabic gets the correct right-to-left order and correctly mirrored
-punctuation, with each letter in its isolated form.
+Hebrew has no contextual shaping, so Hebrew text laid out through this
+module renders fully. Arabic gets the correct right-to-left order and
+mirrored punctuation, with each letter in its isolated form.
 """
 
 

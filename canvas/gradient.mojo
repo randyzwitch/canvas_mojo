@@ -215,10 +215,8 @@ struct RadialGradient(ColorSource, Movable):
     Add stops with add_stop(), then pass to fill_rect_radial_gradient/
     fill_path_radial_gradient (or query color_at() directly).
 
-    The simple single-circle form (center + radius), not the two-circle
-    form SVG/Cairo/HTML5 Canvas offer, where the focal point can sit
-    off-center with its own radius. Bubble centers, donut centers and
-    radial legend swatches all want a concentric gradient.
+    The single-circle form (center + radius) only, not the two-circle
+    form SVG/Cairo/HTML5 Canvas offer with an off-center focal point.
 
     Stops need not be in insertion order, as in LinearGradient; both
     share `_color_at_t`.
@@ -273,11 +271,9 @@ struct RadialGradient(ColorSource, Movable):
         distance is never negative, so only the far end ever clamps),
         then the stop lookup LinearGradient.color_at uses.
 
-        radius == 0.0 collapses every stop's circle to one point.
-        Rather than dividing by zero, that resolves to t=1.0 -- a solid
-        fill of the highest-offset stop's color -- just as a
-        LinearGradient with coincident endpoints (len2 == 0.0) resolves
-        to t=0.0's stop.
+        radius == 0.0 collapses every stop's circle to one point and
+        resolves to t=1.0, a solid fill of the highest-offset stop's
+        color, rather than dividing by zero.
 
         Args:
             x: Point x.

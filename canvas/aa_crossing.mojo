@@ -1,30 +1,24 @@
-"""The anti-aliased scanline sweep, and the pieces it is built from:
-`_AACrossing` (one sub-scanline crossing at a real-valued x --
-polygon_fill's `_Crossing` with a fractional y, where x stays `Float64`
-rather than rounding to `Int`, since an AA sweep places a crossing
-between two supersample columns, not two whole pixels), the insertion
-sort that orders a sub-scanline's crossings, the `_EdgeTable` those
-crossings are read out of, and `_sweep_edges_aa` itself -- the coverage
-sweep `fill_path_aa` and `fill_polygon_aa` both run, once, over whatever
-edges their caller hands in.
+"""The anti-aliased scanline sweep and its parts: `_AACrossing` (one
+sub-scanline crossing at a real-valued x, kept `Float64` since an AA
+sweep places a crossing between two supersample columns rather than two
+whole pixels), the insertion sort that orders a sub-scanline's
+crossings, the `_EdgeTable` they are read out of, and `_sweep_edges_aa`
+-- the coverage sweep `fill_path_aa` and `fill_polygon_aa` both run over
+whatever edges their caller hands in.
 
 The two fills differ only in how they describe their geometry: one walks
-sub-paths, the other a single point ring. Everything after that --
-collecting a sub-scanline's crossings, sorting them, accumulating suffix
-windings, counting inside runs into per-pixel coverage, and turning
-coverage into alpha -- is identical.
+sub-paths, the other a single point ring. Everything after that is
+identical.
 
-A near-leaf module, which is what lets both callers share it:
+This is a near-leaf module, which is what lets both callers share it:
 `path.mojo` already imports drawing primitives *from* `polygon_fill`, so
-anything the two have in common has to live somewhere neither imports.
-Nothing here imports either of them (`_is_inside` comes from
-`fill_rule.mojo`, which imports nothing at all), leaving the DAG
-polygon_fill -> aa_crossing, path -> aa_crossing, path -> polygon_fill.
+shared code has to live where neither imports. Nothing here imports
+either of them -- `_is_inside` comes from `fill_rule.mojo`, which
+imports nothing -- leaving the DAG polygon_fill -> aa_crossing,
+path -> aa_crossing, path -> polygon_fill.
 
-The sort is insertion sort, since a sub-scanline's crossing count is a
-handful rather than the whole shape's point count. `polygon_fill`'s
-`_spans_from_crossings` uses the same reasoning for its own copy of this
-sort over `_Crossing`/`Int`.
+The sort is insertion sort: a sub-scanline's crossing count is a handful,
+not the whole shape's point count.
 """
 
 from std.math import ceil
@@ -73,22 +67,17 @@ def _sample_x(x0: Float64, g: Int, s: Int) -> Float64:
 struct _EdgeTable(Movable):
     """Every non-horizontal edge of a shape, as flat arrays.
 
-    The AA sweeps in `path.mojo` and `shapes/polygon_fill.mojo` both ask
-    each sub-scanline which edges cross it -- four questions per pixel
-    row at the default supersample. Asked against the caller's own point
-    lists, each edge costs two bounds-checked reads, a modulo to wrap the
-    closing edge, and two integer-to-float conversions, all before the
-    y-range test that usually rejects it, and none of that varies with
-    the row. Building the table once per fill hoists that work out; the
-    stored values are the ones the crossing computation already used, so
-    the arithmetic and its result are unchanged.
+    Both AA sweeps ask each sub-scanline which edges cross it -- four
+    questions per pixel row at the default supersample. Read from the
+    caller's own point lists, each edge would cost two bounds-checked
+    reads, a modulo to wrap the closing edge and two integer-to-float
+    conversions per row, none of it varying with the row. The table
+    hoists that out once per fill, storing the values the crossing
+    computation already used.
 
-    It lives here rather than in either caller for the same reason
-    `_AACrossing` does: `path.mojo` already imports from `polygon_fill`,
-    so anything they share has to live where neither imports. Edges are
-    added one at a time because the two callers describe their geometry
-    differently -- one walks sub-paths, the other a single point ring --
-    while the scan over the result is identical.
+    Edges are added one at a time, since the two callers describe their
+    geometry differently -- one walks sub-paths, the other a single point
+    ring -- while the scan over the result is identical.
     """
 
     var y_lo: List[Float64]
@@ -174,15 +163,12 @@ def _accumulate_row_coverage(
     into `row_covered` (which the caller has already cleared and sized to
     `row_width`).
 
-    This is where the anti-aliasing happens: everything above it is
-    bounds arithmetic and everything below it turns a count into a byte.
-    It is a separate function so both consumers of coverage can share it
-    -- `_sweep_edges_aa`, which blends the counts onto a canvas as alpha,
-    and `_sweep_edges_to_mask`, which stores them as a clip mask.
+    Separate from its two consumers so both can share it:
+    `_sweep_edges_aa` blends the counts onto a canvas as alpha, and
+    `_sweep_edges_to_mask` stores them as a clip mask.
 
     `crossings` and `suffix` are caller-owned scratch, reused across
-    every row of a sweep rather than reallocated per row -- see the
-    callers.
+    every row of a sweep rather than reallocated per row.
     """
     var s = supersample
     var step = 1.0 / Float64(s)
@@ -281,42 +267,24 @@ def _sweep_edges_aa(
     double-blend anywhere, including where a shape crosses itself.
 
     `fill_path_aa` and `fill_polygon_aa` are the callers; each builds its
-    own `_EdgeTable` and bounding box from its own geometry and then runs
-    this. `min_x`/`min_y`/`max_x`/`max_y` are the integer bounds of that
-    geometry, unpadded -- the one-pixel skirt every AA fill needs is
-    added here, so neither caller has to remember it.
+    own `_EdgeTable` and bounding box and then runs this.
+    `min_x`/`min_y`/`max_x`/`max_y` are unpadded integer bounds -- the
+    one-pixel AA skirt is added here.
 
-    The sweep runs per sub-scanline rather than per sub-pixel sample. The
-    naive membership test (`_point_in_subpaths` in path.mojo,
-    `_point_in_polygon` in polygon_fill.mojo -- both kept as reference
-    implementations this must match pixel for pixel, and both still
-    tested directly) rescans every edge for each of a pixel's
-    supersample^2 sub-samples: O(pixels * supersample^2 * edges), fine
-    for a small shape and seconds of work for a large edge-dense one,
-    since arc_to's point count scales with radius. Collecting a
-    sub-scanline's crossings once removes the `* edges` factor: sort by
-    x, precompute each crossing's suffix winding sum, then sweep every
-    sub-sample's x -- strictly increasing across the row -- against that
-    sorted list with one forward-only pointer, an amortized O(1) lookup
-    per sample. The math per sample is the reference ray cast either way.
+    The sweep runs per sub-scanline, not per sub-pixel sample. Rescanning
+    every edge per sub-sample, as the reference tests `_point_in_subpaths`
+    and `_point_in_polygon` do, is O(pixels * supersample^2 * edges).
+    Collecting a sub-scanline's crossings once removes the `* edges`
+    factor: sort by x, precompute each crossing's suffix winding sum, then
+    sweep every sub-sample's x -- strictly increasing across the row --
+    against that sorted list with one forward-only pointer. The math per
+    sample is the same ray cast either way.
 
-    `edges` is borrowed and needs to stay borrowed: the band tasks below
-    read it while it lives in the caller's frame. Making it `var`, so
-    this function can preprocess the table before sweeping it, passes
-    `create_task` an aggregate owned by this frame -- canvas_mojo#97,
-    filed upstream as modular/modular#7075. Preprocess in the caller, or
-    take the parameter `mut`. What that change does, on Mojo 1.0.0 with
-    64 cores and `parallelism_level()` 64, so the loop below dispatches
-    64 band tasks over one `_EdgeTable`: across two sets of six
-    consecutive runs of `tests/test_golden.mojo`, none passed. Each run
-    either did not terminate or rendered output differing from the
-    goldens, and the two outcomes split 4/2 and 3/3 between the sets. The
-    scene is always `downsampled_supersample`, the only one whose
-    bounding box is large enough to band, and neither outcome names the
-    argument -- the mismatched renders are caught only because the golden
-    suite exists. An owned struct-of-`List` passed to 64 tasks behaves
-    correctly on its own, with and without mutation between construction
-    and dispatch, so no smaller reproduction was found.
+    Keep `edges` borrowed. Making it `var` hands `create_task` an
+    aggregate owned by this frame, which makes the golden suite hang or
+    render wrong output nondeterministically -- canvas_mojo#97, filed
+    upstream as modular/modular#7075, which carries the run-by-run
+    detail. Preprocess in the caller, or take the parameter `mut`.
     """
     var s = supersample
     var row_first_px = min_x - 1

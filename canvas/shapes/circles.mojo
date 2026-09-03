@@ -18,11 +18,10 @@ def draw_circle(
     """The midpoint circle algorithm: integer-only, plotting via 8-way
     symmetry around the center.
 
-    At y==0 (the first iteration) and x==y (the diagonal crossing),
-    several of the 8 symmetric expressions collapse onto one pixel --
-    (cx+y,cy+x) and (cx-y,cy+x) both become (cx,cy+x) when y==0.
-    Plotting all 8 unconditionally would set_pixel there more than
-    once, double- or quadruple-blending a translucent color.
+    At y==0 and x==y several of the 8 symmetric expressions collapse
+    onto one pixel -- (cx+y,cy+x) and (cx-y,cy+x) both become (cx,cy+x)
+    when y==0 -- so plotting all 8 unconditionally would set_pixel there
+    more than once and multiply-blend a translucent color.
 
     Args:
         canvas: Canvas to draw into.
@@ -72,11 +71,9 @@ def fill_circle(
     mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color
 ):
     """Fill a solid disk, one horizontal span per row, so each pixel is
-    set exactly once and a translucent color never double-blends --
-    unlike reusing draw_circle's 8-way symmetry across rows, which
-    touches some rows twice near the diagonal octant boundary.
+    set exactly once and a translucent color never double-blends.
 
-    Hard-edged; see fill_circle_aa for a smooth edge.
+    Hard-edged; fill_circle_aa has a smooth edge.
 
     Args:
         canvas: Canvas to fill into.
@@ -111,25 +108,22 @@ def fill_circle_aa(
     """Anti-aliased filled disk.
 
     For every pixel near the circle, samples an NxN sub-pixel grid and
-    tests each sub-sample analytically against the true real-valued
-    disk -- no temp canvas, just a coverage fraction turned into that
-    pixel's alpha. Each output pixel is visited exactly once.
+    tests each sub-sample against the real-valued disk, turning the
+    coverage fraction into that pixel's alpha. Each output pixel is
+    visited exactly once.
 
-    Pixel (px, py) is treated as centered AT (px, py), the convention
-    the hard-edged draw_circle/fill_circle use, not as a unit square
-    with (px, py) at its corner. That's what makes supersample=1
-    degenerate to the hard-edged decision pixel for pixel, and keeps
-    this circle centered on the same point given identical
-    (cx, cy, radius).
+    Pixel (px, py) is centered AT (px, py), the convention the hard-edged
+    draw_circle/fill_circle use, not a unit square with (px, py) at its
+    corner. That is what makes supersample=1 degenerate to the hard-edged
+    decision pixel for pixel.
 
-    Before sampling, checks whether the pixel's square
-    ([px-0.5, px+0.5] x [py-0.5, py+0.5]) is provably entirely inside
-    or outside the disk, via that square's nearest and farthest points
-    from the center -- standard point-to-AABB min/max distance. Either
-    way every one of the n*n samples would agree, giving coverage 0 or
-    full alpha without visiting the grid. Most of a large circle's
-    bounding box is interior, so the per-sample loop then runs only for
-    the O(radius) pixels straddling the edge, not all O(radius^2).
+    Before sampling, the pixel's square ([px-0.5, px+0.5] x
+    [py-0.5, py+0.5]) is tested for being provably wholly inside or
+    outside the disk, via its nearest and farthest points from the center
+    (point-to-AABB min/max distance). Either way all n*n samples would
+    agree, so coverage is 0 or full without visiting the grid, leaving
+    the per-sample loop to the O(radius) pixels straddling the edge
+    rather than all O(radius^2).
 
     Args:
         canvas: Canvas to fill into.
@@ -137,8 +131,7 @@ def fill_circle_aa(
         cy: Center y.
         radius: Circle radius in pixels.
         color: Fill color.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     fill_circle_aa(
         canvas,
@@ -187,9 +180,7 @@ def fill_circle_aa(
     to the pixel grid.
 
     This is the real implementation; the whole-pixel overload above
-    converts and calls it. See `draw_line_aa`'s sub-pixel overload
-    (canvas.shapes.lines) for why a chart wants this one -- a scatter
-    marker at y = 44.3 is the same case.
+    converts and calls it.
 
     Args:
         canvas: Canvas to fill into.
@@ -197,8 +188,7 @@ def fill_circle_aa(
         cy: Center y, sub-pixel.
         radius: Circle radius in pixels, sub-pixel.
         color: Fill color.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     if radius <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
@@ -347,18 +337,13 @@ def draw_circle_aa(
 ):
     """Anti-aliased circle outline, ~1px wide.
 
-    fill_circle_aa's supersampled analytic-coverage technique,
-    including the pixel-centered-at-(px,py) convention, but testing
-    each sub-sample against a thin ring (radius +/- 0.5) rather than
-    the filled disk.
+    fill_circle_aa's supersampled coverage technique, including the
+    pixel-centered-at-(px,py) convention, testing each sub-sample against
+    a thin ring (radius +/- 0.5) rather than the filled disk.
 
-    A 1-unit-wide ring never has a pixel square provably fully
-    *inside* it, so fill_circle_aa's inside fast path has no analog
-    here. Most of the bounding square -- well inside the hole or well
-    outside the outer edge, both far larger than the ring itself at any
-    real radius -- is provably outside, through the same AABB
-    nearest/farthest-point test, and skipping those is the win for a
-    large outline.
+    A 1-unit-wide ring never contains a whole pixel square, so there is
+    no provably-inside fast path. Most of the bounding square is provably
+    outside, through the same AABB nearest/farthest-point test.
 
     Args:
         canvas: Canvas to draw into.
@@ -366,8 +351,7 @@ def draw_circle_aa(
         cy: Center y.
         radius: Circle radius in pixels.
         color: Outline color.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)

@@ -3,19 +3,16 @@
 anti-aliased (draw_line_aa/draw_polyline_aa/draw_polygon_aa), and the
 dash-aware cores they share (_draw_line_core, _draw_polyline_core_aa).
 
-`draw_polygon`/`draw_polygon_aa` here draw the *outline* only -- this
-file's line machinery closed into a loop. `fill_polygon`/
-`fill_polygon_aa` in canvas.shapes.polygon_fill fill the *interior* by
-an entirely different scanline algorithm, and live in a separate file.
+`draw_polygon`/`draw_polygon_aa` here draw the *outline* only. The
+*interior* fills, `fill_polygon`/`fill_polygon_aa`, are a different
+scanline algorithm in canvas.shapes.polygon_fill.
 
-Naming convention, followed by every file in canvas.shapes/: hard-edged
-and anti-aliased variants stay separate functions (draw_circle vs.
-draw_circle_aa) rather than one function behind an `antialias: Bool`. A
-shared name would take parameters meaningful in only one branch
-(draw_line_aa's `width` has no hard-edged equivalent -- Bresenham is
-definitionally 1px) and would put a complexity jump behind what looks
-like a toggle (hard-edged circle drawing is O(radius); AA is
-O(radius^2 * supersample^2)).
+Naming convention across canvas.shapes/: hard-edged and anti-aliased
+variants are separate functions (draw_circle vs. draw_circle_aa), never
+one function behind an `antialias: Bool`. The two differ in complexity
+class -- hard-edged circle drawing is O(radius), AA is
+O(radius^2 * supersample^2) -- and in which parameters apply, since
+Bresenham is definitionally 1px and takes no `width`.
 """
 
 from std.math import ceil, cos, floor, sin, sqrt
@@ -33,19 +30,13 @@ comptime _SQRT2 = 1.4142135623730951
 struct LineCap(Copyable, ImplicitlyCopyable, Movable):
     """How an open stroke ends.
 
-    ROUND, the default, caps with a half-disk of the stroke's own radius,
-    so a stroke extends half its width past each endpoint. BUTT stops
-    exactly at the endpoint. SQUARE stops half a width past it, with a
-    flat end rather than a curved one.
+    ROUND, the default, caps with a half-disk of the stroke's radius, so
+    a stroke extends half its width past each endpoint -- a 4px round cap
+    on a rule from x=40 to x=560 spans 38 to 562. BUTT stops exactly at
+    the endpoint. SQUARE stops half a width past it, flat.
 
-    The overshoot is visible at chart scale. An axis rule drawn from
-    x=40 to x=560 with a 4px round cap spans 38 to 562, past its own tick
-    marks, and a bar drawn as a thick line ends in a dome rather than
-    flush with the baseline. Shortening the line does not fix it, since
-    the overshoot scales with stroke width.
-
-    Caps apply only to the two ends of an *open* stroke. A closed
-    polygon has no ends, and passing a cap for one changes nothing.
+    Caps apply only to the two ends of an *open* stroke; a closed polygon
+    has no ends and ignores them.
     """
 
     var _value: Int
@@ -88,15 +79,11 @@ def _draw_line_core(
     omit a segment's shared endpoint with its neighbor, so a
     translucent color doesn't get blended twice at every joint.
 
-    Returns the total distance traveled -- the sum of per-step
-    Euclidean lengths, 1.0 for an axis step and sqrt(2) for a diagonal
-    one, since Bresenham moves exactly one pixel in x and/or y per step
-    -- so draw_polyline/draw_polygon can carry a dash pattern's phase
-    across a joint into the next segment's dash_start_distance instead
-    of restarting it at every corner. This is the accumulated
-    raster-walk distance, not the idealized sqrt(dx^2+dy^2): the two
-    are close but not bit-identical, and the accumulated one is
-    consistent with the pixels this call actually drew.
+    Returns the total distance traveled -- the sum of per-step Euclidean
+    lengths, 1.0 for an axis step and sqrt(2) for a diagonal one -- so
+    draw_polyline/draw_polygon can carry a dash pattern's phase across a
+    joint. That is the accumulated raster-walk distance, not the
+    idealized sqrt(dx^2+dy^2); the two are close but not bit-identical.
     """
     var dx = abs(x1 - x0)
     var dy = -abs(y1 - y0)
@@ -189,14 +176,8 @@ def draw_line_aa(
 
     A one-segment polyline, and drawn as one: `_draw_polyline_core_aa`
     turns the stroke into an outline and fills it, so the cost follows
-    the stroke's own area rather than its bounding box. Scanning the
-    bounding box instead costs the same for a 1-pixel line as for the
-    rectangle it spans -- a full-width diagonal covers a few thousand
-    pixels inside a box of nearly a million.
-
-    The coverage test is minimum-distance-to-segment with round caps; a
-    single segment has no joint, so the core's per-sample minimum reduces
-    to that.
+    the stroke's area rather than its bounding box. The coverage test is
+    minimum-distance-to-segment with round caps.
 
     Args:
         canvas: Canvas to draw into.
@@ -206,8 +187,7 @@ def draw_line_aa(
         y1: End point y.
         color: Line color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         dashes: On/off segment lengths in pixels, cycled along the
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
@@ -251,10 +231,9 @@ def draw_line_aa(
     to a fraction of a pixel rather than snapped to the pixel grid.
 
     This is the real implementation; the whole-pixel overload above
-    converts and calls it. A chart plotting a value at x = 103.7 wants
-    this one: rounding to 104 first moves the line by a third of a
-    pixel, which at a 1px stroke width is a visible shift in where the
-    series sits.
+    converts and calls it. Placing a value at x = 103.7 rather than
+    rounding to 104 shifts the line by a third of a pixel, which at a 1px
+    stroke width is visible.
 
     Args:
         canvas: Canvas to draw into.
@@ -264,8 +243,7 @@ def draw_line_aa(
         y1: End point y.
         color: Line color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         dashes: On/off segment lengths in pixels, cycled along the
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
@@ -298,14 +276,10 @@ def draw_polyline(
 ):
     """Connect consecutive points with line segments (Bresenham).
 
-    Not closed -- see draw_polygon for that. Each interior joint is
-    drawn by exactly one segment (the next segment skips its shared
-    start point), so a translucent color doesn't get blended twice
-    where segments meet.
-
-    A dash pattern's phase carries across joints: each segment starts
-    where the previous one's accumulated distance left off, so dashes
-    don't reset at a corner.
+    Not closed; draw_polygon closes. Each interior joint is drawn by
+    exactly one segment (the next skips its shared start point), so a
+    translucent color is not blended twice where segments meet. Dash
+    phase carries across joints rather than resetting at a corner.
 
     Args:
         canvas: Canvas to draw into.
@@ -437,16 +411,14 @@ def _draw_polyline_core_aa(
 ):
     """Shared implementation for draw_polyline_aa/draw_polygon_aa.
 
-    Calling draw_line_aa per segment would double-blend at every
-    joint. Instead the whole stroke -- every segment, its caps, and its
-    joins -- is converted to a single closed outline by `_stroke_edges`
-    and filled once with FillRule.NONZERO, so a pixel under two
-    overlapping segments is still written exactly once.
+    The whole stroke -- every segment, its caps and its joins -- becomes
+    one closed outline via `_stroke_edges` and is filled once with
+    FillRule.NONZERO, so a pixel under two overlapping segments is
+    written exactly once.
 
-    Dashing happens during that conversion rather than during
-    rasterization: `_stroke_edges` emits a separate outline per dash
-    "on" region, carrying the phase across joints, so the fill sees
-    ordinary geometry and needs to know nothing about dashes.
+    Dashing happens during that conversion: `_stroke_edges` emits a
+    separate outline per dash "on" region and carries the phase across
+    joints, so the fill sees ordinary geometry.
     """
     var count = len(points)
     if count == 0:
@@ -530,19 +502,17 @@ comptime _JOIN_DISK_TOLERANCE = 0.02
 struct LineJoin(Copyable, ImplicitlyCopyable, Movable):
     """How a stroke turns a corner.
 
-    ROUND, the default, fills the corner with a disk of the stroke's own
-    radius. BEVEL cuts it off flat, joining the two outer corners
-    directly. MITER extends both outer edges until they meet, giving the
-    sharp point a drawn box or axis frame is usually expected to have.
+    ROUND, the default, fills the corner with a disk of the stroke's
+    radius. BEVEL cuts it off flat, joining the two outer corners. MITER
+    extends both outer edges until they meet, giving a sharp point.
 
-    MITER needs a limit. As a corner tightens the apex runs away towards
-    infinity -- at 10 degrees it already sticks out more than eleven
-    times the stroke's half-width -- so past `miter_limit` the join falls
-    back to BEVEL. That is SVG's rule, and its default of 4 trips at
-    about 29 degrees.
+    MITER needs a limit: as a corner tightens its apex runs away towards
+    infinity, sticking out more than eleven times the half-width at 10
+    degrees, so past `miter_limit` the join falls back to BEVEL. That is
+    SVG's rule, and its default of 4 trips at about 29 degrees.
 
-    Joins apply only where a stroke actually turns. The two ends of an
-    open stroke are a cap, not a join -- see LineCap.
+    Joins apply only where a stroke turns; the ends of an open stroke are
+    a cap.
     """
 
     var _value: Int
@@ -609,16 +579,14 @@ def _add_join(
     """The wedge a stroke leaves on the outside of a corner at (vx, vy),
     arriving along unit (ux, uy) and leaving along unit (wx, wy).
 
-    ROUND fills it with a disk, which is also the shape the
-    min-distance definition produces and so the one every existing
-    stroke rendered.
+    ROUND fills it with a disk, the shape the min-distance definition
+    produces.
 
-    BEVEL and MITER need to know which side is outside. That is the
-    side away from the turn: the cross product of the two directions
-    gives the turn's handedness, and the outer normal is the one
-    opposed to it. Getting this backwards fills the *inner* corner,
-    which is already covered by both quads and so looks like nothing
-    happened until a wide stroke makes the missing outer wedge obvious.
+    BEVEL and MITER need to know which side is outside: the side away
+    from the turn, found from the cross product of the two directions.
+    Getting it backwards fills the *inner* corner, which both quads
+    already cover, so nothing appears to change until a wide stroke makes
+    the missing outer wedge obvious.
     """
     if join == LineJoin.ROUND:
         _add_disk(edges, vx, vy, half_width)
@@ -742,18 +710,13 @@ def _stroke_edges(
 ) -> _EdgeTable:
     """A stroke expressed as the outline of a filled region.
 
-    The min-distance formulation defines a stroke as every point within
-    `half_width` of some *drawn* part of the path, which is exactly the
-    union of one rectangle per drawn stretch and one disk per vertex it
-    turns through. Expressed that way, the shape goes to the ordinary
-    path fill: `_sweep_edges_aa` is already parallel across cores, where
-    banding a stroke sweep directly runs into the known issue in how
-    Mojo tasks receive aggregate arguments (canvas_mojo#97).
+    A stroke is every point within `half_width` of some *drawn* part of
+    the path, which is the union of one rectangle per drawn stretch and
+    one disk per vertex it turns through. Emitting that as edges lets the
+    ordinary path fill rasterize it.
 
-    Dashing is geometric rather than per-sample: each segment is split at
-    its dash boundaries once and only the drawn pieces are emitted. That
-    matches a per-sample on-dash test, since the parameter split on here
-    is the same projection such a test computes.
+    Dashing is geometric: each segment is split at its dash boundaries
+    once and only the drawn pieces are emitted.
 
     A drawn piece is a stadium -- a quad plus a disk at each end. Those
     end disks make a dash's ends round regardless of `cap`, which
@@ -957,17 +920,14 @@ def draw_polyline_aa(
     join: LineJoin = LineJoin.ROUND,
     miter_limit: Float64 = 4.0,
 ):
-    """Anti-aliased polyline. See draw_polyline for the hard-edged
-    version, and _draw_polyline_core_aa for how joints avoid
-    double-blending and how dash phase carries across them.
+    """Anti-aliased polyline; draw_polyline is the hard-edged version.
 
     Args:
         canvas: Canvas to draw into.
         points: Vertices to connect, in order.
         color: Line color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         dashes: On/off segment lengths in pixels, cycled along the
             whole polyline. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the polyline
@@ -1007,16 +967,14 @@ def draw_polyline_aa(
     grid.
 
     This is the real implementation; the whole-pixel overload above
-    converts and calls it. See `draw_line_aa`'s sub-pixel overload for
-    why a chart wants this one.
+    converts and calls it.
 
     Args:
         canvas: Canvas to draw into.
         points: Vertices to connect, in order, at sub-pixel positions.
         color: Line color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         dashes: On/off segment lengths in pixels. Empty (default) draws
             a solid line.
         dash_offset: Distance into the dash pattern to start at.
@@ -1051,19 +1009,17 @@ def draw_polygon_aa(
     join: LineJoin = LineJoin.ROUND,
     miter_limit: Float64 = 4.0,
 ):
-    """Anti-aliased polygon outline; see draw_polygon for the
-    hard-edged version. The closing segment joins every sample's
-    minimum-distance test like any other, so the closing vertex needs
-    no special case (unlike draw_polygon's skip_first/skip_last), and
-    dash phase carries across it too.
+    """Anti-aliased polygon outline; draw_polygon is the hard-edged
+    version. The closing segment enters the minimum-distance test like
+    any other, so the closing vertex needs no special case and dash phase
+    carries across it.
 
     Args:
         canvas: Canvas to draw into.
         points: Vertices to connect, in order.
         color: Line color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         dashes: On/off segment lengths in pixels, cycled all the way
             around the polygon. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the polygon starts
@@ -1104,16 +1060,14 @@ def draw_polygon_aa(
     pixel grid.
 
     This is the real implementation; the whole-pixel overload above
-    converts and calls it. See `draw_line_aa`'s sub-pixel overload for
-    why a chart wants this one.
+    converts and calls it.
 
     Args:
         canvas: Canvas to draw into.
         points: Vertices to connect, in order, at sub-pixel positions.
         color: Line color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         dashes: On/off segment lengths in pixels. Empty (default) draws
             a solid line.
         dash_offset: Distance into the dash pattern to start at.

@@ -11,15 +11,12 @@ Ten primitives are declared -- `fill_rect`, `fill_rect_gradient`,
 clipping, radial gradients and path-shaped gradients are not on the
 trait; each exists as a free function or a `Canvas` method instead.
 
-The two ellipse methods are the shapes `fill_path_aa`/`stroke_path_aa`
+The ellipse methods are the shapes `fill_path_aa`/`stroke_path_aa`
 cannot reproduce exactly: `Path.arc_to` takes a single `radius`, so a
 `Path` builds circular arcs only and an ellipse comes out as a cubic
-approximation. That also makes `draw_ellipse_aa` the only outline
-primitive here -- a circle outline is `stroke_path_aa` over a Path with
-one `arc_to`. It takes no `width`, unlike `draw_line_aa` and
-`stroke_path_aa`, because the raster primitive behind it draws a fixed
-~1px outline. `fill_rect_gradient` covers linear gradients, which a
-continuous color legend needs.
+approximation. That makes `draw_ellipse_aa` the only outline primitive
+here, and it takes no `width`, since the raster primitive behind it
+draws a fixed ~1px outline.
 
 Method parameters mirror the same-named function in
 `canvas.shapes`/`canvas.path`, minus `supersample`, `dashes` and
@@ -27,11 +24,10 @@ Method parameters mirror the same-named function in
 and a vector one has no equivalent knob.
 
 Text is not on the trait. `Canvas` rasterizes glyph outlines through
-`fill_path_aa` while `SvgCanvas` emits `<text>` markup for the viewer's
-font engine, so there is no shared operation to declare. A generic
-caller collects text as plain data (position, string, color, size,
-alignment) and lets each backend draw that list outside the generic
-path. Keeping text off `Canvas`'s method surface also keeps
+`fill_path_aa` while `SvgCanvas` emits `<text>` markup, so there is no
+shared operation to declare. A generic caller collects text as plain
+data (position, string, color, size, alignment) and lets each backend
+draw it. Keeping text off `Canvas`'s method surface also keeps
 `canvas.text`'s imports off every `Canvas` user, since Mojo resolves a
 struct's whole method surface eagerly.
 

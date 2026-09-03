@@ -102,16 +102,9 @@ def _opacity_attr(name: String, color: Color) -> String:
     """A ` fill-opacity="..."` / ` stroke-opacity="..."` attribute for
     `color`'s alpha, or `""` when it is fully opaque.
 
-    SVG carries alpha in a separate attribute rather than in the color,
-    since `#rrggbb` has nowhere to put it, so without this a translucent
-    color renders fully opaque here while the raster backend blends it,
-    and the same `DrawTarget` call produces two different pictures.
-
-    Omitted entirely at `a == 255`, matching the omit-at-default
-    convention `rotation` and `weight` already follow in `draw_text`.
-    Alpha is written the way SVG wants it, a 0-1 fraction at
-    `_format_svg_float`'s 3 decimals, which is the same shape
-    `fill_rect_gradient` emits for `stop-opacity`.
+    SVG carries alpha in a separate attribute, since `#rrggbb` has
+    nowhere to put it. Omitted entirely at `a == 255`, and written as a
+    0-1 fraction at `_format_svg_float`'s 3 decimals.
     """
     if color.a == 255:
         return ""
@@ -126,17 +119,13 @@ def _opacity_attr(name: String, color: Color) -> String:
 
 def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
     """`LinearGradient.stops` in ascending-offset order. `add_stop`
-    accepts stops in any order and the raster lookup honors that, but
-    SVG's `<stop>` clamps each offset to be no less than the previous
-    sibling's -- so descending offsets would emit every stop after the
-    first at the first stop's offset, flattening the gradient to one
-    color in every viewer. Sorting here, right before emitting, leaves
-    `add_stop`'s contract and `LinearGradient`'s storage untouched.
+    accepts any order, but SVG's `<stop>` clamps each offset to be no
+    less than the previous sibling's, so descending offsets would flatten
+    the gradient to one color in every viewer.
 
-    Insertion sort rather than stdlib `sort()`: `stops` is typically 2-4
-    entries, and the sort has to be stable -- two stops at the same
-    offset are a hard color transition, and an unstable sort could swap
-    which color owns which side of it.
+    The sort must be stable: two stops at the same offset are a hard
+    color transition, and swapping them swaps which color owns which
+    side.
     """
     var sorted_stops = List[_GradientStop](capacity=len(stops))
     for stop in stops:
@@ -298,19 +287,15 @@ struct SvgCanvas(DrawTarget, Movable):
         height: Int,
         gradient: LinearGradient,
     ):
-        """A real SVG `<linearGradient>` with
-        `gradientUnits="userSpaceOnUse"`, not a per-pixel raster fill.
-        `LinearGradient`'s (x0, y0)-(x1, y1) axis already lives in the
-        same absolute pixel space as this document's `<rect>`, so
-        `userSpaceOnUse` -- SVG's escape from its default shape-relative
-        `objectBoundingBox` units -- carries that axis over untranslated.
+        """An SVG `<linearGradient>` with
+        `gradientUnits="userSpaceOnUse"`. `LinearGradient`'s
+        (x0, y0)-(x1, y1) axis is already in the same absolute pixel
+        space as this document's `<rect>`, so `userSpaceOnUse` carries it
+        over untranslated instead of SVG's default shape-relative
+        `objectBoundingBox` units.
 
-        Emits a fresh `<defs><linearGradient id="gradN">` per call rather
-        than deduping a gradient reused across calls; SVG readers dedupe
-        identical `<defs>` at parse time.
-
-        `<stop>` elements come out in ascending-offset order regardless
-        of insertion order -- see _stops_sorted_by_offset.
+        Emits a fresh `<defs><linearGradient id="gradN">` per call;
+        `<stop>` elements come out in ascending-offset order.
 
         Args:
             x: Rectangle's left edge.
@@ -487,12 +472,9 @@ struct SvgCanvas(DrawTarget, Movable):
         end_angle: Float64,
         color: Color,
     ):
-        """A wedge, drawn as `M center L start-point A ... end-point Z`:
-        the same "line out to the arc, sweep it, line back to center"
-        boundary `fill_arc_aa`'s raster coverage math uses.
-        `sweep_flag=1` with no sign flip, since SVG's space is y-down
-        like the raster canvas's and increasing angle sweeps clockwise
-        in both.
+        """A wedge, drawn as `M center L start-point A ... end-point Z`.
+        `sweep_flag=1` with no sign flip: SVG's space is y-down like the
+        raster canvas's, so increasing angle sweeps clockwise in both.
 
         Args:
             cx: Center x.
@@ -547,11 +529,8 @@ struct SvgCanvas(DrawTarget, Movable):
     ):
         """A donut wedge: `M outer-start A ... outer-end L inner-end
         A ... inner-start Z`. The outer arc sweeps forward
-        (`sweep_flag=1`, as in `fill_arc_aa`), then a radial line
-        inward, then the inner arc sweeps *backward* (`sweep_flag=0`)
-        back to the start angle, closing the ring in one loop -- the
-        boundary `fill_ring_sector` builds from two point-sampled
-        polylines, expressed as two SVG arc commands.
+        (`sweep_flag=1`), a radial line runs inward, then the inner arc
+        sweeps backward (`sweep_flag=0`), closing the ring in one loop.
 
         Args:
             cx: Center x.
@@ -666,33 +645,27 @@ struct SvgCanvas(DrawTarget, Movable):
         an `SvgCanvas`, the way raster code calls `canvas.text.draw_text`
         on a `Canvas`.
 
-        `family` becomes a literal `font-family` attribute and is always
-        emitted; without one a viewer falls back to its own default,
-        which varies between viewers. It defaults to `"sans-serif"`, a
-        generic CSS keyword every viewer supports. Despite the shared
-        name and position, this is a different kind of value from raster
-        draw_text's `family`: raster's is a family or generic alias
-        resolved to one concrete font *file*, while this is a literal CSS
-        `font-family` -- keyword, face name, or comma-separated stack --
-        interpreted by whatever renders the SVG. A caller driving both
-        backends maps between the two itself.
+        `family` is always emitted, defaulting to `"sans-serif"`, since
+        a viewer without one falls back to its own varying default. Note
+        it is a different kind of value from raster draw_text's `family`
+        despite the shared name: raster's resolves to one concrete font
+        *file*, while this is a literal CSS `font-family` -- keyword, face
+        name, or comma-separated stack -- interpreted by whatever renders
+        the SVG. A caller driving both backends maps between them itself.
 
-        `(x, y)` is the baseline anchor, matching raster draw_text: SVG
-        `<text>` anchors `y` to the alphabetic baseline already, so
-        nothing adjusts for glyph tops. `text-anchor`
-        (`start`/`middle`/`end`) is the direct equivalent of `align`'s
-        three values, also measured from `(x, y)`.
+        `(x, y)` is the baseline anchor, matching raster draw_text, since
+        SVG `<text>` anchors `y` to the alphabetic baseline already.
+        `text-anchor` (`start`/`middle`/`end`) is the equivalent of
+        `align`'s three values.
 
-        `rotation` is radians, as in raster draw_text, and rotates the
-        whole `<text>` around its `(x, y)` anchor via
-        `transform="rotate(<degrees> <x> <y>)"`, omitted entirely at 0.0.
-        No sign flip: raster space and SVG's viewport space both put y
-        downward, so a positive angle is clockwise in both.
+        `rotation` is radians and rotates the whole `<text>` around its
+        `(x, y)` anchor via `transform="rotate(<degrees> <x> <y>)"`,
+        omitted at 0.0. No sign flip: raster and SVG viewport space both
+        put y downward.
 
-        `weight` mirrors raster draw_text's `weight` -- same
-        `FontWeight`, same `NORMAL` default -- so one call site can drive
-        both backends. It emits `font-weight="bold"` for FontWeight.BOLD,
-        SVG/CSS's two-value keyword, and is omitted at `NORMAL`.
+        `weight` emits `font-weight="bold"` for FontWeight.BOLD and is
+        omitted at `NORMAL`.
+
         Args:
             x: Anchor x -- baseline left end for TextAlign.LEFT.
             y: Anchor y -- baseline.

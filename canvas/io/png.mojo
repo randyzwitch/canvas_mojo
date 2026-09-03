@@ -1,39 +1,25 @@
 """Read and write PNG files, stdlib-only, with no zlib/libpng
-dependency -- this package's approach to every binary format it handles
-(BMP here, TrueType/sfnt in `canvas/text/ttf.mojo`).
+dependency.
 
-PNG's image data is wrapped in a zlib stream (RFC 1950) around a
-DEFLATE stream (RFC 1951). Both directions go through
-`canvas/io/deflate.mojo`: `write_png` compresses through its LZ77
-+ fixed-Huffman `deflate()`, `read_png` decompresses through
-`inflate()`, which has to handle whatever a real encoder produced.
+PNG's image data is a zlib stream (RFC 1950) around a DEFLATE stream
+(RFC 1951). Both directions go through `canvas/io/deflate.mojo`.
 
-Two checksums, hand-rolled from their public specs (PNG spec Appendix D
-for CRC-32, RFC 1950 section 9 for Adler-32) and verified against
-zlib's `crc32`/`adler32` on the same byte sequences. `read_png` checks
-both against every file it reads -- chunk CRC-32s, and the decompressed
-data's Adler-32 against the zlib trailer -- rather than trusting that
-decoding produced *some* output.
+Two checksums, from the PNG spec Appendix D (CRC-32) and RFC 1950
+section 9 (Adler-32). `read_png` checks both on every file it reads --
+chunk CRC-32s, and the decompressed data's Adler-32 against the zlib
+trailer.
 
-Two byte orders are in play, which is a classic place to go wrong:
-PNG's chunk framing (length, CRC-32) and the zlib Adler-32 trailer are
-big-endian, but DEFLATE's stored-block LEN/NLEN fields are
-little-endian.
+Watch the two byte orders: PNG's chunk framing (length, CRC-32) and the
+zlib Adler-32 trailer are big-endian, but DEFLATE's stored-block
+LEN/NLEN fields are little-endian.
 
 `write_png` emits color type 6 (truecolor + alpha) when the canvas
-contains a pixel that is not fully opaque, and color type 2 (truecolor,
-no alpha) when it does not, so a render that never used transparency
-carries no alpha channel in the file.
-
-`read_png` accepts color types 0/2/4/6 (grayscale, truecolor,
-grayscale+alpha, truecolor+alpha) at 8-bit depth, non-interlaced.
-Indexed/palette color (type 3), other bit depths, and Adam7 interlacing
-raise a clear error rather than misreading pixels.
-
-A PNG's alpha channel is kept: `Canvas` stores per-pixel alpha (see
-buffer.mojo), so `read_png` writes each pixel's alpha straight through
-instead of compositing it away onto white, and a file round-trips
-through `read_png` -> `write_png` unchanged.
+contains a pixel that is not fully opaque, and color type 2 otherwise.
+`read_png` accepts color types 0/2/4/6 at 8-bit depth, non-interlaced;
+indexed/palette color (type 3), other bit depths and Adam7 interlacing
+raise rather than misreading pixels. Alpha is preserved in both
+directions, so a file round-trips through `read_png` -> `write_png`
+unchanged.
 """
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -96,10 +82,8 @@ def _adler32(data: List[UInt8]) -> UInt32:
     255*n*(n+1)/2 + (n+1)*(BASE-1) < 2^32, so a block of that length
     cannot carry s2 past the end of the type.
 
-    Bytes are read through `unsafe_ptr` because the loop bound is
-    `len(data)` itself, so the index cannot leave the buffer, and a
-    checked read costs several times what the arithmetic does at this
-    size -- this runs over every raw byte of the image.
+    Bytes are read through `unsafe_ptr`; the loop bound is `len(data)`
+    itself, so the index cannot leave the buffer.
     """
     comptime BASE = UInt32(65521)
     comptime NMAX = 5552
@@ -420,8 +404,7 @@ def read_png(path: String) raises -> Canvas:
 
     Every chunk's CRC-32 is checked against its trailing 4 bytes, and
     the decompressed data's Adler-32 against the zlib stream's, so a
-    corrupted or truncated file is rejected rather than misdecoded into
-    a plausible-looking wrong image.
+    corrupted or truncated file is rejected rather than misdecoded.
 
     Args:
         path: File path to read.

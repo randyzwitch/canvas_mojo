@@ -3,66 +3,54 @@ path on disk, with no linked library. One of the three parts of text
 rendering, alongside glyph resolution and metrics (`ttf.mojo`) and
 rasterization (`fill_path_aa`, see `path.mojo`).
 
-Four steps, covering what `libfontconfig` does for a drawing library:
+Four steps, matching what `libfontconfig` does for a drawing library:
 
-1. **Enumerate the installed fonts.** Walk each platform's font
-   directories (`_font_directories`), collect every `sfnt` container
-   found (`.ttf`/`.ttc`/`.otf`/`.otc`), and read each one's identity out
-   of its own `name`/`OS/2`/`head`/`post` tables (`_parse_face`). There
-   is no cache file and no XML; the tables in the font files are the
-   database.
+1. **Enumerate.** Walk each platform's font directories
+   (`_font_directories`), collect every `sfnt` container
+   (`.ttf`/`.ttc`/`.otf`/`.otc`), and read each one's identity from its
+   `name`/`OS/2`/`head`/`post` tables (`_parse_face`). There is no cache
+   file and no XML; the font files are the database.
 2. **Expand generic families.** "sans-serif"/"serif"/"monospace" and the
-   classic metric aliases (Helvetica, Arial, Times, Courier) are ordered
-   preference lists rather than real families (`_family_candidates`) --
-   the job fontconfig's `/etc/fonts/conf.d/*.conf` rules do.
-3. **Score, don't filter.** Every installed face is ranked against the
-   request and the best one wins, so a request resolves as long as one
-   font is installed (`_score`). The scoring terms run in fontconfig's
-   own priority order (`FcCompare*`): family, spacing, slant, weight,
-   width.
+   metric aliases (Helvetica, Arial, Times, Courier) are ordered
+   preference lists, not real families (`_family_candidates`) -- the job
+   fontconfig's `/etc/fonts/conf.d/*.conf` rules do.
+3. **Score, don't filter.** Every installed face is ranked and the best
+   wins, so a request resolves as long as one font is installed
+   (`_score`). Terms run in fontconfig's priority order (`FcCompare*`):
+   family, spacing, slant, weight, width.
 4. **Fall back per character.** `resolve_font_file_for_char` ranks a
-   font that maps the codepoint above every other consideration, reading
+   font that maps the codepoint above every other term, reading
    candidate `cmap` tables in score order (`_face_covers_codepoint`) --
    fontconfig's `FC_CHARSET` constraint.
 
-Not covered here: fontconfig's XML rule engine, its
-`~/.cache/fontconfig` binary cache, per-language coverage matching, and
-named-instance expansion of variable fonts (a variable font matches as
-its default instance).
+Not covered: fontconfig's XML rule engine, its `~/.cache/fontconfig`
+binary cache, per-language coverage matching, and named-instance
+expansion of variable fonts (a variable font matches as its default
+instance).
 
 Where it looks: on Linux `~/.local/share/fonts` and `~/.fonts` plus
 `/usr/share/fonts`, `/usr/local/share/fonts` and `/usr/share/X11/fonts`;
 on macOS `~/Library/Fonts`, `/Library/Fonts`, `/System/Library/Fonts`
 (and its `Supplemental`) plus Homebrew's font prefixes.
-**`CANVAS_MOJO_FONT_PATH`** (colon-separated directories) adds font
-trees in a nonstandard prefix -- a container image, a test fixture, a
-font vendored beside an application -- and is searched ahead of the
-platform defaults. Fonts have to be installed for text to render; this
+**`CANVAS_MOJO_FONT_PATH`** (colon-separated directories) is searched
+ahead of those. Fonts have to be installed for text to render; this
 package bundles none.
 
-A scan measures ~3.3ms on this machine (51 installed faces, warm page
-cache), two thirds of it the directory walk rather than the font files;
-each file is read a few hundred bytes at a time -- a table directory and
-three or four small tables -- never whole, which `ttf.mojo` does later
-for the one font that wins. Matching against an already-built
-`FontDatabase` is arithmetic over a list, so the scan is paid once per
-`FontDatabase` rather than once per lookup. `FontCache` holds one, and
-`render.mojo`'s cache-less entry points each build one FontCache for the
-duration of the call, so a `draw_text` scans once. A caller drawing many
-labels through a single `FontCache` pays ~3.3ms in total.
+A scan costs a few milliseconds, most of it the directory walk. Matching
+against an already-built `FontDatabase` is arithmetic over a list, so
+build one `FontDatabase` (or `FontCache`) and reuse it rather than
+resolving per call.
 
 This module imports nothing from `canvas.text`, which is why
-`FontSlant`/`FontWeight` and the small binary readers below live here
-rather than being imported from a module that uses them: Mojo resolves a
-struct's method surface, and whatever it imports, eagerly rather than
-lazily. It is also why `_face_covers_codepoint` walks a `cmap` here
-rather than calling `ttf.mojo`'s -- this one answers "is this codepoint
-mapped" from a byte range read off disk, where `TTFFace` needs the whole
-parsed, `glyf`-bearing file it refuses to build for a CFF font.
+`FontSlant`/`FontWeight` and the small binary readers below live here:
+Mojo resolves a struct's method surface, and whatever it imports,
+eagerly. It is also why `_face_covers_codepoint` walks a `cmap` here --
+it answers "is this codepoint mapped" from a byte range read off disk,
+where `TTFFace` needs the whole parsed, `glyf`-bearing file it refuses
+to build for a CFF font.
 
-This module resolves a font *file* and nothing more: it does not parse
-that file's outlines, measure text, hint, or rasterize. `render.mojo`
-drives it, together with `ttf.mojo` and `fill_path_aa`, to draw text.
+This module resolves a font *file* and nothing more: no outline parsing,
+measuring, hinting or rasterizing.
 """
 
 from std.os import getenv, listdir
@@ -1020,12 +1008,11 @@ struct FontDatabase(Movable):
     ) raises -> String:
         """Best-matching font file for this request.
 
-        With `codepoint` set, a face that actually maps that character
-        outranks every other term: the candidates are ranked normally,
-        then walked best-first until one covers the codepoint. If none
-        does -- no installed font has the character at all -- the plain
-        best match is returned rather than raising, so a missing glyph
-        degrades to a `.notdef` box rather than a failed render.
+        With `codepoint` set, a face that maps that character outranks
+        every other term: candidates are ranked normally, then walked
+        best-first until one covers it. If none does, the plain best
+        match is returned rather than raising, so a missing glyph
+        degrades to a `.notdef` box.
 
         Args:
             family: Font family name or generic alias (e.g.
@@ -1115,14 +1102,12 @@ def resolve_font_file(
 ) raises -> String:
     """Resolve `family`/`slant`/`weight` to an absolute font file path.
 
-    Generic aliases ("sans-serif", "serif", "monospace") and the classic
-    metric aliases (Helvetica, Arial, Times, Courier) are expanded, and
-    an unrecognized family falls back through the default sans list, so
-    this raises only on a machine with no installed fonts at all.
+    Generic and metric aliases are expanded, and an unrecognized family
+    falls back through the default sans list, so this raises only on a
+    machine with no installed fonts.
 
-    Scans the font directories on every call. A caller resolving more
-    than a handful of fonts should build one `FontDatabase` (or
-    `FontCache`) and reuse it.
+    Scans the font directories on every call; build one `FontDatabase`
+    (or `FontCache`) to resolve more than a handful of fonts.
 
     Args:
         family: Font family name or generic alias (e.g. "sans-serif").
@@ -1146,15 +1131,13 @@ def resolve_font_file_for_char(
     codepoint: Int,
 ) raises -> String:
     """Like `resolve_font_file`, but constrained to a font that contains
-    `codepoint`. This is the fallback lookup `render.mojo` uses when the
-    requested family has no glyph for a character -- CJK text under a
-    Latin-only "Sans", say -- and it searches every installed font, the
-    way a desktop text stack's fallback chain does.
+    `codepoint` -- the fallback `render.mojo` uses when the requested
+    family has no glyph for a character, such as CJK text under a
+    Latin-only "Sans".
 
     If no installed font has `codepoint`, the unconstrained best match is
-    returned. A caller that must distinguish "found a font with the
-    glyph" from "gave up" checks the result with
-    `glyph_outline.has_glyph`.
+    returned. Check the result with `glyph_outline.has_glyph` to
+    distinguish that from a real hit.
 
     Args:
         family: Font family name or generic alias (e.g. "sans-serif").

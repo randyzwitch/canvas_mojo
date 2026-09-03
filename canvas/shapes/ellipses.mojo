@@ -46,16 +46,15 @@ def draw_ellipse(
     to independent x/y radii.
 
     Two regions, split where the boundary's slope magnitude crosses 1
-    (region 1 shallow, stepping x; region 2 steep, stepping y), each
-    with its own decision parameter: unequal radii leave no single
-    symmetric stepping rule covering the whole curve. 4-way symmetry
-    rather than the circle's 8-way, since swapping x and y preserves
-    the ellipse equation only when rx == ry.
+    (region 1 shallow, stepping x; region 2 steep, stepping y), each with
+    its own decision parameter, since unequal radii leave no single
+    symmetric stepping rule for the whole curve. 4-way symmetry, not the
+    circle's 8-way: swapping x and y preserves the ellipse equation only
+    when rx == ry.
 
-    Integer-only: the decision parameters are scaled by 4 throughout to
-    absorb the 0.25 term the derivation produces when evaluating the
-    ellipse equation at a half-pixel-offset midpoint, the way the
-    circle and line algorithms stay in Int rather than rounding floats.
+    Integer-only. The decision parameters are scaled by 4 throughout to
+    absorb the 0.25 term from evaluating the ellipse equation at a
+    half-pixel-offset midpoint.
 
     Args:
         canvas: Canvas to draw into.
@@ -110,14 +109,13 @@ def fill_ellipse(
     mut canvas: Canvas, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
 ):
     """Fill a solid ellipse: fill_circle generalized to independent x/y
-    radii, same span-per-row technique, each pixel set exactly once.
-    The half-width per row shrinks monotonically as |dy| grows from 0
-    to ry, so `dx` only decreases and never resets. The per-row bound
-    is the ellipse equation multiplied through by rx^2 * ry^2 to stay
-    integer-exact instead of taking a sqrt: `dx^2*ry^2 + dy^2*rx^2 <=
-    rx^2*ry^2`.
+    radii, one span per row, each pixel set exactly once. The half-width
+    per row shrinks monotonically as |dy| grows, so `dx` only decreases.
+    The per-row bound is the ellipse equation multiplied through by
+    rx^2 * ry^2 to stay integer-exact instead of taking a sqrt:
+    `dx^2*ry^2 + dy^2*rx^2 <= rx^2*ry^2`.
 
-    Hard-edged; see fill_ellipse_aa for a smooth edge.
+    Hard-edged; fill_ellipse_aa has a smooth edge.
 
     Args:
         canvas: Canvas to fill into.
@@ -157,15 +155,12 @@ def fill_ellipse_aa(
     independent x/y radii, same per-pixel supersampled analytic
     coverage, each output pixel visited once.
 
-    Generalized by normalizing each sample's offset by (rx, ry) before
-    testing against the unit circle: `(dx/rx)^2 + (dy/ry)^2 <= 1` is
-    the ellipse equation in normalized form, and reduces to
-    fill_circle_aa's `dx^2 + dy^2 <= r^2` when rx == ry.
-
-    Same provably-inside/provably-outside fast path fill_circle_aa
-    uses, in that normalized space: a pixel square's nearest and
-    farthest normalized corners are its raw nearest/farthest corners,
-    each divided by rx/ry before squaring.
+    Each sample's offset is normalized by (rx, ry) before testing
+    against the unit circle: `(dx/rx)^2 + (dy/ry)^2 <= 1`, which reduces
+    to fill_circle_aa's `dx^2 + dy^2 <= r^2` when rx == ry. The
+    provably-inside/outside fast path works in that normalized space,
+    where a pixel square's nearest and farthest normalized corners are
+    its raw ones divided by rx/ry.
 
     Args:
         canvas: Canvas to fill into.
@@ -174,8 +169,7 @@ def fill_ellipse_aa(
         rx: Horizontal radius in pixels.
         ry: Vertical radius in pixels.
         color: Fill color.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     fill_ellipse_aa(
         canvas,
@@ -223,12 +217,8 @@ def fill_ellipse_aa(
     snapped to the pixel grid.
 
     This is the real implementation; the whole-pixel overload above
-    converts and calls it. An error ellipse or confidence region is
-    sized from data, so its radii are almost never whole pixels, and
-    rounding them changes the region it claims to show.
-
-    `draw_ellipse_aa` (the outline) stays whole-pixel: it draws a fixed
-    ~1px stroke, and `DrawTarget` documents it that way.
+    converts and calls it. `draw_ellipse_aa` stays whole-pixel, since it
+    draws a fixed ~1px stroke.
 
     Args:
         canvas: Canvas to fill into.
@@ -237,8 +227,7 @@ def fill_ellipse_aa(
         rx: Horizontal radius in pixels, sub-pixel.
         ry: Vertical radius in pixels, sub-pixel.
         color: Fill color.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     if rx <= 0.0 or ry <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
@@ -402,30 +391,21 @@ def draw_ellipse_aa(
     """Anti-aliased ellipse outline, ~1px wide -- draw_circle_aa's
     generalization to independent x/y radii.
 
-    Unlike the circle case, no single distance value serves both
-    boundaries: draw_circle_aa tests one `d2` against `inner2`/`outer2`
-    because a circle's inner and outer rings are concentric offsets of
-    the same curve, but an ellipse's `(rx-0.5, ry-0.5)` and
-    `(rx+0.5, ry+0.5)` rings are two different ellipses. So each sample
-    is tested against both, in their own normalized space -- strictly
-    inside the outer, not strictly inside the inner:
+    No single distance value serves both boundaries here: an ellipse's
+    `(rx-0.5, ry-0.5)` and `(rx+0.5, ry+0.5)` rings are two different
+    ellipses, where a circle's are concentric offsets of one curve. Each
+    sample is tested against both in their own normalized space:
 
         (dx/outer_rx)^2 + (dy/outer_ry)^2 <  1   (strictly inside outer)
         (dx/inner_rx)^2 + (dy/inner_ry)^2 >= 1   (on or outside inner)
 
-    the same half-open intent as draw_circle_aa's `d2 >= inner2 and d2
-    < outer2`, just as two independent tests since a shared distance
-    doesn't exist here. `rx, ry >= 1` by the time this runs (`rx <= 0
-    or ry <= 0` is handled above), so `inner_rx`/`inner_ry` are always
-    positive -- no degenerate-inner-ellipse case to guard, same as
-    draw_circle_aa never needing one either.
+    `rx, ry >= 1` by the time this runs, so `inner_rx`/`inner_ry` are
+    always positive.
 
     Applying +/-0.5 to rx and ry independently, rather than offsetting
-    along the ellipse's true normal direction, makes the ring's physical
-    width vary around the ellipse -- exactly 1px at the four axis
-    extremes, narrower elsewhere, where the circle's ring is uniformly
-    1px. A normal-offset ring would need the ellipse's actual perimeter
-    parameterization.
+    along the ellipse's normal, makes the ring's width vary around the
+    ellipse: exactly 1px at the four axis extremes, narrower elsewhere. A
+    normal-offset ring would need the perimeter parameterization.
 
     Args:
         canvas: Canvas to draw into.
@@ -434,8 +414,7 @@ def draw_ellipse_aa(
         rx: Horizontal radius in pixels.
         ry: Vertical radius in pixels.
         color: Outline color.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
     if rx <= 0 or ry <= 0:
         canvas.set_pixel(cx, cy, color)

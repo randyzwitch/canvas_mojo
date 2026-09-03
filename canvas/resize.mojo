@@ -1,12 +1,10 @@
-"""Box-filter downsampling -- shrink a Canvas by an integer factor,
-each output pixel the average of the corresponding factor x factor
-block of input pixels. This is the actual mechanism behind
-supersampled anti-aliasing: render `factor` times larger than the
-intended final size, then `downsample()` back to it, and every output
-pixel averages `factor * factor` real source samples instead of one.
-The result has the same pixel dimensions as an unsupersampled render,
-with finer edges baked into the file rather than left to whatever
-displays it.
+"""Box-filter downsampling: shrink a Canvas by an integer factor, each
+output pixel the average of the corresponding factor x factor block of
+input pixels.
+
+This is the mechanism behind supersampled anti-aliasing -- render
+`factor` times larger than the final size, then `downsample()` back --
+so every output pixel averages `factor * factor` real source samples.
 """
 
 from std.runtime.asyncrt import TaskGroup, parallelism_level

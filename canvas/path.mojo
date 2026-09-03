@@ -1,44 +1,29 @@
 """A general path type: move/line/quadratic-curve/cubic-curve/arc-to/
 close, built up through chained calls, then flattened into straight-
 line segments and handed to canvas.shapes' polyline/polygon/fill
-machinery rather than reimplementing fill or stroke here.
+machinery.
 
 Coordinates are Float64 (FPoint), not Point's integer pixels, and stay
 that way end to end: flattening keeps sub-pixel positions rather than
 snapping them to the grid, so `fill_path_aa`'s coverage sweep sees where
-an edge actually falls. That matters most for text, which rasterizes
-through this path -- a glyph at 12px has most of its outline landing
-between pixel centers, and rounding first showed up as uneven stem
-widths and wobbling spacing. Measured against a 9x supersampled
-reference, dropping the rounding cuts a text line's total per-pixel
-error by about 78%, with the worst single pixel going from 209/255 wrong
-to 39.
-
-The hard-edged consumers (`fill_path`, `stroke_path`, `stroke_path_aa`)
-address whole pixels and round at the point of use -- see `_Subpath`.
+an edge actually falls. Text depends on it -- a glyph at 12px has most
+of its outline landing between pixel centers. The hard-edged consumers
+(`fill_path`, `stroke_path`, `stroke_path_aa`) address whole pixels and
+round at the point of use.
 
 Quad/cubic flattening picks its step count per segment from that
-segment's own curvature, so it suits the curve's size rather than being
-a fixed guess. Chords over n equal parameter intervals deviate from a
-curve by at most (1/(8n^2)) * max|B''(t)|, and requiring that stay under
-a tolerance gives a closed form for n -- a bound rather than an
-estimate, so the result is never under-sampled. At the fixed count of 16
-this used to use, the large cubic in the `large_curves` golden scene
-strays 1.61 pixels from the true curve, against 0.0196 chosen
-adaptively. See `_auto_steps` for the derivation. `curve_steps` remains
-as an override: a positive value forces that many segments, and 0, the
-default, chooses per segment. arc_to is the exception -- it reuses
-canvas.shapes.arcs' `_arc_fpoints` (radius-proportional step count), the
-sub-pixel sampler underneath the `_arc_points` that
-draw_arc/fill_arc/fill_ring_sector use, since a fixed count does not
-stretch across a path-drawn arc's much wider radius range.
+segment's curvature; `_auto_steps` carries the bound. `curve_steps`
+overrides it: a positive value forces that many segments, 0 (the
+default) chooses per segment. arc_to instead reuses
+canvas.shapes.arcs' `_arc_fpoints`, whose step count is proportional to
+radius.
 
 A path can hold multiple sub-paths (more than one move_to). fill_path
-combines every sub-path's scanline crossings (even-odd), so an outer
-shape plus an inner sub-path punches a hole the way 'o' or 'A' need.
-stroke_path/stroke_path_aa instead draw each sub-path independently,
-closed (draw_polygon) or open (draw_polyline) depending on whether
-close() was called.
+combines every sub-path's scanline crossings, so an outer shape plus an
+inner sub-path punches a hole the way 'o' or 'A' need.
+stroke_path/stroke_path_aa draw each sub-path independently, closed
+(draw_polygon) or open (draw_polyline) depending on whether close() was
+called.
 """
 
 from std.math import ceil, cos, floor, pi, sin, sqrt
@@ -84,11 +69,7 @@ struct _PathCommand(ImplicitlyCopyable, Movable):
     (endpoint); cubic_to uses all three (control1, control2, endpoint);
     close uses none; arc_to packs five scalars across the three points
     -- p1 = (cx, cy), p2 = (radius, start_angle), p3.x = end_angle,
-    p3.y unused.
-
-    A tagged struct with unused fields zeroed rather than a union,
-    which Mojo has no lightweight form of. The wasted space per command
-    doesn't matter at the counts a path here reaches.
+    p3.y unused. Unused fields are zeroed.
     """
 
     var kind: Int
@@ -245,14 +226,12 @@ struct Path(Movable):
     ) raises:
         """A circular arc segment, center (cx, cy), from `start_angle`
         to `end_angle` (radians, start_angle <= end_angle) -- the same
-        convention as draw_arc/fill_arc/fill_ring_sector, including
-        which way increasing angle sweeps on screen. Flattened at build
-        time through that family's `_arc_fpoints`, so a rendered
-        arc_to traces the identical curve a direct draw_arc call would.
+        angle convention as draw_arc/fill_arc/fill_ring_sector, and
+        flattened through that family's `_arc_fpoints`.
 
-        Unlike Cairo's `arc()`, this inserts no connecting line from
-        the current point to the arc's start. To join without a seam,
-        call move_to(cx + radius*cos(start_angle), cy +
+        Unlike Cairo's `arc()`, this inserts no connecting line from the
+        current point to the arc's start. To join without a seam, call
+        move_to(cx + radius*cos(start_angle), cy +
         radius*sin(start_angle)) first, or end the previous segment
         exactly there.
 
@@ -288,21 +267,16 @@ struct Path(Movable):
         """Add a closed rectangular sub-path, clockwise from its
         top-left corner.
 
-        Expands to the move_to/line_to/line_to/line_to/close it is
-        equivalent to. `fill_rect` is the primitive for an axis-aligned
-        rectangle on its own; this is for one that has to be part of a
-        path, typically to combine with another sub-path or to clip to.
-
-        A degenerate rectangle (zero or negative width or height) adds
-        nothing, rather than a sub-path that fills as a line or
-        backwards.
+        `fill_rect` is the primitive for an axis-aligned rectangle on
+        its own; this is for one that has to be part of a path. A
+        degenerate rectangle (zero or negative width or height) adds
+        nothing.
 
         This describes the geometric rectangle [x, x+width] x
         [y, y+height], and `fill_path`'s X-fill between a row's crossings
         is inclusive, so filling it covers column x+width -- one more
-        than `fill_rect(x, y, width, height)`, which stops at x+width-1.
-        That is `fill_polygon`'s convention; see its docstring for the
-        asymmetric corners that reproduce fill_rect exactly.
+        than `fill_rect(x, y, width, height)`, which stops at
+        x+width-1.
 
         Args:
             x: Left edge.
@@ -332,9 +306,7 @@ struct Path(Movable):
     ) raises:
         """Add a closed rectangular sub-path with rounded corners.
 
-        Corners are true circular quarter-arcs through `arc_to`, not
-        Bezier approximations, so they sample at the same
-        radius-proportional density every other arc in this package does.
+        Corners are circular quarter-arcs through `arc_to`.
 
         `radius` is clamped to half the shorter side. Past that the
         corners overlap and the shape self-intersects, which under
@@ -386,15 +358,11 @@ struct Path(Movable):
         """Add a closed elliptical sub-path.
 
         Four cubic Beziers, one per quadrant, with control points at the
-        standard kappa = 4/3 * (sqrt(2) - 1) offset. That is an
-        approximation, maximum radial error about 0.027% of the radius,
-        where `fill_ellipse_aa` is exact. Use this for an ellipse that
-        has to be *part of a path* -- to combine with other sub-paths, to
-        stroke, or to clip to -- and `fill_ellipse_aa` for a plain filled
-        one.
-
-        Cubics rather than `arc_to`, which takes a single `radius` and so
-        can only build circular arcs.
+        standard kappa = 4/3 * (sqrt(2) - 1) offset -- an approximation
+        with a maximum radial error about 0.027% of the radius, where
+        `fill_ellipse_aa` is exact. Use this for an ellipse that has to
+        be *part of a path*, and `fill_ellipse_aa` for a plain filled
+        one. `arc_to` cannot build it: it takes a single `radius`.
 
         Args:
             cx: Centre x.
@@ -425,13 +393,11 @@ struct Path(Movable):
         would leave a caller no way to draw one shape at several
         positions.
 
-        Bezier control points map directly -- an affine transform of a
-        Bezier is the Bezier of the transformed control points -- so
-        `quad_curve_to` and `cubic_curve_to` come through exactly.
-
-        `arc_to` is the one that cannot always. It describes a
-        *circular* arc by centre, radius and angles, and only a transform
-        that maps circles to circles folds back into those five numbers:
+        Bezier control points map directly, since an affine transform of
+        a Bezier is the Bezier of the transformed control points.
+        `arc_to` describes a *circular* arc by centre, radius and angles,
+        and only a transform that maps circles to circles folds back into
+        those five numbers:
 
         - Equal scale magnitudes, same sign: exact. The centre maps, the
           radius scales, and the angles shift by the transform's
@@ -445,8 +411,8 @@ struct Path(Movable):
           arc, which `arc_to` cannot express and no primitive here draws.
 
         Flattening goes through the same `_arc_fpoints` the renderer
-        would have used anyway, so the drawn result is unchanged. What is
-        lost is the ability to transform the result again exactly.
+        would have used, so the drawn result is unchanged; what is lost
+        is the ability to transform the result again exactly.
 
         Args:
             transform: Mapping applied to every point.
@@ -622,15 +588,9 @@ def _cubic_point(
 struct _Subpath(Movable):
     """One flattened sub-path: its points, and whether it was close()d.
 
-    Points are `FPoint`, not `Point`: flattening is where a curve's real
-    shape is decided, and rounding there would throw away the sub-pixel
-    detail `fill_path_aa`'s coverage sweep exists to resolve. A glyph
-    outline at 12px has most of its control points landing between pixel
-    centers, and snapping them first shows up as uneven stem widths and
-    wobbling spacing.
-
-    The hard-edged consumers (`fill_path`, `stroke_path`,
-    `stroke_path_aa`) round these to whole pixels at the point of use.
+    Points are `FPoint`, not `Point`: rounding at flatten time would
+    discard the sub-pixel detail the coverage sweep resolves. The
+    hard-edged consumers round to whole pixels at the point of use.
     """
 
     var points: List[FPoint]
@@ -664,12 +624,9 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
     starting at each move_to after the first).
 
     `curve_steps` of 0 or less -- the default -- chooses the count per
-    segment from the segment's own curvature, so it suits the curve's
-    size. A positive value forces that many steps for every quad/cubic.
-
-    Sub-pixel throughout -- see `_Subpath` on why nothing is rounded
-    here, and `_rounded_points` for what the hard-edged callers use
-    instead.
+    segment from its curvature. A positive value forces that many steps
+    for every quad/cubic. Nothing is rounded here; `_rounded_points` is
+    what the hard-edged callers use.
     """
     var subpaths = List[_Subpath]()
     var current = List[FPoint]()
@@ -788,12 +745,6 @@ def fill_path(
     sub-paths leave a hole where they overlap; with FillRule.NONZERO, two
     sub-paths wound the same direction fill as one solid union.
 
-    `curve_steps` is how many straight-line segments each quad/cubic
-    Bezier in the path flattens into -- see `_flatten` and `_auto_steps`.
-
-    Separate from fill_polygon rather than a generalization of it:
-    fill_polygon's single-polygon contract is an API guarantee.
-
     Same half-open Y-extent convention as fill_polygon
     ([min(y0,y1), max(y0,y1))), which makes a vertex shared by two
     opposite-direction edges count once rather than twice, while a local
@@ -804,9 +755,8 @@ def fill_path(
         path: Path to fill.
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -907,12 +857,10 @@ def _point_in_subpaths(
     an arbitrary real-valued point, which is what fill_path_aa's
     supersampling needs.
 
-    Reads the sub-paths' points unrounded, as fill_path_aa does -- this
-    is the reference implementation that fill's output has to match, so
-    it has to see the same geometry. The hard-edged `_row_crossings`
-    rounds instead; the two therefore agree on a boundary only to
-    within the rounding, which is inherent to one of them addressing
-    whole pixels.
+    Reads the points unrounded, as fill_path_aa does, since this is the
+    reference implementation its output must match. The hard-edged
+    `_row_crossings` rounds instead, so the two agree on a boundary only
+    to within that rounding.
     """
     var winding = 0
     for sp_idx in range(len(subpaths)):
@@ -943,9 +891,7 @@ def fill_path_aa(
     supersample: Int = 4,
     curve_steps: Int = 0,
 ):
-    """Anti-aliased fill_path, standing to fill_path the way
-    fill_polygon_aa stands to fill_polygon (see that function in
-    canvas.shapes.polygon_fill): for every pixel near the path's
+    """Anti-aliased fill_path: for every pixel near the path's
     flattened outline, samples an NxN sub-pixel grid and turns the
     coverage fraction into that pixel's alpha. Each output pixel is
     visited exactly once.
@@ -955,31 +901,19 @@ def fill_path_aa(
     contribution is combined before the fill rule is applied, rather than
     per-sub-path independently.
 
-    The sweep itself is `canvas.aa_crossing`'s `_sweep_edges_aa`, shared
-    with `fill_polygon_aa` -- see there for why it works per sub-scanline
-    rather than per sub-pixel sample. What this function contributes is
-    the flattened path's bounding box and its edges.
-    `_point_in_subpaths` remains the reference implementation that
-    sweep's output must match pixel for pixel, and is still tested
-    directly.
-
-    Kept separate from fill_path rather than fused behind an
-    `antialias: Bool`, for the reason canvas.shapes.lines gives: the
-    per-pixel work is a different complexity class, not a toggle.
-
-    `curve_steps` is fill_path's same per-segment flattening knob -- see
-    its docstring.
+    The sweep is `canvas.aa_crossing`'s `_sweep_edges_aa`, shared with
+    `fill_polygon_aa`; this function contributes the flattened path's
+    bounding box and its edges. `_point_in_subpaths` is the reference
+    implementation the sweep's output must match pixel for pixel.
 
     Args:
         canvas: Canvas to fill into.
         path: Path to fill.
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -1023,12 +957,9 @@ def _path_coverage_mask(
     a clip mask.
 
     The same flatten-and-sweep `fill_path_aa` runs, with the coverage
-    kept as a number instead of being turned into a colour's alpha, so
-    a clip boundary and a fill boundary of the same path fall in
-    exactly the same places.
-
-    Lives here rather than in buffer.mojo because it needs `_flatten`,
-    which is this module's; `buffer.mojo` already imports from here.
+    kept as a number instead of a colour's alpha, so a clip boundary and
+    a fill boundary of the same path land in the same places. It needs
+    `_flatten`, so it lives here rather than in buffer.mojo.
     """
     var mask = List[UInt8](length=width * height, fill=0)
     var subpaths = _flatten(path, curve_steps)
@@ -1113,17 +1044,14 @@ def _fill_path_source_aa[
     """`fill_path_aa`'s anti-aliased fill, taking each pixel's colour
     from `source` instead of one flat Color.
 
-    Coverage comes from `_sweep_edges_to_mask` -- the same sweep
+    Coverage comes from `_sweep_edges_to_mask`, the same sweep
     `fill_path_aa` and `Canvas.push_clip_path` run, so a gradient fill's
-    edge lands in exactly the same places a flat fill's would. It is
-    swept to a mask first rather than blended during the sweep because
-    the sweep hands its band tasks a single flat `Color`; going through
-    the mask keeps this out of that machinery entirely.
+    edge lands where a flat fill's would. It goes to a mask first because
+    the sweep hands its band tasks a single flat `Color`.
 
-    Coverage scales the source colour's own alpha, so a translucent
-    gradient stop stays translucent and a partly-covered edge pixel
-    compounds the two -- the rule `Canvas._set_pixel_masked` already
-    follows for clip masks.
+    Coverage scales the source colour's alpha, so a translucent gradient
+    stop stays translucent and a partly-covered edge pixel compounds the
+    two, as `Canvas._set_pixel_masked` does for clip masks.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -1180,20 +1108,15 @@ def fill_path_gradient(
     pixel's color from `gradient` (gradient.mojo) rather than one flat
     Color.
 
-    Hard-edged, like `fill_path` itself. `fill_path_gradient_aa` is the
-    anti-aliased counterpart.
-
-    `curve_steps` is fill_path's same per-segment flattening knob --
-    see its docstring.
+    Hard-edged; `fill_path_gradient_aa` is the anti-aliased counterpart.
 
     Args:
         canvas: Canvas to fill into.
         path: Path to fill.
         gradient: Fill source, queried per pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
     """
     _fill_path_source(canvas, path, gradient, fill_rule, curve_steps)
 
@@ -1212,9 +1135,8 @@ def fill_path_radial_gradient(
         path: Path to fill.
         gradient: Fill source, queried per pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
     """
     _fill_path_source(canvas, path, gradient, fill_rule, curve_steps)
 
@@ -1236,11 +1158,9 @@ def fill_path_gradient_aa(
         path: Path to fill.
         gradient: Fill source, queried per covered pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
     """
     _fill_path_source_aa(
         canvas, path, gradient, fill_rule, supersample, curve_steps
@@ -1262,11 +1182,9 @@ def fill_path_radial_gradient_aa(
         path: Path to fill.
         gradient: Fill source, queried per covered pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
     """
     _fill_path_source_aa(
         canvas, path, gradient, fill_rule, supersample, curve_steps
@@ -1284,16 +1202,12 @@ def stroke_path(
     """Stroke every sub-path, hard-edged 1px: closed ones (close() was
     called) via draw_polygon, open ones via draw_polyline.
 
-    `curve_steps` is fill_path's same per-segment flattening knob --
-    see its docstring.
-
     Args:
         canvas: Canvas to stroke into.
         path: Path to stroke.
         color: Stroke color.
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
         dashes: On/off segment lengths in pixels, cycled along the
             stroke. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the stroke starts
@@ -1322,32 +1236,23 @@ def stroke_path_aa(
     join: LineJoin = LineJoin.ROUND,
     miter_limit: Float64 = 4.0,
 ):
-    """Anti-aliased version of stroke_path -- see draw_polyline_aa/
-    draw_polygon_aa.
-
-    `curve_steps` is fill_path's same per-segment flattening knob --
-    see its docstring.
+    """Anti-aliased stroke_path, via draw_polyline_aa/draw_polygon_aa.
 
     Args:
         canvas: Canvas to stroke into.
         path: Path to stroke.
         color: Stroke color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N
-            samples).
-        curve_steps: Straight-line segments per quad/cubic Bezier.
-            0 (the default) picks a count per segment from its own
-            curvature; a positive value forces that many.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
         dashes: On/off segment lengths in pixels, cycled along the
             stroke. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the stroke starts
             at.
         cap: How an *open* sub-path's two ends are finished -- see
             LineCap. A closed sub-path has no ends and ignores it.
-        join: How corners are turned -- see LineJoin. A flattened
-            curve's corners are shallow enough that the three styles
-            are hard to tell apart; the difference shows on a polygon
-            or a sharply-kinked path.
+        join: How corners are turned -- see LineJoin.
         miter_limit: Ratio past which a MITER join falls back to
             BEVEL, as a multiple of half the stroke width.
     """
