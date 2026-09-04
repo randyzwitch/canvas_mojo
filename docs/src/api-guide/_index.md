@@ -114,8 +114,10 @@ A drawing routine written once against `DrawTarget` renders through
 either backend — raster or vector — without knowing which it holds.
 
 - [`vector.svg`](../canvas/vector/svg/) — `SvgCanvas`: the same
-  drawing methods as `Canvas`, producing SVG markup instead of
-  pixels — `to_string()` for the markup, `write_svg` for a file.
+  drawing methods as `Canvas`, including the `save`/`restore`
+  transform state (carried as a `transform` attribute per element),
+  producing SVG markup instead of pixels — `to_string()` for the
+  markup, `write_svg` for a file.
 - [`vector.draw_target`](../canvas/vector/draw_target/) —
   `DrawTarget`: the trait both `Canvas` and `SvgCanvas` implement.
   Write against this instead of `Canvas` directly and your code works

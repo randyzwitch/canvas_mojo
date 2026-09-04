@@ -28,6 +28,18 @@ sub-path: SVG's own default is nonzero, so a hole that even-odd
 punches in a PNG would fill solid in the SVG unless the element says
 `fill-rule="evenodd"`.
 
+The transform state is on the trait too: `save`/`restore`,
+`translate`/`rotate`/`scale`/`transform`/`set_transform`/
+`reset_transform`, `current_transform` and `has_transform`, with the
+semantics `Canvas` defines (see `Canvas.save`). A mark drawn through
+the trait can set up a local frame -- translate to a panel, rotate for
+a wedge -- and draw at the origin on either backend. `SvgCanvas` puts
+the current matrix on each element as a `transform` attribute. One
+rule holds on both: strokes are built in user space, so under a
+`scale` a stroke's width, dashes and caps scale with the shape; the
+state is for placement and rotation, and data still maps through
+scales.
+
 Two further methods, `begin_annotated_group` and
 `end_annotated_group`, declare no drawing at all: they label whatever
 is drawn between them. A vector backend has somewhere to put that
@@ -57,6 +69,7 @@ their struct declaration.
 
 from canvas.color import Color
 from canvas.fill_rule import FillRule
+from canvas.geometry import Matrix2D
 from canvas.path import Path
 from canvas.gradient import LinearGradient
 
@@ -255,5 +268,82 @@ trait DrawTarget:
         if none is open -- matching `Canvas.pop_clip`, which also
         treats an unbalanced close as nothing to undo rather than an
         error.
+        """
+        ...
+
+    def save(mut self):
+        """Push the current transform (and, on a backend that clips,
+        the clip state) for `restore` to put back.
+        """
+        ...
+
+    def restore(mut self):
+        """Pop what `save` pushed. A no-op with nothing saved."""
+        ...
+
+    def translate(mut self, tx: Float64, ty: Float64):
+        """Shift subsequent drawing by (tx, ty) in the current user
+        space.
+
+        Args:
+            tx: Horizontal shift.
+            ty: Vertical shift.
+        """
+        ...
+
+    def rotate(mut self, angle: Float64):
+        """Turn subsequent drawing by `angle` radians about the current
+        origin; positive is clockwise on screen.
+
+        Args:
+            angle: Radians.
+        """
+        ...
+
+    def scale(mut self, sx: Float64, sy: Float64):
+        """Scale subsequent drawing about the current origin, each
+        axis by its own factor.
+
+        Args:
+            sx: Horizontal factor.
+            sy: Vertical factor.
+        """
+        ...
+
+    def transform(mut self, matrix: Matrix2D):
+        """Compose `matrix` into the current transform, applied to
+        coordinates before everything already in place.
+
+        Args:
+            matrix: The map to apply first.
+        """
+        ...
+
+    def set_transform(mut self, matrix: Matrix2D):
+        """Replace the current transform outright.
+
+        Args:
+            matrix: The new map from user space to the backend's
+                own coordinates.
+        """
+        ...
+
+    def reset_transform(mut self):
+        """Back to the identity."""
+        ...
+
+    def current_transform(self) -> Matrix2D:
+        """The map every drawing call currently applies.
+
+        Returns:
+            The current transform; the identity if none is set.
+        """
+        ...
+
+    def has_transform(self) -> Bool:
+        """Whether the current transform is anything but the identity.
+
+        Returns:
+            True if drawing is being mapped.
         """
         ...

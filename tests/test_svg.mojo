@@ -9,10 +9,13 @@ reads no font files, never canvas.text.render.
 from std.math import pi
 from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
+from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
+from canvas.geometry import Matrix2D
 from canvas.gradient import LinearGradient
 from canvas.path import Path
+from canvas.vector.draw_target import DrawTarget
 from canvas.vector.svg import SvgCanvas
 from canvas.text.font_discovery import FontWeight
 from canvas.text.text_align import TextAlign
@@ -751,6 +754,140 @@ def test_end_annotated_group_without_a_group_emits_nothing() raises:
 
     assert_equal(s.count("</g>"), 0, "no stray closing tag")
     assert_equal(s.count("<g>"), 0, "and no opening one either")
+
+
+# --- transform state --------------------------------------------------
+
+
+def test_no_transform_means_no_transform_attribute() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.fill_rect(1, 2, 3, 4, Color(0, 0, 0))
+    svg.save()
+    svg.restore()
+    svg.reset_transform()
+    svg.fill_circle_aa(5, 5, 2, Color(0, 0, 0))
+    assert_true("transform" not in svg.to_string())
+    assert_true(not svg.has_transform())
+
+
+def test_translate_puts_a_matrix_on_each_element() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.translate(10.0, 5.0)
+    svg.fill_rect(1, 2, 3, 4, Color(0, 0, 0))
+    var path = Path()
+    path.move_to(0.0, 0.0)
+    path.line_to(4.0, 0.0)
+    svg.stroke_path_aa(path, Color(0, 0, 0), 2.0)
+    var out = svg.to_string()
+    assert_true(
+        '<rect x="1" y="2" width="3" height="4" fill="#000000"'
+        ' transform="matrix(1.000 0.000 0.000 1.000 10.000 5.000)"/>'
+        in out,
+        "the rect carries the translation as a matrix",
+    )
+    assert_true(
+        'stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"'
+        ' transform="matrix(1.000 0.000 0.000 1.000 10.000 5.000)"/>'
+        in out,
+        "so does the stroked path, with its width still in user space",
+    )
+
+
+def test_rotate_and_scale_compose_in_call_order() raises:
+    # translate then scale: the scale applies first to coordinates, so
+    # the matrix is (2 0 0 2 10 5) -- what Canvas computes too.
+    var svg = SvgCanvas(100, 100)
+    svg.translate(10.0, 5.0)
+    svg.scale(2.0, 2.0)
+    svg.fill_rect(0, 0, 1, 1, Color(0, 0, 0))
+    assert_true(
+        'transform="matrix(2.000 0.000 0.000 2.000 10.000 5.000)"'
+        in svg.to_string()
+    )
+
+    var turned = SvgCanvas(100, 100)
+    turned.rotate(pi / 2.0)
+    turned.fill_rect(0, 0, 1, 1, Color(0, 0, 0))
+    assert_true(
+        'transform="matrix(0.000 1.000 -1.000 0.000 0.000 0.000)"'
+        in turned.to_string(),
+        "a quarter turn: x maps to y",
+    )
+
+
+def test_save_restore_and_set_transform() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.save()
+    svg.translate(3.0, 0.0)
+    svg.save()
+    svg.scale(5.0, 5.0)
+    svg.fill_rect(0, 0, 1, 1, Color(0, 0, 0))
+    svg.restore()
+    svg.fill_rect(0, 0, 1, 1, Color(0, 0, 0))
+    svg.restore()
+    svg.fill_rect(0, 0, 1, 1, Color(0, 0, 0))
+    var out = svg.to_string()
+    assert_true("matrix(5.000 0.000 0.000 5.000 3.000 0.000)" in out)
+    assert_true("matrix(1.000 0.000 0.000 1.000 3.000 0.000)" in out)
+    var last = out.rfind("<rect")
+    assert_true(
+        "transform" not in out[byte=last:],
+        "the outer restore leaves the last rect untransformed",
+    )
+
+    var direct = SvgCanvas(100, 100)
+    direct.set_transform(Matrix2D(1.0, 0.0, 0.5, 1.0, 0.0, 0.0))
+    direct.fill_rect(0, 0, 1, 1, Color(0, 0, 0))
+    assert_true(
+        "matrix(1.000 0.000 0.500 1.000 0.000 0.000)" in direct.to_string(),
+        "a shear set outright",
+    )
+
+
+def test_text_composes_the_canvas_transform_before_its_rotation() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.translate(20.0, 30.0)
+    svg.draw_text(
+        5, 6, "up", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=-pi / 2.0
+    )
+    assert_true(
+        'transform="matrix(1.000 0.000 0.000 1.000 20.000 30.000)'
+        ' rotate(-90.000 5 6)"'
+        in svg.to_string(),
+        (
+            "matrix first in the list, so the rotation about the anchor applies"
+            " before the frame"
+        ),
+    )
+
+
+def _frame[T: DrawTarget](mut target: T):
+    target.save()
+    target.translate(10.0, 5.0)
+    target.rotate(0.3)
+    target.scale(2.0, 1.5)
+    target.transform(Matrix2D.translation(1.0, 1.0))
+
+
+def test_both_backends_compose_the_same_transform() raises:
+    # A routine written against the trait ends up with the same matrix
+    # whichever backend it holds.
+    var raster = Canvas(10, 10)
+    var vector = SvgCanvas(10, 10)
+    _frame(raster)
+    _frame(vector)
+    var a = raster.current_transform()
+    var b = vector.current_transform()
+    assert_equal(a.a, b.a)
+    assert_equal(a.b, b.b)
+    assert_equal(a.c, b.c)
+    assert_equal(a.d, b.d)
+    assert_equal(a.e, b.e)
+    assert_equal(a.f, b.f)
+    assert_true(raster.has_transform() and vector.has_transform())
+    raster.restore()
+    vector.restore()
+    assert_true(not raster.has_transform() and not vector.has_transform())
 
 
 def main() raises:

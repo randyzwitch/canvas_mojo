@@ -6,15 +6,23 @@ displays at, so content drawn through this carries no fixed pixel size.
 
 The surface implements every `DrawTarget` method. It is not a
 general-purpose SVG builder: no gradients beyond `fill_rect_gradient`'s,
-no transforms, no clipping, and no groups beyond `begin_annotated_group`. `draw_text`'s `rotation`
-is the one exception, a per-`<text>` `transform="rotate(...)"` rather
-than a transform stack, for a chart's rotated y-axis title.
+no clipping, and no groups beyond `begin_annotated_group`.
+
+The transform state (`save`/`restore`, `translate`/`rotate`/`scale`)
+is carried as a `transform="matrix(a b c d e f)"` attribute on each
+element drawn while a transform is set, rather than as nested `<g>`
+groups: an attribute per element cannot interleave badly with the
+annotated groups, and `restore` has nothing to close. `draw_text`'s own
+`rotation` composes after it in the same attribute. SVG applies
+`stroke-width` in the element's user space, so a stroke under a scale
+widens with it, as it does on `Canvas`.
 """
 
 from std.math import cos, pi, sin
 
 from canvas.color import Color
 from canvas.fill_rule import FillRule
+from canvas.geometry import Matrix2D
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.geometry import _round_to_int
@@ -218,6 +226,11 @@ struct SvgCanvas(DrawTarget, Movable):
     # state; `to_string` consults it so an unclosed group cannot reach
     # a file as malformed markup.
     var _open_group: Bool
+    # The current transform (see `save`), whether it is anything but
+    # the identity, and the stack `save` pushes onto.
+    var _transform: Matrix2D
+    var _transformed: Bool
+    var _saved: List[Matrix2D]
 
     def __init__(out self, width: Int, height: Int):
         """An empty `width x height` SVG document.
@@ -231,6 +244,120 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body = ""
         self._gradient_count = 0
         self._open_group = False
+        self._transform = Matrix2D.identity()
+        self._transformed = False
+        self._saved = List[Matrix2D]()
+
+    def _transform_attr(self) -> String:
+        """The `transform` attribute for an element drawn now: empty at
+        the identity, otherwise the current matrix.
+        """
+        if not self._transformed:
+            return ""
+        return ' transform="' + self._matrix_value() + '"'
+
+    def _matrix_value(self) -> String:
+        """`matrix(a b c d e f)` for the current transform."""
+        var m = self._transform
+        return (
+            "matrix("
+            + _format_svg_float(m.a)
+            + " "
+            + _format_svg_float(m.b)
+            + " "
+            + _format_svg_float(m.c)
+            + " "
+            + _format_svg_float(m.d)
+            + " "
+            + _format_svg_float(m.e)
+            + " "
+            + _format_svg_float(m.f)
+            + ")"
+        )
+
+    def save(mut self):
+        """Push the current transform for `restore` to put back. This
+        backend has no clip state, so the transform is all it holds.
+        """
+        self._saved.append(self._transform)
+
+    def restore(mut self):
+        """Pop the transform `save` pushed. A no-op with nothing saved,
+        matching `Canvas.restore`.
+        """
+        if len(self._saved) == 0:
+            return
+        self._set_transform(self._saved.pop())
+
+    def translate(mut self, tx: Float64, ty: Float64):
+        """Shift subsequent elements by (tx, ty) in the current user
+        space -- see `Canvas.translate`.
+
+        Args:
+            tx: Horizontal shift.
+            ty: Vertical shift.
+        """
+        self.transform(Matrix2D.translation(tx, ty))
+
+    def rotate(mut self, angle: Float64):
+        """Turn subsequent elements by `angle` radians about the
+        current origin -- see `Canvas.rotate`.
+
+        Args:
+            angle: Radians.
+        """
+        self.transform(Matrix2D.rotation(angle))
+
+    def scale(mut self, sx: Float64, sy: Float64):
+        """Scale subsequent elements about the current origin -- see
+        `Canvas.scale`.
+
+        Args:
+            sx: Horizontal factor.
+            sy: Vertical factor.
+        """
+        self.transform(Matrix2D.scaling(sx, sy))
+
+    def transform(mut self, matrix: Matrix2D):
+        """Compose `matrix` into the current transform, applied first
+        -- the order `Canvas.transform` composes in.
+
+        Args:
+            matrix: The map to apply first.
+        """
+        self._set_transform(matrix.then(self._transform))
+
+    def set_transform(mut self, matrix: Matrix2D):
+        """Replace the current transform outright.
+
+        Args:
+            matrix: The new map from user space to document pixels.
+        """
+        self._set_transform(matrix)
+
+    def reset_transform(mut self):
+        """Back to the identity: elements carry no `transform`."""
+        self._set_transform(Matrix2D.identity())
+
+    def current_transform(self) -> Matrix2D:
+        """The map every element drawn now carries.
+
+        Returns:
+            The current transform; the identity if none is set.
+        """
+        return self._transform
+
+    def has_transform(self) -> Bool:
+        """Whether elements drawn now carry a `transform` attribute.
+
+        Returns:
+            True if the current transform is not the identity.
+        """
+        return self._transformed
+
+    def _set_transform(mut self, matrix: Matrix2D):
+        self._transform = matrix
+        self._transformed = not matrix.is_identity()
 
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
@@ -257,6 +384,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
+            + self._transform_attr()
             + "/>\n"
         )
 
@@ -327,7 +455,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(height)
             + '" fill="url(#'
             + gid
-            + ')"/>\n'
+            + ')"'
+            + self._transform_attr()
+            + "/>\n"
         )
 
     def draw_line_aa(
@@ -364,7 +494,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _opacity_attr("stroke", color)
             + ' stroke-width="'
             + _format_svg_float(width)
-            + '" stroke-linecap="round"/>\n'
+            + '" stroke-linecap="round"'
+            + self._transform_attr()
+            + "/>\n"
         )
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
@@ -387,6 +519,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
+            + self._transform_attr()
             + "/>\n"
         )
 
@@ -415,6 +548,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
+            + self._transform_attr()
             + "/>\n"
         )
 
@@ -445,7 +579,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
-            + ' stroke-width="1"/>\n'
+            + ' stroke-width="1"'
+            + self._transform_attr()
+            + "/>\n"
         )
 
     def fill_arc_aa(
@@ -497,6 +633,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
+            + self._transform_attr()
             + "/>\n"
         )
 
@@ -567,6 +704,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
+            + self._transform_attr()
             + "/>\n"
         )
 
@@ -589,7 +727,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _opacity_attr("stroke", color)
             + ' stroke-width="'
             + _format_svg_float(width)
-            + '" stroke-linecap="round" stroke-linejoin="round"/>\n'
+            + '" stroke-linecap="round" stroke-linejoin="round"'
+            + self._transform_attr()
+            + "/>\n"
         )
 
     def fill_path_aa(
@@ -620,6 +760,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + rule
             + _opacity_attr("fill", color)
+            + self._transform_attr()
             + "/>\n"
         )
 
@@ -715,18 +856,28 @@ struct SvgCanvas(DrawTarget, Movable):
             anchor = "middle"
         elif align == TextAlign.RIGHT:
             anchor = "end"
-        var transform = ""
+        # A transform list applies right to left, so the canvas
+        # transform goes first and the label's own rotation about its
+        # anchor happens before it, as on Canvas.
+        var ops = ""
+        if self._transformed:
+            ops = self._matrix_value()
         if rotation != 0.0:
             var degrees = rotation * (180.0 / pi)
-            transform = (
-                ' transform="rotate('
+            if ops != "":
+                ops += " "
+            ops += (
+                "rotate("
                 + _format_svg_float(degrees)
                 + " "
                 + String(x)
                 + " "
                 + String(y)
-                + ')"'
+                + ")"
             )
+        var transform = ""
+        if ops != "":
+            transform = ' transform="' + ops + '"'
         var font_weight = ""
         if weight == FontWeight.BOLD:
             font_weight = ' font-weight="bold"'
