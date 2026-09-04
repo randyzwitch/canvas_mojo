@@ -44,6 +44,12 @@ rule holds on both: strokes are built in user space, so under a
 state is for placement and rotation, and data still maps through
 scales.
 
+The blend mode is on the trait as well: `set_blend_mode` and
+`blend_mode`, carried by `save`/`restore`, with the formulas in
+canvas/blend.mojo. `SvgCanvas` emits the six separable modes as
+`mix-blend-mode` and draws the Porter-Duff operators source-over,
+since CSS has no keyword for them.
+
 Two further methods, `begin_annotated_group` and
 `end_annotated_group`, declare no drawing at all: they label whatever
 is drawn between them. A vector backend has somewhere to put that
@@ -71,6 +77,7 @@ and `SvgCanvas` (`canvas/vector/svg.mojo`) each name `DrawTarget` in
 their struct declaration.
 """
 
+from canvas.blend import BlendMode
 from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
@@ -379,5 +386,25 @@ trait DrawTarget:
 
         Returns:
             True if drawing is being mapped.
+        """
+        ...
+
+    def set_blend_mode(mut self, mode: BlendMode):
+        """Set how later drawing calls combine with what is already
+        there. `save`/`restore` carry the mode. A backend that cannot
+        express a mode draws source-over and says so in its docstring
+        (`SvgCanvas` has no attribute for the Porter-Duff operators).
+
+        Args:
+            mode: The blend mode later calls use.
+        """
+        ...
+
+    def blend_mode(self) -> BlendMode:
+        """The blend mode later drawing calls will use.
+
+        Returns:
+            The current mode, `BlendMode.SOURCE_OVER` until
+            `set_blend_mode` says otherwise.
         """
         ...

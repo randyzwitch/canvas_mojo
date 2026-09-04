@@ -1,17 +1,20 @@
-"""Tests for gradient.mojo: LinearGradient.color_at and
-RadialGradient.color_at, with every expected value hand-computed, plus
-the path fills in canvas.path that take a gradient as their fill
-source.
+"""Tests for gradient.mojo: LinearGradient.color_at,
+RadialGradient.color_at and ConicGradient.color_at, with every expected
+value hand-computed, plus the path fills in canvas.path that take a
+gradient as their fill source.
 """
 
+from std.math import pi
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
-from canvas.gradient import LinearGradient, RadialGradient
+from canvas.gradient import ConicGradient, LinearGradient, RadialGradient
 from canvas.path import (
     Path,
+    fill_path_conic_gradient,
+    fill_path_conic_gradient_aa,
     fill_path_gradient,
     fill_path_gradient_aa,
     fill_path_radial_gradient,
@@ -212,6 +215,174 @@ def test_radial_color_at_no_stops_is_fully_transparent() raises:
     var g = RadialGradient(0.0, 0.0, 100.0)
     var c = g.color_at(0.0, 0.0)
     assert_equal(c.a, 0)
+
+
+def _color_wheel(
+    cx: Float64, cy: Float64, start_angle: Float64
+) -> ConicGradient:
+    var g = ConicGradient(cx, cy, start_angle)
+    g.add_stop(0.0, Color(255, 0, 0))
+    g.add_stop(0.25, Color(0, 255, 0))
+    g.add_stop(0.5, Color(0, 0, 255))
+    g.add_stop(0.75, Color(255, 255, 0))
+    return g^
+
+
+def test_conic_color_at_the_four_cardinal_directions() raises:
+    # start_angle=0.0: offset 0.0 sits along +x, and the sweep
+    # increases clockwise -- which in this package's y-down pixel
+    # coordinates means toward +y (down), not toward -y as it would in
+    # a y-up math frame. So going clockwise from +x: down is a quarter
+    # turn (t=0.25), -x is a half turn (t=0.5), up is three quarters
+    # (t=0.75). Each point lands exactly on a stop's offset, so the
+    # returned color is that stop's exact color, no interpolation.
+    var g = _color_wheel(0.0, 0.0, 0.0)
+
+    var east = g.color_at(10.0, 0.0)  # t=0.0
+    assert_equal(east.r, 255)
+    assert_equal(east.g, 0)
+    assert_equal(east.b, 0)
+
+    var south = g.color_at(0.0, 10.0)  # t=0.25 (down, clockwise from +x)
+    assert_equal(south.r, 0)
+    assert_equal(south.g, 255)
+    assert_equal(south.b, 0)
+
+    var west = g.color_at(-10.0, 0.0)  # t=0.5
+    assert_equal(west.r, 0)
+    assert_equal(west.g, 0)
+    assert_equal(west.b, 255)
+
+    var north = g.color_at(0.0, -10.0)  # t=0.75
+    assert_equal(north.r, 255)
+    assert_equal(north.g, 255)
+    assert_equal(north.b, 0)
+
+
+def test_conic_color_at_the_center_is_the_first_stop_regardless_of_start_angle() raises:
+    # (cx, cy) has no angle to measure -- color_at() fixes it at t=0.0
+    # rather than letting atan2(0, 0) == 0 tie the center's color to
+    # start_angle, so it must read back the first stop even when
+    # start_angle is nonzero (which would otherwise put t=0.0
+    # somewhere other than the center's raw angle).
+    var g = _color_wheel(5.0, 5.0, pi)
+    var center = g.color_at(5.0, 5.0)
+    assert_equal(center.r, 255)
+    assert_equal(center.g, 0)
+    assert_equal(center.b, 0)
+
+
+def test_conic_color_at_a_nonzero_start_angle_rotates_the_wheel() raises:
+    # Same wheel as the cardinal-directions test, rotated a quarter
+    # turn: start_angle=pi/2 puts offset 0.0 where +y (down) used to
+    # be, so every direction reads back the stop a quarter turn
+    # earlier in the unrotated wheel. +x, which was t=0.0 before,
+    # is now three quarters of a turn *after* the new start_angle:
+    # turns = (0 - pi/2) / (2*pi) = -0.25, and color_at() wraps a
+    # negative fraction forward by a full turn rather than clamping
+    # it, landing on t = -0.25 - floor(-0.25) = 0.75.
+    var g = _color_wheel(0.0, 0.0, pi / 2.0)
+
+    var east = g.color_at(10.0, 0.0)  # t=0.75
+    assert_equal(east.r, 255)
+    assert_equal(east.g, 255)
+    assert_equal(east.b, 0)
+
+    var south = g.color_at(0.0, 10.0)  # t=0.0, the new start_angle
+    assert_equal(south.r, 255)
+    assert_equal(south.g, 0)
+    assert_equal(south.b, 0)
+
+    var west = g.color_at(-10.0, 0.0)  # t=0.25
+    assert_equal(west.r, 0)
+    assert_equal(west.g, 255)
+    assert_equal(west.b, 0)
+
+    var north = g.color_at(0.0, -10.0)  # t=0.5
+    assert_equal(north.r, 0)
+    assert_equal(north.g, 0)
+    assert_equal(north.b, 255)
+
+
+def test_conic_color_at_wraps_across_the_start_angle_rather_than_clamping() raises:
+    # A point a hair clockwise of start_angle (t just above 0.0) and a
+    # point a hair counterclockwise of it (t just below a full turn)
+    # sit on opposite sides of the same ray, one full turn apart --
+    # unlike LinearGradient/RadialGradient's "pad" extend, there is no
+    # discontinuity here, and both must land near the same stop. Offset
+    # 0.98 turns of a full circle is 0.98 * 360 = 352.8 degrees;
+    # (1 - 0.98) turns short of start_angle on the other side is
+    # equivalent to -0.02 turns, which color_at() must wrap to 0.98,
+    # not read as a small negative-and-clamped value.
+    var g = ConicGradient(0.0, 0.0, 0.0)
+    g.add_stop(0.0, Color(0, 0, 0))
+    g.add_stop(1.0, Color(255, 255, 255))
+
+    # angle = -0.02 turns * 2*pi, taken directly rather than via
+    # atan2/cos/sin so the test doesn't call the same trig the
+    # implementation does: dx = cos(-0.02*2*pi), dy = sin(-0.02*2*pi)
+    # would be circular. Instead this constructs the angle from a
+    # right triangle: a small negative angle close to 0 rad has
+    # (dx, dy) close to (1, -epsilon), i.e. just above the +x axis in
+    # this package's y-down frame (negative dy is "up", clockwise-
+    # before the start_angle ray at +x).
+    var almost_wrapped = g.color_at(1.0, -0.001)
+    # Very close to a full turn (t near 1.0), so very close to the
+    # last stop's color -- far lighter than the halfway grey a clamp
+    # would produce.
+    assert_true(
+        almost_wrapped.r > 250,
+        "a point just before start_angle must wrap near t=1.0, got r="
+        + String(almost_wrapped.r),
+    )
+
+    var just_after = g.color_at(1.0, 0.001)
+    # Just past start_angle in the clockwise direction, t is near 0.0.
+    assert_true(
+        just_after.r < 5,
+        "a point just after start_angle must read near t=0.0, got r="
+        + String(just_after.r),
+    )
+
+
+def test_conic_gradient_aa_fill_interior_matches_the_gradient() raises:
+    var c = Canvas(80, 80, Color(255, 255, 255))
+    var g = _color_wheel(40.0, 40.0, 0.0)
+    var p = _diamond(40.0, 40.0, 30.0)
+    fill_path_conic_gradient_aa(c, p, g)
+
+    # A point southwest of center, well inside the diamond: dx=-8,
+    # dy=8 is exactly 135 degrees clockwise of +x in this y-down frame
+    # (atan2(8, -8) = 3*pi/4), i.e. t = (3*pi/4) / (2*pi) = 0.375 --
+    # halfway between the green stop (0.25) and the blue stop (0.5):
+    # local_t = (0.375-0.25)/(0.5-0.25) = 0.5, so red stays 0, blue
+    # rises from 0 to 0.5*255 = 127.5 -> 128, and green falls from 255
+    # by the same half-step to 128.
+    var expected = g.color_at(32.0, 48.0)
+    var got = c.get_pixel(32, 48)
+    assert_equal(got.r, expected.r)
+    assert_equal(got.g, expected.g)
+    assert_equal(got.b, expected.b)
+    assert_equal(expected.r, 0)
+    assert_equal(expected.g, 128)
+    assert_equal(expected.b, 128)
+
+
+def test_conic_gradient_hard_and_aa_fills_agree_in_the_interior() raises:
+    var hard = Canvas(80, 80, Color(255, 255, 255))
+    var soft = Canvas(80, 80, Color(255, 255, 255))
+    var p = _diamond(40.0, 40.0, 28.0)
+
+    var g1 = _color_wheel(40.0, 40.0, 0.0)
+    var g2 = _color_wheel(40.0, 40.0, 0.0)
+    fill_path_conic_gradient(hard, p, g1)
+    fill_path_conic_gradient_aa(soft, p, g2)
+
+    var a = hard.get_pixel(40, 20)
+    var b = soft.get_pixel(40, 20)
+    assert_equal(a.r, b.r)
+    assert_equal(a.g, b.g)
+    assert_equal(a.b, b.b)
 
 
 def _black_to_white(x0: Float64, x1: Float64) -> LinearGradient:

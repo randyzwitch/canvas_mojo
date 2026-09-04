@@ -41,7 +41,12 @@ from canvas.geometry import (
     _rounded_fpoints,
     _scaled_lengths,
 )
-from canvas.gradient import ColorSource, LinearGradient, RadialGradient
+from canvas.gradient import (
+    ColorSource,
+    ConicGradient,
+    LinearGradient,
+    RadialGradient,
+)
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import (
     _EdgeTable,
@@ -1617,6 +1622,39 @@ def fill_path_radial_gradient(
     )
 
 
+def fill_path_conic_gradient(
+    mut canvas: Canvas,
+    path: Path,
+    gradient: ConicGradient,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    curve_steps: Int = 0,
+):
+    """Like fill_path_gradient, but for a ConicGradient (gradient.mojo).
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        gradient: Fill source, queried per pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source(
+            canvas,
+            _through(path, m),
+            gradient,
+            fill_rule,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
+    _fill_path_source(
+        canvas, path, gradient, fill_rule, curve_steps, Matrix2D.identity()
+    )
+
+
 def fill_path_gradient_aa(
     mut canvas: Canvas,
     path: Path,
@@ -1672,6 +1710,50 @@ def fill_path_radial_gradient_aa(
     curve_steps: Int = 0,
 ):
     """Like fill_path_gradient_aa, but for a RadialGradient.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        gradient: Fill source, queried per covered pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) under EVEN_ODD. A NONZERO fill rasterizes by
+            exact area (`canvas.aa_area`) and ignores it.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source_aa(
+            canvas,
+            _through(path, m),
+            gradient,
+            fill_rule,
+            supersample,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
+    _fill_path_source_aa(
+        canvas,
+        path,
+        gradient,
+        fill_rule,
+        supersample,
+        curve_steps,
+        Matrix2D.identity(),
+    )
+
+
+def fill_path_conic_gradient_aa(
+    mut canvas: Canvas,
+    path: Path,
+    gradient: ConicGradient,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    supersample: Int = 4,
+    curve_steps: Int = 0,
+):
+    """Like fill_path_gradient_aa, but for a ConicGradient.
 
     Args:
         canvas: Canvas to fill into.
@@ -1784,7 +1866,10 @@ def stroke_path_aa(
         path: Path to stroke.
         color: Stroke color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) for a stroke whose outline is not simple (a
+            hairpin, a reversal); a simple outline rasterizes by
+            exact area and ignores it. See `_stroke_edges`.
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
         dashes: On/off segment lengths in pixels, cycled along the

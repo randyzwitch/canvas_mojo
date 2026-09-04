@@ -29,6 +29,7 @@ comptime _OUT_DIR = "docs/src/examples"
 def _titles() -> Dict[String, String]:
     var d = Dict[String, String]()
     d["fill_rect_blend"] = "Fill & Blend"
+    d["blend_modes"] = "Blend & Composite Modes"
     d["rect_stroke"] = "Rectangle Stroke"
     d["lines"] = "Lines"
     d["circles"] = "Circles"
@@ -39,6 +40,7 @@ def _titles() -> Dict[String, String]:
     d["path"] = "Paths"
     d["fill_rule"] = "Fill Rules"
     d["gradient"] = "Gradients"
+    d["conic_gradient"] = "Conic Gradients"
     d["dashes"] = "Dashes"
     d["transform"] = "Transforms"
     d["canvas_state"] = "Canvas Transform State"
@@ -94,7 +96,7 @@ def _categories() -> List[Category]:
                 "The general Path API -- Bezier curves, multi-sub-path fill"
                 " rules, and gradient fills."
             ),
-            ["path", "fill_rule", "gradient"],
+            ["path", "fill_rule", "gradient", "conic_gradient"],
         )
     )
     cats.append(
@@ -108,6 +110,7 @@ def _categories() -> List[Category]:
             [
                 "dashes",
                 "joins",
+                "blend_modes",
                 "transform",
                 "canvas_state",
                 "clipping",

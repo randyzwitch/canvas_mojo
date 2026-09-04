@@ -25,13 +25,21 @@ segments, a paragraph of real text.
 from std.math import cos, sin
 from std.time import perf_counter_ns
 
+from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import draw_canvas
 from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Point
-from canvas.gradient import LinearGradient
-from canvas.path import Path, fill_path_aa, fill_path_gradient_aa, stroke_path_aa
+from canvas.gradient import ConicGradient, LinearGradient, RadialGradient
+from canvas.path import (
+    Path,
+    fill_path_aa,
+    fill_path_conic_gradient_aa,
+    fill_path_gradient_aa,
+    fill_path_radial_gradient_aa,
+    stroke_path_aa,
+)
 from canvas.io.png import write_png, read_png
 from canvas.resize import downsample
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
@@ -155,6 +163,18 @@ def main() raises:
         fill_rect(canvas, 40, 40, 600, 400, INK)
         sink += Int(canvas.get_pixel(50, 50).r)
     _report(rows, "fill_rect 600x400 opaque", perf_counter_ns() - t0, iters)
+
+    # The same fill under a blend mode, which cannot take the packed
+    # store and goes through write_pixel per pixel -- the cost of any
+    # mode but source-over.
+    canvas.set_blend_mode(BlendMode.MULTIPLY)
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_rect(canvas, 40, 40, 600, 400, INK)
+        sink += Int(canvas.get_pixel(50, 50).r)
+    _report(rows, "fill_rect 600x400 multiply", perf_counter_ns() - t0, iters)
+    canvas.set_blend_mode(BlendMode.SOURCE_OVER)
 
     # --- anti-aliased fills -------------------------------------------
     # A scatter plot's markers: many small disks, where per-call
@@ -331,6 +351,57 @@ def main() raises:
         sink += Int(canvas.get_pixel(400, 400).r)
     _report(rows, "fill_path_gradient_aa large 39-curve", perf_counter_ns() - t0, iters)
 
+    # RadialGradient's projection is a sqrt per pixel; ConicGradient's
+    # is an atan2 per pixel. Same shapes as the linear rows above, so
+    # the three are directly comparable.
+    var radial = RadialGradient(Float64(W) / 2.0, Float64(H) / 2.0, Float64(H))
+    radial.add_stop(0.0, INK)
+    radial.add_stop(1.0, Color(220, 90, 60))
+    iters = 2000
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_radial_gradient_aa(canvas, glyph, radial)
+        sink += Int(canvas.get_pixel(20, 30).r)
+    _report(
+        rows, "fill_path_radial_gradient_aa glyph-sized", perf_counter_ns() - t0, iters
+    )
+
+    iters = 60
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_radial_gradient_aa(canvas, big_path, radial)
+        sink += Int(canvas.get_pixel(400, 400).r)
+    _report(
+        rows,
+        "fill_path_radial_gradient_aa large 39-curve",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    var conic = ConicGradient(Float64(W) / 2.0, Float64(H) / 2.0, 0.0)
+    conic.add_stop(0.0, INK)
+    conic.add_stop(1.0, Color(220, 90, 60))
+    iters = 2000
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_conic_gradient_aa(canvas, glyph, conic)
+        sink += Int(canvas.get_pixel(20, 30).r)
+    _report(
+        rows, "fill_path_conic_gradient_aa glyph-sized", perf_counter_ns() - t0, iters
+    )
+
+    iters = 60
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_conic_gradient_aa(canvas, big_path, conic)
+        sink += Int(canvas.get_pixel(400, 400).r)
+    _report(
+        rows,
+        "fill_path_conic_gradient_aa large 39-curve",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     # --- strokes -------------------------------------------------------
     iters = 400
     t0 = perf_counter_ns()
@@ -350,6 +421,26 @@ def main() raises:
         draw_polyline_aa(canvas, series, INK, width=1.5)
         sink += Int(canvas.get_pixel(400, 300).r)
     _report(rows, "draw_polyline_aa 3000-segment series", perf_counter_ns() - t0, iters)
+
+    # The same length of line without the hairpins: a gentle sine whose
+    # outline is simple, so it rasterizes by exact area. The series
+    # above turns through nearly 180 degrees at every peak and takes the
+    # sampled fallback; a chart's series can be either.
+    var smooth = List[FPoint]()
+    for i in range(3000):
+        var x = 20.0 + Float64(i) * 0.25
+        var y = 300.0 + 180.0 * sin(Float64(i) * 0.005)
+        smooth.append(FPoint(x, y))
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_polyline_aa(canvas, smooth, INK, width=1.5)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "draw_polyline_aa 3000-segment smooth series",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     # Dashed strokes query the dash pattern per piece (AA) or per pixel
     # (Bresenham), so the pattern's own cost shows here and nowhere

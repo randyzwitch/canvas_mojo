@@ -25,17 +25,18 @@ winding at each sample. `FillRule.EVEN_ODD` therefore stays on the
 sweep; `_sweep_edges_aa` and `_sweep_edges_to_mask` dispatch here for
 `FillRule.NONZERO`.
 
-Strokes do not come here, although they fill under NONZERO. A stroke
-is built as overlapping pieces, a quad per segment and a disk at every
-vertex (`_stroke_edges`), and where two pieces overlap inside one edge
-pixel their coverages add and clamp rather than union: the disk's
-sliver on top of the quad's 0.2 makes 0.26, and along a dense series
-the edge saturates and the line reads wider than drawn. The sweep's
-per-sample winding test has no such term. Exact-area strokes need a
-non-overlapping outline or a per-piece max-merge; until then they take
-`_sweep_edges_sampled_aa`. A fill's sub-paths overlap only where the
-caller drew them so, and this is the trade every accumulation
-rasterizer (FreeType included) makes for glyphs.
+Strokes come here as outlines, when they can be simple ones. Where
+two pieces of a shape overlap inside one edge pixel an accumulation
+adds their coverages and clamps rather than taking their union, so
+the union of pieces the sweep fills a stroke with (a quad per segment,
+a disk per joint) over-covers every vertex here: a joint disk's sliver
+on top of a quad's 0.2 makes 0.26, and a dense series reads wider than
+drawn. `_stroke_edges` builds one simple polygon per drawn run
+instead, so there is nothing to add -- and where it cannot (a hairpin
+or a reversal, whose bodies overlap each other) the stroke stays on
+the sampled sweep. A fill's sub-paths overlap only where the caller
+drew them so, and that is the trade every accumulation rasterizer
+(FreeType included) makes for glyphs.
 
 Banded across cores above `_MIN_PARALLEL_PIXELS` like the sweep: a
 band deposits only into its own rows and writes only those, with the

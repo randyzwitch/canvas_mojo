@@ -9,7 +9,11 @@ from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import Point
 from canvas.shapes.dash import _is_dash_on
+from canvas.geometry import FPoint, Matrix2D
 from canvas.shapes.lines import (
+    _stroke_edges,
+    LineCap,
+    LineJoin,
     draw_line,
     draw_line_aa,
     draw_polyline,
@@ -87,28 +91,32 @@ def test_draw_line_aa_horizontal_interior_is_fully_opaque() raises:
 
 
 def test_draw_line_aa_round_cap_matches_hand_computed_value() raises:
-    # By the clamped-projection distance formula, the horizontal line
-    # (1,1)-(7,1) puts 14/16 of pixel (1,1)'s sub-samples inside the
-    # round cap.
+    # Pixel (1,1) is the square [0.5, 1.5]^2. The horizontal line
+    # (1,1)-(7,1) at width 1 covers its right half outright and its
+    # left half with the round cap's half-disk: 0.5 + pi/8 = 0.8927,
+    # which is 228 of 255. The cap is a 16-gon, so it comes in a hair
+    # under; the 4x4 sampler used to say 14/16 = 223.
     var c = Canvas(9, 3, BG)
     draw_line_aa(c, 1, 1, 7, 1, FG)
     var cap = c.get_pixel(1, 1)
-    assert_equal(cap.r, 223)
-    assert_equal(cap.g, 223)
-    assert_equal(cap.b, 223)
+    assert_true(cap.r >= 224 and cap.r <= 229, "cap: " + String(cap.r))
+    assert_equal(cap.g, cap.r)
+    assert_equal(cap.b, cap.r)
     # the round cap doesn't bulge far enough to reach the next column
     _assert_pixel(c, 0, 1, BG, "just past the cap")
 
 
 def test_draw_line_aa_diagonal_matches_hand_computed_value() raises:
-    # Hand-verified the same way for a non-axis-aligned segment:
-    # (1,1)-(8,6), pixel (1,1) has 13/16 sub-samples covered.
+    # A non-axis-aligned segment, (1,1)-(8,6): the exact area of pixel
+    # (1,1) inside the round-capped stadium is 0.8515, or 217 of 255
+    # (a 1500x1500 sampling of the true shape); the 4x4 sampler used
+    # to say 13/16 = 207.
     var c = Canvas(10, 10, BG)
     draw_line_aa(c, 1, 1, 8, 6, FG)
     var p = c.get_pixel(1, 1)
-    assert_equal(p.r, 207)
-    assert_equal(p.g, 207)
-    assert_equal(p.b, 207)
+    assert_true(p.r >= 213 and p.r <= 220, "diagonal: " + String(p.r))
+    assert_equal(p.g, p.r)
+    assert_equal(p.b, p.r)
 
 
 def test_draw_line_aa_agrees_with_hard_edged_on_interior_pixels() raises:
@@ -366,13 +374,18 @@ def _brute_force_stroke_polyline_aa(
     dashes: List[Float64],
     dash_offset: Float64,
 ) raises:
-    """Naive reference for _draw_polyline_core_aa's column-bucket
-    optimization: for every pixel and sample, tests distance to EVERY
-    segment, with no row- or column-level pre-filtering. Same
-    per-sample "minimum distance across every on-dash candidate" math
-    and the same coverage-to-alpha blend, without the bucket
-    bookkeeping -- so a divergence means the optimization changed a
-    result, not just the speed.
+    """Naive reference for the stroke: for every pixel and sample,
+    the distance to every segment whose bounding box, grown by the
+    half-width, contains the pixel -- the "within half a width of some
+    drawn part of the path" definition of a stroke, sampled on an
+    n x n grid per pixel. Round joins and caps, and butt dash ends,
+    fall out of the clamped-projection distance by themselves.
+
+    The stroke itself is exact-area, so the two agree only to within
+    the sampling error: at n = 8 a straight edge can be off by up to
+    1/8 of a pixel's coverage where it lines up with the sample rows,
+    and by far less elsewhere. `_assert_matches_reference` allows for
+    that.
     """
     var count = len(points)
     if count == 0:
@@ -437,6 +450,13 @@ def _brute_force_stroke_polyline_aa(
                         var fy0 = Float64(a.y)
                         var fx1 = Float64(b.x)
                         var fy1 = Float64(b.y)
+                        if (
+                            sample_x < min(fx0, fx1) - half_width
+                            or sample_x > max(fx0, fx1) + half_width
+                            or sample_y < min(fy0, fy1) - half_width
+                            or sample_y > max(fy0, fy1) + half_width
+                        ):
+                            continue
                         var ldx = fx1 - fx0
                         var ldy = fy1 - fy0
                         var len2 = ldx * ldx + ldy * ldy
@@ -479,6 +499,40 @@ def _brute_force_stroke_polyline_aa(
                 canvas.set_pixel(
                     px, py, Color(color.r, color.g, color.b, alpha)
                 )
+
+
+def _assert_matches_reference(
+    canvas: Canvas, reference: Canvas, max_gap: Int, mean_limit: Float64
+) raises:
+    """The stroke against its sampled reference: no pixel further
+    than `max_gap` levels apart, and the mean gap over every pixel
+    either of them inked under `mean_limit`. A shape drawn in the
+    wrong place, or an edge over-covered at every vertex, moves the
+    mean by tens of levels; the sampler's own error moves it by one
+    or two.
+    """
+    var worst = 0
+    var total = 0
+    var inked = 0
+    for i in range(0, len(canvas.pixels), 4):
+        var a = Int(canvas.pixels[i])
+        var b = Int(reference.pixels[i])
+        if a == 255 and b == 255:
+            continue
+        inked += 1
+        var d = a - b if a > b else b - a
+        total += d
+        if d > worst:
+            worst = d
+    assert_true(inked > 0, "the stroke drew something")
+    assert_true(
+        worst <= max_gap, "worst gap " + String(worst) + " > " + String(max_gap)
+    )
+    var mean = Float64(total) / Float64(inked)
+    assert_true(
+        mean <= mean_limit,
+        "mean gap " + String(mean) + " over " + String(inked) + " pixels",
+    )
 
 
 def _jagged_stress_points() -> List[Point]:
@@ -571,14 +625,75 @@ def test_dashed_stroke_has_butt_ends_not_round_ones() raises:
     )
 
 
+def test_stroke_shape_is_exact_only_when_its_outline_is_simple() raises:
+    # Which rasterizer a stroke gets is decided by its geometry: a
+    # gentle path is one simple outline and rasterizes by exact area;
+    # a hairpin, whose bodies overlap, falls back to the union of
+    # pieces and the sampled sweep. The jagged stress path above is
+    # the second kind, which is why its tests compare byte for byte
+    # against a 4x4 reference, and the flattened curve below is the
+    # first.
+    var gentle: List[FPoint] = [
+        FPoint(5.0, 40.0),
+        FPoint(30.0, 10.0),
+        FPoint(55.0, 50.0),
+        FPoint(80.0, 20.0),
+    ]
+    var shape = _stroke_edges(
+        gentle,
+        False,
+        1.5,
+        LineCap.ROUND,
+        List[Float64](),
+        0.0,
+        LineJoin.ROUND,
+        4.0,
+        Matrix2D.identity(),
+    )
+    assert_true(shape.exact, "a gentle polyline is one simple outline")
+
+    var hairpin: List[FPoint] = [
+        FPoint(10.0, 60.0),
+        FPoint(10.0, 5.0),
+        FPoint(11.0, 40.0),
+    ]
+    var back = _stroke_edges(
+        hairpin,
+        False,
+        1.0,
+        LineCap.ROUND,
+        List[Float64](),
+        0.0,
+        LineJoin.ROUND,
+        4.0,
+        Matrix2D.identity(),
+    )
+    assert_true(not back.exact, "a hairpin's bodies overlap: pieces")
+
+    var jagged = _jagged_stress_points()
+    var fpts = List[FPoint](capacity=len(jagged))
+    for pt in jagged:
+        fpts.append(FPoint(Float64(pt.x), Float64(pt.y)))
+    var stress = _stroke_edges(
+        fpts,
+        False,
+        1.0,
+        LineCap.ROUND,
+        List[Float64](),
+        0.0,
+        LineJoin.ROUND,
+        4.0,
+        Matrix2D.identity(),
+    )
+    assert_true(not stress.exact, "the stress path has hairpins")
+
+
 def test_stroke_matches_brute_force_on_short_segments() raises:
     # The jagged stress paths above use long segments. A flattened
     # curve does not -- it is hundreds of segments shorter than the
-    # stroke is wide, and that is a different case: a joint's round
-    # disk is only covered by its two adjoining quads when both of them
-    # reach at least half a width back from it. Skipping the disk
-    # without checking that leaves a notch on every tight joint, which
-    # no long-segment test can see.
+    # stroke is wide, which is where an outline's inner corners cannot
+    # reach the offset lines' crossing and fall back to the pivot, and
+    # where a notch at a joint would show if the fallback were wrong.
     var points = List[Point](capacity=120)
     for i in range(120):
         var t = Float64(i) / 119.0
@@ -591,10 +706,9 @@ def test_stroke_matches_brute_force_on_short_segments() raises:
 
     var reference = Canvas(100, 140, Color(255, 255, 255))
     _brute_force_stroke_polyline_aa(
-        reference, points, Color(0, 0, 0), 3.0, 4, False, List[Float64](), 0.0
+        reference, points, Color(0, 0, 0), 3.0, 8, False, List[Float64](), 0.0
     )
-    for i in range(len(canvas.pixels)):
-        assert_equal(canvas.pixels[i], reference.pixels[i])
+    _assert_matches_reference(canvas, reference, 48, 4.0)
 
 
 def main() raises:
