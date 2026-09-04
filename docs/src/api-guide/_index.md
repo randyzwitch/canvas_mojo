@@ -34,7 +34,8 @@ fill/stroke color is.
 
 The discrete shapes: lines, rectangles, circles, ellipses, arcs,
 polylines/polygons. Each comes in a hard-edged variant (fast, aliased)
-and an `_aa` variant (supersampled, anti-aliased) — see
+and an `_aa` variant (anti-aliased: exact-area coverage for nonzero
+fills, 4×4 supersampled for even-odd fills and strokes) — see
 [Examples](../examples/) for both side by side.
 
 - [`shapes.lines`](../canvas/shapes/lines/) — `draw_line`,

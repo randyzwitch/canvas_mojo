@@ -248,7 +248,9 @@ def fill_polygon_aa(
         points: Polygon vertices, in order. Implicitly closed.
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) under EVEN_ODD. A NONZERO fill rasterizes by
+            exact area (`canvas.aa_area`) and ignores it.
     """
     if canvas.has_transform():
         var m = canvas._take_transform()
@@ -291,7 +293,9 @@ def fill_polygon_aa(
             Implicitly closed.
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) under EVEN_ODD. A NONZERO fill rasterizes by
+            exact area (`canvas.aa_area`) and ignores it.
     """
     if canvas.has_transform():
         var m = canvas.current_transform()
