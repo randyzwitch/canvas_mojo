@@ -1085,12 +1085,18 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         stroke_path_aa(self, path, color, width=width)
 
-    def fill_path_aa(mut self, path: Path, color: Color):
+    def fill_path_aa(
+        mut self,
+        path: Path,
+        color: Color,
+        fill_rule: FillRule = FillRule.EVEN_ODD,
+    ):
         """Same as `canvas.path.fill_path_aa`, callable as a
         method.
 
         Args:
             path: Path to fill.
             color: Fill color.
+            fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         """
-        fill_path_aa(self, path, color)
+        fill_path_aa(self, path, color, fill_rule)

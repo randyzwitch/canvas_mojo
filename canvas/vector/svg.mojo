@@ -14,6 +14,7 @@ than a transform stack, for a chart's rotated y-axis title.
 from std.math import cos, pi, sin
 
 from canvas.color import Color
+from canvas.fill_rule import FillRule
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.geometry import _round_to_int
@@ -591,19 +592,33 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" stroke-linecap="round" stroke-linejoin="round"/>\n'
         )
 
-    def fill_path_aa(mut self, path: Path, color: Color):
-        """Emit a `<path>` element, filled only.
+    def fill_path_aa(
+        mut self,
+        path: Path,
+        color: Color,
+        fill_rule: FillRule = FillRule.EVEN_ODD,
+    ):
+        """Emit a `<path>` element, filled only. The default rule is
+        written out as `fill-rule="evenodd"`, since SVG's own default
+        is nonzero and the raster backend's is even-odd; a path with a
+        hole has to come out the same on both. NONZERO adds nothing,
+        being what a renderer does when the attribute is absent.
 
         Args:
             path: Path to fill.
             color: Fill color.
+            fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         """
+        var rule = ""
+        if fill_rule == FillRule.EVEN_ODD:
+            rule = ' fill-rule="evenodd"'
         self._body += (
             '<path d="'
             + _path_d(path)
             + '" fill="'
             + _to_hex(color)
             + '"'
+            + rule
             + _opacity_attr("fill", color)
             + "/>\n"
         )
