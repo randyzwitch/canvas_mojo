@@ -17,7 +17,12 @@ from canvas.text.font_discovery import (
     resolve_font_file_for_char,
 )
 from canvas.geometry import Matrix2D, Point, Transform2D
-from canvas.gradient import ColorSource, LinearGradient, RadialGradient
+from canvas.gradient import (
+    ColorSource,
+    ConicGradient,
+    LinearGradient,
+    RadialGradient,
+)
 from canvas.fill_rule import FillRule
 from canvas.shapes.lines import (
     LineCap,
@@ -69,6 +74,8 @@ from canvas.path import (
     FPoint,
     fill_path,
     fill_path_aa,
+    fill_path_conic_gradient,
+    fill_path_conic_gradient_aa,
     fill_path_gradient,
     fill_path_gradient_aa,
     fill_path_radial_gradient,

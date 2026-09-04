@@ -40,6 +40,7 @@ def _titles() -> Dict[String, String]:
     d["path"] = "Paths"
     d["fill_rule"] = "Fill Rules"
     d["gradient"] = "Gradients"
+    d["conic_gradient"] = "Conic Gradients"
     d["dashes"] = "Dashes"
     d["transform"] = "Transforms"
     d["canvas_state"] = "Canvas Transform State"
@@ -95,7 +96,7 @@ def _categories() -> List[Category]:
                 "The general Path API -- Bezier curves, multi-sub-path fill"
                 " rules, and gradient fills."
             ),
-            ["path", "fill_rule", "gradient"],
+            ["path", "fill_rule", "gradient", "conic_gradient"],
         )
     )
     cats.append(
