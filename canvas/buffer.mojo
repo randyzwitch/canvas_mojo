@@ -15,6 +15,7 @@ comptime BYTES_PER_PIXEL = 4
 
 from std.sys import size_of
 
+from canvas.blend import BlendMode, _blend_pixel
 from canvas.color import Color, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
@@ -62,11 +63,12 @@ struct _ClipRect(ImplicitlyCopyable, Movable):
 
 struct _CanvasState(ImplicitlyCopyable, Movable):
     """What `Canvas.save` records and `Canvas.restore` puts back: the
-    transform, and how deep the two clip stacks were.
+    transform, the blend mode, and how deep the two clip stacks were.
     """
 
     var transform: Matrix2D
     var transformed: Bool
+    var blend: BlendMode
     var clip_depth: Int
     var mask_depth: Int
 
@@ -74,11 +76,13 @@ struct _CanvasState(ImplicitlyCopyable, Movable):
         out self,
         transform: Matrix2D,
         transformed: Bool,
+        blend: BlendMode,
         clip_depth: Int,
         mask_depth: Int,
     ):
         self.transform = transform
         self.transformed = transformed
+        self.blend = blend
         self.clip_depth = clip_depth
         self.mask_depth = mask_depth
 
@@ -166,6 +170,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # is a field rather than six comparisons on the matrix.
     var _transform: Matrix2D
     var _transformed: Bool
+    # The current blend mode (see `set_blend_mode`). SOURCE_OVER until
+    # a caller sets otherwise, and every pixel write tests it.
+    var _blend: BlendMode
     var _saved: List[_CanvasState]
 
     def __init__(
@@ -214,6 +221,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         ), "Canvas must stay over 256 bytes -- see _layout_pad"
         self._transform = Matrix2D.identity()
         self._transformed = False
+        self._blend = BlendMode.SOURCE_OVER
         self._saved = List[_CanvasState]()
         if total == 0:
             return
@@ -264,30 +272,34 @@ struct Canvas(Copyable, DrawTarget, Movable):
         ), "Canvas must stay over 256 bytes -- see _layout_pad"
         self._transform = Matrix2D.identity()
         self._transformed = False
+        self._blend = BlendMode.SOURCE_OVER
         self._saved = List[_CanvasState]()
 
     def save(mut self):
-        """Push the current transform and clip state, for `restore` to
-        put back. The pair works as Cairo's `cairo_save`/`cairo_restore`
-        and the HTML5 canvas's `save`/`restore` do: whatever
-        `translate`, `rotate`, `scale`, `transform`, `set_transform`,
-        `push_clip` or `push_clip_path` does between the two is undone
-        by `restore`, so a caller can set up a local frame for one part
-        of a drawing and leave the canvas as it found it.
+        """Push the current transform, blend mode and clip state, for
+        `restore` to put back. The pair works as Cairo's
+        `cairo_save`/`cairo_restore` and the HTML5 canvas's
+        `save`/`restore` do: whatever `translate`, `rotate`, `scale`,
+        `transform`, `set_transform`, `set_blend_mode`, `push_clip` or
+        `push_clip_path` does between the two is undone by `restore`,
+        so a caller can set up a local frame for one part of a drawing
+        and leave the canvas as it found it.
         """
         self._saved.append(
             _CanvasState(
                 self._transform,
                 self._transformed,
+                self._blend,
                 len(self._clip_stack),
                 self._clip_mask_count,
             )
         )
 
     def restore(mut self):
-        """Pop the state `save` pushed: the transform goes back to what
-        it was, and every clip pushed since -- rectangle or path -- is
-        popped. A no-op with nothing saved, matching `pop_clip`.
+        """Pop the state `save` pushed: the transform and blend mode go
+        back to what they were, and every clip pushed since --
+        rectangle or path -- is popped. A no-op with nothing saved,
+        matching `pop_clip`.
         """
         if len(self._saved) == 0:
             return
@@ -298,6 +310,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             _ = self._clip_stack.pop()
         self._transform = state.transform
         self._transformed = state.transformed
+        self._blend = state.blend
 
     def translate(mut self, tx: Float64, ty: Float64):
         """Shift the origin subsequent drawing is measured from by
@@ -387,6 +400,30 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var m = self._transform
         self._set_transform(Matrix2D.identity())
         return m
+
+    def set_blend_mode(mut self, mode: BlendMode):
+        """Set how every later drawing call combines with the pixels
+        already there -- the equivalent of Cairo's
+        `cairo_set_operator` and the HTML5 canvas's
+        `globalCompositeOperation`.
+
+        `save`/`restore` carry the mode with the rest of the canvas
+        state. See canvas/blend.mojo for each mode's formula and for
+        the three limits on where a mode applies.
+
+        Args:
+            mode: The blend mode later calls use.
+        """
+        self._blend = mode
+
+    def blend_mode(self) -> BlendMode:
+        """The blend mode later drawing calls will use.
+
+        Returns:
+            The current mode, `BlendMode.SOURCE_OVER` until
+            `set_blend_mode` says otherwise.
+        """
+        return self._blend
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.
@@ -613,8 +650,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Args:
             x: Column to write.
             y: Row to write.
-            color: Color to write, blended over the existing pixel if
-                translucent.
+            color: Color to write, combined with the existing pixel
+                under the current blend mode.
         """
         if not self.in_bounds(x, y):
             return
@@ -688,9 +725,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Args:
             x: Column to write. Must already be known in-bounds.
             y: Row to write. Must already be known in-bounds.
-            color: Color to write, blended over the existing pixel if
-                translucent.
+            color: Color to write, combined with the existing pixel
+                under the current blend mode.
         """
+        if not self._blend.is_source_over():
+            self._write_pixel_blended(x, y, color)
+            return
+
         var idx = (y * self.width + x) * BYTES_PER_PIXEL
         var p = self.pixels.unsafe_ptr()
         if color.a == 255:
@@ -723,6 +764,36 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 p[unsafe_offset=idx + 2],
                 dst_a,
             )
+        )
+        p[unsafe_offset=idx] = blended.r
+        p[unsafe_offset=idx + 1] = blended.g
+        p[unsafe_offset=idx + 2] = blended.b
+        p[unsafe_offset=idx + 3] = blended.a
+
+    def _write_pixel_blended(mut self, x: Int, y: Int, color: Color):
+        """`write_pixel` under any mode but SOURCE_OVER, kept out of
+        line so the default path above compiles with one field test
+        ahead of it.
+
+        None of `write_pixel`'s shortcuts survive here: an opaque
+        source does not necessarily replace the pixel (DARKEN keeps
+        the darker channel), a transparent one does not necessarily
+        leave it alone (DESTINATION_IN clears it), and an opaque
+        destination does not necessarily stay opaque (XOR punches
+        through it). So the general blend reads all four bytes and
+        writes all four back.
+        """
+        var idx = (y * self.width + x) * BYTES_PER_PIXEL
+        var p = self.pixels.unsafe_ptr()
+        var blended = _blend_pixel(
+            self._blend,
+            color,
+            Color(
+                p[unsafe_offset=idx],
+                p[unsafe_offset=idx + 1],
+                p[unsafe_offset=idx + 2],
+                p[unsafe_offset=idx + 3],
+            ),
         )
         p[unsafe_offset=idx] = blended.r
         p[unsafe_offset=idx + 1] = blended.g
@@ -845,6 +916,18 @@ struct Canvas(Copyable, DrawTarget, Movable):
             for y in range(ry, ry + rh):
                 for x in range(rx, rx + rw):
                     self.set_pixel(x, y, color)
+            return
+
+        # Both shortcuts below are source-over identities -- an opaque
+        # colour replaces the pixel, a fully transparent one leaves it
+        # -- and neither holds for the other modes, so those take the
+        # general blend per pixel. The coordinates are already known
+        # drawable, so this goes straight to the blend rather than
+        # through set_pixel or write_pixel.
+        if not self._blend.is_source_over():
+            for y in range(ry, ry + rh):
+                for x in range(rx, rx + rw):
+                    self._write_pixel_blended(x, y, color)
             return
 
         var p = self.pixels.unsafe_ptr()

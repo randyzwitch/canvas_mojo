@@ -29,6 +29,7 @@ comptime _OUT_DIR = "docs/src/examples"
 def _titles() -> Dict[String, String]:
     var d = Dict[String, String]()
     d["fill_rect_blend"] = "Fill & Blend"
+    d["blend_modes"] = "Blend & Composite Modes"
     d["rect_stroke"] = "Rectangle Stroke"
     d["lines"] = "Lines"
     d["circles"] = "Circles"
@@ -109,6 +110,7 @@ def _categories() -> List[Category]:
             [
                 "dashes",
                 "joins",
+                "blend_modes",
                 "transform",
                 "canvas_state",
                 "clipping",

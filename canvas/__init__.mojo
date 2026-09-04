@@ -1,3 +1,4 @@
+from canvas.blend import BlendMode
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.compose import draw_canvas

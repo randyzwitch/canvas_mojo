@@ -25,6 +25,7 @@ segments, a paragraph of real text.
 from std.math import cos, sin
 from std.time import perf_counter_ns
 
+from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import draw_canvas
@@ -162,6 +163,18 @@ def main() raises:
         fill_rect(canvas, 40, 40, 600, 400, INK)
         sink += Int(canvas.get_pixel(50, 50).r)
     _report(rows, "fill_rect 600x400 opaque", perf_counter_ns() - t0, iters)
+
+    # The same fill under a blend mode, which cannot take the packed
+    # store and goes through write_pixel per pixel -- the cost of any
+    # mode but source-over.
+    canvas.set_blend_mode(BlendMode.MULTIPLY)
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_rect(canvas, 40, 40, 600, 400, INK)
+        sink += Int(canvas.get_pixel(50, 50).r)
+    _report(rows, "fill_rect 600x400 multiply", perf_counter_ns() - t0, iters)
+    canvas.set_blend_mode(BlendMode.SOURCE_OVER)
 
     # --- anti-aliased fills -------------------------------------------
     # A scatter plot's markers: many small disks, where per-call

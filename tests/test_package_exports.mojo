@@ -8,6 +8,7 @@ project.
 from std.testing import TestSuite, assert_equal, assert_true
 
 from canvas import (
+    BlendMode,
     Canvas,
     Color,
     DrawTarget,
@@ -33,9 +34,13 @@ from canvas import (
 
 def _draw_scene[T: DrawTarget](mut target: T):
     """Written against the trait, so the `DrawTarget` import is
-    exercised as a constraint rather than only as a name.
+    exercised as a constraint rather than only as a name, and so the
+    blend mode is reachable through it on every backend.
     """
     target.fill_rect(0, 0, 2, 2, Color(255, 0, 0))
+    target.set_blend_mode(BlendMode.MULTIPLY)
+    target.fill_rect(0, 0, 1, 1, Color(255, 255, 255))
+    target.set_blend_mode(BlendMode.SOURCE_OVER)
 
 
 def test_root_exports_draw_and_round_trip() raises:
@@ -43,6 +48,8 @@ def test_root_exports_draw_and_round_trip() raises:
     _draw_scene(canvas)
     assert_equal(canvas.get_pixel(0, 0).r, 255)
     assert_equal(canvas.get_pixel(3, 3).r, 0)
+
+    assert_true(canvas.blend_mode() == BlendMode.SOURCE_OVER)
 
     var layer = Canvas(2, 2, Color(0, 255, 0))
     draw_canvas(canvas, layer, 2, 2)
