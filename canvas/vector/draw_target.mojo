@@ -19,9 +19,14 @@ here, and it takes no `width`, since the raster primitive behind it
 draws a fixed ~1px outline.
 
 Method parameters mirror the same-named function in
-`canvas.shapes`/`canvas.path`, minus `supersample`, `dashes` and
-`fill_rule`: a raster implementation picks its own supersample factor,
-and a vector one has no equivalent knob.
+`canvas.shapes`/`canvas.path`, minus `supersample` and `dashes`: a
+raster implementation picks its own supersample factor, and a vector
+one has no equivalent knob. `fill_path_aa` does take a `fill_rule`,
+defaulting to `EVEN_ODD` as the raster function does, because the two
+backends would otherwise disagree on a path with more than one
+sub-path: SVG's own default is nonzero, so a hole that even-odd
+punches in a PNG would fill solid in the SVG unless the element says
+`fill-rule="evenodd"`.
 
 Two further methods, `begin_annotated_group` and
 `end_annotated_group`, declare no drawing at all: they label whatever
@@ -51,6 +56,7 @@ their struct declaration.
 """
 
 from canvas.color import Color
+from canvas.fill_rule import FillRule
 from canvas.path import Path
 from canvas.gradient import LinearGradient
 
@@ -207,12 +213,19 @@ trait DrawTarget:
         """
         ...
 
-    def fill_path_aa(mut self, path: Path, color: Color):
+    def fill_path_aa(
+        mut self,
+        path: Path,
+        color: Color,
+        fill_rule: FillRule = FillRule.EVEN_ODD,
+    ):
         """An anti-aliased fill of a Path's interior.
 
         Args:
             path: Path to fill.
             color: Fill color.
+            fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+                The same rule on either backend.
         """
         ...
 

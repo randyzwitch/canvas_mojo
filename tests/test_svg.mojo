@@ -10,6 +10,7 @@ from std.math import pi
 from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas.color import Color
+from canvas.fill_rule import FillRule
 from canvas.gradient import LinearGradient
 from canvas.path import Path
 from canvas.vector.svg import SvgCanvas
@@ -379,9 +380,37 @@ def test_fill_path_aa_emits_closed_path_with_fill_color() raises:
     var svg = SvgCanvas(100, 100)
     svg.fill_path_aa(path, Color(200, 100, 0))
     assert_true(
-        '<path d="M0.000,0.000 L10.000,0.000 L10.000,10.000 Z" fill="#c86400"/>'
+        '<path d="M0.000,0.000 L10.000,0.000 L10.000,10.000 Z" fill="#c86400"'
+        ' fill-rule="evenodd"/>'
         in svg.to_string(),
         "fill_path_aa: exact d string including the Z from Path.close()",
+    )
+
+
+def test_fill_path_aa_fill_rule_matches_the_raster_default() raises:
+    # Canvas fills a path even-odd unless told otherwise; SVG renderers
+    # fill nonzero unless told otherwise. A square with a square hole
+    # is the case where they differ, so the element has to say which.
+    var path = Path()
+    path.rect(0.0, 0.0, 10.0, 10.0)
+    path.rect(3.0, 3.0, 4.0, 4.0)
+
+    var by_default = SvgCanvas(20, 20)
+    by_default.fill_path_aa(path, Color(0, 0, 0))
+    assert_true(
+        'fill-rule="evenodd"' in by_default.to_string(),
+        "the default rule is written out, since it is not SVG's",
+    )
+
+    var even_odd = SvgCanvas(20, 20)
+    even_odd.fill_path_aa(path, Color(0, 0, 0), FillRule.EVEN_ODD)
+    assert_true('fill-rule="evenodd"' in even_odd.to_string())
+
+    var nonzero = SvgCanvas(20, 20)
+    nonzero.fill_path_aa(path, Color(0, 0, 0), FillRule.NONZERO)
+    assert_true(
+        "fill-rule" not in nonzero.to_string(),
+        "nonzero is SVG's own default and adds nothing",
     )
 
 
@@ -398,7 +427,7 @@ def test_fill_path_aa_handles_arc_to_command() raises:
     svg.fill_path_aa(path, Color(0, 255, 0))
     assert_true(
         '<path d="M70.000,60.000 A20.000,20.000 0 0,1 50.000,80.000"'
-        ' fill="#00ff00"/>'
+        ' fill="#00ff00" fill-rule="evenodd"/>'
         in svg.to_string(),
         "arc_to: bare A command, hand-derived endpoint, large-arc-flag 0",
     )
@@ -415,7 +444,7 @@ def test_fill_path_aa_arc_to_backwards_sweep_clears_sweep_flag() raises:
     svg.fill_path_aa(path, Color(0, 255, 0))
     assert_true(
         '<path d="M70.000,60.000 A20.000,20.000 0 0,0 50.000,40.000"'
-        ' fill="#00ff00"/>'
+        ' fill="#00ff00" fill-rule="evenodd"/>'
         in svg.to_string(),
         "arc_to backwards: sweep-flag 0, hand-derived endpoint",
     )
@@ -431,7 +460,7 @@ def test_fill_path_aa_arc_to_wide_span_sets_large_arc_flag() raises:
     svg.fill_path_aa(path, Color(0, 0, 255))
     assert_true(
         '<path d="M70.000,60.000 A20.000,20.000 0 1,1 36.927,44.864"'
-        ' fill="#0000ff"/>'
+        ' fill="#0000ff" fill-rule="evenodd"/>'
         in svg.to_string(),
         (
             "arc_to: wide span (> pi) sets large-arc-flag 1, same hand-derived"
@@ -449,7 +478,7 @@ def test_fill_path_aa_handles_quad_and_cubic_commands() raises:
     svg.fill_path_aa(path, Color(0, 0, 0))
     assert_true(
         '<path d="M0.000,0.000 Q5.000,10.000 10.000,0.000 C12.000,5.000'
-        ' 14.000,5.000 16.000,0.000" fill="#000000"/>'
+        ' 14.000,5.000 16.000,0.000" fill="#000000" fill-rule="evenodd"/>'
         in svg.to_string(),
         (
             "Q (quad) and C (cubic) commands map directly, same control-point"
