@@ -165,21 +165,40 @@ struct _EdgeTable(Movable):
         """The whole-pixel box every edge lies in, as (min_x, min_y,
         max_x, max_y), widened outward with floor/ceil. (0, 0, 0, 0)
         for an empty table.
+
+        The four lists are read through their pointers: on a table of
+        tens of thousands of edges (a dashed series) the checked
+        indexing of `List` costs more than the compares, and `n` is
+        the length of every list here.
         """
         var n = len(self.y_lo)
         if n == 0:
             return (0, 0, 0, 0)
-        var min_x = self.x0[0]
+        var x0 = self.x0.unsafe_ptr()
+        var dx = self.dx.unsafe_ptr()
+        var y_lo = self.y_lo.unsafe_ptr()
+        var y_hi = self.y_hi.unsafe_ptr()
+        var min_x = x0[unsafe_offset=0]
         var max_x = min_x
-        var min_y = self.y_lo[0]
-        var max_y = self.y_hi[0]
+        var min_y = y_lo[unsafe_offset=0]
+        var max_y = y_hi[unsafe_offset=0]
         for i in range(n):
-            var xa = self.x0[i]
-            var xb = xa + self.dx[i]
-            min_x = min(min_x, min(xa, xb))
-            max_x = max(max_x, max(xa, xb))
-            min_y = min(min_y, self.y_lo[i])
-            max_y = max(max_y, self.y_hi[i])
+            var xa = x0[unsafe_offset=i]
+            var xb = xa + dx[unsafe_offset=i]
+            if xa < min_x:
+                min_x = xa
+            if xa > max_x:
+                max_x = xa
+            if xb < min_x:
+                min_x = xb
+            if xb > max_x:
+                max_x = xb
+            var lo = y_lo[unsafe_offset=i]
+            if lo < min_y:
+                min_y = lo
+            var hi = y_hi[unsafe_offset=i]
+            if hi > max_y:
+                max_y = hi
         return (
             Int(floor(min_x)),
             Int(floor(min_y)),

@@ -1784,7 +1784,10 @@ def stroke_path_aa(
         path: Path to stroke.
         color: Stroke color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) for a stroke whose outline is not simple (a
+            hairpin, a reversal); a simple outline rasterizes by
+            exact area and ignores it. See `_stroke_edges`.
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
         dashes: On/off segment lengths in pixels, cycled along the
