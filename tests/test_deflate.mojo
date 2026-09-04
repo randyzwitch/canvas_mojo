@@ -538,6 +538,54 @@ def test_deflate_codes_a_two_value_alternation_at_distance_two() raises:
         assert_equal(back[i], UInt8(7) if i % 2 == 0 else UInt8(200))
 
 
+def test_deflate_takes_a_literal_when_the_next_position_matches_longer() raises:
+    # 65 bytes built so the two encodings differ by one byte, which is
+    # the lazy rule's decision made visible:
+    #
+    #   0..29   S, the 30 distinct bytes 100..129
+    #   30..33  50, 100, 101, 200
+    #   34      50
+    #   35..64  S again
+    #
+    # At 34 the bytes 50, 100, 101 match position 30 and stop there,
+    # since 102 != 200: a 3-byte match at distance 4. At 35 the whole
+    # of S matches position 0: a 30-byte match at distance 35. Greedy
+    # takes the 3-byte match and then codes the 28 bytes left of S;
+    # lazy emits 50 as a literal and codes S in one match.
+    #
+    # Small enough that deflate() codes it with the fixed tables (RFC
+    # 1951 3.2.6), so both encodings can be counted in bits. They share
+    # 34 literals -- 33 below 144 at 8 bits and 200 at 9 -- and the
+    # 3-bit block header, 276 bits, and the end-of-block code, 7.
+    #
+    #   greedy: length 3 is code 257, 7 bits and no extra; distance 4
+    #           is code 3, 5 bits and no extra. Length 28 is code 271
+    #           (base 27) with 2 extra bits, and distance 35 is code 10
+    #           (base 33) with 4 extra: 7 + 5 + 7 + 2 + 5 + 4 = 30 bits
+    #           on top of the shared 283, so 313, which is 40 bytes.
+    #   lazy:   the literal 50 is 8 bits, and length 30 is again code
+    #           271 with 2 extra bits at distance 35: 8 + 7 + 2 + 5 + 4
+    #           = 26 bits, so 309, which is 39 bytes.
+    var data = List[UInt8](capacity=65)
+    for k in range(30):
+        data.append(UInt8(100 + k))
+    data.append(50)
+    data.append(100)
+    data.append(101)
+    data.append(200)
+    data.append(50)
+    for k in range(30):
+        data.append(UInt8(100 + k))
+    var compressed = deflate(data)
+    # BFINAL=1, BTYPE=01 packed LSB-first: 1 | (1 << 1) == 3.
+    assert_equal(Int(compressed[0] & 0b111), 3, "fixed block")
+    assert_equal(len(compressed), 39, "the literal, not the 3-byte match")
+    var back = inflate(compressed^)
+    assert_equal(len(back), len(data))
+    for i in range(len(data)):
+        assert_equal(back[i], data[i])
+
+
 def test_deflate_round_trips_empty_input() raises:
     var result = _round_trip(List[UInt8]())
     assert_equal(len(result), 0)
