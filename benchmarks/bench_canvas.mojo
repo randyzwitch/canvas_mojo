@@ -409,6 +409,26 @@ def main() raises:
         sink += Int(canvas.get_pixel(400, 300).r)
     _report(rows, "draw_polyline_aa 3000-segment series", perf_counter_ns() - t0, iters)
 
+    # The same length of line without the hairpins: a gentle sine whose
+    # outline is simple, so it rasterizes by exact area. The series
+    # above turns through nearly 180 degrees at every peak and takes the
+    # sampled fallback; a chart's series can be either.
+    var smooth = List[FPoint]()
+    for i in range(3000):
+        var x = 20.0 + Float64(i) * 0.25
+        var y = 300.0 + 180.0 * sin(Float64(i) * 0.005)
+        smooth.append(FPoint(x, y))
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_polyline_aa(canvas, smooth, INK, width=1.5)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "draw_polyline_aa 3000-segment smooth series",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     # Dashed strokes query the dash pattern per piece (AA) or per pixel
     # (Bresenham), so the pattern's own cost shows here and nowhere
     # else.

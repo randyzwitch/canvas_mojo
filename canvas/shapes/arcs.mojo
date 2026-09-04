@@ -384,7 +384,10 @@ def draw_arc_aa(
             pattern and the two caps are laid along.
         color: Outline color.
         width: Stroke width in pixels.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) for a stroke whose outline is not simple (a
+            hairpin, a reversal); a simple outline rasterizes by
+            exact area and ignores it. See `_stroke_edges`.
         dashes: On/off segment lengths in pixels, cycled along the
             arc. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the arc starts at.
