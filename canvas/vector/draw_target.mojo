@@ -7,9 +7,13 @@ through the trait deals in supersampling.
 Ten drawing primitives are declared -- `fill_rect`, `fill_rect_gradient`,
 `draw_line_aa`, `fill_circle_aa`, `fill_ellipse_aa`, `draw_ellipse_aa`,
 `fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa` and
-`fill_path_aa` -- a subset of `canvas.shapes`. `fill_polygon`, dashes,
+`fill_path_aa` -- a subset of `canvas.shapes`. `fill_polygon`,
 clipping, radial gradients and path-shaped gradients are not on the
 trait; each exists as a free function or a `Canvas` method instead.
+The two strokes, `draw_line_aa` and `stroke_path_aa`, take the full
+stroke style -- `dashes`, `dash_offset`, `cap`, `join`, `miter_limit`
+-- so a dashed series or a square-capped rule renders the same way on
+either backend.
 
 The ellipse methods are the shapes `fill_path_aa`/`stroke_path_aa`
 cannot reproduce exactly: `Path.arc_to` takes a single `radius`, so a
@@ -19,9 +23,9 @@ here, and it takes no `width`, since the raster primitive behind it
 draws a fixed ~1px outline.
 
 Method parameters mirror the same-named function in
-`canvas.shapes`/`canvas.path`, minus `supersample` and `dashes`: a
-raster implementation picks its own supersample factor, and a vector
-one has no equivalent knob. `fill_path_aa` does take a `fill_rule`,
+`canvas.shapes`/`canvas.path`, minus `supersample`: a raster
+implementation picks its own supersample factor, and a vector one has
+no equivalent knob. `fill_path_aa` does take a `fill_rule`,
 defaulting to `EVEN_ODD` as the raster function does, because the two
 backends would otherwise disagree on a path with more than one
 sub-path: SVG's own default is nonzero, so a hole that even-odd
@@ -72,6 +76,7 @@ from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.path import Path
 from canvas.gradient import LinearGradient
+from canvas.shapes.lines import LineCap, LineJoin
 
 
 trait DrawTarget:
@@ -117,8 +122,13 @@ trait DrawTarget:
         y1: Int,
         color: Color,
         width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
     ):
-        """An anti-aliased line with round end caps.
+        """An anti-aliased line, round-capped by default.
 
         Args:
             x0: Start point x.
@@ -127,6 +137,13 @@ trait DrawTarget:
             y1: End point y.
             color: Line color.
             width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the line. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the line starts
+                at.
+            cap: How the two ends are finished -- see LineCap.
+            join: Unused for a single segment, which has no corners.
+            miter_limit: Unused for a single segment.
         """
         ...
 
@@ -215,7 +232,15 @@ trait DrawTarget:
         ...
 
     def stroke_path_aa(
-        mut self, path: Path, color: Color, width: Float64 = 1.0
+        mut self,
+        path: Path,
+        color: Color,
+        width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
     ):
         """An anti-aliased stroke of a Path's outline.
 
@@ -223,6 +248,15 @@ trait DrawTarget:
             path: Path to stroke.
             color: Stroke color.
             width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the stroke. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the stroke
+                starts at.
+            cap: How an open sub-path's two ends are finished -- see
+                LineCap.
+            join: How corners are turned -- see LineJoin.
+            miter_limit: Ratio past which a MITER join falls back to
+                BEVEL, as a multiple of half the stroke width.
         """
         ...
 

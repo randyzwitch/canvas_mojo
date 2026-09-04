@@ -35,6 +35,7 @@ from canvas.path import (
     _MOVE_TO,
     _QUAD_TO,
 )
+from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_discovery import FontWeight
 from canvas.text.text_align import TextAlign
 
@@ -116,6 +117,61 @@ def _opacity_attr(name: String, color: Color) -> String:
         + _format_svg_float(Float64(color.a) / 255.0)
         + '"'
     )
+
+
+def _cap_name(cap: LineCap) -> String:
+    if cap == LineCap.BUTT:
+        return "butt"
+    if cap == LineCap.SQUARE:
+        return "square"
+    return "round"
+
+
+def _join_name(join: LineJoin) -> String:
+    if join == LineJoin.BEVEL:
+        return "bevel"
+    if join == LineJoin.MITER:
+        return "miter"
+    return "round"
+
+
+def _stroke_attrs(
+    width: Float64,
+    dashes: List[Float64],
+    dash_offset: Float64,
+    cap: LineCap,
+    join: LineJoin,
+    miter_limit: Float64,
+    has_corners: Bool,
+) -> String:
+    """The stroke-style attributes of a stroked element: width and
+    cap always; join and, for a MITER join at a non-default limit,
+    miter-limit when the element has corners; dash array and, when
+    non-zero, dash offset when there are dashes. SVG's own defaults
+    for the omitted attributes are the same as the trait's, so a
+    default call emits exactly what it did before the style existed.
+    """
+    var out = (
+        ' stroke-width="'
+        + _format_svg_float(width)
+        + '" stroke-linecap="'
+        + _cap_name(cap)
+        + '"'
+    )
+    if has_corners:
+        out += ' stroke-linejoin="' + _join_name(join) + '"'
+        if join == LineJoin.MITER and miter_limit != 4.0:
+            out += ' stroke-miterlimit="' + _format_svg_float(miter_limit) + '"'
+    if len(dashes) > 0:
+        var array = String("")
+        for i in range(len(dashes)):
+            if i > 0:
+                array += " "
+            array += _format_svg_float(dashes[i])
+        out += ' stroke-dasharray="' + array + '"'
+        if dash_offset != 0.0:
+            out += ' stroke-dashoffset="' + _format_svg_float(dash_offset) + '"'
+    return out
 
 
 def _path_d(path: Path) -> String:
@@ -468,8 +524,13 @@ struct SvgCanvas(DrawTarget, Movable):
         y1: Int,
         color: Color,
         width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
     ):
-        """Emit a `<line>` element with round end caps.
+        """Emit a `<line>` element, round-capped by default.
 
         Args:
             x0: Start point x.
@@ -478,6 +539,13 @@ struct SvgCanvas(DrawTarget, Movable):
             y1: End point y.
             color: Line color.
             width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the line. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the line starts
+                at.
+            cap: How the two ends are finished -- see LineCap.
+            join: Unused for a single segment, which has no corners.
+            miter_limit: Unused for a single segment.
         """
         self._body += (
             '<line x1="'
@@ -492,9 +560,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
-            + ' stroke-width="'
-            + _format_svg_float(width)
-            + '" stroke-linecap="round"'
+            + _stroke_attrs(
+                width, dashes, dash_offset, cap, join, miter_limit, False
+            )
             + self._transform_attr()
             + "/>\n"
         )
@@ -709,7 +777,15 @@ struct SvgCanvas(DrawTarget, Movable):
         )
 
     def stroke_path_aa(
-        mut self, path: Path, color: Color, width: Float64 = 1.0
+        mut self,
+        path: Path,
+        color: Color,
+        width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
     ):
         """Emit a `<path>` element, stroked only.
 
@@ -717,6 +793,15 @@ struct SvgCanvas(DrawTarget, Movable):
             path: Path to stroke.
             color: Stroke color.
             width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the stroke. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the stroke
+                starts at.
+            cap: How an open sub-path's two ends are finished -- see
+                LineCap.
+            join: How corners are turned -- see LineJoin.
+            miter_limit: Ratio past which a MITER join falls back to
+                BEVEL, as a multiple of half the stroke width.
         """
         self._body += (
             '<path d="'
@@ -725,9 +810,9 @@ struct SvgCanvas(DrawTarget, Movable):
             + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
-            + ' stroke-width="'
-            + _format_svg_float(width)
-            + '" stroke-linecap="round" stroke-linejoin="round"'
+            + _stroke_attrs(
+                width, dashes, dash_offset, cap, join, miter_limit, True
+            )
             + self._transform_attr()
             + "/>\n"
         )

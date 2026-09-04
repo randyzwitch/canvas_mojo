@@ -28,7 +28,7 @@ from canvas.path import (
     _rect_path,
     _through,
 )
-from canvas.shapes.lines import draw_line_aa
+from canvas.shapes.lines import draw_line_aa, LineCap, LineJoin
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa
 from canvas.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
@@ -961,6 +961,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
         y1: Int,
         color: Color,
         width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
     ):
         """Same as `canvas.shapes.lines.draw_line_aa`, callable as
         a method.
@@ -972,8 +977,28 @@ struct Canvas(Copyable, DrawTarget, Movable):
             y1: End point's y.
             color: Stroke color.
             width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the line. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the line starts
+                at.
+            cap: How the two ends are finished -- see LineCap.
+            join: Unused for a single segment, which has no corners.
+            miter_limit: Unused for a single segment.
         """
-        draw_line_aa(self, x0, y0, x1, y1, color, width=width)
+        draw_line_aa(
+            self,
+            x0,
+            y0,
+            x1,
+            y1,
+            color,
+            width=width,
+            dashes=dashes,
+            dash_offset=dash_offset,
+            cap=cap,
+            join=join,
+            miter_limit=miter_limit,
+        )
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """Same as `canvas.shapes.circles.fill_circle_aa`,
@@ -1073,7 +1098,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         )
 
     def stroke_path_aa(
-        mut self, path: Path, color: Color, width: Float64 = 1.0
+        mut self,
+        path: Path,
+        color: Color,
+        width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
     ):
         """Same as `canvas.path.stroke_path_aa`, callable as a
         method.
@@ -1082,8 +1115,27 @@ struct Canvas(Copyable, DrawTarget, Movable):
             path: Path to stroke.
             color: Stroke color.
             width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the stroke. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the stroke
+                starts at.
+            cap: How an open sub-path's two ends are finished -- see
+                LineCap.
+            join: How corners are turned -- see LineJoin.
+            miter_limit: Ratio past which a MITER join falls back to
+                BEVEL, as a multiple of half the stroke width.
         """
-        stroke_path_aa(self, path, color, width=width)
+        stroke_path_aa(
+            self,
+            path,
+            color,
+            width=width,
+            dashes=dashes,
+            dash_offset=dash_offset,
+            cap=cap,
+            join=join,
+            miter_limit=miter_limit,
+        )
 
     def fill_path_aa(
         mut self,

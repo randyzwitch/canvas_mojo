@@ -15,6 +15,7 @@ from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.gradient import LinearGradient
 from canvas.path import Path
+from canvas.shapes.lines import LineCap, LineJoin
 from canvas.vector.draw_target import DrawTarget
 from canvas.vector.svg import SvgCanvas
 from canvas.text.font_discovery import FontWeight
@@ -888,6 +889,85 @@ def test_both_backends_compose_the_same_transform() raises:
     raster.restore()
     vector.restore()
     assert_true(not raster.has_transform() and not vector.has_transform())
+
+
+# --- stroke style -----------------------------------------------------
+
+
+def test_dashes_and_caps_on_a_line() raises:
+    var svg = SvgCanvas(100, 100)
+    var dashes: List[Float64] = [4.0, 2.0]
+    svg.draw_line_aa(
+        0, 0, 50, 0, Color(0, 0, 0), 2.0, dashes, 1.0, LineCap.BUTT
+    )
+    var out = svg.to_string()
+    assert_true(
+        'stroke-width="2.000" stroke-linecap="butt" stroke-dasharray="4.000'
+        ' 2.000" stroke-dashoffset="1.000"/>'
+        in out,
+        "butt cap, dash array and offset, no linejoin on a line",
+    )
+
+    var square = SvgCanvas(100, 100)
+    square.draw_line_aa(0, 0, 50, 0, Color(0, 0, 0), cap=LineCap.SQUARE)
+    assert_true('stroke-linecap="square"/>' in square.to_string())
+    assert_true("dasharray" not in square.to_string(), "solid: no dashes")
+
+
+def test_joins_and_miter_limit_on_a_path() raises:
+    var path = Path()
+    path.move_to(0.0, 0.0)
+    path.line_to(10.0, 0.0)
+    path.line_to(10.0, 10.0)
+
+    var miter = SvgCanvas(100, 100)
+    miter.stroke_path_aa(path, Color(0, 0, 0), 3.0, join=LineJoin.MITER)
+    assert_true(
+        'stroke-linecap="round" stroke-linejoin="miter"/>' in miter.to_string(),
+        (
+            "miter at the default limit writes no miterlimit, SVG's default"
+            " being the same 4"
+        ),
+    )
+
+    var tight = SvgCanvas(100, 100)
+    tight.stroke_path_aa(
+        path, Color(0, 0, 0), 3.0, join=LineJoin.MITER, miter_limit=10.0
+    )
+    assert_true(
+        'stroke-linejoin="miter" stroke-miterlimit="10.000"/>'
+        in tight.to_string()
+    )
+
+    var bevel = SvgCanvas(100, 100)
+    var dashes: List[Float64] = [6.0, 3.0, 1.0, 3.0]
+    bevel.stroke_path_aa(
+        path, Color(0, 0, 0), 3.0, dashes, cap=LineCap.BUTT, join=LineJoin.BEVEL
+    )
+    assert_true(
+        'stroke-linecap="butt" stroke-linejoin="bevel"'
+        ' stroke-dasharray="6.000 3.000 1.000 3.000"/>'
+        in bevel.to_string(),
+        "a zero dash offset is left to SVG's default",
+    )
+
+
+def _dashed_rule[T: DrawTarget](mut target: T):
+    var dashes: List[Float64] = [6.0, 6.0]
+    target.draw_line_aa(2, 5, 58, 5, Color(0, 0, 0), 2.0, dashes)
+
+
+def test_dashes_reach_both_backends_through_the_trait() raises:
+    var raster = Canvas(60, 10, Color(255, 255, 255))
+    _dashed_rule(raster)
+    # 6 on, 6 off from x = 2: x = 4 is inside the first dash, x = 11
+    # inside the first gap.
+    assert_true(raster.get_pixel(4, 5).r < 128, "on a dash")
+    assert_equal(raster.get_pixel(11, 5).r, 255, "in a gap")
+
+    var vector = SvgCanvas(60, 10)
+    _dashed_rule(vector)
+    assert_true('stroke-dasharray="6.000 6.000"' in vector.to_string())
 
 
 def main() raises:
