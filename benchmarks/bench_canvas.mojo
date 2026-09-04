@@ -329,6 +329,16 @@ def main() raises:
         sink += Int(canvas.get_pixel(400, 300).r)
     _report(rows, "draw_line dashed full diagonal", perf_counter_ns() - t0, iters)
 
+    # The solid counterpart of the row above: same Bresenham walk with
+    # no dash pattern, which is what every caller that omits `dashes`
+    # runs.
+    iters = 400
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_line(canvas, 30, 30, 770, 570, INK)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(rows, "draw_line solid full diagonal", perf_counter_ns() - t0, iters)
+
     iters = 200
     t0 = perf_counter_ns()
     for _ in range(iters):
