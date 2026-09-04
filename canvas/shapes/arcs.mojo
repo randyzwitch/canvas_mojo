@@ -661,7 +661,7 @@ def _fill_arc_band(
                 canvas.set_pixel(
                     px,
                     py,
-                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
+                    color.with_alpha(coverage_alpha[covered]),
                 )
 
 
@@ -939,5 +939,5 @@ def _fill_ring_band(
                 canvas.set_pixel(
                     px,
                     py,
-                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
+                    color.with_alpha(coverage_alpha[covered]),
                 )
