@@ -14,7 +14,7 @@ than a transform stack, for a chart's rotated y-axis title.
 from std.math import cos, pi, sin
 
 from canvas.color import Color
-from canvas.gradient import LinearGradient, _GradientStop
+from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.geometry import _round_to_int
 from canvas.path import (
@@ -28,17 +28,6 @@ from canvas.path import (
 )
 from canvas.text.font_discovery import FontWeight
 from canvas.text.text_align import TextAlign
-
-
-def _hex_byte(value: UInt8) -> String:
-    comptime _HEX_DIGITS = "0123456789abcdef"
-
-    var v = Int(value)
-    # `_HEX_DIGITS` is a fixed, pure-ASCII literal, so a raw UTF-8 byte
-    # index (`[byte=...]`) is exactly the character it looks like.
-    # Mojo `String` has no plain positional `s[i]` indexing -- it
-    # indexes by `[byte=]`/`[codepoint=]`/`[grapheme=]`.
-    return String(_HEX_DIGITS[byte=v // 16]) + String(_HEX_DIGITS[byte=v % 16])
 
 
 def _format_svg_float(value: Float64) -> String:
@@ -94,8 +83,11 @@ def _escape_xml_attr(value: String) -> String:
     return result
 
 
-def _hex_color(color: Color) -> String:
-    return "#" + _hex_byte(color.r) + _hex_byte(color.g) + _hex_byte(color.b)
+def _to_hex(color: Color) -> String:
+    """`Color.to_hex()`, as a function so the emitters below read the
+    same as the other `_`-prefixed formatting helpers here.
+    """
+    return color.to_hex()
 
 
 def _opacity_attr(name: String, color: Color) -> String:
@@ -115,27 +107,6 @@ def _opacity_attr(name: String, color: Color) -> String:
         + _format_svg_float(Float64(color.a) / 255.0)
         + '"'
     )
-
-
-def _stops_sorted_by_offset(stops: List[_GradientStop]) -> List[_GradientStop]:
-    """`LinearGradient.stops` in ascending-offset order. `add_stop`
-    accepts any order, but SVG's `<stop>` clamps each offset to be no
-    less than the previous sibling's, so descending offsets would flatten
-    the gradient to one color in every viewer.
-
-    The sort must be stable: two stops at the same offset are a hard
-    color transition, and swapping them swaps which color owns which
-    side.
-    """
-    var sorted_stops = List[_GradientStop](capacity=len(stops))
-    for stop in stops:
-        var insert_at = len(sorted_stops)
-        while (
-            insert_at > 0 and sorted_stops[insert_at - 1].offset > stop.offset
-        ):
-            insert_at -= 1
-        sorted_stops.insert(insert_at, stop)
-    return sorted_stops^
 
 
 def _path_d(path: Path) -> String:
@@ -282,7 +253,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" height="'
             + String(height)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -328,12 +299,16 @@ struct SvgCanvas(DrawTarget, Movable):
             + _format_svg_float(gradient.y1)
             + '">'
         )
-        for stop in _stops_sorted_by_offset(gradient.stops):
+        # `LinearGradient.stops` is kept sorted by offset on insert,
+        # which is what SVG needs: `<stop>` clamps each offset to be no
+        # less than the previous sibling's, so descending offsets would
+        # flatten the gradient to one colour in every viewer.
+        for stop in gradient.stops:
             defs += (
                 '<stop offset="'
                 + _format_svg_float(stop.offset)
                 + '" stop-color="'
-                + _hex_color(stop.color)
+                + _to_hex(stop.color)
                 + '" stop-opacity="'
                 + _format_svg_float(Float64(stop.color.a) / 255.0)
                 + '"/>'
@@ -383,7 +358,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" y2="'
             + String(y1)
             + '" stroke="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
             + ' stroke-width="'
@@ -408,7 +383,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" r="'
             + String(radius)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -436,7 +411,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" ry="'
             + String(ry)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -466,7 +441,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" ry="'
             + String(ry)
             + '" fill="none" stroke="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
             + ' stroke-width="1"/>\n'
@@ -518,7 +493,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + ","
             + _format_svg_float(y1)
             + ' Z" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -588,7 +563,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + ","
             + _format_svg_float(inner_y0)
             + ' Z" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -608,7 +583,7 @@ struct SvgCanvas(DrawTarget, Movable):
             '<path d="'
             + _path_d(path)
             + '" fill="none" stroke="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
             + ' stroke-width="'
@@ -627,7 +602,7 @@ struct SvgCanvas(DrawTarget, Movable):
             '<path d="'
             + _path_d(path)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -752,7 +727,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + font_weight
             + ' fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + ' text-anchor="'

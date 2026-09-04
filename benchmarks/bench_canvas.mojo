@@ -27,6 +27,7 @@ from std.time import perf_counter_ns
 
 from canvas.buffer import Canvas
 from canvas.color import Color
+from canvas.compose import draw_canvas
 from canvas.geometry import FPoint, Point
 from canvas.gradient import LinearGradient
 from canvas.path import Path, fill_path_aa, fill_path_gradient_aa, stroke_path_aa
@@ -39,7 +40,7 @@ from canvas.shapes.lines import draw_line, draw_line_aa, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
-from canvas.text.render import draw_text
+from canvas.text.render import draw_text, measure_text, measure_text_block
 
 comptime W = 800
 comptime H = 600
@@ -329,6 +330,16 @@ def main() raises:
         sink += Int(canvas.get_pixel(400, 300).r)
     _report(rows, "draw_line dashed full diagonal", perf_counter_ns() - t0, iters)
 
+    # The solid counterpart of the row above: same Bresenham walk with
+    # no dash pattern, which is what every caller that omits `dashes`
+    # runs.
+    iters = 400
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_line(canvas, 30, 30, 770, 570, INK)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(rows, "draw_line solid full diagonal", perf_counter_ns() - t0, iters)
+
     iters = 200
     t0 = perf_counter_ns()
     for _ in range(iters):
@@ -411,6 +422,112 @@ def main() raises:
         var small = downsample(supersampled, 2)
         sink += Int(small.get_pixel(10, 10).r)
     _report(rows, "downsample 1600x1200 -> 2x", perf_counter_ns() - t0, iters)
+
+    # --- clipping --------------------------------------------------
+    # A clip path is a whole-canvas coverage mask plus a per-pixel
+    # masked write for everything drawn inside it, which is the shape
+    # a chart clipping a series to its plot area pays.
+    var clip_path = Path()
+    clip_path.rect(60.0, 60.0, 680.0, 480.0)
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        canvas.push_clip_path(clip_path)
+        canvas.pop_clip_path()
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(rows, "push_clip_path rect mask", perf_counter_ns() - t0, iters)
+
+    canvas.push_clip_path(clip_path)
+    iters = 20
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        for i in range(2000):
+            var cx = 20.0 + Float64((i * 37) % 760)
+            var cy = 20.0 + Float64((i * 53) % 560)
+            fill_circle_aa(canvas, cx, cy, 3.5, INK)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "fill_circle_aa x2000 under a clip path",
+        perf_counter_ns() - t0,
+        iters,
+    )
+    canvas.pop_clip_path()
+
+    # The rectangle clip for comparison: a range test, not a mask, so
+    # this is what the mask above costs over the cheap kind of clip.
+    canvas.push_clip(60, 60, 680, 480)
+    iters = 20
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        for i in range(2000):
+            var rx = 20.0 + Float64((i * 37) % 760)
+            var ry = 20.0 + Float64((i * 53) % 560)
+            fill_circle_aa(canvas, rx, ry, 3.5, INK)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "fill_circle_aa x2000 under a clip rect",
+        perf_counter_ns() - t0,
+        iters,
+    )
+    canvas.pop_clip()
+
+    # --- compositing -----------------------------------------------
+    # Layers: each part of a figure drawn onto its own transparent
+    # canvas and composed in order.
+    var layer = Canvas(W, H, Color(0, 0, 0, 0))
+    fill_circle_aa(layer, 400.0, 300.0, 200.0, TRANSLUCENT)
+    var opaque_layer = Canvas(W, H, WHITE)
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_canvas(canvas, opaque_layer, 0, 0)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(rows, "draw_canvas 800x600 opaque", perf_counter_ns() - t0, iters)
+
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_canvas(canvas, layer, 0, 0)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows, "draw_canvas 800x600 translucent", perf_counter_ns() - t0, iters
+    )
+
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_canvas(canvas, layer, 0, 0, 128)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "draw_canvas 800x600 at half opacity",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    # --- text measurement ------------------------------------------
+    # Laying out axis labels without drawing them: what a chart runs
+    # before it knows where anything goes.
+    iters = 200
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var m = measure_text("−12,345.67", 13.0, cache=cache)
+        sink += Int(m.advance)
+    _report(rows, "measure_text one label (cached)", perf_counter_ns() - t0, iters)
+
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var b = measure_text_block(paragraph, 13.0, cache=cache)
+        sink += Int(b.height)
+    _report(
+        rows,
+        "measure_text_block 3 lines (cached)",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     _print_table(rows)
     # Printed so nothing above can be optimized away as unused. The

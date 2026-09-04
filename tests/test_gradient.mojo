@@ -435,5 +435,93 @@ def test_gradient_aa_fill_clips_to_the_canvas() raises:
     )
 
 
+def test_stops_are_sorted_on_insert_whatever_order_they_arrive_in() raises:
+    # Same three stops, added ascending and descending. add_stop keeps
+    # the list sorted either way, so color_at answers identically and
+    # `stops` itself comes out in ascending offset order.
+    var ascending = LinearGradient(0.0, 0.0, 100.0, 0.0)
+    ascending.add_stop(0.0, Color(0, 0, 0))
+    ascending.add_stop(0.5, Color(100, 100, 100))
+    ascending.add_stop(1.0, Color(200, 200, 200))
+
+    var descending = LinearGradient(0.0, 0.0, 100.0, 0.0)
+    descending.add_stop(1.0, Color(200, 200, 200))
+    descending.add_stop(0.5, Color(100, 100, 100))
+    descending.add_stop(0.0, Color(0, 0, 0))
+
+    assert_equal(len(descending.stops), 3)
+    assert_equal(descending.stops[0].offset, 0.0)
+    assert_equal(descending.stops[1].offset, 0.5)
+    assert_equal(descending.stops[2].offset, 1.0)
+
+    for x in range(0, 101, 10):
+        assert_equal(
+            ascending.color_at(Float64(x), 0.0).r,
+            descending.color_at(Float64(x), 0.0).r,
+            "insertion order does not change the ramp at x=" + String(x),
+        )
+    # And the midpoint of the first half is the hand-computed average
+    # of its two stops: 0 + 0.5*(100 - 0) = 50 at t = 0.25.
+    assert_equal(ascending.color_at(25.0, 0.0).r, 50)
+
+
+def test_two_stops_at_one_offset_are_a_hard_transition() raises:
+    # A hard edge: black up to the midpoint, white after it. The first
+    # stop at 0.5 ends the run below it and the second begins the run
+    # above, the same rule svg.mojo's <stop> ordering follows.
+    var g = LinearGradient(0.0, 0.0, 100.0, 0.0)
+    g.add_stop(0.0, Color(0, 0, 0))
+    g.add_stop(0.5, Color(0, 0, 0))
+    g.add_stop(0.5, Color(255, 255, 255))
+    g.add_stop(1.0, Color(255, 255, 255))
+
+    # Below the transition the ramp runs black-to-black, so every
+    # sample is black rather than part-way to white.
+    assert_equal(g.color_at(10.0, 0.0).r, 0)
+    assert_equal(g.color_at(49.0, 0.0).r, 0)
+    # Above it, white-to-white.
+    assert_equal(g.color_at(51.0, 0.0).r, 255)
+    assert_equal(g.color_at(90.0, 0.0).r, 255)
+    # Exactly on the offset the later stop wins, so the edge belongs to
+    # the upper run.
+    assert_equal(g.color_at(50.0, 0.0).r, 255)
+
+
+def test_binary_search_brackets_correctly_across_many_stops() raises:
+    # Eleven evenly spaced stops whose red channel is 10 * the stop
+    # index, added in a shuffled order. Every stop offset must read
+    # back its own colour, and each midpoint the average of its
+    # neighbours -- which pins the bracketing pair at every position
+    # in the list, not just the ends.
+    var g = LinearGradient(0.0, 0.0, 100.0, 0.0)
+    var order: List[Int] = [5, 0, 9, 3, 10, 1, 7, 2, 8, 4, 6]
+    for i in order:
+        g.add_stop(Float64(i) / 10.0, Color(UInt8(i * 10), 0, 0))
+
+    for i in range(11):
+        assert_equal(
+            g.color_at(Float64(i) * 10.0, 0.0).r,
+            UInt8(i * 10),
+            "stop " + String(i) + " reads back its own colour",
+        )
+    for i in range(10):
+        # Midway between stop i and i+1: 10*i + 0.5*10 = 10*i + 5.
+        assert_equal(
+            g.color_at(Float64(i) * 10.0 + 5.0, 0.0).r,
+            UInt8(i * 10 + 5),
+            "midpoint after stop " + String(i),
+        )
+
+
+def test_radial_stops_are_sorted_on_insert_too() raises:
+    var g = RadialGradient(0.0, 0.0, 100.0)
+    g.add_stop(1.0, Color(200, 0, 0))
+    g.add_stop(0.0, Color(0, 0, 0))
+    assert_equal(g.stops[0].offset, 0.0)
+    assert_equal(g.stops[1].offset, 1.0)
+    # Half the radius along +x is t = 0.5: 0 + 0.5*(200 - 0) = 100.
+    assert_equal(g.color_at(50.0, 0.0).r, 100)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

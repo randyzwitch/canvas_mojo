@@ -496,5 +496,5 @@ def draw_ellipse_aa(
                 canvas.set_pixel(
                     px,
                     py,
-                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
+                    color.with_alpha(coverage_alpha[covered]),
                 )

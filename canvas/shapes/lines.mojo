@@ -93,10 +93,14 @@ def _draw_line_core(
     var y = y0
     var first = True
     var distance = dash_start_distance
+    # Hoisted: a solid stroke is every caller that doesn't pass
+    # `dashes`, and `is_on` would otherwise be a call per pixel to
+    # answer the same True.
+    var solid = pattern.solid
 
     while True:
         var is_last = x == x1 and y == y1
-        var on_dash = pattern.is_on(distance)
+        var on_dash = solid or pattern.is_on(distance)
         if on_dash and not ((first and skip_first) or (is_last and skip_last)):
             canvas.set_pixel(x, y, color)
         first = False
