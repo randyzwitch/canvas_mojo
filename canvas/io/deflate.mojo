@@ -750,17 +750,42 @@ struct _HashChains(Movable):
         self.prev = List[Int32](length=_WINDOW, fill=-1)
         self.mask = size - 1
 
-    def insert(mut self, data: List[UInt8], pos: Int):
-        """Record `pos` as a candidate match source for its 3-byte
-        prefix. Unbounded in what it stores; the search is what caps
-        how far back it looks.
+    def insert_range(mut self, data: List[UInt8], start: Int, stop: Int):
+        """Record every position in [`start`, `stop`) as a candidate
+        match source for the 3 bytes at it. Unbounded in what it
+        stores; the search is what caps how far back it looks.
+
+        A range rather than a position at a time: the encoder inserts
+        every position of every token, so this runs once per input
+        byte. The pointers and the 3-byte key are carried across
+        iterations, leaving two stores and a shift per position.
+
+        Args:
+            data: The bytes being compressed.
+            start: First position to record.
+            stop: One past the last, which must leave _MIN_MATCH bytes
+                in `data` (`stop` <= len(data) - _MIN_MATCH + 1).
         """
-        var h = _hash3(data, pos, self.mask)
+        if start >= stop:
+            return
+        var d = data.unsafe_ptr()
         var hp = self.head.unsafe_ptr()
-        self.prev.unsafe_ptr()[unsafe_offset=pos & _WINDOW_MASK] = hp[
-            unsafe_offset=h
-        ]
-        hp[unsafe_offset=h] = Int32(pos)
+        var pp = self.prev.unsafe_ptr()
+        var v = (
+            (Int(d[unsafe_offset=start]) << 16)
+            | (Int(d[unsafe_offset=start + 1]) << 8)
+            | Int(d[unsafe_offset=start + 2])
+        )
+        for pos in range(start, stop):
+            var h = ((v * _HASH_MUL) >> 16) & self.mask
+            pp[unsafe_offset=pos & _WINDOW_MASK] = hp[unsafe_offset=h]
+            hp[unsafe_offset=h] = Int32(pos)
+            if pos + 1 < stop:
+                # The next position's key is this one shifted up a
+                # byte, so only one byte is read per position. In range
+                # because `stop` leaves _MIN_MATCH bytes: pos + 3 is at
+                # most stop + 1 <= len(data) - 1.
+                v = ((v << 8) | Int(d[unsafe_offset=pos + 3])) & 0xFFFFFF
 
 
 struct _Match(ImplicitlyCopyable, Movable):
@@ -1056,27 +1081,30 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     var tokens = List[_Token]()
     var lit_freq = List[Int](length=_MAX_L_CODES, fill=0)
     var dist_freq = List[Int](length=_MAX_D_CODES, fill=0)
+    # The last position with _MIN_MATCH bytes left to hash. Nothing
+    # past it can start a match, so nothing past it is indexed.
+    var last_insert = n - _MIN_MATCH
     var i = 0
     while i < n:
         var m = _find_match(chains, data, i)
+        var advance: Int
         if m.length >= _MIN_MATCH:
             tokens.append(_Token(m.length, m.distance))
             lit_freq[257 + _length_symbol(m.length, lens)] += 1
             dist_freq[_distance_symbol(m.distance, dists)] += 1
-            # Only the match's starting position is indexed, not every
-            # position it spans: a compression-ratio trade (a match
-            # starting partway through this one won't be found), not a
-            # correctness gap.
-            if i + _MIN_MATCH <= n:
-                chains.insert(data, i)
-            i += m.length
+            advance = m.length
         else:
             var byte = Int(data[i])
             tokens.append(_Token(byte, 0))
             lit_freq[byte] += 1
-            if i + _MIN_MATCH <= n:
-                chains.insert(data, i)
-            i += 1
+            advance = 1
+        # Every position the token covers is indexed, not only the
+        # position the search ran from. Inside a run, that puts the
+        # immediately preceding position in the bucket, so the next
+        # search finds it at distance 1 -- which costs no extra bits --
+        # rather than reaching back to the run's start.
+        chains.insert_range(data, i, min(i + advance, last_insert + 1))
+        i += advance
     lit_freq[256] = 1  # end-of-block, sent exactly once
 
     # A dynamic code for these frequencies, and what it would cost.

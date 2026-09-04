@@ -489,6 +489,55 @@ def test_deflate_flat_input_matches_a_single_candidate_search() raises:
         assert_equal(back[i], 42)
 
 
+def test_deflate_codes_a_flat_run_at_distance_one() raises:
+    # Every position a match covers is indexed, not only the position
+    # the search ran from, so the search that follows a match finds the
+    # position immediately behind it and codes the next match at
+    # distance 1.
+    #
+    # The bound separates that from indexing match starts alone. Either
+    # way 100,000 identical bytes are one literal and 388 matches (387
+    # of the 258-byte maximum, one of 153), but with only starts
+    # indexed every match after the first sits 258 back. Distance 258
+    # falls in the 257-384 distance code, which carries 7 extra bits
+    # (RFC 1951 3.2.5), so those matches spend 388 * 7 = 2716 bits, 339
+    # bytes, in extra bits before a single Huffman code is counted.
+    # Distance 1 has a code of its own and no extra bits, so a stream
+    # under 339 bytes can only be one coded at a near distance.
+    var flat = List[UInt8](capacity=100_000)
+    for _ in range(100_000):
+        flat.append(42)
+    var compressed = deflate(flat)
+    assert_true(
+        len(compressed) < 200,
+        "a flat run must be coded at distance 1, not at distance 258",
+    )
+    var back = inflate(compressed^)
+    assert_equal(len(back), 100_000)
+    for i in range(0, 100_000, 997):
+        assert_equal(back[i], 42)
+
+
+def test_deflate_codes_a_two_value_alternation_at_distance_two() raises:
+    # The same property one step out from a flat run. 30,000 bytes
+    # alternating between two values are two literals and 117 matches
+    # (116 of 258, one of 70). At distance 258 -- even, so it does
+    # reproduce an alternation -- each carries 7 extra bits, 117 * 7 =
+    # 819 bits or 102 bytes; at distance 2 none of them do.
+    var alt = List[UInt8](capacity=30_000)
+    for i in range(30_000):
+        alt.append(UInt8(7) if i % 2 == 0 else UInt8(200))
+    var compressed = deflate(alt)
+    assert_true(
+        len(compressed) < 100,
+        "an alternation must be coded at distance 2, not at distance 258",
+    )
+    var back = inflate(compressed^)
+    assert_equal(len(back), 30_000)
+    for i in range(0, 30_000, 499):
+        assert_equal(back[i], UInt8(7) if i % 2 == 0 else UInt8(200))
+
+
 def test_deflate_round_trips_empty_input() raises:
     var result = _round_trip(List[UInt8]())
     assert_equal(len(result), 0)
