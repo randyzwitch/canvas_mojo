@@ -35,20 +35,35 @@ def _round_channel(value: Float64) -> UInt8:
     return UInt8(value + 0.5)
 
 
-def _color_at_t(
-    stops: List[_GradientStop],
-    lowest: _GradientStop,
-    highest: _GradientStop,
-    t_in: Float64,
-) -> Color:
+def _insert_stop(mut stops: List[_GradientStop], offset: Float64, color: Color):
+    """Add a stop, keeping `stops` sorted by offset with insertion
+    order preserved among equal offsets.
+
+    Two stops at one offset are a hard color transition, and which was
+    added first decides which side of it owns which color -- so the
+    insert goes *after* any stop already at this offset, and
+    `_color_at_t` reads the run's ends accordingly.
+    """
+    var at = len(stops)
+    while at > 0 and stops[at - 1].offset > offset:
+        at -= 1
+    stops.insert(at, _GradientStop(offset, color))
+
+
+def _color_at_t(stops: List[_GradientStop], t_in: Float64) -> Color:
     """The "given a projected position, what color" half both
     LinearGradient.color_at and RadialGradient.color_at share. `t_in`
     is clamped to [0, 1] here -- the "pad" extend -- so neither
     projection has to.
+
+    `stops` is sorted by offset (see `_insert_stop`), so the
+    bracketing pair comes from a binary search rather than a scan of
+    every stop.
     """
-    if len(stops) == 0:
+    var count = len(stops)
+    if count == 0:
         return Color(0, 0, 0, 0)
-    if len(stops) == 1:
+    if count == 1:
         return stops[0].color
 
     var t = t_in
@@ -57,20 +72,30 @@ def _color_at_t(
     elif t > 1.0:
         t = 1.0
 
-    if t <= lowest.offset:
-        return lowest.color
-    if t >= highest.offset:
-        return highest.color
+    if t <= stops[0].offset:
+        return stops[0].color
+    if t >= stops[count - 1].offset:
+        return stops[count - 1].color
 
-    # The bracketing pair: the highest-offset stop at or below t,
-    # and the lowest-offset stop at or above t.
-    var before = lowest
-    var after = highest
-    for s in stops:
-        if s.offset <= t and s.offset >= before.offset:
-            before = s
-        if s.offset >= t and s.offset <= after.offset:
-            after = s
+    # The last stop at or below t. `lo` ends on it: the loop keeps
+    # `stops[lo].offset <= t < stops[hi].offset`, which holds at entry
+    # because the two clamps above ruled out both ends.
+    var lo = 0
+    var hi = count - 1
+    while hi - lo > 1:
+        var mid = (lo + hi) // 2
+        if stops[mid].offset <= t:
+            lo = mid
+        else:
+            hi = mid
+
+    var before = stops[lo]
+    # t landing exactly on a stop takes that stop's color. With
+    # several at the offset, `lo` is the last of them -- the one that
+    # owns the far side of a hard transition.
+    if before.offset == t:
+        return before.color
+    var after = stops[hi]
 
     if before.offset == after.offset:
         return before.color
@@ -119,9 +144,9 @@ struct LinearGradient(ColorSource, Movable):
     Add stops with add_stop(), then pass to fill_rect_gradient/
     fill_path_gradient (or query color_at() directly).
 
-    Stops need not be added in offset order: color_at() finds the
-    bracketing pair by scanning all stops, typically 2-4 for a chart
-    fill, which is too few to be worth a sorted-insertion invariant.
+    Stops need not be added in offset order: `add_stop` inserts each
+    into place, so `stops` is always sorted by offset and color_at()
+    finds its bracketing pair by binary search.
     """
 
     var x0: Float64
@@ -135,10 +160,6 @@ struct LinearGradient(ColorSource, Movable):
     var _axis_x: Float64
     var _axis_y: Float64
     var _len2: Float64
-    # The smallest-/largest-offset stop so far, tracked incrementally
-    # rather than rescanned per call; see _color_at_t.
-    var _lowest: _GradientStop
-    var _highest: _GradientStop
 
     def __init__(out self, x0: Float64, y0: Float64, x1: Float64, y1: Float64):
         """A gradient with no stops yet -- add at least one with
@@ -158,26 +179,17 @@ struct LinearGradient(ColorSource, Movable):
         self._axis_x = x1 - x0
         self._axis_y = y1 - y0
         self._len2 = self._axis_x * self._axis_x + self._axis_y * self._axis_y
-        # Overwritten by the first add_stop(); _color_at_t never reads
-        # these below len(stops) >= 2, so this transparent-black
-        # sentinel is never observed.
-        self._lowest = _GradientStop(0.0, Color(0, 0, 0, 0))
-        self._highest = self._lowest
 
     def add_stop(mut self, offset: Float64, color: Color):
         """Add a color stop at `offset` (0.0 to 1.0 along the axis).
 
         Args:
             offset: Position along the axis, 0.0 at (x0, y0), 1.0 at
-                (x1, y1). Stops need not be added in offset order.
+                (x1, y1). Stops need not be added in offset order;
+                each is inserted into place.
             color: This stop's color.
         """
-        var stop = _GradientStop(offset, color)
-        if len(self.stops) == 0 or offset < self._lowest.offset:
-            self._lowest = stop
-        if len(self.stops) == 0 or offset > self._highest.offset:
-            self._highest = stop
-        self.stops.append(stop)
+        _insert_stop(self.stops, offset, color)
 
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): project onto the axis, clamp
@@ -197,7 +209,7 @@ struct LinearGradient(ColorSource, Movable):
             t = (
                 (x - self.x0) * self._axis_x + (y - self.y0) * self._axis_y
             ) / self._len2
-        return _color_at_t(self.stops, self._lowest, self._highest, t)
+        return _color_at_t(self.stops, t)
 
 
 struct RadialGradient(ColorSource, Movable):
@@ -214,10 +226,6 @@ struct RadialGradient(ColorSource, Movable):
     var cy: Float64
     var radius: Float64
     var stops: List[_GradientStop]
-    # Same incremental lowest-/highest-offset tracking LinearGradient
-    # does.
-    var _lowest: _GradientStop
-    var _highest: _GradientStop
 
     def __init__(out self, cx: Float64, cy: Float64, radius: Float64):
         """A gradient with no stops yet -- add at least one with
@@ -232,10 +240,6 @@ struct RadialGradient(ColorSource, Movable):
         self.cy = cy
         self.radius = radius
         self.stops = List[_GradientStop]()
-        # Overwritten by the first add_stop(); see
-        # LinearGradient.__init__.
-        self._lowest = _GradientStop(0.0, Color(0, 0, 0, 0))
-        self._highest = self._lowest
 
     def add_stop(mut self, offset: Float64, color: Color):
         """Add a color stop at `offset` (0.0 at the center, 1.0 at
@@ -243,15 +247,11 @@ struct RadialGradient(ColorSource, Movable):
 
         Args:
             offset: Position from the center, 0.0 to 1.0. Stops need
-                not be added in offset order.
+                not be added in offset order; each is inserted into
+                place.
             color: This stop's color.
         """
-        var stop = _GradientStop(offset, color)
-        if len(self.stops) == 0 or offset < self._lowest.offset:
-            self._lowest = stop
-        if len(self.stops) == 0 or offset > self._highest.offset:
-            self._highest = stop
-        self.stops.append(stop)
+        _insert_stop(self.stops, offset, color)
 
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): project onto [0, 1] as
@@ -277,4 +277,4 @@ struct RadialGradient(ColorSource, Movable):
         var t = 1.0
         if self.radius != 0.0:
             t = dist / self.radius
-        return _color_at_t(self.stops, self._lowest, self._highest, t)
+        return _color_at_t(self.stops, t)
