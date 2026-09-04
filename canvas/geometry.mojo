@@ -163,3 +163,50 @@ struct Transform2D(ImplicitlyCopyable, Movable):
         """
         var p = self.to_point(x, y)
         return Point(_round_to_int(p.x), _round_to_int(p.y))
+
+    def inverse_point(self, px: Float64, py: Float64) raises -> FPoint:
+        """Map a pixel-space point back to the data-space point
+        `to_point` would have produced it from -- the exact inverse of
+        `to_point`, for hit-testing or cursor readout against a chart's
+        own coordinate transform.
+
+        Undoes the pipeline in reverse: subtracts the translation,
+        rotates by -rotation, then divides each axis by its own scale.
+
+        Returns a point rather than another `Transform2D`: this
+        transform's pipeline is fixed as scale-then-rotate, and the
+        exact inverse of an anisotropic (scale_x != scale_y), rotated
+        instance is a rotate-then-scale map, which is a different
+        matrix in general and does not fit that same shape.
+
+        Args:
+            px: Pixel-space x.
+            py: Pixel-space y.
+
+        Returns:
+            The data-space point.
+
+        Raises:
+            Error: `scale_x` or `scale_y` is zero, which collapses
+                that axis and cannot be undone.
+        """
+        if self.scale_x == 0.0 or self.scale_y == 0.0:
+            raise Error(
+                "Transform2D.inverse_point(): scale_x and scale_y must both"
+                " be non-zero to invert (got "
+                + String(self.scale_x)
+                + ", "
+                + String(self.scale_y)
+                + ")"
+            )
+
+        var ux = px - self.translate_x
+        var uy = py - self.translate_y
+
+        var sx = ux
+        var sy = uy
+        if self.rotation != 0.0:
+            sx = ux * self._cos_rotation + uy * self._sin_rotation
+            sy = -ux * self._sin_rotation + uy * self._cos_rotation
+
+        return FPoint(sx / self.scale_x, sy / self.scale_y)

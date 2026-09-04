@@ -1,7 +1,12 @@
 """Tests for geometry.mojo: Point and Transform2D."""
 
 from std.math import pi
-from std.testing import assert_equal, TestSuite
+from std.testing import (
+    assert_almost_equal,
+    assert_equal,
+    assert_raises,
+    TestSuite,
+)
 
 from canvas.geometry import Point, Transform2D
 
@@ -98,6 +103,65 @@ def test_transform2d_rotation_applies_after_scale_before_translate() raises:
     var p = t.to_pixel(5.0, 0.0)
     assert_equal(p.x, 100)
     assert_equal(p.y, 110)
+
+
+def test_inverse_point_undoes_scale_and_translate_exactly() raises:
+    # No rotation, and every number here divides evenly, so the round
+    # trip is exact in floating point -- no tolerance needed.
+    var t = Transform2D(10.0, -10.0, 50.0, 200.0)
+    var pixel = t.to_point(3.0, 4.0)
+    assert_equal(pixel.x, 80.0)  # 3*10 + 50
+    assert_equal(pixel.y, 160.0)  # 4*-10 + 200
+
+    var back = t.inverse_point(pixel.x, pixel.y)
+    assert_equal(back.x, 3.0)
+    assert_equal(back.y, 4.0)
+
+
+def test_inverse_point_round_trips_with_rotation() raises:
+    # Isotropic scale plus a rotation that isn't a multiple of a
+    # quarter turn, so both sin and cos are irrational -- the round
+    # trip is what a property this general can be checked against,
+    # not a specific hand-computed literal.
+    var t = Transform2D(5.0, 5.0, 10.0, -20.0, rotation=0.7)
+    var pixel = t.to_point(3.0, -4.5)
+    var back = t.inverse_point(pixel.x, pixel.y)
+    assert_almost_equal(back.x, 3.0, atol=1e-9)
+    assert_almost_equal(back.y, -4.5, atol=1e-9)
+
+
+def test_inverse_point_round_trips_anisotropic_scale_and_rotation() raises:
+    # scale_x != scale_y together with a nonzero rotation is the case
+    # where the true inverse is a rotate-then-scale map rather than
+    # another scale-then-rotate Transform2D: a matrix that fits the
+    # forward pipeline's shape for one direction need not fit it for
+    # the other unless the scale is isotropic or the rotation is a
+    # multiple of pi. inverse_point still has to recover the original
+    # point exactly here, since it computes the inverse directly
+    # rather than trying to express it as a Transform2D.
+    var t = Transform2D(2.0, 1.0, 30.0, -20.0, rotation=pi / 4.0)
+    var pixel = t.to_point(3.0, 4.0)
+    var back = t.inverse_point(pixel.x, pixel.y)
+    assert_almost_equal(back.x, 3.0, atol=1e-9)
+    assert_almost_equal(back.y, 4.0, atol=1e-9)
+
+    # And a second point, so this isn't a coincidence of one input.
+    var pixel2 = t.to_point(-7.0, 12.0)
+    var back2 = t.inverse_point(pixel2.x, pixel2.y)
+    assert_almost_equal(back2.x, -7.0, atol=1e-9)
+    assert_almost_equal(back2.y, 12.0, atol=1e-9)
+
+
+def test_inverse_point_raises_on_zero_scale_x() raises:
+    var t = Transform2D(0.0, 2.0, 0.0, 0.0)
+    with assert_raises():
+        _ = t.inverse_point(0.0, 0.0)
+
+
+def test_inverse_point_raises_on_zero_scale_y() raises:
+    var t = Transform2D(2.0, 0.0, 0.0, 0.0)
+    with assert_raises():
+        _ = t.inverse_point(0.0, 0.0)
 
 
 def main() raises:
