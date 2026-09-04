@@ -1,5 +1,5 @@
 """Tests for canvas/aa_area.mojo, the exact-area rasterizer behind
-every `FillRule.NONZERO` anti-aliased fill and clip mask.
+every `FillRule.NONZERO` anti-aliased fill, clip mask and stroke.
 
 The sweep's 4x4 sampling can only report coverage in sixteenths, so
 the checks here are shapes whose exact coverage is known and is not a
@@ -159,7 +159,7 @@ def test_nonzero_union_and_cancellation() raises:
     assert_equal(_alpha_of(opposite, 30, 30), 255)
 
 
-def test_polygon_goes_through_area_and_strokes_stay_sampled() raises:
+def test_polygon_and_stroke_go_through_area() raises:
     var tri: List[FPoint] = [
         FPoint(0.5, 0.5),
         FPoint(1.5, 0.5),
@@ -169,18 +169,19 @@ def test_polygon_goes_through_area_and_strokes_stay_sampled() raises:
     fill_polygon_aa(c, tri, INK, FillRule.NONZERO)
     _assert_near(_alpha_of(c, 1, 1), 128, 1, "polygon half pixel")
 
-    # A stroke is overlapping pieces, which accumulation over-covers at
-    # their shared edge pixels (see aa_area's docstring), so strokes
-    # keep the sampled sweep: a shallow 1px line's edge coverage is
-    # still counted in sixteenths.
+    # A stroke is one outline per drawn run (see `_stroke_edges`), so
+    # it comes here too: a shallow 1px line's edge coverage varies
+    # smoothly along the row rather than in sixteenths.
     var s = Canvas(220, 12, BG)
     draw_line_aa(s, 5.0, 5.2, 205.0, 6.8, INK, width=1.0)
+    var seen = List[Bool](length=256, fill=False)
+    var distinct = 0
     for x in range(10, 200):
         var a = _alpha_of(s, x, 5)
-        var sixteenths = Int(Float64(a) / 255.0 * 16.0 + 0.5)
-        _assert_near(
-            a, Int(Float64(sixteenths) / 16.0 * 255.0 + 0.5), 1, "sampled"
-        )
+        if not seen[a]:
+            seen[a] = True
+            distinct += 1
+    assert_true(distinct > 17, "stroke: " + String(distinct) + " levels")
 
 
 def test_shape_past_the_canvas_edges() raises:
