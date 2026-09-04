@@ -209,6 +209,53 @@ struct _EdgeTable(Movable):
             op[unsafe_offset=slot] = i
             orow[unsafe_offset=slot] = r + min_row
 
+    def seed_band(
+        self, first_fy: Float64, mut cursor: Int, mut active: List[Int]
+    ):
+        """Position a band's incremental state at `first_fy`, its
+        topmost sub-scanline.
+
+        A band covering rows partway down a shape must start with
+        every edge already spanning those rows in `active`, and
+        `cursor` past every edge that begins above them. Letting
+        `crossings_at` reach that state by admitting from index 0
+        costs an append and a retire for each of them, per band --
+        O(bands * edges) of list churn across a sweep, which is what
+        made a top-sorted table lose to a plain scan once the sweep
+        was spread over many cores.
+
+        This reaches the same state with a binary search for `cursor`
+        and one compare per skipped edge, appending only the ones
+        actually live. An edge admitted a fraction of a row early is
+        harmless: `crossings_at` skips it until `fy` reaches its
+        `y_lo`.
+        """
+        active.clear()
+        cursor = 0
+        var count = len(self.order)
+        if count == 0:
+            return
+
+        # First index in `order` whose row is past `first_fy`'s.
+        var orow = self.order_row.unsafe_ptr()
+        var row = Int(floor(first_fy))
+        var lo = 0
+        var hi = count
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if orow[unsafe_offset=mid] <= row:
+                lo = mid + 1
+            else:
+                hi = mid
+        cursor = lo
+
+        var op = self.order.unsafe_ptr()
+        var yhi = self.y_hi.unsafe_ptr()
+        for i in range(cursor):
+            var e = op[unsafe_offset=i]
+            if first_fy < yhi[unsafe_offset=e]:
+                active.append(e)
+
     def crossings_at(
         self,
         fy: Float64,
@@ -228,8 +275,9 @@ struct _EdgeTable(Movable):
         -- together the same `y_lo <= fy < y_hi` test the scan made,
         applied only to the edges near the sub-scanline. That needs
         sub-scanlines in non-decreasing `fy`, which a band's
-        row-by-row, sub-row-by-sub-row walk provides; a band starts
-        with `cursor` at 0 and `active` empty. The order crossings
+        row-by-row, sub-row-by-sub-row walk provides; `seed_band` puts
+        a band's `cursor` and `active` at its first sub-scanline. The
+        order crossings
         come out in differs from the scan's, but they are sorted by x
         before use and two crossings at the same x bound an empty run,
         so the coverage counts are unchanged.
@@ -248,19 +296,6 @@ struct _EdgeTable(Movable):
         var edx = self.dx.unsafe_ptr()
         var edy = self.dy.unsafe_ptr()
         var edir = self.direction.unsafe_ptr()
-        if len(self.order) == 0:
-            # Not top-sorted: scan every edge. `_sweep_edges_aa` sorts
-            # only for a single-banded sweep -- see its docstring.
-            for i in range(len(self.y_lo)):
-                if fy >= ylo[unsafe_offset=i] and fy < yhi[unsafe_offset=i]:
-                    var t = (fy - ey0[unsafe_offset=i]) / edy[unsafe_offset=i]
-                    crossings.append(
-                        _AACrossing(
-                            ex0[unsafe_offset=i] + t * edx[unsafe_offset=i],
-                            edir[unsafe_offset=i],
-                        )
-                    )
-            return
         var op = self.order.unsafe_ptr()
         var orow = self.order_row.unsafe_ptr()
         var count = len(self.order)
@@ -268,14 +303,21 @@ struct _EdgeTable(Movable):
         while cursor < count and orow[unsafe_offset=cursor] <= row:
             active.append(op[unsafe_offset=cursor])
             cursor += 1
-        var i = 0
-        while i < len(active):
+        # Retire passed edges by compacting in place rather than
+        # swapping the last entry down. Compaction keeps `active` in
+        # admission order, which is edge order, which for a stroked or
+        # flattened outline is close to x order -- and that is what
+        # keeps the crossing sort below on its insertion-sort path
+        # instead of the library sort.
+        var count_active = len(active)
+        var live = 0
+        for i in range(count_active):
             var e = active[i]
             if fy >= yhi[unsafe_offset=e]:
-                # Below this edge for the rest of the band: swap-remove.
-                active[i] = active[len(active) - 1]
-                _ = active.pop()
                 continue
+            if live != i:
+                active[live] = e
+            live += 1
             if fy >= ylo[unsafe_offset=e]:
                 var t = (fy - ey0[unsafe_offset=e]) / edy[unsafe_offset=e]
                 crossings.append(
@@ -284,7 +326,10 @@ struct _EdgeTable(Movable):
                         edir[unsafe_offset=e],
                     )
                 )
-            i += 1
+        # Most sub-scanlines retire nothing, so the shrink is skipped
+        # rather than called with an unchanged length.
+        if live != count_active:
+            active.resize(live, 0)
 
 
 # Below this many pixels in a fill's bounding box, the sweep runs
@@ -485,15 +530,14 @@ def _sweep_edges_aa(
         if bands < 1:
             bands = 1
 
+    # Top-sort the edges so each sub-scanline touches only the edges
+    # near it, and each band starts already positioned among them (see
+    # `_EdgeTable.seed_band`). Every sweep sorts, banded or not: the
+    # sort is a counting sort, linear in the edge count, against a
+    # sweep that costs edges times sub-scanlines when it scans instead.
+    edges.sort_by_top()
+
     if bands == 1:
-        # Top-sort the edges so each sub-scanline touches only the
-        # edges near it (see `_EdgeTable.crossings_at`). Single-banded
-        # sweeps only: the sort is serial work ahead of the sweep, and
-        # with the sweep spread over every core a stroked series of
-        # tens of thousands of short edges measured slower sorted than
-        # scanned (#133), while a glyph-sized or single-banded fill
-        # measured faster.
-        edges.sort_by_top()
         _sweep_band(
             canvas,
             edges,
@@ -591,6 +635,7 @@ def _sweep_band(
     var suffix = List[Int]()
     var cursor = 0
     var active = List[Int]()
+    edges.seed_band(Float64(first_row) - 0.5, cursor, active)
 
     for py in range(first_row, last_row):
         for pxi in range(row_width):
@@ -671,8 +716,9 @@ def _sweep_edges_to_mask(
         if bands < 1:
             bands = 1
 
+    edges.sort_by_top()
+
     if bands == 1:
-        edges.sort_by_top()
         _mask_band(
             mask,
             mask_width,
@@ -771,6 +817,7 @@ def _mask_band(
     var suffix = List[Int]()
     var cursor = 0
     var active = List[Int]()
+    edges.seed_band(Float64(first_row) - 0.5, cursor, active)
 
     for py in range(first_row, last_row):
         for pxi in range(row_width):
