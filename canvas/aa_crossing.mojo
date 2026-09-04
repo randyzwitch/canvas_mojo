@@ -705,16 +705,21 @@ def _sweep_edges_to_mask(
     max_y: Int,
     fill_rule: FillRule,
     supersample: Int,
+    full_coverage: Int = 255,
 ):
-    """`_sweep_edges_aa`'s counterpart for a clip mask: the same
-    coverage, written as a per-pixel 0-255 byte into `mask` instead of
-    blended onto a canvas as alpha.
+    """`_sweep_edges_aa`'s counterpart for a coverage mask: the same
+    coverage, written as one byte per pixel into `mask` instead of
+    blended onto a canvas as alpha. A fully covered pixel is written as
+    `full_coverage` and partial coverage scales linearly: 255 for a
+    clip mask, `supersample * supersample` for the raw sample count a
+    glyph mask keeps so its later composite reproduces `_sweep_band`'s
+    alpha exactly.
 
     `mask` is expected to be `mask_width * mask_height` bytes, already
     zeroed, covering canvas pixels [origin_x, origin_x + mask_width) x
     [origin_y, origin_y + mask_height). Anything the shape does not
-    cover keeps its zero, which is what makes the mask read as "clipped
-    out" there.
+    cover keeps its zero, which is what makes a clip mask read as
+    "clipped out" there.
 
     Banded across cores above `_MIN_PARALLEL_PIXELS` exactly as
     `_sweep_edges_aa` is, with the same single-band-only top-sort:
@@ -753,6 +758,7 @@ def _sweep_edges_to_mask(
             row_width,
             fill_rule,
             s,
+            full_coverage,
         )
         return
 
@@ -778,6 +784,7 @@ def _sweep_edges_to_mask(
                 row_width,
                 fill_rule,
                 s,
+                full_coverage,
             )
         )
     tg.wait()
@@ -795,6 +802,7 @@ async def _mask_band_async(
     row_width: Int,
     fill_rule: FillRule,
     supersample: Int,
+    full_coverage: Int,
 ):
     """`_mask_band` as a task; see `_sweep_band_async`."""
     _mask_band(
@@ -809,6 +817,7 @@ async def _mask_band_async(
         row_width,
         fill_rule,
         supersample,
+        full_coverage,
     )
 
 
@@ -824,10 +833,15 @@ def _mask_band(
     row_width: Int,
     fill_rule: FillRule,
     supersample: Int,
+    full_coverage: Int,
 ):
     """Write rows [first_row, last_row) of `edges`' coverage into
     `mask`. Rows are in canvas coordinates and already inside the
     mask; columns are still clipped to it here.
+
+    With `full_coverage == total_samples` the byte is the sample count
+    itself: dividing by a power-of-two sample count and multiplying it
+    back is exact in Float64, so the rounding below is a no-op.
     """
     var s = supersample
     var total_samples = s * s
@@ -868,5 +882,10 @@ def _mask_band(
             if mx < 0 or mx >= mask_width:
                 continue
             mask[row_base + mx] = UInt8(
-                Int(Float64(covered) / Float64(total_samples) * 255.0 + 0.5)
+                Int(
+                    Float64(covered)
+                    / Float64(total_samples)
+                    * Float64(full_coverage)
+                    + 0.5
+                )
             )

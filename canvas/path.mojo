@@ -962,6 +962,92 @@ def fill_path_aa(
     )
 
 
+struct _CoverageMask(Copyable, Movable):
+    """A path's anti-aliased coverage over its own padded bounding
+    box, as `_sweep_band` would have computed it before turning each
+    pixel's coverage into alpha: one byte per pixel holding the number
+    of covered sub-samples out of `total_samples`. `origin_x`/
+    `origin_y` are the box's top-left in the path's coordinate space,
+    so `counts[(y - origin_y) * width + (x - origin_x)]` is pixel
+    (x, y). A path with no outline has width and height 0.
+
+    What the glyph mask cache stores: compositing the counts through
+    the same alpha arithmetic `_sweep_band` uses gives the pixels
+    `fill_path_aa` would have written, for any colour, at any whole-
+    pixel offset.
+    """
+
+    var counts: List[UInt8]
+    var origin_x: Int
+    var origin_y: Int
+    var width: Int
+    var height: Int
+    var total_samples: Int
+
+    def __init__(
+        out self,
+        var counts: List[UInt8],
+        origin_x: Int,
+        origin_y: Int,
+        width: Int,
+        height: Int,
+        total_samples: Int,
+    ):
+        self.counts = counts^
+        self.origin_x = origin_x
+        self.origin_y = origin_y
+        self.width = width
+        self.height = height
+        self.total_samples = total_samples
+
+    def has_ink(self) -> Bool:
+        return self.width > 0 and self.height > 0
+
+
+def _path_coverage_counts(
+    path: Path,
+    fill_rule: FillRule,
+    supersample: Int,
+    curve_steps: Int,
+) -> _CoverageMask:
+    """`path`'s anti-aliased coverage as raw sub-sample counts over its
+    padded bounding box -- see `_CoverageMask`. The same flatten, edge
+    table, bounds and one-pixel skirt `fill_path_aa` uses, swept into a
+    mask instead of onto a canvas, so a glyph rasterized here and then
+    composited lands on the same pixels with the same coverage as a
+    direct fill.
+    """
+    var total_samples = supersample * supersample
+    var subpaths = _flatten(path, curve_steps)
+    if len(subpaths) == 0:
+        return _CoverageMask(List[UInt8](), 0, 0, 0, 0, total_samples)
+
+    var fe = _FillEdges(subpaths)
+    var origin_x = fe.min_x - 1
+    var origin_y = fe.min_y - 1
+    var width = (fe.max_x + 2) - origin_x
+    var height = (fe.max_y + 2) - origin_y
+    var counts = List[UInt8](length=width * height, fill=0)
+    _sweep_edges_to_mask(
+        counts,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        fe.edges,
+        fe.min_x,
+        fe.min_y,
+        fe.max_x,
+        fe.max_y,
+        fill_rule,
+        supersample,
+        total_samples,
+    )
+    return _CoverageMask(
+        counts^, origin_x, origin_y, width, height, total_samples
+    )
+
+
 def _path_coverage_mask(
     path: Path,
     width: Int,
