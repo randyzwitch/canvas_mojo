@@ -13,6 +13,8 @@
 # and would change what every existing caller of `get_pixel` sees.
 comptime BYTES_PER_PIXEL = 4
 
+from std.sys import size_of
+
 from canvas.color import Color, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
@@ -109,6 +111,22 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # once per pixel drawn anywhere in the package, and a bare field
     # load beats reaching into a List-of-Lists for its length.
     var _clip_mask_count: Int
+    # Keeps the struct over 256 bytes, which is the line between a
+    # `Canvas` argument being copied into the callee and being passed
+    # by reference. `set_pixel` and the methods it calls take the
+    # canvas once per pixel for every hard-edged primitive and every
+    # clip-path blend, so at 256 bytes or less that copy is paid per
+    # pixel and grows with the struct. Measured on the 800x600
+    # benchmark, `draw_line solid full diagonal` is 7.2 us with the
+    # struct at 96 bytes, 10.3 at 160, 12.9 at 224, 14.2 at 256, and
+    # 4.2 at 264 and every size above; `fill_circle_aa x2000 under a
+    # clip path` is 3.4 ms at 96 bytes and 2.1 ms at 264. Fields added
+    # without crossing the line only make it worse, which is what
+    # happened to an earlier clip-bounds cache (#145). The check in
+    # `__init__` keeps it over the line as fields come and go. Measured
+    # with Mojo 1.0 (#182); re-measure those two rows if a compiler
+    # update changes how arguments are passed.
+    var _layout_pad: InlineArray[UInt8, 176]
 
     def __init__(
         out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)
@@ -150,6 +168,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
+        self._layout_pad = InlineArray[UInt8, 176](fill=0)
+        comptime assert (
+            size_of[Canvas]() > 256
+        ), "Canvas must stay over 256 bytes -- see _layout_pad"
         if total == 0:
             return
 
@@ -193,6 +215,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
+        self._layout_pad = InlineArray[UInt8, 176](fill=0)
+        comptime assert (
+            size_of[Canvas]() > 256
+        ), "Canvas must stay over 256 bytes -- see _layout_pad"
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.
