@@ -15,6 +15,8 @@ LEN/NLEN fields are little-endian.
 
 `write_png` emits color type 6 (truecolor + alpha) when the canvas
 contains a pixel that is not fully opaque, and color type 2 otherwise.
+It compresses the scanlines twice, unfiltered and Sub-filtered (spec
+section 9), and keeps the smaller stream.
 `read_png` accepts color types 0/2/4/6 at 8-bit depth, non-interlaced;
 indexed/palette color (type 3), other bit depths and Adam7 interlacing
 raise rather than misreading pixels. Alpha is preserved in both
@@ -178,10 +180,8 @@ def write_png(canvas: Canvas, path: String) raises:
     ihdr.append(0)  # interlace method: none
     _write_chunk(file_buf, crc_table, "IHDR", ihdr)
 
-    # Raw scanlines: a filter-type byte, then that row's pixel bytes.
-    # Filter type 0 (None, no per-pixel prediction) because deflate()'s
-    # LZ77 already finds the horizontal-run redundancy a predictor
-    # targets, and these images are dominated by flat-color regions.
+    # Raw scanlines: a filter-type byte, then that row's pixel bytes,
+    # unfiltered (type 0) first.
     #
     # With alpha, the canvas's own RGBA layout *is* the scanline
     # layout, so each row is one bulk slice copy. Without it the alpha
@@ -204,6 +204,22 @@ def write_png(canvas: Canvas, path: String) raises:
                 raw.append(px[unsafe_offset=i + 1])
                 raw.append(px[unsafe_offset=i + 2])
 
+    # Two candidate encodings, both compressed, the smaller kept. The
+    # unfiltered rows win wherever deflate's LZ77 finds flat colour
+    # and repeated rows, which is most of a chart; the Sub-filtered
+    # rows win on a gradient, whose steady ramps become runs of one
+    # small delta. Measured over this package's own examples: Sub
+    # takes 30% off the gradient and loses on everything else, so the
+    # choice has to be per image (#167, which has the table). Up,
+    # Average, Paeth and a per-row adaptive pick were measured too and
+    # won nothing Sub did not, so they are not candidates.
+    var compressed = deflate(raw)
+    var sub = _sub_filtered(raw, h, w * channels, channels)
+    var compressed_sub = deflate(sub)
+    var filtered = len(compressed_sub) < len(compressed)
+    if filtered:
+        compressed = compressed_sub^
+
     var zlib_stream = List[UInt8]()
     # zlib header (RFC 1950 2.2): CMF=0x78 (deflate, 32K window),
     # FLG=0x01 (FLEVEL=0/"fastest", matching deflate()'s single-block,
@@ -211,9 +227,8 @@ def write_png(canvas: Canvas, path: String) raises:
     # required self-check.
     zlib_stream.append(0x78)
     zlib_stream.append(0x01)
-    var compressed = deflate(raw)
     zlib_stream.extend(compressed^)
-    _append_u32_be(zlib_stream, _adler32(raw))
+    _append_u32_be(zlib_stream, _adler32(sub) if filtered else _adler32(raw))
 
     _write_chunk(file_buf, crc_table, "IDAT", zlib_stream)
     _write_chunk(file_buf, crc_table, "IEND", List[UInt8]())
@@ -232,6 +247,34 @@ def _read_u32_be(data: List[UInt8], pos: Int) raises -> Int:
         | (Int(data[pos + 2]) << 8)
         | Int(data[pos + 3])
     )
+
+
+def _sub_filtered(
+    raw: List[UInt8], height: Int, row_bytes: Int, bpp: Int
+) -> List[UInt8]:
+    """The scanlines in `raw` (filter byte + `row_bytes` of pixels per
+    row, every filter byte 0) re-encoded under filter type 1, Sub: each
+    byte replaced by its difference from the byte one pixel to its
+    left, the first pixel of a row from zero (spec section 9.2). Same
+    layout back, with every filter byte 1.
+
+    Sub needs no row above, which is why it is the one filter worth a
+    second pass: it reads `raw` once, sequentially.
+    """
+    var out = List[UInt8](length=len(raw), fill=0)
+    var rp = raw.unsafe_ptr()
+    var op = out.unsafe_ptr()
+    var stride = 1 + row_bytes
+    for y in range(height):
+        var base = y * stride
+        op[unsafe_offset=base] = 1
+        for i in range(row_bytes):
+            var cur = Int(rp[unsafe_offset=base + 1 + i])
+            var left = 0
+            if i >= bpp:
+                left = Int(rp[unsafe_offset=base + 1 + i - bpp])
+            op[unsafe_offset=base + 1 + i] = UInt8((cur - left) & 0xFF)
+    return out^
 
 
 def _paeth_predictor(a: Int, b: Int, c: Int) -> Int:
