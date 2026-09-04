@@ -35,6 +35,8 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.color import Color
 from canvas.buffer import Canvas
+from canvas.path import Path
+from canvas.text.font_cache import FontCache
 from canvas.text.render import (
     draw_text,
     measure_text,
@@ -552,6 +554,116 @@ def test_measure_text_falls_back_to_a_font_with_the_glyph() raises:
     var m = measure_text("☃", 32.0, family="Ubuntu")
     assert_true(m.width > 0.0)
     assert_true(m.height > 0.0)
+
+
+def _assert_same_pixels(a: Canvas, b: Canvas, label: String) raises:
+    assert_equal(a.width, b.width, label)
+    assert_equal(a.height, b.height, label)
+    for y in range(a.height):
+        for x in range(a.width):
+            var p = a.get_pixel(x, y)
+            var q = b.get_pixel(x, y)
+            if p.r != q.r or p.g != q.g or p.b != q.b or p.a != q.a:
+                var at = label + " at " + String(x) + "," + String(y)
+                assert_equal(p.r, q.r, at)
+                assert_equal(p.g, q.g, at)
+                assert_equal(p.b, q.b, at)
+                assert_equal(p.a, q.a, at)
+
+
+def test_glyph_cache_hit_matches_miss_at_whole_pixels() raises:
+    # The first draw rasterizes every glyph into the cache; the second
+    # composites the cached masks. A translucent colour makes the alpha
+    # arithmetic part of what has to agree.
+    var cache = FontCache()
+    var ink = Color(30, 90, 200, 140)
+    var first = Canvas(160, 40, BG)
+    draw_text(first, 8, 28, "Cached 42", ink, 16.0, cache=cache)
+    var masks = cache.glyph_mask_count()
+    assert_true(masks >= 8, "one mask per distinct glyph")
+
+    var second = Canvas(160, 40, BG)
+    draw_text(second, 8, 28, "Cached 42", ink, 16.0, cache=cache)
+    assert_equal(cache.glyph_mask_count(), masks, "the second draw hit")
+    _assert_same_pixels(first, second, "hit vs miss")
+
+    # And at a different whole-pixel position the same masks apply.
+    var moved = Canvas(160, 40, BG)
+    draw_text(moved, 31, 22, "Cached 42", ink, 16.0, cache=cache)
+    assert_equal(cache.glyph_mask_count(), masks, "same sub-pixel offset")
+    var fresh = FontCache()
+    var reference = Canvas(160, 40, BG)
+    draw_text(reference, 31, 22, "Cached 42", ink, 16.0, cache=fresh)
+    _assert_same_pixels(reference, moved, "moved hit vs fresh miss")
+
+
+def test_glyph_cache_hit_matches_miss_at_sub_pixel_anchors() raises:
+    # The key carries the origin's exact fractional part, so a label at
+    # x = 10.3 and one at x = 42.3 share masks, and a label at 10.7 gets
+    # its own. Every hit must match a fresh rasterization at the same
+    # place.
+    var cache = FontCache()
+    var warm = Canvas(200, 40, BG)
+    draw_text(warm, 10.3, 27.6, "tick 1.5", FG, 13.0, cache=cache)
+    var masks = cache.glyph_mask_count()
+
+    var hit = Canvas(200, 40, BG)
+    draw_text(hit, 42.3, 27.6, "tick 1.5", FG, 13.0, cache=cache)
+    assert_equal(cache.glyph_mask_count(), masks, "same fraction, no miss")
+    var fresh = FontCache()
+    var miss = Canvas(200, 40, BG)
+    draw_text(miss, 42.3, 27.6, "tick 1.5", FG, 13.0, cache=fresh)
+    _assert_same_pixels(miss, hit, "sub-pixel hit vs miss")
+
+    var other = Canvas(200, 40, BG)
+    draw_text(other, 10.7, 27.6, "tick 1.5", FG, 13.0, cache=cache)
+    assert_true(
+        cache.glyph_mask_count() > masks, "a new fraction is a new mask"
+    )
+
+
+def test_glyph_cache_composites_under_clips() raises:
+    # Cached masks meet the rectangle clip per row and the clip path
+    # per pixel, the same way a direct fill does.
+    var cache = FontCache()
+    var warm = Canvas(160, 60, BG)
+    draw_text(warm, 6, 40, "Clipped", FG, 20.0, cache=cache)
+
+    var clipped = Canvas(160, 60, BG)
+    clipped.push_clip(20, 10, 60, 25)
+    draw_text(clipped, 6, 40, "Clipped", FG, 20.0, cache=cache)
+    clipped.pop_clip()
+    var fresh = FontCache()
+    var reference = Canvas(160, 60, BG)
+    reference.push_clip(20, 10, 60, 25)
+    draw_text(reference, 6, 40, "Clipped", FG, 20.0, cache=fresh)
+    reference.pop_clip()
+    _assert_same_pixels(reference, clipped, "under a clip rect")
+    for x in range(160):
+        var p = clipped.get_pixel(x, 45)
+        assert_equal(p.r, BG.r, "row 45 is outside the clip")
+
+    var circle = Path()
+    circle.ellipse(60.0, 32.0, 35.0, 22.0)
+    var masked = Canvas(160, 60, BG)
+    masked.push_clip_path(circle)
+    draw_text(masked, 6, 40, "Clipped", FG, 20.0, cache=cache)
+    masked.pop_clip()
+    var fresh2 = FontCache()
+    var reference2 = Canvas(160, 60, BG)
+    reference2.push_clip_path(circle)
+    draw_text(reference2, 6, 40, "Clipped", FG, 20.0, cache=fresh2)
+    reference2.pop_clip()
+    _assert_same_pixels(reference2, masked, "under a clip path")
+
+
+def test_rotated_text_bypasses_the_glyph_cache() raises:
+    var cache = FontCache()
+    var c = Canvas(120, 120, BG)
+    draw_text(c, 20, 100, "Up", FG, 16.0, rotation=-pi / 2.0, cache=cache)
+    assert_equal(cache.glyph_mask_count(), 0, "rotated glyphs fill directly")
+    var bbox = _ink_bbox(c, BG)
+    assert_true(bbox.found_any, "and still render")
 
 
 def main() raises:

@@ -5,6 +5,18 @@ outlines and metrics from `ttf.mojo` via
 `fill_path_aa` every other shape uses, so translucent text composites
 through `set_pixel` like any other fill.
 
+Unrotated text goes through a glyph mask cache on the `FontCache`:
+each (face, size, codepoint, sub-pixel offset) is rasterized once, as
+the sub-sample counts `fill_path_aa`'s sweep computes, and every later
+occurrence composites the cached counts through the sweep's own alpha
+arithmetic (`_composite_glyph_mask`), so the pixels are the ones a
+direct fill writes. The sub-pixel offset is the glyph origin's
+fractional part rounded to 1/64 px (`_SUBPIXEL_STEPS`): whole-pixel
+anchors are unchanged, and a fractional anchor places each glyph
+within 1/128 px of where the unrounded outline would go, well inside
+the sweep's 1/4 px sample spacing. Rotated text still fills each
+glyph's outline directly (#170).
+
 `draw_text`'s (x, y) is the baseline's left end for LEFT alignment, not
 a top-left corner like fill_rect's. CENTER/RIGHT shift each line
 horizontally against that same anchor.
@@ -33,12 +45,13 @@ FontSlant/FontWeight come from font_discovery.mojo and TextAlign from
 text_align.mojo, both re-exported here.
 """
 
-from std.math import cos, sin
+from std.math import ceil, cos, floor, sin
 
 from canvas.text.bidi import detect_base_level, visual_order
 from canvas.buffer import Canvas
 from canvas.color import Color
-from canvas.text.font_cache import FontCache
+from canvas.fill_rule import FillRule
+from canvas.text.font_cache import _cache_key, _GlyphMask, FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.glyph_outline import (
     face_line_metrics,
@@ -51,6 +64,8 @@ from canvas.text.ttf import TTFFace
 from canvas.path import (
     fill_path_aa,
     Path,
+    _CoverageMask,
+    _path_coverage_counts,
     _CLOSE,
     _CUBIC_TO,
     _LINE_TO,
@@ -58,6 +73,13 @@ from canvas.path import (
     _QUAD_TO,
 )
 from canvas.text.text_align import TextAlign
+
+# Sub-pixel positions per pixel the glyph mask cache distinguishes.
+# Two anchors whose fractional parts differ only in floating-point
+# rounding (10.3 + advance against 42.3 + advance) round to the same
+# step and share a mask; without this, exact-bit keys missed on nearly
+# every fractional anchor (#170).
+comptime _SUBPIXEL_STEPS = 64
 
 
 struct TextMetrics(ImplicitlyCopyable, Movable):
@@ -802,6 +824,137 @@ def draw_text(
     )
 
 
+def _composite_glyph_mask(
+    mut canvas: Canvas,
+    mask: _CoverageMask,
+    offset_x: Int,
+    offset_y: Int,
+    color: Color,
+):
+    """Blend a cached glyph's coverage onto `canvas` with the mask's
+    origin shifted by (offset_x, offset_y). Each row is intersected once
+    with the canvas and the rectangle clip and written through
+    `write_pixel`, the arrangement `_sweep_band` uses; under a clip path
+    the per-pixel mask applies, so those rows go through `set_pixel`.
+    The alpha arithmetic is `_sweep_band`'s, on the same counts, so the
+    result matches a direct `fill_path_aa` of the glyph.
+    """
+    var masked = canvas.has_clip_mask()
+    var total = Float64(mask.total_samples)
+    var left = offset_x + mask.origin_x
+    for row in range(mask.height):
+        var py = offset_y + mask.origin_y + row
+        var region = canvas.effective_fill_rect(left, py, mask.width, 1)
+        if region[2] == 0 or region[3] == 0:
+            continue
+        var lo = region[0] - left
+        var hi = lo + region[2]
+        var base = row * mask.width
+        for mx in range(lo, hi):
+            var covered = Int(mask.counts[base + mx])
+            if covered == 0:
+                continue
+            var alpha = UInt8(
+                Int(Float64(covered) / total * Float64(color.a) + 0.5)
+            )
+            if masked:
+                canvas.set_pixel(left + mx, py, color.with_alpha(alpha))
+            else:
+                canvas.write_pixel(left + mx, py, color.with_alpha(alpha))
+
+
+def _rasterize_glyph(
+    mut primary: TTFFace,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    size: Float64,
+    codepoint: Int,
+    frac_x: Float64,
+    frac_y: Float64,
+    mut cache: FontCache,
+) raises -> _GlyphMask:
+    """A glyph's advance and coverage with its origin at (frac_x,
+    frac_y), both in [0, 1): the outline `_resolve_glyph` would build
+    for the render pass, swept with the same fill rule, sample grid and
+    curve flattening `fill_path_aa` applies to it, kept as counts.
+    """
+    var g = _resolve_glyph(
+        primary, family, slant, weight, size, codepoint, frac_x, frac_y, cache
+    )
+    if not (g.metrics.width > 0.0 and g.metrics.height > 0.0):
+        return _GlyphMask(
+            g.metrics.advance, _CoverageMask(List[UInt8](), 0, 0, 0, 0, 16)
+        )
+    return _GlyphMask(
+        g.metrics.advance,
+        _path_coverage_counts(g.path, FillRule.EVEN_ODD, 4, 0),
+    )
+
+
+def _draw_cached_glyph(
+    mut canvas: Canvas,
+    mut primary: TTFFace,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    size: Float64,
+    codepoint: Int,
+    origin_x: Float64,
+    origin_y: Float64,
+    key_prefix: String,
+    color: Color,
+    mut cache: FontCache,
+) raises -> Float64:
+    """Composite one glyph with its origin at (origin_x, origin_y)
+    through the cache, rasterizing it on a miss, and return its
+    advance. The key is the face, size and codepoint plus the origin's
+    sub-pixel part in 1/`_SUBPIXEL_STEPS` px; the whole-pixel part
+    becomes the composite offset. A whole-pixel origin rasterizes at
+    step 0, exactly where the direct fill would.
+    """
+    var ix = Int(floor(origin_x))
+    var iy = Int(floor(origin_y))
+    var step_x = Int(floor((origin_x - Float64(ix)) * _SUBPIXEL_STEPS + 0.5))
+    var step_y = Int(floor((origin_y - Float64(iy)) * _SUBPIXEL_STEPS + 0.5))
+    # A fraction that rounds up to the next whole pixel is that pixel.
+    if step_x == _SUBPIXEL_STEPS:
+        ix += 1
+        step_x = 0
+    if step_y == _SUBPIXEL_STEPS:
+        iy += 1
+        step_y = 0
+    var frac_x = Float64(step_x) / _SUBPIXEL_STEPS
+    var frac_y = Float64(step_y) / _SUBPIXEL_STEPS
+    var key = (
+        key_prefix
+        + String(codepoint)
+        + "|"
+        + String(step_x)
+        + "|"
+        + String(step_y)
+    )
+    if key not in cache._glyph_masks:
+        cache._store_glyph_mask(
+            key,
+            _rasterize_glyph(
+                primary,
+                family,
+                slant,
+                weight,
+                size,
+                codepoint,
+                frac_x,
+                frac_y,
+                cache,
+            ),
+        )
+    ref entry = cache._glyph_masks[key]
+    if entry.mask.has_ink():
+        _composite_glyph_mask(canvas, entry.mask, ix, iy, color)
+    return entry.advance
+
+
 def draw_text(
     mut canvas: Canvas,
     x: Float64,
@@ -858,6 +1011,37 @@ def draw_text(
         return
 
     var face = cache.resolve_face(family, slant, weight, size)
+
+    if rotation == 0.0:
+        # Faces are shared per (font file, whole pixel size), so the
+        # mask key follows the same rounding of `size`.
+        var key_prefix = (
+            _cache_key(family, slant, weight)
+            + "@"
+            + String(Int(ceil(size)))
+            + "|"
+        )
+        for line in block.lines:
+            if line.text == "":
+                continue
+            var pen_x = line.x
+            for codepoint in _visual_codepoints(line.text):
+                pen_x += _draw_cached_glyph(
+                    canvas,
+                    face[],
+                    family,
+                    slant,
+                    weight,
+                    size,
+                    codepoint,
+                    x + pen_x,
+                    y + line.y,
+                    key_prefix,
+                    color,
+                    cache,
+                )
+        return
+
     var c = cos(rotation)
     var s = sin(rotation)
     var anchor_x = x

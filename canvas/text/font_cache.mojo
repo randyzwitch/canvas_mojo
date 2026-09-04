@@ -26,6 +26,16 @@ size), and a hit bumps a refcount rather than copying the payload.
 keying by `path + "@" + pixel_size` rather than path alone keeps two
 callers at different sizes from corrupting each other's scale state.
 
+The third half is rasterized glyphs. `draw_text` keys each unrotated
+glyph by face, pixel size, codepoint and the glyph origin's sub-pixel
+offset in 1/64 px, and stores its coverage as the sub-sample counts
+the anti-aliased sweep computed (`_GlyphMask`); a hit composites the
+counts instead of extracting and sweeping the outline again, for the
+pixels a direct fill would write. This is what makes a cached label
+tens of microseconds rather than a millisecond. The Dict empties and
+restarts at `_MAX_GLYPH_MASKS` entries, so labels at arbitrary
+sub-pixel anchors cannot grow it without bound.
+
 Mojo has no mutable global state (declaring one raises "global variables
 are not supported"), so there is no implicit shared cache. Pass one
 FontCache to draw_text/measure_text/measure_text_block through their
@@ -41,7 +51,28 @@ from canvas.text.font_discovery import (
     FontSlant,
     FontWeight,
 )
+from canvas.path import _CoverageMask
 from canvas.text.ttf import TTFFace
+
+# Distinct (face, size, codepoint, sub-pixel offset) masks kept before
+# the glyph mask cache is emptied and starts over. A 13 px glyph mask
+# is around 200 bytes, so this bounds the cache at a few megabytes for
+# the largest text a chart draws.
+comptime _MAX_GLYPH_MASKS = 4096
+
+
+struct _GlyphMask(Copyable, Movable):
+    """One glyph as `draw_text` composites it: its advance, and its
+    coverage rasterized at a given sub-pixel offset. A whitespace glyph
+    has an advance and an empty mask.
+    """
+
+    var advance: Float64
+    var mask: _CoverageMask
+
+    def __init__(out self, advance: Float64, var mask: _CoverageMask):
+        self.advance = advance
+        self.mask = mask^
 
 
 def _slant_key(slant: FontSlant) -> String:
@@ -76,6 +107,7 @@ struct FontCache(Movable):
     var _paths: Dict[String, String]
     var _paths_for_char: Dict[String, String]
     var _faces: Dict[String, ArcPointer[TTFFace]]
+    var _glyph_masks: Dict[String, _GlyphMask]
 
     def __init__(out self):
         """Scans the installed fonts once -- see this module's
@@ -85,6 +117,26 @@ struct FontCache(Movable):
         self._paths = Dict[String, String]()
         self._paths_for_char = Dict[String, String]()
         self._faces = Dict[String, ArcPointer[TTFFace]]()
+        self._glyph_masks = Dict[String, _GlyphMask]()
+
+    def glyph_mask_count(self) -> Int:
+        """How many rasterized glyph masks the cache holds.
+
+        Returns:
+            The number of distinct (face, size, codepoint, sub-pixel
+            offset) masks cached so far.
+        """
+        return len(self._glyph_masks)
+
+    def _store_glyph_mask(mut self, key: String, var entry: _GlyphMask):
+        """Insert a rasterized glyph, emptying the cache first once it
+        holds `_MAX_GLYPH_MASKS` entries. Text anchored at arbitrary
+        sub-pixel positions can produce a new key per call, and this
+        keeps that from growing without bound.
+        """
+        if len(self._glyph_masks) >= _MAX_GLYPH_MASKS:
+            self._glyph_masks.clear()
+        self._glyph_masks[key] = entry^
 
     def _face_for_path(
         mut self, path: String, size: Float64
