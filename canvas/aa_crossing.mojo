@@ -619,9 +619,19 @@ def _sweep_band(
 
     Bands write disjoint rows, so no two ever touch the same pixel.
     `canvas` is shared mutably between them on exactly that basis.
+
+    Each row is intersected once with the canvas and the rectangle
+    clip -- the test `set_pixel` would otherwise repeat per pixel --
+    and its covered pixels go through `write_pixel`. A row the
+    intersection empties is skipped before its coverage is even
+    accumulated, which is what makes a clip cheap for the part of a
+    shape it hides. While a clip path is pushed the per-pixel mask
+    still applies, so those rows fall back to `set_pixel`, the
+    arrangement `Canvas._fill_region` uses.
     """
     var s = supersample
     var total_samples = s * s
+    var masked = canvas.has_clip_mask()
 
     # Buffers for the whole band, not per row and per sub-scanline.
     # A glyph-sized path is small enough that allocating a crossing
@@ -638,6 +648,16 @@ def _sweep_band(
     edges.seed_band(Float64(first_row) - 0.5, cursor, active)
 
     for py in range(first_row, last_row):
+        var region = canvas.effective_fill_rect(row_first_px, py, row_width, 1)
+        if region[2] == 0 or region[3] == 0:
+            # Nothing on this row can land. Skipping the sweep is safe
+            # for the active edge list: crossings_at catches up its
+            # admissions on the next row it sees and retires passed
+            # edges as it meets them.
+            continue
+        var lo = region[0] - row_first_px
+        var hi = lo + region[2]
+
         for pxi in range(row_width):
             row_covered[pxi] = 0
 
@@ -655,19 +675,21 @@ def _sweep_band(
             suffix,
         )
 
-        for pxi in range(row_width):
+        for pxi in range(lo, hi):
             var covered = row_covered[pxi]
-            if covered > 0:
-                var px = row_first_px + pxi
-                var alpha = UInt8(
-                    Int(
-                        Float64(covered)
-                        / Float64(total_samples)
-                        * Float64(color.a)
-                        + 0.5
-                    )
+            if covered == 0:
+                continue
+            var px = row_first_px + pxi
+            var alpha = UInt8(
+                Int(
+                    Float64(covered) / Float64(total_samples) * Float64(color.a)
+                    + 0.5
                 )
+            )
+            if masked:
                 canvas.set_pixel(px, py, color.with_alpha(alpha))
+            else:
+                canvas.write_pixel(px, py, color.with_alpha(alpha))
 
 
 def _sweep_edges_to_mask(
