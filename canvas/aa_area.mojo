@@ -5,7 +5,12 @@ to `aa_crossing.mojo`'s supersampled sweep.
 
 Each edge deposits, into every pixel it crosses, the signed area it
 cuts off (`_deposit_edge`), plus a carry into the pixel to its right
-for the rest of the row. A prefix sum along the row then turns the
+for the rest of the row. Pixel (px, py) is the square
+[px - 0.5, px + 0.5] x [py - 0.5, py + 0.5], the convention every
+rasterizer in this package shares (the sweep samples at
+`px + (g + 0.5) / s - 0.5`); the deposit arithmetic works on
+[px, px + 1) cells, so `_deposit_all` shifts each edge by half a pixel
+on the way in. A prefix sum along the row then turns the
 deposits into each pixel's accumulated winding, a real number whose
 magnitude is the pixel's covered fraction: exact where one edge
 crosses the pixel, and the sum of the pieces where several do. The
@@ -131,12 +136,19 @@ def _deposit_all(
     last_row: Int,
     row_first_px: Int,
 ):
-    """Every edge of `edges` into `acc`, rows [first_row, last_row)."""
+    """Every edge of `edges` into `acc`, rows [first_row, last_row).
+
+    The half-pixel shift is what puts the edges in cell coordinates:
+    pixel py's square starts at py - 0.5 in the path's space, which is
+    cell row py's start once 0.5 is added; likewise for columns.
+    """
     var n = len(edges.y_lo)
     for i in range(n):
-        if edges.y_hi[i] <= Float64(first_row):
+        var y_lo = edges.y_lo[i] + 0.5
+        var y_hi = edges.y_hi[i] + 0.5
+        if y_hi <= Float64(first_row):
             continue
-        if edges.y_lo[i] >= Float64(last_row):
+        if y_lo >= Float64(last_row):
             continue
         _deposit_edge(
             acc,
@@ -144,12 +156,12 @@ def _deposit_all(
             first_row,
             last_row,
             row_first_px,
-            edges.x0[i],
-            edges.y0[i],
+            edges.x0[i] + 0.5,
+            edges.y0[i] + 0.5,
             edges.dx[i],
             edges.dy[i],
-            edges.y_lo[i],
-            edges.y_hi[i],
+            y_lo,
+            y_hi,
             edges.direction[i],
         )
 
