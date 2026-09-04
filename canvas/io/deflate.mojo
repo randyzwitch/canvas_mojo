@@ -577,6 +577,14 @@ comptime _WINDOW = 32768
 # Real encoders go much higher at their top compression levels.
 comptime _MAX_CHAIN = 32
 
+# The longest match `deflate` still looks one byte further for. Above
+# it a match is taken as found, without the second search the lazy
+# rule needs. Both a ratio and a speed knob, and monotonic in neither:
+# set by benchmark (#172, which has the numbers) over the example
+# images, where 48, 64 and 96 land within 0.1% of each other, 32 comes
+# out 1.9% larger, and 128 and up is both larger and slower to write.
+comptime _MAX_LAZY = 64
+
 # Hash table sizing for the match search below. The table is indexed by
 # a hash of the 3 bytes at a position, and holds the most recent
 # position with that hash; `_HashChains.prev` links each position to
@@ -737,6 +745,12 @@ struct _HashChains(Movable):
     var head: List[Int32]
     var prev: List[Int32]
     var mask: Int
+    # How far the input has been indexed: every position below this is
+    # in `head`/`prev`, and none at or above it is. The encoder walks
+    # forward and looks back, so this is what keeps a position from
+    # being indexed twice (which would link it to itself and cut the
+    # chain) or skipped.
+    var indexed: Int
 
     def __init__(out self, n: Int):
         var size = _MIN_HASH_SIZE
@@ -749,18 +763,47 @@ struct _HashChains(Movable):
         # measured slower (#104).
         self.prev = List[Int32](length=_WINDOW, fill=-1)
         self.mask = size - 1
+        self.indexed = 0
 
-    def insert(mut self, data: List[UInt8], pos: Int):
-        """Record `pos` as a candidate match source for its 3-byte
-        prefix. Unbounded in what it stores; the search is what caps
-        how far back it looks.
+    def index_upto(mut self, data: List[UInt8], limit: Int):
+        """Record every position below `limit` not already recorded as
+        a candidate match source for the 3 bytes at it. Positions with
+        fewer than _MIN_MATCH bytes after them are never recorded,
+        since nothing can match against them. Unbounded in what it
+        stores; the search is what caps how far back it looks.
+
+        A range at a time rather than a position at a time: the encoder
+        indexes every position of every token, so this loop runs once
+        per input byte. The pointers and the 3-byte key are carried
+        across iterations, leaving two stores and a shift per position.
+
+        Args:
+            data: The bytes being compressed.
+            limit: One past the last position to record.
         """
-        var h = _hash3(data, pos, self.mask)
+        var start = self.indexed
+        var stop = min(limit, len(data) - _MIN_MATCH + 1)
+        if start >= stop:
+            return
+        self.indexed = stop
+        var d = data.unsafe_ptr()
         var hp = self.head.unsafe_ptr()
-        self.prev.unsafe_ptr()[unsafe_offset=pos & _WINDOW_MASK] = hp[
-            unsafe_offset=h
-        ]
-        hp[unsafe_offset=h] = Int32(pos)
+        var pp = self.prev.unsafe_ptr()
+        var v = (
+            (Int(d[unsafe_offset=start]) << 16)
+            | (Int(d[unsafe_offset=start + 1]) << 8)
+            | Int(d[unsafe_offset=start + 2])
+        )
+        for pos in range(start, stop):
+            var h = ((v * _HASH_MUL) >> 16) & self.mask
+            pp[unsafe_offset=pos & _WINDOW_MASK] = hp[unsafe_offset=h]
+            hp[unsafe_offset=h] = Int32(pos)
+            if pos + 1 < stop:
+                # The next position's key is this one shifted up a
+                # byte, so only one byte is read per position. In range
+                # because `stop` leaves _MIN_MATCH bytes after the last
+                # position: pos + 3 is at most stop + 1 <= len(data) - 1.
+                v = ((v << 8) | Int(d[unsafe_offset=pos + 3])) & 0xFFFFFF
 
 
 struct _Match(ImplicitlyCopyable, Movable):
@@ -1025,6 +1068,12 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     stream (RFC 1950) -- a caller needing one, such as write_png, adds
     the 2-byte header and 4-byte Adler-32 trailer itself.
 
+    Every position of every token is indexed, so a match can start
+    partway into an earlier one and a run is coded at distance 1. A
+    match shorter than _MAX_LAZY is not taken until the position one
+    byte on has been searched too: if that one is longer, the byte here
+    is emitted as a literal and the longer match follows it.
+
     The block is coded with whichever of the two Huffman options costs
     fewer bits, worked out from the token stream's symbol frequencies
     before anything is written: the fixed tables (3.2.6), which carry
@@ -1057,25 +1106,51 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     var lit_freq = List[Int](length=_MAX_L_CODES, fill=0)
     var dist_freq = List[Int](length=_MAX_D_CODES, fill=0)
     var i = 0
+    # The match the previous position's look-ahead found and left for
+    # this one, so a deferred match is searched for once rather than
+    # twice.
+    var deferred = _Match(0, 0)
+    var have_deferred = False
     while i < n:
-        var m = _find_match(chains, data, i)
+        var m: _Match
+        if have_deferred:
+            m = deferred
+            have_deferred = False
+        else:
+            m = _find_match(chains, data, i)
         if m.length >= _MIN_MATCH:
+            # Lazy matching: a match starting one byte later may be
+            # longer than this one, and a literal plus the longer match
+            # then covers the same bytes in fewer bits than this match
+            # plus whatever follows it. Skipped when this match already
+            # runs as far as one starting a byte later could reach,
+            # where no improvement is possible.
+            if m.length < min(_MAX_LAZY, n - i):
+                chains.index_upto(data, i + 1)
+                var later = _find_match(chains, data, i + 1)
+                if later.length > m.length:
+                    var byte = Int(data[i])
+                    tokens.append(_Token(byte, 0))
+                    lit_freq[byte] += 1
+                    deferred = later
+                    have_deferred = True
+                    i += 1
+                    continue
             tokens.append(_Token(m.length, m.distance))
             lit_freq[257 + _length_symbol(m.length, lens)] += 1
             dist_freq[_distance_symbol(m.distance, dists)] += 1
-            # Only the match's starting position is indexed, not every
-            # position it spans: a compression-ratio trade (a match
-            # starting partway through this one won't be found), not a
-            # correctness gap.
-            if i + _MIN_MATCH <= n:
-                chains.insert(data, i)
+            # Every position the match covers is indexed, not only the
+            # position the search ran from. Inside a run, that puts the
+            # immediately preceding position in the bucket, so the next
+            # search finds it at distance 1 -- which costs no extra
+            # bits -- rather than reaching back to the run's start.
+            chains.index_upto(data, i + m.length)
             i += m.length
         else:
             var byte = Int(data[i])
             tokens.append(_Token(byte, 0))
             lit_freq[byte] += 1
-            if i + _MIN_MATCH <= n:
-                chains.insert(data, i)
+            chains.index_upto(data, i + 1)
             i += 1
     lit_freq[256] = 1  # end-of-block, sent exactly once
 
