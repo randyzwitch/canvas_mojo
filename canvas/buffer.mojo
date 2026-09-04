@@ -395,14 +395,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # Coverage scales the drawn colour's own alpha rather than
         # replacing it, so clipping a translucent fill compounds the two.
         self.write_pixel(
-            x,
-            y,
-            Color(
-                color.r,
-                color.g,
-                color.b,
-                UInt8(_div255(Int(color.a) * Int(coverage))),
-            ),
+            x, y, color.with_alpha(UInt8(_div255(Int(color.a) * Int(coverage))))
         )
 
     def _store_packed(mut self, start: Int, count: Int, packed: UInt32):

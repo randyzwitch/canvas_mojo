@@ -340,7 +340,8 @@ def draw_arc(
         cy: Center y.
         radius: Arc radius in pixels.
         start_angle: Sweep start, radians, 0 pointing along +x.
-        end_angle: Sweep end, radians. Must be >= start_angle.
+        end_angle: Sweep end, radians. Below `start_angle` sweeps the
+            other way round, over the same points in reverse.
         color: Outline color.
     """
     if radius <= 0.0:
@@ -377,7 +378,9 @@ def draw_arc_aa(
         cy: Center y.
         radius: Arc radius in pixels.
         start_angle: Sweep start, radians, 0 pointing along +x.
-        end_angle: Sweep end, radians. Must be >= start_angle.
+        end_angle: Sweep end, radians. Below `start_angle` sweeps the
+            other way round, which reverses the direction a dash
+            pattern and the two caps are laid along.
         color: Outline color.
         width: Stroke width in pixels.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
@@ -661,7 +664,7 @@ def _fill_arc_band(
                 canvas.set_pixel(
                     px,
                     py,
-                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
+                    color.with_alpha(coverage_alpha[covered]),
                 )
 
 
@@ -939,5 +942,5 @@ def _fill_ring_band(
                 canvas.set_pixel(
                     px,
                     py,
-                    Color(color.r, color.g, color.b, coverage_alpha[covered]),
+                    color.with_alpha(coverage_alpha[covered]),
                 )
