@@ -273,6 +273,23 @@ def main() raises:
         sink += Int(canvas.get_pixel(400, 400).r)
     _report(rows, "fill_path_aa large 39-curve", perf_counter_ns() - t0, iters)
 
+    # The same fill with most of it clipped away: what a series drawn
+    # past its plot area costs. The rows outside the clip should cost
+    # nothing.
+    canvas.push_clip(200, 150, 400, 300)
+    iters = 60
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_aa(canvas, big_path, INK)
+        sink += Int(canvas.get_pixel(400, 400).r)
+    _report(
+        rows,
+        "fill_path_aa large under a clip rect",
+        perf_counter_ns() - t0,
+        iters,
+    )
+    canvas.pop_clip()
+
     # Gradient-sourced path fills go through a coverage mask first;
     # the small case is where the mask's own size shows.
     var gradient = LinearGradient(0.0, 0.0, Float64(W), Float64(H))

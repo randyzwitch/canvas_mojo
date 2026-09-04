@@ -1209,5 +1209,64 @@ def test_transformed_leaves_the_original_alone() raises:
     assert_equal(got[0].x, 12.0, "while the copy is transformed")
 
 
+def _assert_clipped_fill_matches_reference(
+    clip_x: Int, clip_y: Int, clip_w: Int, clip_h: Int
+) raises:
+    """fill_path_aa under push_clip(clip rect) against the same fill
+    unclipped: inside the clip every pixel matches, outside it every
+    pixel is still the background.
+    """
+    var shape = Path()
+    shape.move_to(10.0, 30.0)
+    shape.cubic_curve_to(30.0, -10.0, 70.0, 70.0, 90.0, 30.0)
+    shape.line_to(50.0, 58.0)
+    shape.close()
+
+    var reference = Canvas(100, 60, BG)
+    fill_path_aa(reference, shape, FG)
+
+    var clipped = Canvas(100, 60, BG)
+    clipped.push_clip(clip_x, clip_y, clip_w, clip_h)
+    fill_path_aa(clipped, shape, FG)
+    clipped.pop_clip()
+
+    for y in range(60):
+        for x in range(100):
+            var inside = (
+                x >= clip_x
+                and x < clip_x + clip_w
+                and y >= clip_y
+                and y < clip_y + clip_h
+            )
+            var want = reference.get_pixel(x, y) if inside else BG
+            var got = clipped.get_pixel(x, y)
+            if got.r != want.r or got.g != want.g or got.b != want.b:
+                var at = "pixel " + String(x) + "," + String(y)
+                assert_equal(got.r, want.r, at)
+                assert_equal(got.g, want.g, at)
+                assert_equal(got.b, want.b, at)
+
+
+def test_fill_path_aa_under_a_clip_that_cuts_rows() raises:
+    # Rows above and below the clip are skipped before their crossings
+    # are swept, so the active edge list has to catch up when the
+    # clip's first row arrives, mid-shape.
+    _assert_clipped_fill_matches_reference(0, 20, 100, 20)
+
+
+def test_fill_path_aa_under_a_clip_that_cuts_columns() raises:
+    _assert_clipped_fill_matches_reference(30, 0, 40, 60)
+
+
+def test_fill_path_aa_under_a_clip_past_the_canvas_edge() raises:
+    # A clip rectangle that starts left of the canvas and runs past its
+    # bottom: the per-row range is clamped to the canvas as well.
+    _assert_clipped_fill_matches_reference(-10, 25, 50, 100)
+
+
+def test_fill_path_aa_under_a_clip_missing_the_shape() raises:
+    _assert_clipped_fill_matches_reference(0, 0, 100, 2)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
