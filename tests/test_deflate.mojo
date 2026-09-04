@@ -18,7 +18,12 @@ would pass every round-trip test here.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas.io.deflate import deflate, inflate
+from canvas.io.deflate import (
+    _huffman_lengths,
+    _run_length_code,
+    deflate,
+    inflate,
+)
 
 
 def _assert_inflates_to(
@@ -519,12 +524,143 @@ def test_deflate_matches_hand_and_cross_derived_bytes_for_all_literal_input() ra
 
 def test_deflate_output_starts_with_bfinal_and_fixed_huffman_btype() raises:
     # BFINAL=1 (bit 0) and BTYPE=01/fixed-Huffman (bits 1-2), packed
-    # LSB-first into the first byte: 1 | (1 << 1) == 3, deflate()'s
-    # promise of exactly one fixed-Huffman block.
+    # LSB-first into the first byte: 1 | (1 << 1) == 3. Five literals
+    # cost 5 * 8 bits under the fixed code and a dynamic block's header
+    # alone is more than that, so deflate() picks fixed here -- which is
+    # what keeps this file's byte-for-byte expectations for tiny inputs
+    # valid.
     var data: List[UInt8] = [1, 2, 3, 4, 5]
     var compressed = deflate(data)
     assert_true(len(compressed) > 0)
     assert_equal(Int(compressed[0] & 0b111), 3)
+
+
+def test_deflate_picks_a_dynamic_block_for_a_skewed_alphabet() raises:
+    # 20,000 bytes drawn from four values in a pseudo-random order.
+    # Every value is below 144, so the fixed code spends 8 bits on
+    # each literal and a fixed block of pure literals would be 20,000
+    # bytes; a code fitted to four symbols spends 2. The matcher also
+    # takes short matches through this, which cost more than the
+    # literals they replace under either code, so the bound below is
+    # not the 5,000 an ideal 2-bit literal stream would give -- but it
+    # is well under half of what fixed Huffman could manage, and the
+    # header byte says which code was chosen.
+    var data = List[UInt8](capacity=20_000)
+    var state = UInt32(42)
+    for _ in range(20_000):
+        state = state * 1664525 + 1013904223
+        data.append(UInt8(((state >> 24) & 3) * 60))
+    var compressed = deflate(data)
+    # BTYPE=10 in bits 1-2 of the first byte: 1 | (2 << 1) == 5.
+    assert_equal(Int(compressed[0] & 0b111), 5, "dynamic block chosen")
+    assert_true(
+        len(compressed) < 10_000,
+        "a four-symbol alphabet packs into far fewer than 8 bits a byte",
+    )
+    var back = inflate(compressed^)
+    assert_equal(len(back), 20_000)
+    state = UInt32(42)
+    for i in range(20_000):
+        state = state * 1664525 + 1013904223
+        assert_equal(back[i], UInt8(((state >> 24) & 3) * 60))
+
+
+def test_huffman_lengths_are_a_valid_prefix_code_within_the_limit() raises:
+    # Fibonacci frequencies over 25 symbols: the textbook case whose
+    # unbounded Huffman tree is a chain, 24 deep, past DEFLATE's 15-bit
+    # cap. The limiter has to hand back lengths of at most 15 that are
+    # still a valid prefix code -- Kraft's inequality, sum(2^-len) <= 1,
+    # checked in integers as sum(2^(15 - len)) <= 2^15.
+    var freqs = List[Int]()
+    var a = 1
+    var b = 1
+    for _ in range(25):
+        freqs.append(a)
+        var next = a + b
+        a = b
+        b = next
+
+    var unlimited = _huffman_lengths(freqs, 64)
+    var deepest = 0
+    for l in unlimited:
+        if l > deepest:
+            deepest = l
+    assert_equal(deepest, 24, "without a limit the tree really is a chain")
+
+    var limited = _huffman_lengths(freqs, 15)
+    var kraft = 0
+    var longest = 0
+    for l in limited:
+        assert_true(l > 0, "every used symbol keeps a code")
+        if l > longest:
+            longest = l
+        kraft += 1 << (15 - l)
+    assert_true(longest <= 15, "no code longer than the limit")
+    assert_true(kraft <= 1 << 15, "and the lengths still form a prefix code")
+
+
+def test_huffman_lengths_edge_cases() raises:
+    # Nothing used: nothing coded.
+    var none = _huffman_lengths([0, 0, 0], 15)
+    assert_equal(none[0], 0)
+    assert_equal(none[1], 0)
+    assert_equal(none[2], 0)
+    # One symbol used: a 1-bit code, since DEFLATE has no 0-bit one.
+    var one = _huffman_lengths([0, 0, 5, 0], 15)
+    assert_equal(one[2], 1)
+    assert_equal(one[0], 0)
+    # Two symbols, however skewed: one bit each.
+    var two = _huffman_lengths([1000, 1], 15)
+    assert_equal(two[0], 1)
+    assert_equal(two[1], 1)
+
+
+def test_run_length_code_matches_the_spec_by_hand() raises:
+    # RFC 1951 3.2.7's three repeat symbols, each at the run length
+    # that first earns it, plus the runs too short to use one. Nonzero
+    # values sit between the zero runs so each run is its own case.
+    var lengths: List[Int] = [5, 5, 5, 5, 0, 0, 7, 0, 0, 0, 9]
+    for _ in range(11):
+        lengths.append(0)
+    # 5 5 5 5   -> 5, then 16 repeating it three times (extra 3-3=0)
+    # 0 0       -> two zeros, too short for 17: two literal 0s
+    # 7         -> a lone 7
+    # 0 0 0     -> three zeros: 17 with extra 3-3=0
+    # 9         -> a lone 9
+    # 0 x 11    -> eleven zeros: 18 with extra 11-11=0
+    var expected_symbols: List[Int] = [5, 16, 0, 0, 7, 17, 9, 18]
+    var expected_bits: List[Int] = [0, 2, 0, 0, 0, 3, 0, 7]
+    var codes = _run_length_code(lengths)
+    assert_equal(len(codes), len(expected_symbols))
+    for i in range(len(codes)):
+        assert_equal(
+            codes[i].symbol, expected_symbols[i], "symbol " + String(i)
+        )
+        assert_equal(codes[i].extra, 0, "extra " + String(i))
+        assert_equal(
+            codes[i].extra_bits, expected_bits[i], "extra bits " + String(i)
+        )
+
+    # A run of zeros past 138 splits: 140 zeros -> 18 (138, extra 127)
+    # then two literal zeros.
+    var long = List[Int](length=140, fill=0)
+    var split = _run_length_code(long)
+    assert_equal(len(split), 3)
+    assert_equal(split[0].symbol, 18)
+    assert_equal(split[0].extra, 127)
+    assert_equal(split[1].symbol, 0)
+    assert_equal(split[2].symbol, 0)
+
+    # Repeats past six split too: 9 sevens -> 7, 16 (x6, extra 3),
+    # then 16 would need three more but only two remain: two literal 7s.
+    var sevens = List[Int](length=9, fill=7)
+    var reps = _run_length_code(sevens)
+    assert_equal(len(reps), 4)
+    assert_equal(reps[0].symbol, 7)
+    assert_equal(reps[1].symbol, 16)
+    assert_equal(reps[1].extra, 3)
+    assert_equal(reps[2].symbol, 7)
+    assert_equal(reps[3].symbol, 7)
 
 
 def test_deflate_compresses_a_long_repeated_run_substantially() raises:

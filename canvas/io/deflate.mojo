@@ -1,12 +1,13 @@
 """DEFLATE (RFC 1951), both directions.
 
 `inflate()` is a translation of zlib's `puff.c` reference decoder (Mark
-Adler, zlib-licensed), using its "SLOW" bit-at-a-time `decode()` variant
-rather than the faster table-driven one. `deflate()` is a from-scratch
-LZ77 + fixed-Huffman encoder built against the RFC: one fixed-Huffman
-block (RFC 1951 3.2.6, BTYPE=01, no dynamic tree to build or transmit)
-over a hash-chain match finder with bounded search depth (`_MAX_CHAIN`).
-canvas.io.png's `write_png` is the caller.
+Adler, zlib-licensed), with a first-level lookup table in front of its
+bit-at-a-time `decode()` (`_decode_fast`). `deflate()` is a
+from-scratch LZ77 + Huffman encoder built against the RFC: one block,
+coded with either the fixed tables (RFC 1951 3.2.6, BTYPE=01) or a
+dynamic code fitted to the data (3.2.7, BTYPE=10), whichever spends
+fewer bits, over a hash-chain match finder with bounded search depth
+(`_MAX_CHAIN`). canvas.io.png's `write_png` is the caller.
 
 tests/test_deflate.mojo round-trips both directions against real
 `zlib.compress()`/`zlib.decompress()` output.
@@ -25,6 +26,15 @@ comptime _FIX_L_CODES = 288
 # this Mojo version (the same limitation bidi.mojo's mirroring table
 # works around). Both the decoder (`_codes`) and the encoder (`deflate`)
 # read them, so they are defined once here.
+
+
+def _code_length_order() -> List[Int]:
+    """The order RFC 1951 3.2.7 transmits the code-length alphabet's
+    own code lengths in: the run-length symbols first, then the
+    literal lengths from the middle outward, so the trailing entries a
+    typical block never uses can be left off (`HCLEN`).
+    """
+    return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
 
 
 def _length_bases() -> List[Int]:
@@ -449,27 +459,7 @@ def _dynamic_tables(mut reader: _BitReader) raises -> _CodeTables:
     keeps the common short list short. Direct translation of puff.c's
     `dynamic()`.
     """
-    var order: List[Int] = [
-        16,
-        17,
-        18,
-        0,
-        8,
-        7,
-        9,
-        6,
-        10,
-        5,
-        11,
-        4,
-        12,
-        3,
-        13,
-        2,
-        14,
-        1,
-        15,
-    ]
+    var order = _code_length_order()
 
     var nlen = reader.read_bits(5) + 257
     var ndist = reader.read_bits(5) + 1
@@ -862,12 +852,187 @@ def _find_match(chains: _HashChains, data: List[UInt8], pos: Int) -> _Match:
     return _Match(best_length, best_distance)
 
 
+struct _Token(ImplicitlyCopyable, Movable):
+    """One LZ77 output symbol: a literal byte (`distance` 0, `value`
+    the byte) or a match (`distance` 1 or more, `value` its length).
+    `deflate` buffers the whole token stream so it can count symbol
+    frequencies before choosing a code, then emits from the buffer.
+    """
+
+    var value: Int
+    var distance: Int
+
+    def __init__(out self, value: Int, distance: Int):
+        self.value = value
+        self.distance = distance
+
+
+def _tree_depths(weights: List[Int]) -> List[Int]:
+    """Leaf depths of the Huffman tree over `weights`, of which there
+    are at least two: repeatedly merges the two lightest parentless
+    nodes, lowest index first on a tie, which makes the result
+    deterministic. Quadratic in the leaf count, which is at most 288.
+    """
+    var m = len(weights)
+    var weight = List[Int](capacity=2 * m - 1)
+    var parent = List[Int](capacity=2 * m - 1)
+    for w in weights:
+        weight.append(w)
+        parent.append(-1)
+
+    var remaining = m
+    while remaining > 1:
+        var a = -1
+        var b = -1
+        for i in range(len(weight)):
+            if parent[i] != -1:
+                continue
+            if a == -1 or weight[i] < weight[a]:
+                b = a
+                a = i
+            elif b == -1 or weight[i] < weight[b]:
+                b = i
+        var node = len(weight)
+        weight.append(weight[a] + weight[b])
+        parent.append(-1)
+        parent[a] = node
+        parent[b] = node
+        remaining -= 1
+
+    var depths = List[Int](capacity=m)
+    for k in range(m):
+        var depth = 0
+        var i = k
+        while parent[i] != -1:
+            i = parent[i]
+            depth += 1
+        depths.append(depth)
+    return depths^
+
+
+def _huffman_lengths(freqs: List[Int], limit: Int) -> List[Int]:
+    """Code length per symbol for a canonical Huffman code over
+    `freqs` -- zero for a symbol never used -- with none longer than
+    `limit`: 15 for the literal/length and distance alphabets, 7 for
+    the code-length alphabet (RFC 1951 3.2.7).
+
+    A plain Huffman tree over the counts gives the shortest code. When
+    its deepest leaf exceeds `limit`, every count is halved (rounding
+    up, so a used symbol stays used) and the tree rebuilt: flattening
+    the counts flattens the tree, and equal counts give a balanced one
+    no deeper than ceil(log2(symbols)) -- 9 for 286 symbols, 5 for 19
+    -- so this always finishes inside the limit. The price is a code a
+    little longer than optimal in the rare case it triggers, never an
+    invalid one.
+
+    A single used symbol gets length 1 rather than the tree's 0.
+    DEFLATE has no zero-length code, and the decoder accepts the
+    one-code incomplete tree that results (RFC 1951 3.2.7 says so of
+    a lone distance code).
+    """
+    var n = len(freqs)
+    var lengths = List[Int](length=n, fill=0)
+    var used = List[Int]()
+    for symbol in range(n):
+        if freqs[symbol] > 0:
+            used.append(symbol)
+    if len(used) == 0:
+        return lengths^
+    if len(used) == 1:
+        lengths[used[0]] = 1
+        return lengths^
+
+    var weights = List[Int](capacity=len(used))
+    for symbol in used:
+        weights.append(freqs[symbol])
+    while True:
+        var depths = _tree_depths(weights)
+        var deepest = 0
+        for depth in depths:
+            if depth > deepest:
+                deepest = depth
+        if deepest <= limit:
+            for k in range(len(used)):
+                lengths[used[k]] = depths[k]
+            return lengths^
+        for k in range(len(weights)):
+            weights[k] = (weights[k] + 1) // 2
+
+
+struct _LengthCode(ImplicitlyCopyable, Movable):
+    """One symbol of the code-length alphabet as `_run_length_code`
+    emits it: the symbol (0-18), and the extra bits 16/17/18 carry.
+    """
+
+    var symbol: Int
+    var extra: Int
+    var extra_bits: Int
+
+    def __init__(out self, symbol: Int, extra: Int, extra_bits: Int):
+        self.symbol = symbol
+        self.extra = extra
+        self.extra_bits = extra_bits
+
+
+def _run_length_code(lengths: List[Int]) -> List[_LengthCode]:
+    """RFC 1951 3.2.7's run-length coding of a code-length sequence:
+    0-15 stand for themselves, 16 repeats the previous length 3-6 times
+    (2 extra bits), 17 is a run of 3-10 zeros (3 extra bits) and 18 a
+    run of 11-138 zeros (7 extra bits). Greedy, longest run first, the
+    same choices zlib's `send_tree` makes. A run too short for its
+    repeat symbol is written out literally.
+    """
+    var out = List[_LengthCode]()
+    var n = len(lengths)
+    var i = 0
+    while i < n:
+        var value = lengths[i]
+        var run = 1
+        while i + run < n and lengths[i + run] == value:
+            run += 1
+        i += run
+
+        if value == 0:
+            while run >= 11:
+                var take = min(run, 138)
+                out.append(_LengthCode(18, take - 11, 7))
+                run -= take
+            if run >= 3:
+                out.append(_LengthCode(17, run - 3, 3))
+                run = 0
+            while run > 0:
+                out.append(_LengthCode(0, 0, 0))
+                run -= 1
+        else:
+            # The first occurrence is literal; 16 repeats what came
+            # before it.
+            out.append(_LengthCode(value, 0, 0))
+            run -= 1
+            while run >= 3:
+                var take = min(run, 6)
+                out.append(_LengthCode(16, take - 3, 2))
+                run -= take
+            while run > 0:
+                out.append(_LengthCode(value, 0, 0))
+                run -= 1
+    return out^
+
+
 def deflate(data: List[UInt8]) raises -> List[UInt8]:
-    """Compress `data` into a raw DEFLATE stream (RFC 1951): LZ77 +
-    fixed-Huffman, one block, head/prev hash-chain match search (see
-    _HashChains) capped at _MAX_CHAIN candidates. Not a zlib stream
-    (RFC 1950) -- a caller needing one, such as write_png, adds the
-    2-byte header and 4-byte Adler-32 trailer itself.
+    """Compress `data` into a raw DEFLATE stream (RFC 1951): LZ77 over
+    a head/prev hash-chain match search (see _HashChains) capped at
+    _MAX_CHAIN candidates, then one Huffman-coded block. Not a zlib
+    stream (RFC 1950) -- a caller needing one, such as write_png, adds
+    the 2-byte header and 4-byte Adler-32 trailer itself.
+
+    The block is coded with whichever of the two Huffman options costs
+    fewer bits, worked out from the token stream's symbol frequencies
+    before anything is written: the fixed tables (3.2.6), which carry
+    no header, or a dynamic code fitted to those frequencies (3.2.7),
+    which pays for its header with shorter codes. A handful of bytes
+    stays fixed; anything image-sized goes dynamic. The extra bits a
+    match's length and distance carry are the same under both, so
+    they drop out of the comparison.
 
     Always one block (BFINAL=1 from the start): RFC 1951 caps a stored
     block at 65535 bytes but puts no upper bound on a compressed one.
@@ -878,15 +1043,6 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     Returns:
         The compressed bytes, no zlib wrapper.
     """
-    var writer = _BitWriter()
-    writer.write_bits(1, 1)  # BFINAL = 1 -- the only block
-    writer.write_bits(1, 2)  # BTYPE = 01 (fixed Huffman)
-
-    var lit_lengths = _fixed_lit_lengths()
-    var lit_codes = _build_codes(lit_lengths)
-    var dist_lengths = _fixed_dist_lengths()
-    var dist_codes = _build_codes(dist_lengths)
-
     # The same base-length/base-distance tables _codes() decodes
     # against.
     var lens = _length_bases()
@@ -894,20 +1050,19 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
     var dists = _distance_bases()
     var dext = _distance_extra_bits()
 
+    # Pass one: LZ77 into a token buffer, counting symbols as it goes.
     var n = len(data)
     var chains = _HashChains(n)
+    var tokens = List[_Token]()
+    var lit_freq = List[Int](length=_MAX_L_CODES, fill=0)
+    var dist_freq = List[Int](length=_MAX_D_CODES, fill=0)
     var i = 0
     while i < n:
         var m = _find_match(chains, data, i)
         if m.length >= _MIN_MATCH:
-            var lsym = _length_symbol(m.length, lens)
-            writer.write_bits(lit_codes[257 + lsym], lit_lengths[257 + lsym])
-            writer.write_bits(m.length - lens[lsym], lext[lsym])
-
-            var dsym = _distance_symbol(m.distance, dists)
-            writer.write_bits(dist_codes[dsym], dist_lengths[dsym])
-            writer.write_bits(m.distance - dists[dsym], dext[dsym])
-
+            tokens.append(_Token(m.length, m.distance))
+            lit_freq[257 + _length_symbol(m.length, lens)] += 1
+            dist_freq[_distance_symbol(m.distance, dists)] += 1
             # Only the match's starting position is indexed, not every
             # position it spans: a compression-ratio trade (a match
             # starting partway through this one won't be found), not a
@@ -917,10 +1072,89 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
             i += m.length
         else:
             var byte = Int(data[i])
-            writer.write_bits(lit_codes[byte], lit_lengths[byte])
+            tokens.append(_Token(byte, 0))
+            lit_freq[byte] += 1
             if i + _MIN_MATCH <= n:
                 chains.insert(data, i)
             i += 1
+    lit_freq[256] = 1  # end-of-block, sent exactly once
+
+    # A dynamic code for these frequencies, and what it would cost.
+    var dyn_lit = _huffman_lengths(lit_freq, _MAX_BITS)
+    var dyn_dist = _huffman_lengths(dist_freq, _MAX_BITS)
+    # HLIT/HDIST: trailing unused symbols are not transmitted. 257
+    # literal/length codes and 1 distance code are the minimums the
+    # header can express.
+    var nlit = _MAX_L_CODES
+    while nlit > 257 and dyn_lit[nlit - 1] == 0:
+        nlit -= 1
+    var ndist = _MAX_D_CODES
+    while ndist > 1 and dyn_dist[ndist - 1] == 0:
+        ndist -= 1
+    var combined = List[Int](capacity=nlit + ndist)
+    combined.extend(dyn_lit[0:nlit])
+    combined.extend(dyn_dist[0:ndist])
+    var rle = _run_length_code(combined)
+    var cl_freq = List[Int](length=19, fill=0)
+    for code in rle:
+        cl_freq[code.symbol] += 1
+    var cl_lengths = _huffman_lengths(cl_freq, 7)
+    var order = _code_length_order()
+    var ncl = 19
+    while ncl > 4 and cl_lengths[order[ncl - 1]] == 0:
+        ncl -= 1
+
+    var dynamic_bits = 5 + 5 + 4 + 3 * ncl
+    for code in rle:
+        dynamic_bits += cl_lengths[code.symbol] + code.extra_bits
+    for symbol in range(_MAX_L_CODES):
+        dynamic_bits += lit_freq[symbol] * dyn_lit[symbol]
+    for symbol in range(_MAX_D_CODES):
+        dynamic_bits += dist_freq[symbol] * dyn_dist[symbol]
+
+    var fixed_lit = _fixed_lit_lengths()
+    var fixed_bits = 0
+    for symbol in range(_MAX_L_CODES):
+        fixed_bits += lit_freq[symbol] * fixed_lit[symbol]
+    for symbol in range(_MAX_D_CODES):
+        fixed_bits += dist_freq[symbol] * 5
+
+    # Pass two: the header, then the tokens through the chosen code.
+    var writer = _BitWriter()
+    writer.write_bits(1, 1)  # BFINAL = 1 -- the only block
+    var lit_lengths: List[Int]
+    var dist_lengths: List[Int]
+    if dynamic_bits < fixed_bits:
+        writer.write_bits(2, 2)  # BTYPE = 10 (dynamic Huffman)
+        writer.write_bits(nlit - 257, 5)
+        writer.write_bits(ndist - 1, 5)
+        writer.write_bits(ncl - 4, 4)
+        for k in range(ncl):
+            writer.write_bits(cl_lengths[order[k]], 3)
+        var cl_codes = _build_codes(cl_lengths)
+        for code in rle:
+            writer.write_bits(cl_codes[code.symbol], cl_lengths[code.symbol])
+            if code.extra_bits > 0:
+                writer.write_bits(code.extra, code.extra_bits)
+        lit_lengths = dyn_lit^
+        dist_lengths = dyn_dist^
+    else:
+        writer.write_bits(1, 2)  # BTYPE = 01 (fixed Huffman)
+        lit_lengths = fixed_lit^
+        dist_lengths = _fixed_dist_lengths()
+    var lit_codes = _build_codes(lit_lengths)
+    var dist_codes = _build_codes(dist_lengths)
+
+    for token in tokens:
+        if token.distance == 0:
+            writer.write_bits(lit_codes[token.value], lit_lengths[token.value])
+            continue
+        var lsym = _length_symbol(token.value, lens)
+        writer.write_bits(lit_codes[257 + lsym], lit_lengths[257 + lsym])
+        writer.write_bits(token.value - lens[lsym], lext[lsym])
+        var dsym = _distance_symbol(token.distance, dists)
+        writer.write_bits(dist_codes[dsym], dist_lengths[dsym])
+        writer.write_bits(token.distance - dists[dsym], dext[dsym])
 
     writer.write_bits(lit_codes[256], lit_lengths[256])  # end-of-block
     return writer.finish()
