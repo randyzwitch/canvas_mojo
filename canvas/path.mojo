@@ -1094,7 +1094,7 @@ def _fill_path_source_aa[
             var alpha = _div255(Int(c.a) * coverage)
             if alpha == 0:
                 continue
-            canvas.set_pixel(px, py, Color(c.r, c.g, c.b, UInt8(alpha)))
+            canvas.set_pixel(px, py, c.with_alpha(UInt8(alpha)))
 
 
 def fill_path_gradient(

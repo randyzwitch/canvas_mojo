@@ -622,9 +622,7 @@ def _sweep_band(
                         + 0.5
                     )
                 )
-                canvas.set_pixel(
-                    px, py, Color(color.r, color.g, color.b, alpha)
-                )
+                canvas.set_pixel(px, py, color.with_alpha(alpha))
 
 
 def _sweep_edges_to_mask(

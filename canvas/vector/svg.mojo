@@ -30,17 +30,6 @@ from canvas.text.font_discovery import FontWeight
 from canvas.text.text_align import TextAlign
 
 
-def _hex_byte(value: UInt8) -> String:
-    comptime _HEX_DIGITS = "0123456789abcdef"
-
-    var v = Int(value)
-    # `_HEX_DIGITS` is a fixed, pure-ASCII literal, so a raw UTF-8 byte
-    # index (`[byte=...]`) is exactly the character it looks like.
-    # Mojo `String` has no plain positional `s[i]` indexing -- it
-    # indexes by `[byte=]`/`[codepoint=]`/`[grapheme=]`.
-    return String(_HEX_DIGITS[byte=v // 16]) + String(_HEX_DIGITS[byte=v % 16])
-
-
 def _format_svg_float(value: Float64) -> String:
     """Format `value` to exactly `_SVG_DECIMALS` decimal places. Plain
     `String(Float64)` is not safe for SVG coordinates: the same
@@ -94,8 +83,11 @@ def _escape_xml_attr(value: String) -> String:
     return result
 
 
-def _hex_color(color: Color) -> String:
-    return "#" + _hex_byte(color.r) + _hex_byte(color.g) + _hex_byte(color.b)
+def _to_hex(color: Color) -> String:
+    """`Color.to_hex()`, as a function so the emitters below read the
+    same as the other `_`-prefixed formatting helpers here.
+    """
+    return color.to_hex()
 
 
 def _opacity_attr(name: String, color: Color) -> String:
@@ -261,7 +253,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" height="'
             + String(height)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -316,7 +308,7 @@ struct SvgCanvas(DrawTarget, Movable):
                 '<stop offset="'
                 + _format_svg_float(stop.offset)
                 + '" stop-color="'
-                + _hex_color(stop.color)
+                + _to_hex(stop.color)
                 + '" stop-opacity="'
                 + _format_svg_float(Float64(stop.color.a) / 255.0)
                 + '"/>'
@@ -366,7 +358,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" y2="'
             + String(y1)
             + '" stroke="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
             + ' stroke-width="'
@@ -391,7 +383,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" r="'
             + String(radius)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -419,7 +411,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" ry="'
             + String(ry)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -449,7 +441,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '" ry="'
             + String(ry)
             + '" fill="none" stroke="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
             + ' stroke-width="1"/>\n'
@@ -501,7 +493,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + ","
             + _format_svg_float(y1)
             + ' Z" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -571,7 +563,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + ","
             + _format_svg_float(inner_y0)
             + ' Z" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -591,7 +583,7 @@ struct SvgCanvas(DrawTarget, Movable):
             '<path d="'
             + _path_d(path)
             + '" fill="none" stroke="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("stroke", color)
             + ' stroke-width="'
@@ -610,7 +602,7 @@ struct SvgCanvas(DrawTarget, Movable):
             '<path d="'
             + _path_d(path)
             + '" fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + "/>\n"
@@ -735,7 +727,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + font_weight
             + ' fill="'
-            + _hex_color(color)
+            + _to_hex(color)
             + '"'
             + _opacity_attr("fill", color)
             + ' text-anchor="'

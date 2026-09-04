@@ -383,6 +383,52 @@ def test_draw_arc_aa_width_widens_the_stroke() raises:
     assert_true(_ink(thick) > _ink(thin), "width=4 draws more ink than width=1")
 
 
+def test_draw_arc_reversed_sweep_draws_the_same_pixels() raises:
+    # _arc_fpoints samples `start + t * span` for a span of either
+    # sign, so sweeping pi/2 -> 0 walks the same quarter as 0 -> pi/2,
+    # just in the opposite order. A hard-edged arc has no caps or dash
+    # phase to notice the direction, so the two must land on exactly
+    # the same pixels.
+    var forward = Canvas(60, 60, BG)
+    draw_arc(forward, 30.0, 30.0, 20.0, 0.0, pi / 2.0, FG)
+    var backward = Canvas(60, 60, BG)
+    draw_arc(backward, 30.0, 30.0, 20.0, pi / 2.0, 0.0, FG)
+
+    assert_true(_ink(forward) > 0, "the forward arc drew something")
+    for y in range(60):
+        for x in range(60):
+            assert_equal(
+                forward.get_pixel(x, y).r,
+                backward.get_pixel(x, y).r,
+                "reversed sweep matches at " + String(x) + "," + String(y),
+            )
+
+
+def test_draw_arc_aa_reversed_sweep_covers_the_same_quarter() raises:
+    # The anti-aliased stroke lays its caps and any dash phase along
+    # the sweep's direction, so a reversed solid arc need not match
+    # pixel for pixel -- but it covers the same quarter of the circle
+    # with the same total ink, and leaves the other three alone.
+    var forward = Canvas(60, 60, BG)
+    draw_arc_aa(forward, 30.0, 30.0, 20.0, 0.0, pi / 2.0, FG)
+    var backward = Canvas(60, 60, BG)
+    draw_arc_aa(backward, 30.0, 30.0, 20.0, pi / 2.0, 0.0, FG)
+
+    var forward_ink = _ink(forward)
+    assert_true(forward_ink > 0, "the forward arc drew something")
+    var difference = forward_ink - _ink(backward)
+    if difference < 0:
+        difference = -difference
+    assert_true(
+        difference * 100 < forward_ink,
+        "the two sweeps lay down the same ink to within 1%",
+    )
+    # The quarter from 0 to pi/2 runs right and down from the centre
+    # (y grows downward), so nothing may land above or left of it.
+    _assert_pixel(backward, 8, 30, BG, "nothing left of centre")
+    _assert_pixel(backward, 30, 8, BG, "nothing above centre")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
 
