@@ -1134,10 +1134,11 @@ def fill_path_aa(
     supersample: Int = 4,
     curve_steps: Int = 0,
 ):
-    """Anti-aliased fill_path: for every pixel near the path's
-    flattened outline, samples an NxN sub-pixel grid and turns the
-    coverage fraction into that pixel's alpha. Each output pixel is
-    visited exactly once.
+    """Anti-aliased fill_path. Under `FillRule.NONZERO` every pixel
+    gets its exact covered area (256 levels, `canvas.aa_area`); under
+    `EVEN_ODD` every pixel near the path's flattened outline samples an
+    NxN sub-pixel grid and the covered fraction becomes its alpha.
+    Each output pixel is visited exactly once.
 
     Multi-sub-path hole-punching, and union-filling under
     FillRule.NONZERO, work as in fill_path: every sub-path's winding
@@ -1149,7 +1150,9 @@ def fill_path_aa(
         path: Path to fill.
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) under EVEN_ODD. A NONZERO fill rasterizes by
+            exact area (`canvas.aa_area`) and ignores it.
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
@@ -1202,9 +1205,10 @@ def _fill_path_aa_device(
 
 struct _CoverageMask(Copyable, Movable):
     """A path's anti-aliased coverage over its own padded bounding
-    box, as `_sweep_band` would have computed it before turning each
-    pixel's coverage into alpha: one byte per pixel holding the number
-    of covered sub-samples out of `total_samples`. `origin_x`/
+    box, as the rasterizer would have computed it before turning each
+    pixel's coverage into alpha: one byte per pixel holding the covered
+    fraction as counts out of `total_samples` -- sub-samples for an
+    even-odd fill, 255ths for a nonzero one. `origin_x`/
     `origin_y` are the box's top-left in the path's coordinate space,
     so `counts[(y - origin_y) * width + (x - origin_x)]` is pixel
     (x, y). A path with no outline has width and height 0.
@@ -1255,7 +1259,10 @@ def _path_coverage_counts(
     composited lands on the same pixels with the same coverage as a
     direct fill.
     """
+    # Exact area comes back in 255ths; sampled coverage in sub-samples.
     var total_samples = supersample * supersample
+    if fill_rule == FillRule.NONZERO:
+        total_samples = 255
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return _CoverageMask(List[UInt8](), 0, 0, 0, 0, total_samples)
@@ -1627,7 +1634,9 @@ def fill_path_gradient_aa(
         path: Path to fill.
         gradient: Fill source, queried per covered pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) under EVEN_ODD. A NONZERO fill rasterizes by
+            exact area (`canvas.aa_area`) and ignores it.
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
@@ -1669,7 +1678,9 @@ def fill_path_radial_gradient_aa(
         path: Path to fill.
         gradient: Fill source, queried per covered pixel.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-        supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) under EVEN_ODD. A NONZERO fill rasterizes by
+            exact area (`canvas.aa_area`) and ignores it.
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """

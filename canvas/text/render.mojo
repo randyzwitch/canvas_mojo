@@ -1,9 +1,11 @@
 """Text rendering: font matching from `font_discovery.mojo`, glyph
 outlines and metrics from `ttf.mojo` via
 `glyph_outline.mojo`, and rasterization from `fill_path_aa`
-(`path.mojo`). The glyph path is unhinted. Glyphs fill through the same
-`fill_path_aa` every other shape uses, so translucent text composites
-through `set_pixel` like any other fill.
+(`path.mojo`) under `FillRule.NONZERO`, the rule TrueType outlines are
+drawn with, which also puts every glyph on the exact-area rasterizer
+(`canvas.aa_area`). The glyph path is unhinted. Glyphs fill through
+the same `fill_path_aa` every other shape uses, so translucent text
+composites through `set_pixel` like any other fill.
 
 Unrotated text goes through a glyph mask cache on the `FontCache`:
 each (face, size, codepoint, sub-pixel offset) is rasterized once, as
@@ -879,7 +881,12 @@ def _draw_text_transformed(
                     cache,
                 )
                 if g.metrics.width > 0.0 and g.metrics.height > 0.0:
-                    fill_path_aa(canvas, _through(g.path, placement), color)
+                    fill_path_aa(
+                        canvas,
+                        _through(g.path, placement),
+                        color,
+                        FillRule.NONZERO,
+                    )
                 pen_x += g.metrics.advance
     except e:
         canvas._set_transform(saved)
@@ -951,7 +958,7 @@ def _rasterize_glyph(
         )
     return _GlyphMask(
         g.metrics.advance,
-        _path_coverage_counts(g.path, FillRule.EVEN_ODD, 4, 0),
+        _path_coverage_counts(g.path, FillRule.NONZERO, 4, 0),
     )
 
 
@@ -1170,5 +1177,5 @@ def draw_text(
             )
             if g.metrics.width > 0.0 and g.metrics.height > 0.0:
                 var placed = _place_glyph_path(g.path, c, s, anchor_x, anchor_y)
-                fill_path_aa(canvas, placed, color)
+                fill_path_aa(canvas, placed, color, FillRule.NONZERO)
             pen_x += g.metrics.advance

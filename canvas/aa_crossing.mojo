@@ -29,6 +29,7 @@ downward, so each sub-scanline touches only the edges near it.
 from std.math import ceil, floor
 from std.runtime.asyncrt import TaskGroup, parallelism_level
 
+from canvas.aa_area import _area_edges_aa, _area_edges_to_mask
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule, _is_inside
@@ -541,6 +542,40 @@ def _sweep_edges_aa(
     fill_rule: FillRule,
     supersample: Int,
 ):
+    """Rasterize `edges` into `canvas` with anti-aliased coverage, by
+    the rasterizer the fill rule calls for: `FillRule.NONZERO` goes to
+    `canvas.aa_area` for each pixel's exact covered area (`supersample`
+    unused), `EVEN_ODD` to `_sweep_edges_sampled_aa`. Strokes call the
+    sampled sweep directly, whatever their rule -- see `aa_area`'s
+    docstring for why.
+    """
+    if fill_rule == FillRule.NONZERO:
+        _area_edges_aa(canvas, edges, min_x, min_y, max_x, max_y, color)
+        return
+    _sweep_edges_sampled_aa(
+        canvas,
+        edges,
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        color,
+        fill_rule,
+        supersample,
+    )
+
+
+def _sweep_edges_sampled_aa(
+    mut canvas: Canvas,
+    mut edges: _EdgeTable,
+    min_x: Int,
+    min_y: Int,
+    max_x: Int,
+    max_y: Int,
+    color: Color,
+    fill_rule: FillRule,
+    supersample: Int,
+):
     """Rasterize `edges` into `canvas` with supersampled coverage AA:
     for every pixel in the padded bounding box, sample an NxN sub-pixel
     grid and turn the covered fraction into that pixel's alpha. Each
@@ -762,7 +797,9 @@ def _sweep_edges_to_mask(
 ):
     """`_sweep_edges_aa`'s counterpart for a coverage mask: the same
     coverage, written as one byte per pixel into `mask` instead of
-    blended onto a canvas as alpha. A fully covered pixel is written as
+    blended onto a canvas as alpha, and the same split by fill rule --
+    NONZERO by exact area in `canvas.aa_area`, EVEN_ODD sampled here.
+    A fully covered pixel is written as
     `full_coverage` and partial coverage scales linearly: 255 for a
     clip mask, `supersample * supersample` for the raw sample count a
     glyph mask keeps so its later composite reproduces `_sweep_band`'s
@@ -778,6 +815,21 @@ def _sweep_edges_to_mask(
     `_sweep_edges_aa` is, with the same single-band-only top-sort:
     bands write disjoint rows of `mask` and only read `edges`.
     """
+    if fill_rule == FillRule.NONZERO:
+        _area_edges_to_mask(
+            mask,
+            mask_width,
+            mask_height,
+            origin_x,
+            origin_y,
+            edges,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            full_coverage,
+        )
+        return
     var s = supersample
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px
