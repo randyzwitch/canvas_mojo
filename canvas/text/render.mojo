@@ -51,6 +51,7 @@ from canvas.text.bidi import detect_base_level, visual_order
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
+from canvas.geometry import Matrix2D
 from canvas.text.font_cache import _cache_key, _GlyphMask, FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.glyph_outline import (
@@ -66,6 +67,7 @@ from canvas.path import (
     Path,
     _CoverageMask,
     _path_coverage_counts,
+    _through,
     _CLOSE,
     _CUBIC_TO,
     _LINE_TO,
@@ -824,6 +826,67 @@ def draw_text(
     )
 
 
+def _draw_text_transformed(
+    mut canvas: Canvas,
+    matrix: Matrix2D,
+    x: Float64,
+    y: Float64,
+    text: String,
+    color: Color,
+    size: Float64,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    rotation: Float64,
+    align: TextAlign,
+    mut cache: FontCache,
+) raises:
+    """`draw_text` under a canvas transform that is more than a
+    translation. The block is laid out in user space exactly as the
+    untransformed call lays it out, and each glyph's outline goes
+    through one matrix -- the block rotation about the anchor, the
+    anchor's translation, then the canvas transform -- and is filled
+    directly. The glyph mask cache holds glyphs at one scale and
+    orientation, so it is not used here.
+    """
+    var block = _layout_block(
+        text, size, family, slant, weight, rotation, align, cache
+    )
+    if not block.any_ink:
+        return
+    var face = cache.resolve_face(family, slant, weight, size)
+    var placement = (
+        Matrix2D.rotation(rotation)
+        .then(Matrix2D.translation(x, y))
+        .then(matrix)
+    )
+    var saved = canvas._take_transform()
+    try:
+        for line in block.lines:
+            if line.text == "":
+                continue
+            var pen_x = line.x
+            for codepoint in _visual_codepoints(line.text):
+                var g = _resolve_glyph(
+                    face[],
+                    family,
+                    slant,
+                    weight,
+                    size,
+                    codepoint,
+                    pen_x,
+                    line.y,
+                    cache,
+                )
+                if g.metrics.width > 0.0 and g.metrics.height > 0.0:
+                    fill_path_aa(canvas, _through(g.path, placement), color)
+                pen_x += g.metrics.advance
+    except e:
+        canvas._set_transform(saved)
+        raise e
+    canvas._set_transform(saved)
+
+
 def _composite_glyph_mask(
     mut canvas: Canvas,
     mask: _CoverageMask,
@@ -997,6 +1060,48 @@ def draw_text(
         align: Horizontal alignment of each line.
         cache: Shared cache for font resolution and parsed faces.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if not m.is_translation():
+            _draw_text_transformed(
+                canvas,
+                m,
+                x,
+                y,
+                text,
+                color,
+                size,
+                family,
+                slant,
+                weight,
+                rotation,
+                align,
+                cache,
+            )
+            return
+        # A pure translation keeps every glyph at its size and
+        # orientation, so the anchor moves and the cache still applies.
+        var saved = canvas._take_transform()
+        try:
+            draw_text(
+                canvas,
+                x + m.e,
+                y + m.f,
+                text,
+                color,
+                size,
+                family,
+                slant,
+                weight,
+                rotation,
+                align,
+                cache=cache,
+            )
+        except e:
+            canvas._set_transform(saved)
+            raise e
+        canvas._set_transform(saved)
+        return
     if text == "":
         return
 

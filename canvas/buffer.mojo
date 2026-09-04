@@ -19,11 +19,14 @@ from canvas.color import Color, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.fill_rule import FillRule
+from canvas.geometry import Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
     Path,
     fill_path_aa,
     stroke_path_aa,
     _path_coverage_mask,
+    _rect_path,
+    _through,
 )
 from canvas.shapes.lines import draw_line_aa
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
@@ -41,12 +44,43 @@ struct _ClipRect(ImplicitlyCopyable, Movable):
     var y: Int
     var width: Int
     var height: Int
+    # For a rectangle push_clip turned into a clip path (a rotated or
+    # skewed transform): how many clip masks were pushed before it, so
+    # pop_clip can pop the mask along with this entry. -1 for a plain
+    # rectangle.
+    var mask_depth: Int
 
-    def __init__(out self, x: Int, y: Int, width: Int, height: Int):
+    def __init__(
+        out self, x: Int, y: Int, width: Int, height: Int, mask_depth: Int = -1
+    ):
         self.x = x
         self.y = y
         self.width = width
         self.height = height
+        self.mask_depth = mask_depth
+
+
+struct _CanvasState(ImplicitlyCopyable, Movable):
+    """What `Canvas.save` records and `Canvas.restore` puts back: the
+    transform, and how deep the two clip stacks were.
+    """
+
+    var transform: Matrix2D
+    var transformed: Bool
+    var clip_depth: Int
+    var mask_depth: Int
+
+    def __init__(
+        out self,
+        transform: Matrix2D,
+        transformed: Bool,
+        clip_depth: Int,
+        mask_depth: Int,
+    ):
+        self.transform = transform
+        self.transformed = transformed
+        self.clip_depth = clip_depth
+        self.mask_depth = mask_depth
 
 
 def _pack_rgba(color: Color) -> UInt32:
@@ -127,6 +161,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # with Mojo 1.0 (#182); re-measure those two rows if a compiler
     # update changes how arguments are passed.
     var _layout_pad: InlineArray[UInt8, 176]
+    # The current transform (see `save`), and whether it is anything
+    # but the identity. Every drawing call tests the flag once, so it
+    # is a field rather than six comparisons on the matrix.
+    var _transform: Matrix2D
+    var _transformed: Bool
+    var _saved: List[_CanvasState]
 
     def __init__(
         out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)
@@ -172,6 +212,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         comptime assert (
             size_of[Canvas]() > 256
         ), "Canvas must stay over 256 bytes -- see _layout_pad"
+        self._transform = Matrix2D.identity()
+        self._transformed = False
+        self._saved = List[_CanvasState]()
         if total == 0:
             return
 
@@ -219,6 +262,131 @@ struct Canvas(Copyable, DrawTarget, Movable):
         comptime assert (
             size_of[Canvas]() > 256
         ), "Canvas must stay over 256 bytes -- see _layout_pad"
+        self._transform = Matrix2D.identity()
+        self._transformed = False
+        self._saved = List[_CanvasState]()
+
+    def save(mut self):
+        """Push the current transform and clip state, for `restore` to
+        put back. The pair works as Cairo's `cairo_save`/`cairo_restore`
+        and the HTML5 canvas's `save`/`restore` do: whatever
+        `translate`, `rotate`, `scale`, `transform`, `set_transform`,
+        `push_clip` or `push_clip_path` does between the two is undone
+        by `restore`, so a caller can set up a local frame for one part
+        of a drawing and leave the canvas as it found it.
+        """
+        self._saved.append(
+            _CanvasState(
+                self._transform,
+                self._transformed,
+                len(self._clip_stack),
+                self._clip_mask_count,
+            )
+        )
+
+    def restore(mut self):
+        """Pop the state `save` pushed: the transform goes back to what
+        it was, and every clip pushed since -- rectangle or path -- is
+        popped. A no-op with nothing saved, matching `pop_clip`.
+        """
+        if len(self._saved) == 0:
+            return
+        var state = self._saved.pop()
+        while self._clip_mask_count > state.mask_depth:
+            self.pop_clip_path()
+        while len(self._clip_stack) > state.clip_depth:
+            _ = self._clip_stack.pop()
+        self._transform = state.transform
+        self._transformed = state.transformed
+
+    def translate(mut self, tx: Float64, ty: Float64):
+        """Shift the origin subsequent drawing is measured from by
+        (tx, ty), in the current user space: after `scale(2.0, 2.0)`,
+        `translate(10.0, 0.0)` moves it 20 pixels.
+
+        Args:
+            tx: Horizontal shift.
+            ty: Vertical shift.
+        """
+        self.transform(Matrix2D.translation(tx, ty))
+
+    def rotate(mut self, angle: Float64):
+        """Turn subsequent drawing by `angle` radians about the current
+        origin. Positive turns +x toward +y, clockwise on screen.
+
+        Args:
+            angle: Radians.
+        """
+        self.transform(Matrix2D.rotation(angle))
+
+    def scale(mut self, sx: Float64, sy: Float64):
+        """Scale subsequent drawing about the current origin, each axis
+        by its own factor. A negative factor mirrors that axis --
+        `scale(1.0, -1.0)` after a `translate` to the bottom of a plot
+        area gives a y-up coordinate system.
+
+        Args:
+            sx: Horizontal factor.
+            sy: Vertical factor.
+        """
+        self.transform(Matrix2D.scaling(sx, sy))
+
+    def transform(mut self, matrix: Matrix2D):
+        """Compose `matrix` into the current transform, applied to
+        coordinates before everything already in place -- the same
+        order `translate`/`rotate`/`scale` compose in, so a
+        `Matrix2D(Transform2D(...))` slots in like any of them.
+
+        Args:
+            matrix: The map to apply first.
+        """
+        self._set_transform(matrix.then(self._transform))
+
+    def set_transform(mut self, matrix: Matrix2D):
+        """Replace the current transform outright.
+
+        Args:
+            matrix: The new map from user space to device pixels.
+        """
+        self._set_transform(matrix)
+
+    def reset_transform(mut self):
+        """Back to the identity: coordinates are device pixels again.
+        Clips are left alone; `restore` undoes both.
+        """
+        self._set_transform(Matrix2D.identity())
+
+    def current_transform(self) -> Matrix2D:
+        """The map every drawing call currently applies.
+
+        Returns:
+            The current transform; the identity if none is set.
+        """
+        return self._transform
+
+    def has_transform(self) -> Bool:
+        """Whether the current transform is anything but the identity.
+        Each drawing primitive checks this once and, when it is false,
+        runs exactly as it did before transforms existed.
+
+        Returns:
+            True if drawing is being mapped.
+        """
+        return self._transformed
+
+    def _set_transform(mut self, matrix: Matrix2D):
+        self._transform = matrix
+        self._transformed = not matrix.is_identity()
+
+    def _take_transform(mut self) -> Matrix2D:
+        """The current transform, with the canvas left at the identity:
+        for a primitive that has mapped its own coordinates to device
+        space and is about to call a drawing function that would
+        otherwise map them again. Put it back with `_set_transform`.
+        """
+        var m = self._transform
+        self._set_transform(Matrix2D.identity())
+        return m
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.
@@ -243,17 +411,47 @@ struct Canvas(Copyable, DrawTarget, Movable):
         the canvas bounds is fine; in_bounds still rejects anything
         outside the canvas.
 
+        Under a canvas transform the rectangle is in user space. An
+        axis-aligned transform maps it to another rectangle; a rotated
+        or skewed one turns it into a clip path, with its bounding
+        rectangle on this stack so `pop_clip` removes both together.
+
         Args:
             x: Clip rectangle's left edge.
             y: Clip rectangle's top edge.
             width: Clip rectangle's width.
             height: Clip rectangle's height.
         """
+        if self._transformed:
+            if self._transform.is_axis_aligned():
+                var r = _mapped_rect(self._transform, x, y, width, height)
+                self._push_clip_rect(r[0], r[1], r[2], r[3], -1)
+                return
+            var depth = self._clip_mask_count
+            self._push_clip_mask(
+                _through(_rect_path(x, y, width, height), self._transform),
+                FillRule.EVEN_ODD,
+                4,
+                0,
+            )
+            var bb = _mapped_bounds(self._transform, x, y, width, height)
+            self._push_clip_rect(bb[0], bb[1], bb[2], bb[3], depth)
+            return
+        self._push_clip_rect(x, y, width, height, -1)
+
+    def _push_clip_rect(
+        mut self, x: Int, y: Int, width: Int, height: Int, mask_depth: Int
+    ):
+        """Intersect a device-space rectangle with the current clip and
+        push it; `mask_depth` is -1 or the mask count the entry owns
+        from (see `_ClipRect`).
+        """
         var new_rect = _ClipRect(x, y, width, height)
         if len(self._clip_stack) > 0:
             new_rect = _intersect_clip(
                 self._clip_stack[len(self._clip_stack) - 1], new_rect
             )
+        new_rect.mask_depth = mask_depth
         self._clip_stack.append(new_rect)
 
     def pop_clip(mut self):
@@ -264,8 +462,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
         in_bounds' handling of out-of-range requests: a stack alone
         cannot distinguish an unbalanced pop from "nothing to undo".
         """
-        if len(self._clip_stack) > 0:
-            _ = self._clip_stack.pop()
+        if len(self._clip_stack) == 0:
+            return
+        var top = self._clip_stack.pop()
+        if top.mask_depth >= 0:
+            while self._clip_mask_count > top.mask_depth:
+                self.pop_clip_path()
 
     def push_clip_path(
         mut self,
@@ -285,7 +487,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         A new mask is multiplied into the current one, so a nested clip
         can only restrict further, never escape its parent. Rectangle
         clips still apply independently on top. Pair with
-        `pop_clip_path`.
+        `pop_clip_path`. Under a canvas transform `path` is in user
+        space and is mapped before it is rasterized.
 
         Args:
             path: Shape to clip to. Its interior is what stays visible.
@@ -297,6 +500,24 @@ struct Canvas(Copyable, DrawTarget, Movable):
             curve_steps: Straight-line segments per quad/cubic Bezier.
                 0 (the default) picks a count from the curvature.
         """
+        if self._transformed:
+            self._push_clip_mask(
+                _through(path, self._transform),
+                fill_rule,
+                supersample,
+                curve_steps,
+            )
+        else:
+            self._push_clip_mask(path, fill_rule, supersample, curve_steps)
+
+    def _push_clip_mask(
+        mut self,
+        path: Path,
+        fill_rule: FillRule,
+        supersample: Int,
+        curve_steps: Int,
+    ):
+        """`push_clip_path` for a path already in device space."""
         var mask = _path_coverage_mask(
             path, self.width, self.height, fill_rule, supersample, curve_steps
         )
@@ -374,7 +595,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         if len(self._clip_stack) == 0:
             return True
-        var top = self._clip_stack[len(self._clip_stack) - 1]
+        # A reference, not a copy: this runs per pixel inside every
+        # primitive's loop, and copying the entry is enough to push
+        # set_pixel past what inlines there.
+        ref top = self._clip_stack[len(self._clip_stack) - 1]
         return (
             x >= top.x
             and x < top.x + top.width
@@ -534,7 +758,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var right = min(self.width, x + width)
         var bottom = min(self.height, y + height)
         if len(self._clip_stack) > 0:
-            var top_clip = self._clip_stack[len(self._clip_stack) - 1]
+            ref top_clip = self._clip_stack[len(self._clip_stack) - 1]
             left = max(left, top_clip.x)
             top = max(top, top_clip.y)
             right = min(right, top_clip.x + top_clip.width)

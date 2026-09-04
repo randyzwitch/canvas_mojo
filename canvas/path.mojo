@@ -26,12 +26,21 @@ stroke_path/stroke_path_aa draw each sub-path independently, closed
 called.
 """
 
-from std.math import ceil, cos, floor, pi, sin, sqrt
+from std.math import atan2, ceil, cos, floor, pi, sin, sqrt
 from std.runtime.asyncrt import TaskGroup, parallelism_level
 
 from canvas.buffer import Canvas
 from canvas.color import Color, _div255
-from canvas.geometry import Point, FPoint, Transform2D, _round_to_int
+from canvas.geometry import (
+    Matrix2D,
+    Point,
+    FPoint,
+    Transform2D,
+    _inverse_or_identity,
+    _round_to_int,
+    _rounded_fpoints,
+    _scaled_lengths,
+)
 from canvas.gradient import ColorSource, LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import (
@@ -483,6 +492,90 @@ struct Path(Movable):
                 out.close()
         return out^
 
+    def transformed(self, matrix: Matrix2D) raises -> Path:
+        """This path mapped through `matrix`, as a new path -- the
+        general-affine counterpart of the `Transform2D` overload, and
+        what every drawing call applies to a path under a canvas
+        transform.
+
+        Bezier control points map directly. An `arc_to` stays an arc
+        when the matrix keeps circles circular (a rotation, a uniform
+        scale, a translation, or a mirror of those): its centre maps,
+        its radius scales, its start angle is read off the mapped start
+        point, and its sweep keeps its size, reversing under a mirror.
+        Any other matrix turns the arc into an ellipse, which `arc_to`
+        cannot hold, so it is flattened through the same `_arc_fpoints`
+        the renderer would use and its points are mapped.
+
+        Args:
+            matrix: Mapping applied to every point.
+
+        Returns:
+            A new path in the transformed space.
+
+        Raises:
+            Error: Never in practice -- every call below follows this
+                path's own commands, which were already well-formed.
+        """
+        var out = Path()
+        var circular = (matrix.a == matrix.d and matrix.b == -matrix.c) or (
+            matrix.a == -matrix.d and matrix.b == matrix.c
+        )
+        var length_scale = sqrt(matrix.a * matrix.a + matrix.b * matrix.b)
+        var mirrored = matrix.determinant() < 0.0
+
+        for cmd in self.commands:
+            if cmd.kind == _MOVE_TO:
+                var p = matrix.apply(cmd.p1.x, cmd.p1.y)
+                out.move_to(p.x, p.y)
+            elif cmd.kind == _LINE_TO:
+                var p = matrix.apply(cmd.p1.x, cmd.p1.y)
+                out.line_to(p.x, p.y)
+            elif cmd.kind == _QUAD_TO:
+                var c = matrix.apply(cmd.p1.x, cmd.p1.y)
+                var e = matrix.apply(cmd.p2.x, cmd.p2.y)
+                out.quad_curve_to(c.x, c.y, e.x, e.y)
+            elif cmd.kind == _CUBIC_TO:
+                var c1 = matrix.apply(cmd.p1.x, cmd.p1.y)
+                var c2 = matrix.apply(cmd.p2.x, cmd.p2.y)
+                var e = matrix.apply(cmd.p3.x, cmd.p3.y)
+                out.cubic_curve_to(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
+            elif cmd.kind == _ARC_TO:
+                # p1 = (cx, cy), p2 = (radius, start_angle),
+                # p3.x = end_angle -- see _PathCommand.
+                if circular:
+                    var centre = matrix.apply(cmd.p1.x, cmd.p1.y)
+                    var start_pt = matrix.apply(
+                        cmd.p1.x + cmd.p2.x * cos(cmd.p2.y),
+                        cmd.p1.y + cmd.p2.x * sin(cmd.p2.y),
+                    )
+                    var start = atan2(
+                        start_pt.y - centre.y, start_pt.x - centre.x
+                    )
+                    var sweep = cmd.p3.x - cmd.p2.y
+                    if mirrored:
+                        sweep = -sweep
+                    out.arc_to(
+                        centre.x,
+                        centre.y,
+                        cmd.p2.x * length_scale,
+                        start,
+                        start + sweep,
+                    )
+                else:
+                    var arc = _arc_fpoints(
+                        cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x
+                    )
+                    # From index 1, matching `_flatten`: index 0 is the
+                    # arc's own start, which arc_to's contract already
+                    # places at the current point.
+                    for i in range(1, len(arc)):
+                        var q = matrix.apply(arc[i].x, arc[i].y)
+                        out.line_to(q.x, q.y)
+            else:  # _CLOSE
+                out.close()
+        return out^
+
     def bounds(
         self, curve_steps: Int = 0
     ) -> Tuple[Float64, Float64, Float64, Float64]:
@@ -785,6 +878,94 @@ struct _SolidColor(ColorSource, ImplicitlyCopyable, Movable):
         return self.color
 
 
+def _through(path: Path, matrix: Matrix2D) -> Path:
+    """`path.transformed(matrix)` for the drawing functions, which do
+    not raise: `transformed` follows commands the path already
+    accepted, so its `raises` is unreachable, and an empty path stands
+    in for the branch that cannot run.
+    """
+    try:
+        return path.transformed(matrix)
+    except e:
+        return Path()
+
+
+def _rect_path(x: Int, y: Int, width: Int, height: Int) -> Path:
+    """A whole-pixel rectangle as a path, for a rectangle primitive
+    routed through the path fill under a rotated or skewed transform.
+    """
+    var out = Path()
+    try:
+        out.rect(Float64(x), Float64(y), Float64(width), Float64(height))
+    except e:
+        return Path()
+    return out^
+
+
+def _ellipse_path(cx: Float64, cy: Float64, rx: Float64, ry: Float64) -> Path:
+    """A circle or ellipse as a path, for the circle and ellipse
+    primitives under a transform their own rasterizers cannot follow.
+    """
+    var out = Path()
+    try:
+        out.ellipse(cx, cy, rx, ry)
+    except e:
+        return Path()
+    return out^
+
+
+def _wedge_path(
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+) -> Path:
+    """`fill_arc_aa`'s pie wedge as a path: centre, out to the arc's
+    start, round the arc, and back.
+    """
+    var out = Path()
+    try:
+        out.move_to(cx, cy)
+        out.line_to(
+            cx + radius * cos(start_angle), cy + radius * sin(start_angle)
+        )
+        out.arc_to(cx, cy, radius, start_angle, end_angle)
+        out.close()
+    except e:
+        return Path()
+    return out^
+
+
+def _ring_path(
+    cx: Float64,
+    cy: Float64,
+    inner_radius: Float64,
+    outer_radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+) -> Path:
+    """`fill_ring_sector_aa`'s ring segment as a path: along the outer
+    arc, in to the inner arc, back along it the other way, and closed.
+    """
+    var out = Path()
+    try:
+        out.move_to(
+            cx + outer_radius * cos(start_angle),
+            cy + outer_radius * sin(start_angle),
+        )
+        out.arc_to(cx, cy, outer_radius, start_angle, end_angle)
+        out.line_to(
+            cx + inner_radius * cos(end_angle),
+            cy + inner_radius * sin(end_angle),
+        )
+        out.arc_to(cx, cy, inner_radius, end_angle, start_angle)
+        out.close()
+    except e:
+        return Path()
+    return out^
+
+
 def fill_path(
     mut canvas: Canvas,
     path: Path,
@@ -812,7 +993,35 @@ def fill_path(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
-    _fill_path_source(canvas, path, _SolidColor(color), fill_rule, curve_steps)
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_device(
+            canvas, _through(path, m), color, fill_rule, curve_steps
+        )
+        return
+    _fill_path_device(canvas, path, color, fill_rule, curve_steps)
+
+
+def _fill_path_device(
+    mut canvas: Canvas,
+    path: Path,
+    color: Color,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    curve_steps: Int = 0,
+):
+    """`fill_path` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
+    _fill_path_source(
+        canvas,
+        path,
+        _SolidColor(color),
+        fill_rule,
+        curve_steps,
+        Matrix2D.identity(),
+    )
 
 
 def _rounded_y_range(subpaths: List[_Subpath]) -> Tuple[Int, Int]:
@@ -943,6 +1152,35 @@ def fill_path_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_aa_device(
+            canvas,
+            _through(path, m),
+            color,
+            fill_rule,
+            supersample,
+            curve_steps,
+        )
+        return
+    _fill_path_aa_device(
+        canvas, path, color, fill_rule, supersample, curve_steps
+    )
+
+
+def _fill_path_aa_device(
+    mut canvas: Canvas,
+    path: Path,
+    color: Color,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    supersample: Int = 4,
+    curve_steps: Int = 0,
+):
+    """`fill_path_aa` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -1096,9 +1334,12 @@ def _fill_path_source[
     source: S,
     fill_rule: FillRule,
     curve_steps: Int,
+    to_user: Matrix2D,
 ):
     """`fill_path`'s hard-edged scanline fill, taking each pixel's
-    colour from `source` instead of one flat Color.
+    colour from `source` instead of one flat Color. `to_user` takes
+    each device pixel back to the space the source was defined in: the
+    inverse of the canvas transform, or the identity.
     """
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
@@ -1111,7 +1352,8 @@ def _fill_path_source[
         for span_idx in range(len(spans)):
             ref span = spans[span_idx]
             for x in range(span.start_x, span.end_x + 1):
-                canvas.set_pixel(x, y, source.color_at(Float64(x), Float64(y)))
+                var p = to_user.apply(Float64(x), Float64(y))
+                canvas.set_pixel(x, y, source.color_at(p.x, p.y))
 
 
 def _fill_path_source_aa[
@@ -1123,9 +1365,12 @@ def _fill_path_source_aa[
     fill_rule: FillRule,
     supersample: Int,
     curve_steps: Int,
+    to_user: Matrix2D,
 ):
     """`fill_path_aa`'s anti-aliased fill, taking each pixel's colour
-    from `source` instead of one flat Color.
+    from `source` instead of one flat Color. `to_user` takes each
+    device pixel back to the space the source was defined in: the
+    inverse of the canvas transform, or the identity.
 
     Coverage comes from `_sweep_edges_to_mask`, the same sweep
     `fill_path_aa` and `Canvas.push_clip_path` run, so a gradient fill's
@@ -1186,7 +1431,16 @@ def _fill_path_source_aa[
 
     if bands == 1:
         _fill_source_band(
-            canvas, source, mask, mask_width, lo_x, lo_y, hi_x, lo_y, hi_y
+            canvas,
+            source,
+            mask,
+            mask_width,
+            lo_x,
+            lo_y,
+            hi_x,
+            lo_y,
+            hi_y,
+            to_user,
         )
         return
 
@@ -1210,6 +1464,7 @@ def _fill_path_source_aa[
                 hi_x,
                 band_start,
                 band_end,
+                to_user,
             )
         )
     tg.wait()
@@ -1227,6 +1482,7 @@ async def _fill_source_band_async[
     hi_x: Int,
     first_row: Int,
     last_row: Int,
+    to_user: Matrix2D,
 ):
     """`_fill_source_band` as a task, so the single-band path stays an
     ordinary call with no coroutine machinery around it.
@@ -1245,6 +1501,7 @@ async def _fill_source_band_async[
         hi_x,
         first_row,
         last_row,
+        to_user,
     )
 
 
@@ -1260,9 +1517,11 @@ def _fill_source_band[
     hi_x: Int,
     first_row: Int,
     last_row: Int,
+    to_user: Matrix2D,
 ):
     """Paint rows [first_row, last_row) of an already-swept coverage
-    mask, taking each pixel's colour from `source`.
+    mask, taking each pixel's colour from `source` at the device
+    pixel's position in the source's own space (`to_user`).
 
     Bands write disjoint rows and only read the mask, which is what
     lets `canvas` be shared mutably between them.
@@ -1273,7 +1532,8 @@ def _fill_source_band[
             var coverage = Int(mask[row + px - lo_x])
             if coverage == 0:
                 continue
-            var c = source.color_at(Float64(px), Float64(py))
+            var u = to_user.apply(Float64(px), Float64(py))
+            var c = source.color_at(u.x, u.y)
             var alpha = _div255(Int(c.a) * coverage)
             if alpha == 0:
                 continue
@@ -1301,7 +1561,20 @@ def fill_path_gradient(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
-    _fill_path_source(canvas, path, gradient, fill_rule, curve_steps)
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source(
+            canvas,
+            _through(path, m),
+            gradient,
+            fill_rule,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
+    _fill_path_source(
+        canvas, path, gradient, fill_rule, curve_steps, Matrix2D.identity()
+    )
 
 
 def fill_path_radial_gradient(
@@ -1321,7 +1594,20 @@ def fill_path_radial_gradient(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
-    _fill_path_source(canvas, path, gradient, fill_rule, curve_steps)
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source(
+            canvas,
+            _through(path, m),
+            gradient,
+            fill_rule,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
+    _fill_path_source(
+        canvas, path, gradient, fill_rule, curve_steps, Matrix2D.identity()
+    )
 
 
 def fill_path_gradient_aa(
@@ -1345,8 +1631,26 @@ def fill_path_gradient_aa(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source_aa(
+            canvas,
+            _through(path, m),
+            gradient,
+            fill_rule,
+            supersample,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
     _fill_path_source_aa(
-        canvas, path, gradient, fill_rule, supersample, curve_steps
+        canvas,
+        path,
+        gradient,
+        fill_rule,
+        supersample,
+        curve_steps,
+        Matrix2D.identity(),
     )
 
 
@@ -1369,8 +1673,26 @@ def fill_path_radial_gradient_aa(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source_aa(
+            canvas,
+            _through(path, m),
+            gradient,
+            fill_rule,
+            supersample,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
     _fill_path_source_aa(
-        canvas, path, gradient, fill_rule, supersample, curve_steps
+        canvas,
+        path,
+        gradient,
+        fill_rule,
+        supersample,
+        curve_steps,
+        Matrix2D.identity(),
     )
 
 
@@ -1396,6 +1718,31 @@ def stroke_path(
         dash_offset: Distance into the dash pattern the stroke starts
             at.
     """
+    if canvas.has_transform():
+        var m = canvas._take_transform()
+        var s = m.scale_factor()
+        var subpaths = _flatten(path, curve_steps)
+        for sp_idx in range(len(subpaths)):
+            ref sp = subpaths[sp_idx]
+            var points = _rounded_fpoints(m, sp.points)
+            if sp.closed:
+                draw_polygon(
+                    canvas,
+                    points,
+                    color,
+                    _scaled_lengths(dashes, s),
+                    dash_offset * s,
+                )
+            else:
+                draw_polyline(
+                    canvas,
+                    points,
+                    color,
+                    _scaled_lengths(dashes, s),
+                    dash_offset * s,
+                )
+        canvas._set_transform(m)
+        return
     var subpaths = _flatten(path, curve_steps)
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]

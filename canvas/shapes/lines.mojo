@@ -19,7 +19,14 @@ from std.math import ceil, cos, floor, pi, sin, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import Point, FPoint, _round_to_int
+from canvas.geometry import (
+    Matrix2D,
+    Point,
+    FPoint,
+    _mapped_points,
+    _round_to_int,
+    _scaled_lengths,
+)
 from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
 from canvas.fill_rule import FillRule
 from canvas.shapes.dash import _DashPattern
@@ -150,6 +157,40 @@ def draw_line(
         dashes: On/off segment lengths in pixels, cycled along the
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        var p0 = m.apply(Float64(x0), Float64(y0))
+        var p1 = m.apply(Float64(x1), Float64(y1))
+        var s = m.scale_factor()
+        _draw_line_device(
+            canvas,
+            _round_to_int(p0.x),
+            _round_to_int(p0.y),
+            _round_to_int(p1.x),
+            _round_to_int(p1.y),
+            color,
+            _scaled_lengths(dashes, s),
+            dash_offset * s,
+        )
+        return
+    _draw_line_device(canvas, x0, y0, x1, y1, color, dashes, dash_offset)
+
+
+def _draw_line_device(
+    mut canvas: Canvas,
+    x0: Int,
+    y0: Int,
+    x1: Int,
+    y1: Int,
+    color: Color,
+    dashes: List[Float64] = List[Float64](),
+    dash_offset: Float64 = 0.0,
+):
+    """`draw_line` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     var pattern = _DashPattern(dashes, dash_offset)
     _ = _draw_line_core(canvas, x0, y0, x1, y1, color, False, False, pattern)
@@ -288,6 +329,32 @@ def draw_polyline(
         dash_offset: Distance into the dash pattern the polyline
             starts at.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        var s = m.scale_factor()
+        _draw_polyline_device(
+            canvas,
+            _mapped_points(m, points),
+            color,
+            _scaled_lengths(dashes, s),
+            dash_offset * s,
+        )
+        return
+    _draw_polyline_device(canvas, points, color, dashes, dash_offset)
+
+
+def _draw_polyline_device(
+    mut canvas: Canvas,
+    points: List[Point],
+    color: Color,
+    dashes: List[Float64] = List[Float64](),
+    dash_offset: Float64 = 0.0,
+):
+    """`draw_polyline` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
     if len(points) == 0:
         return
     if len(points) == 1:
@@ -328,6 +395,32 @@ def draw_polygon(
         dash_offset: Distance into the dash pattern the polygon starts
             at.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        var s = m.scale_factor()
+        _draw_polygon_device(
+            canvas,
+            _mapped_points(m, points),
+            color,
+            _scaled_lengths(dashes, s),
+            dash_offset * s,
+        )
+        return
+    _draw_polygon_device(canvas, points, color, dashes, dash_offset)
+
+
+def _draw_polygon_device(
+    mut canvas: Canvas,
+    points: List[Point],
+    color: Color,
+    dashes: List[Float64] = List[Float64](),
+    dash_offset: Float64 = 0.0,
+):
+    """`draw_polygon` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
     var n = len(points)
     if n == 0:
         return
@@ -335,7 +428,7 @@ def draw_polygon(
         canvas.set_pixel(points[0].x, points[0].y, color)
         return
     if n == 2:
-        draw_line(
+        _draw_line_device(
             canvas,
             points[0].x,
             points[0].y,
@@ -392,6 +485,21 @@ def _draw_polyline_core_aa(
     FillRule.NONZERO, so a pixel under two overlapping segments is
     written exactly once.
     """
+    if canvas.has_transform():
+        _stroke_transformed(
+            canvas,
+            points,
+            color,
+            width,
+            supersample,
+            closed,
+            dashes,
+            dash_offset,
+            cap,
+            join,
+            miter_limit,
+        )
+        return
     var count = len(points)
     if count == 0:
         return
@@ -439,6 +547,7 @@ def _draw_polyline_core_aa(
         dash_offset,
         join,
         miter_limit,
+        Matrix2D.identity(),
     )
     _sweep_edges_aa(
         canvas,
@@ -447,6 +556,63 @@ def _draw_polyline_core_aa(
         min_y,
         max_x,
         max_y,
+        color,
+        FillRule.NONZERO,
+        supersample,
+    )
+
+
+def _stroke_transformed(
+    mut canvas: Canvas,
+    points: List[FPoint],
+    color: Color,
+    width: Float64,
+    supersample: Int,
+    closed: Bool,
+    dashes: List[Float64],
+    dash_offset: Float64,
+    cap: LineCap,
+    join: LineJoin,
+    miter_limit: Float64,
+):
+    """`_draw_polyline_core_aa` under a canvas transform. The stroke is
+    built in user space -- its width, dashes, caps and joins are what
+    the caller asked for in the coordinates it drew in, as Cairo and
+    the HTML5 canvas define them -- and every edge of its outline is
+    mapped to device space as it is added (`_EdgeTable.set_map`), so a
+    non-uniform scale makes a vertical stroke wider than a horizontal
+    one exactly as it stretches the shapes around it.
+    """
+    var count = len(points)
+    if count == 0:
+        return
+    var matrix = canvas.current_transform()
+    if count == 1:
+        var p = matrix.apply(points[0].x, points[0].y)
+        canvas.set_pixel(_round_to_int(p.x), _round_to_int(p.y), color)
+        return
+
+    var edges = _stroke_edges(
+        points,
+        closed,
+        width / 2.0,
+        cap,
+        dashes,
+        dash_offset,
+        join,
+        miter_limit,
+        matrix,
+    )
+    if len(edges.y_lo) == 0:
+        return
+    var b = edges.bounds()
+    _sweep_edges_aa(
+        canvas,
+        edges,
+        b[0],
+        b[1],
+        b[2],
+        b[3],
         color,
         FillRule.NONZERO,
         supersample,
@@ -661,6 +827,7 @@ def _stroke_edges(
     dash_offset: Float64,
     join: LineJoin,
     miter_limit: Float64,
+    matrix: Matrix2D,
 ) -> _EdgeTable:
     """A stroke expressed as the outline of a filled region.
 
@@ -683,6 +850,7 @@ def _stroke_edges(
     var pattern = _DashPattern(dashes, dash_offset)
     if count == 1:
         var single = _EdgeTable()
+        single.set_map(matrix)
         if pattern.is_on(0.0) and (closed or cap == LineCap.ROUND):
             _add_disk(single, points[0].x, points[0].y, half_width)
         return single^
@@ -696,6 +864,13 @@ def _stroke_edges(
     # several doubling reallocations per list, across tens of
     # thousands of edges for a long stroked series, into at most one.
     var edges = _EdgeTable(4 * num_segments)
+    edges.set_map(matrix)
+    # The notch tolerance is in device pixels and the sagitta below is
+    # measured in user space, so it shrinks by the map's scale.
+    var tolerance = _JOIN_DISK_TOLERANCE
+    var map_scale = matrix.scale_factor()
+    if map_scale > 0.0:
+        tolerance = _JOIN_DISK_TOLERANCE / map_scale
 
     # Endpoints per segment, with SQUARE's extension already folded in
     # so distances below are measured along the geometry actually
@@ -843,7 +1018,7 @@ def _stroke_edges(
         # half_width * (1 - cos(theta/2)), using
         # cos(theta/2) = sqrt((1 + cos theta) / 2).
         var sagitta = half_width * (1.0 - sqrt((1.0 + dot) * 0.5))
-        if sagitta > _JOIN_DISK_TOLERANCE:
+        if sagitta > tolerance:
             _add_join(
                 edges,
                 bx[seg],

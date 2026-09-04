@@ -19,12 +19,16 @@ fill/stroke color is.
 - [`buffer`](../canvas/buffer/) — `Canvas`: the pixel buffer.
   Construct one, then either call its drawing methods directly
   (`canvas.fill_circle_aa(...)`) or use the free-function form
-  (`fill_circle_aa(canvas, ...)`) — both call the same code.
+  (`fill_circle_aa(canvas, ...)`) — both call the same code. It also
+  carries the drawing state: `save`/`restore`, `translate`/`rotate`/
+  `scale`/`transform` for a current transform every primitive maps
+  through, and `push_clip`/`push_clip_path` for clipping.
 - [`color`](../canvas/color/) — `Color`: 8-bit RGBA, plus
   `blend_over` for compositing a translucent color onto a background.
 - [`geometry`](../canvas/geometry/) — `Point` (an integer x/y
-  pair, for polylines/polygons) and `Transform2D` (scale, rotate,
-  translate a coordinate before it hits the canvas).
+  pair, for polylines/polygons), `Transform2D` (scale, rotate,
+  translate a coordinate before it hits the canvas) and `Matrix2D`
+  (a general affine map, the type behind the canvas transform).
 
 ## Shape primitives
 

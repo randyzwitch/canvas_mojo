@@ -32,6 +32,7 @@ from std.runtime.asyncrt import TaskGroup, parallelism_level
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule, _is_inside
+from canvas.geometry import Matrix2D
 
 
 struct _AACrossing(Comparable, ImplicitlyCopyable, Movable):
@@ -117,6 +118,11 @@ struct _EdgeTable(Movable):
     # whole row their top lands in, and that row for each entry.
     var order: List[Int]
     var order_row: List[Int]
+    # Set by `set_map`: a transform every edge passes through as it is
+    # added, for a stroke built in user space and swept in device
+    # space.
+    var _map: Matrix2D
+    var _mapped: Bool
 
     def __init__(out self, capacity: Int = 0):
         """An empty table, its seven per-edge lists pre-sized to
@@ -144,21 +150,68 @@ struct _EdgeTable(Movable):
         # no benefit to reserving these up front.
         self.order = List[Int]()
         self.order_row = List[Int]()
+        self._map = Matrix2D.identity()
+        self._mapped = False
+
+    def set_map(mut self, matrix: Matrix2D):
+        """Map every edge added from now on through `matrix`. The
+        identity switches mapping off.
+        """
+        self._map = matrix
+        self._mapped = not matrix.is_identity()
+
+    def bounds(self) -> Tuple[Int, Int, Int, Int]:
+        """The whole-pixel box every edge lies in, as (min_x, min_y,
+        max_x, max_y), widened outward with floor/ceil. (0, 0, 0, 0)
+        for an empty table.
+        """
+        var n = len(self.y_lo)
+        if n == 0:
+            return (0, 0, 0, 0)
+        var min_x = self.x0[0]
+        var max_x = min_x
+        var min_y = self.y_lo[0]
+        var max_y = self.y_hi[0]
+        for i in range(n):
+            var xa = self.x0[i]
+            var xb = xa + self.dx[i]
+            min_x = min(min_x, min(xa, xb))
+            max_x = max(max_x, max(xa, xb))
+            min_y = min(min_y, self.y_lo[i])
+            max_y = max(max_y, self.y_hi[i])
+        return (
+            Int(floor(min_x)),
+            Int(floor(min_y)),
+            Int(ceil(max_x)),
+            Int(ceil(max_y)),
+        )
 
     def add_edge(mut self, ax: Float64, ay: Float64, bx: Float64, by: Float64):
-        """Record one edge. Horizontal edges are dropped: they never
-        cross a scanline, so keeping them would only cost a rejected
-        test on every sub-scanline for the life of the fill.
+        """Record one edge, mapped first if `set_map` gave a
+        transform. Horizontal edges are dropped: they never cross a
+        scanline, so keeping them would only cost a rejected test on
+        every sub-scanline for the life of the fill.
         """
-        if ay == by:
+        var x_a = ax
+        var y_a = ay
+        var x_b = bx
+        var y_b = by
+        if self._mapped:
+            var pa = self._map.apply(ax, ay)
+            var pb = self._map.apply(bx, by)
+            x_a = pa.x
+            y_a = pa.y
+            x_b = pb.x
+            y_b = pb.y
+        if y_a == y_b:
             return
-        self.y_lo.append(min(ay, by))
-        self.y_hi.append(max(ay, by))
-        self.x0.append(ax)
-        self.y0.append(ay)
-        self.dx.append(bx - ax)
-        self.dy.append(by - ay)
-        self.direction.append(1 if by > ay else -1)
+        self.y_lo.append(min(y_a, y_b))
+        self.y_hi.append(max(y_a, y_b))
+        self.x0.append(x_a)
+        self.y0.append(y_a)
+        self.dx.append(x_b - x_a)
+        self.dy.append(y_b - y_a)
+        self.direction.append(1 if y_b > y_a else -1)
 
     def sort_by_top(mut self):
         """Fill `order` with the edge indices bucketed by the whole row

@@ -10,6 +10,14 @@ from std.math import ceil, floor, sqrt
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.geometry import _round_to_int
+from canvas.fill_rule import FillRule
+from canvas.path import (
+    fill_path,
+    fill_path_aa,
+    stroke_path,
+    stroke_path_aa,
+    _ellipse_path,
+)
 from canvas.aa_crossing import _CoverageAlpha
 
 
@@ -30,6 +38,37 @@ def draw_circle(
         cy: Center y.
         radius: Circle radius in pixels.
         color: Outline color.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(Float64(cx), Float64(cy))
+            _draw_circle_device(
+                canvas,
+                _round_to_int(p.x),
+                _round_to_int(p.y),
+                _round_to_int(Float64(radius) * m.scale_factor()),
+                color,
+            )
+            return
+        stroke_path(
+            canvas,
+            _ellipse_path(
+                Float64(cx), Float64(cy), Float64(radius), Float64(radius)
+            ),
+            color,
+        )
+        return
+    _draw_circle_device(canvas, cx, cy, radius, color)
+
+
+def _draw_circle_device(
+    mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color
+):
+    """`draw_circle` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
@@ -83,6 +122,37 @@ def fill_circle(
         radius: Circle radius in pixels.
         color: Fill color.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(Float64(cx), Float64(cy))
+            _fill_circle_device(
+                canvas,
+                _round_to_int(p.x),
+                _round_to_int(p.y),
+                _round_to_int(Float64(radius) * m.scale_factor()),
+                color,
+            )
+            return
+        fill_path(
+            canvas,
+            _ellipse_path(
+                Float64(cx), Float64(cy), Float64(radius), Float64(radius)
+            ),
+            color,
+        )
+        return
+    _fill_circle_device(canvas, cx, cy, radius, color)
+
+
+def _fill_circle_device(
+    mut canvas: Canvas, cx: Int, cy: Int, radius: Int, color: Color
+):
+    """`fill_circle` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
         return
@@ -129,6 +199,31 @@ def fill_circle_aa(
         color: Fill color.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(Float64(cx), Float64(cy))
+            var saved = canvas._take_transform()
+            fill_circle_aa(
+                canvas,
+                p.x,
+                p.y,
+                Float64(radius) * m.scale_factor(),
+                color,
+                supersample,
+            )
+            canvas._set_transform(saved)
+            return
+        fill_path_aa(
+            canvas,
+            _ellipse_path(
+                Float64(cx), Float64(cy), Float64(radius), Float64(radius)
+            ),
+            color,
+            FillRule.EVEN_ODD,
+            supersample,
+        )
+        return
     fill_circle_aa(
         canvas,
         Float64(cx),
@@ -177,6 +272,45 @@ def fill_circle_aa(
         radius: Circle radius in pixels, sub-pixel.
         color: Fill color.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(Float64(cx), Float64(cy))
+            _fill_circle_aa_device(
+                canvas,
+                p.x,
+                p.y,
+                Float64(radius) * m.scale_factor(),
+                color,
+                supersample,
+            )
+            return
+        fill_path_aa(
+            canvas,
+            _ellipse_path(
+                Float64(cx), Float64(cy), Float64(radius), Float64(radius)
+            ),
+            color,
+            FillRule.EVEN_ODD,
+            supersample,
+        )
+        return
+    _fill_circle_aa_device(canvas, cx, cy, radius, color, supersample)
+
+
+def _fill_circle_aa_device(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    color: Color,
+    supersample: Int = 4,
+):
+    """`fill_circle_aa` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     if radius <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
@@ -327,6 +461,33 @@ def draw_circle_aa(
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         width: Stroke width in pixels.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(Float64(cx), Float64(cy))
+            var s = m.scale_factor()
+            var saved = canvas._take_transform()
+            draw_circle_aa(
+                canvas,
+                p.x,
+                p.y,
+                Float64(radius) * s,
+                color,
+                supersample,
+                width * s,
+            )
+            canvas._set_transform(saved)
+            return
+        stroke_path_aa(
+            canvas,
+            _ellipse_path(
+                Float64(cx), Float64(cy), Float64(radius), Float64(radius)
+            ),
+            color,
+            width,
+            supersample,
+        )
+        return
     if radius <= 0:
         canvas.set_pixel(cx, cy, color)
         return
@@ -368,6 +529,48 @@ def draw_circle_aa(
         color: Outline color.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
         width: Stroke width in pixels.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(Float64(cx), Float64(cy))
+            var s = m.scale_factor()
+            _draw_circle_aa_device(
+                canvas,
+                p.x,
+                p.y,
+                Float64(radius) * s,
+                color,
+                supersample,
+                width * s,
+            )
+            return
+        stroke_path_aa(
+            canvas,
+            _ellipse_path(
+                Float64(cx), Float64(cy), Float64(radius), Float64(radius)
+            ),
+            color,
+            width,
+            supersample,
+        )
+        return
+    _draw_circle_aa_device(canvas, cx, cy, radius, color, supersample, width)
+
+
+def _draw_circle_aa_device(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    color: Color,
+    supersample: Int = 4,
+    width: Float64 = 1.0,
+):
+    """`draw_circle_aa` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     if radius <= 0.0:
         canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)

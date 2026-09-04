@@ -41,6 +41,7 @@ def _titles() -> Dict[String, String]:
     d["gradient"] = "Gradients"
     d["dashes"] = "Dashes"
     d["transform"] = "Transforms"
+    d["canvas_state"] = "Canvas Transform State"
     d["clipping"] = "Clipping"
     d["layers"] = "Layers & Compositing"
     d["clip_path"] = "Clipping to a Path"
@@ -100,10 +101,19 @@ def _categories() -> List[Category]:
         Category(
             "Styling & transforms",
             (
-                "Dash patterns, the Transform2D coordinate pipeline, clip"
-                " regions, and composing separate layers into one image."
+                "Dash patterns, the Transform2D coordinate pipeline, the"
+                " canvas's own save/restore transform state, clip regions,"
+                " and composing separate layers into one image."
             ),
-            ["dashes", "joins", "transform", "clipping", "clip_path", "layers"],
+            [
+                "dashes",
+                "joins",
+                "transform",
+                "canvas_state",
+                "clipping",
+                "clip_path",
+                "layers",
+            ],
         )
     )
     cats.append(

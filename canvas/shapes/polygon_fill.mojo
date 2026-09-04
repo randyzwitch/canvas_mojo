@@ -18,7 +18,13 @@ from std.math import ceil, floor
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import Point, FPoint
+from canvas.geometry import (
+    Point,
+    FPoint,
+    _mapped_fpoints,
+    _mapped_points,
+    _mapped_points_to_fpoints,
+)
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
 
@@ -132,6 +138,26 @@ def fill_polygon(
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_polygon_device(
+            canvas, _mapped_points(m, points), color, fill_rule
+        )
+        return
+    _fill_polygon_device(canvas, points, color, fill_rule)
+
+
+def _fill_polygon_device(
+    mut canvas: Canvas,
+    points: List[Point],
+    color: Color,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+):
+    """`fill_polygon` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
     var n = len(points)
     if n < 3:
         return
@@ -224,6 +250,17 @@ def fill_polygon_aa(
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
+    if canvas.has_transform():
+        var m = canvas._take_transform()
+        fill_polygon_aa(
+            canvas,
+            _mapped_points_to_fpoints(m, points),
+            color,
+            fill_rule,
+            supersample,
+        )
+        canvas._set_transform(m)
+        return
     var n = len(points)
     if n < 3:
         return
@@ -255,6 +292,27 @@ def fill_polygon_aa(
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_polygon_aa_device(
+            canvas, _mapped_fpoints(m, points), color, fill_rule, supersample
+        )
+        return
+    _fill_polygon_aa_device(canvas, points, color, fill_rule, supersample)
+
+
+def _fill_polygon_aa_device(
+    mut canvas: Canvas,
+    points: List[FPoint],
+    color: Color,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    supersample: Int = 4,
+):
+    """`fill_polygon_aa` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     var n = len(points)
     if n < 3:

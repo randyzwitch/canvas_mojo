@@ -17,6 +17,7 @@ from std.memory import unsafe_memcpy
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, _div255
+from canvas.geometry import _round_to_int
 
 
 def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int):
@@ -52,6 +53,28 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8):
         x: Destination column for `src`'s left edge.
         y: Destination row for `src`'s top edge.
         opacity: Scales every source pixel's alpha, 255 for unchanged.
+
+    Under a canvas transform only its translation applies: (x, y) maps
+    through the transform and `src` is composited there unscaled and
+    unrotated. Drawing a canvas scaled or rotated is #174.
+    """
+    if dst.has_transform():
+        var m = dst.current_transform()
+        var p = m.apply(Float64(x), Float64(y))
+        _draw_canvas_device(
+            dst, src, _round_to_int(p.x), _round_to_int(p.y), opacity
+        )
+        return
+    _draw_canvas_device(dst, src, x, y, opacity)
+
+
+def _draw_canvas_device(
+    mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8
+):
+    """`draw_canvas` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     if opacity == 0:
         return

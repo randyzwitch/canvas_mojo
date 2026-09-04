@@ -6,8 +6,20 @@ see gradient.mojo).
 
 from canvas.color import Color
 from canvas.buffer import Canvas
+from canvas.geometry import (
+    Matrix2D,
+    Point,
+    _inverse_or_identity,
+    _mapped_rect,
+)
 from canvas.gradient import ColorSource, LinearGradient, RadialGradient
-from canvas.shapes.lines import draw_line
+from canvas.path import (
+    fill_path,
+    fill_path_gradient,
+    fill_path_radial_gradient,
+    _rect_path,
+)
+from canvas.shapes.lines import draw_line, draw_polygon, _draw_line_device
 
 
 def draw_rect(
@@ -27,18 +39,47 @@ def draw_rect(
         height: Rectangle's height.
         color: Outline color.
     """
+    if canvas.has_transform():
+        if canvas.current_transform().is_axis_aligned():
+            var m = canvas.current_transform()
+            var r = _mapped_rect(m, x, y, width, height)
+            _draw_rect_device(canvas, r[0], r[1], r[2], r[3], color)
+            return
+        if width <= 0 or height <= 0:
+            return
+        var corners: List[Point] = [
+            Point(x, y),
+            Point(x + width - 1, y),
+            Point(x + width - 1, y + height - 1),
+            Point(x, y + height - 1),
+        ]
+        draw_polygon(canvas, corners, color)
+        return
+    _draw_rect_device(canvas, x, y, width, height, color)
+
+
+def _draw_rect_device(
+    mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color: Color
+):
+    """`draw_rect` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
     if width <= 0 or height <= 0:
         return
 
     var x1 = x + width - 1
     var y1 = y + height - 1
 
-    draw_line(canvas, x, y, x1, y, color)  # top, full width
+    _draw_line_device(canvas, x, y, x1, y, color)  # top, full width
     if height > 1:
-        draw_line(canvas, x, y1, x1, y1, color)  # bottom, full width
+        _draw_line_device(canvas, x, y1, x1, y1, color)  # bottom, full width
     if height > 2:
-        draw_line(canvas, x, y + 1, x, y1 - 1, color)  # left, corners excluded
-        draw_line(
+        _draw_line_device(
+            canvas, x, y + 1, x, y1 - 1, color
+        )  # left, corners excluded
+        _draw_line_device(
             canvas, x1, y + 1, x1, y1 - 1, color
         )  # right, corners excluded
 
@@ -56,6 +97,27 @@ def fill_rect(
         height: Rectangle's height.
         color: Fill color.
     """
+    if canvas.has_transform():
+        if canvas.current_transform().is_axis_aligned():
+            var m = canvas.current_transform()
+            var r = _mapped_rect(m, x, y, width, height)
+            _fill_rect_device(canvas, r[0], r[1], r[2], r[3], color)
+            return
+        if width <= 0 or height <= 0:
+            return
+        fill_path(canvas, _rect_path(x, y, width, height), color)
+        return
+    _fill_rect_device(canvas, x, y, width, height, color)
+
+
+def _fill_rect_device(
+    mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color: Color
+):
+    """`fill_rect` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
     if width <= 0 or height <= 0:
         return
 
@@ -65,10 +127,20 @@ def fill_rect(
 
 def _fill_rect_source[
     S: ColorSource
-](mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, source: S):
+](
+    mut canvas: Canvas,
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    source: S,
+    to_user: Matrix2D,
+):
     """`fill_rect`'s clamp-once-then-sweep, taking each pixel's colour
     from `source` instead of one flat Color. Both gradient rect fills
-    are this with a different source type.
+    are this with a different source type. `to_user` takes each device
+    pixel back to the space the source was defined in: the inverse of
+    the canvas transform, or the identity.
     """
     if width <= 0 or height <= 0:
         return
@@ -84,16 +156,14 @@ def _fill_rect_source[
     if canvas.has_clip_mask():
         for yy in range(ry, ry + rh):
             for xx in range(rx, rx + rw):
-                canvas.set_pixel(
-                    xx, yy, source.color_at(Float64(xx), Float64(yy))
-                )
+                var p = to_user.apply(Float64(xx), Float64(yy))
+                canvas.set_pixel(xx, yy, source.color_at(p.x, p.y))
         return
 
     for yy in range(ry, ry + rh):
         for xx in range(rx, rx + rw):
-            canvas.write_pixel(
-                xx, yy, source.color_at(Float64(xx), Float64(yy))
-            )
+            var p = to_user.apply(Float64(xx), Float64(yy))
+            canvas.write_pixel(xx, yy, source.color_at(p.x, p.y))
 
 
 def fill_rect_gradient(
@@ -116,7 +186,27 @@ def fill_rect_gradient(
         height: Rectangle's height.
         gradient: Fill source, projected across the rectangle.
     """
-    _fill_rect_source(canvas, x, y, width, height, gradient)
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_axis_aligned():
+            var r = _mapped_rect(m, x, y, width, height)
+            _fill_rect_source(
+                canvas,
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                gradient,
+                _inverse_or_identity(m),
+            )
+            return
+        if width <= 0 or height <= 0:
+            return
+        fill_path_gradient(canvas, _rect_path(x, y, width, height), gradient)
+        return
+    _fill_rect_source(
+        canvas, x, y, width, height, gradient, Matrix2D.identity()
+    )
 
 
 def fill_rect_radial_gradient(
@@ -140,4 +230,26 @@ def fill_rect_radial_gradient(
         height: Rectangle's height.
         gradient: Fill source, projected across the rectangle.
     """
-    _fill_rect_source(canvas, x, y, width, height, gradient)
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_axis_aligned():
+            var r = _mapped_rect(m, x, y, width, height)
+            _fill_rect_source(
+                canvas,
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                gradient,
+                _inverse_or_identity(m),
+            )
+            return
+        if width <= 0 or height <= 0:
+            return
+        fill_path_radial_gradient(
+            canvas, _rect_path(x, y, width, height), gradient
+        )
+        return
+    _fill_rect_source(
+        canvas, x, y, width, height, gradient, Matrix2D.identity()
+    )

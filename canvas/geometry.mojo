@@ -13,7 +13,7 @@ and `path.mojo` imports *from* arcs, so the shared type has to sit below
 both.
 """
 
-from std.math import cos, sin
+from std.math import atan2, cos, sin, sqrt
 
 
 struct Point(ImplicitlyCopyable, Movable):
@@ -210,3 +210,356 @@ struct Transform2D(ImplicitlyCopyable, Movable):
             sy = -ux * self._sin_rotation + uy * self._cos_rotation
 
         return FPoint(sx / self.scale_x, sy / self.scale_y)
+
+
+struct Matrix2D(ImplicitlyCopyable, Movable):
+    """A general affine map of the plane.
+
+        x' = a * x + c * y + e
+        y' = b * x + d * y + f
+
+    in the (a, b, c, d, e, f) layout SVG's `matrix()`, Cairo's
+    `cairo_matrix_t` and the HTML5 canvas's `setTransform` share, so a
+    matrix written for any of them reads the same here. `Canvas` keeps
+    one as its current transform (see `Canvas.save`) and every drawing
+    call maps its coordinates through it.
+
+    Where `Transform2D`'s pipeline is fixed as scale, rotate, translate,
+    a `Matrix2D` is closed under composition: `then` of any two is
+    another `Matrix2D`, which is what lets a canvas accumulate
+    `translate`/`rotate`/`scale` calls in any order. `Matrix2D(t)`
+    converts a `Transform2D`, so a chart's data-to-pixel mapping can
+    become the canvas transform.
+    """
+
+    var a: Float64
+    var b: Float64
+    var c: Float64
+    var d: Float64
+    var e: Float64
+    var f: Float64
+
+    def __init__(
+        out self,
+        a: Float64,
+        b: Float64,
+        c: Float64,
+        d: Float64,
+        e: Float64,
+        f: Float64,
+    ):
+        """The matrix with these coefficients -- see the struct
+        docstring for the layout.
+
+        Args:
+            a: Coefficient of x in x'.
+            b: Coefficient of x in y'.
+            c: Coefficient of y in x'.
+            d: Coefficient of y in y'.
+            e: Offset added to x'.
+            f: Offset added to y'.
+        """
+        self.a = a
+        self.b = b
+        self.c = c
+        self.d = d
+        self.e = e
+        self.f = f
+
+    def __init__(out self, transform: Transform2D):
+        """The matrix of `transform`'s scale-then-rotate-then-translate
+        pipeline: the same mapping `transform.to_point` computes.
+
+        Args:
+            transform: The mapping to express as a matrix.
+        """
+        var cs = cos(transform.rotation)
+        var sn = sin(transform.rotation)
+        self.a = transform.scale_x * cs
+        self.b = transform.scale_x * sn
+        self.c = -transform.scale_y * sn
+        self.d = transform.scale_y * cs
+        self.e = transform.translate_x
+        self.f = transform.translate_y
+
+    @staticmethod
+    def identity() -> Matrix2D:
+        """The map that leaves every point where it is.
+
+        Returns:
+            The identity matrix.
+        """
+        return Matrix2D(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+    @staticmethod
+    def translation(tx: Float64, ty: Float64) -> Matrix2D:
+        """A shift by (tx, ty).
+
+        Args:
+            tx: Horizontal shift.
+            ty: Vertical shift.
+
+        Returns:
+            The translation matrix.
+        """
+        return Matrix2D(1.0, 0.0, 0.0, 1.0, tx, ty)
+
+    @staticmethod
+    def scaling(sx: Float64, sy: Float64) -> Matrix2D:
+        """A scale about the origin, each axis by its own factor. A
+        negative factor mirrors that axis.
+
+        Args:
+            sx: Horizontal factor.
+            sy: Vertical factor.
+
+        Returns:
+            The scaling matrix.
+        """
+        return Matrix2D(sx, 0.0, 0.0, sy, 0.0, 0.0)
+
+    @staticmethod
+    def rotation(angle: Float64) -> Matrix2D:
+        """A rotation about the origin by `angle` radians. Positive
+        turns +x toward +y, which is clockwise on a y-down canvas.
+
+        Args:
+            angle: Radians.
+
+        Returns:
+            The rotation matrix.
+        """
+        var cs = cos(angle)
+        var sn = sin(angle)
+        return Matrix2D(cs, sn, -sn, cs, 0.0, 0.0)
+
+    def apply(self, x: Float64, y: Float64) -> FPoint:
+        """Map a point.
+
+        Args:
+            x: Point x.
+            y: Point y.
+
+        Returns:
+            The mapped point.
+        """
+        return FPoint(
+            self.a * x + self.c * y + self.e,
+            self.b * x + self.d * y + self.f,
+        )
+
+    def then(self, other: Matrix2D) -> Matrix2D:
+        """This map followed by `other`: `self.then(o).apply(p)` is
+        `o.apply(self.apply(p))`.
+
+        Args:
+            other: The map applied second.
+
+        Returns:
+            The composed map.
+        """
+        return Matrix2D(
+            other.a * self.a + other.c * self.b,
+            other.b * self.a + other.d * self.b,
+            other.a * self.c + other.c * self.d,
+            other.b * self.c + other.d * self.d,
+            other.a * self.e + other.c * self.f + other.e,
+            other.b * self.e + other.d * self.f + other.f,
+        )
+
+    def determinant(self) -> Float64:
+        """The area scale of the map, negative if it mirrors.
+
+        Returns:
+            The value a * d - b * c.
+        """
+        return self.a * self.d - self.b * self.c
+
+    def inverse(self) raises -> Matrix2D:
+        """The map that undoes this one.
+
+        Returns:
+            The inverse matrix.
+
+        Raises:
+            Error: The determinant is zero, so the map collapses the
+                plane onto a line or point and cannot be undone.
+        """
+        var det = self.determinant()
+        if det == 0.0:
+            raise Error(
+                "Matrix2D.inverse(): the matrix is singular (determinant"
+                " 0), so it collapses the plane and cannot be undone"
+            )
+        return Matrix2D(
+            self.d / det,
+            -self.b / det,
+            -self.c / det,
+            self.a / det,
+            (self.c * self.f - self.d * self.e) / det,
+            (self.b * self.e - self.a * self.f) / det,
+        )
+
+    def is_identity(self) -> Bool:
+        """Whether the map leaves every point where it is.
+
+        Returns:
+            True for the identity matrix exactly.
+        """
+        return (
+            self.a == 1.0
+            and self.b == 0.0
+            and self.c == 0.0
+            and self.d == 1.0
+            and self.e == 0.0
+            and self.f == 0.0
+        )
+
+    def is_translation(self) -> Bool:
+        """Whether the map is a pure shift.
+
+        Returns:
+            True if the linear part is the identity.
+        """
+        return (
+            self.a == 1.0 and self.b == 0.0 and self.c == 0.0 and self.d == 1.0
+        )
+
+    def is_axis_aligned(self) -> Bool:
+        """Whether the map keeps axis-aligned rectangles axis-aligned:
+        scale (possibly mirrored) and translation only, no rotation or
+        shear.
+
+        Returns:
+            True if b and c are both zero.
+        """
+        return self.b == 0.0 and self.c == 0.0
+
+    def is_similarity(self) -> Bool:
+        """Whether the map keeps circles circular and angles intact: a
+        rotation, a uniform scale and a translation, with no mirroring.
+
+        Returns:
+            True for such a map.
+        """
+        return (
+            self.a == self.d
+            and self.b == -self.c
+            and (self.a != 0.0 or self.b != 0.0)
+        )
+
+    def scale_factor(self) -> Float64:
+        """The map's length scale: the factor a similarity scales
+        every length by, and the geometric mean of the two axis scales
+        otherwise -- what a stroke width or dash length is multiplied
+        by to follow the map.
+
+        Returns:
+            The square root of the absolute determinant.
+        """
+        return sqrt(abs(self.determinant()))
+
+    def rotation_angle(self) -> Float64:
+        """The angle the map turns the +x axis by, in radians.
+
+        Returns:
+            The angle atan2(b, a).
+        """
+        return atan2(self.b, self.a)
+
+
+def _mapped_fpoints(m: Matrix2D, points: List[FPoint]) -> List[FPoint]:
+    var out = List[FPoint](capacity=len(points))
+    for p in points:
+        out.append(m.apply(p.x, p.y))
+    return out^
+
+
+def _mapped_points(m: Matrix2D, points: List[Point]) -> List[Point]:
+    """Whole-pixel points mapped and rounded back to whole pixels."""
+    var out = List[Point](capacity=len(points))
+    for p in points:
+        var q = m.apply(Float64(p.x), Float64(p.y))
+        out.append(Point(_round_to_int(q.x), _round_to_int(q.y)))
+    return out^
+
+
+def _mapped_points_to_fpoints(m: Matrix2D, points: List[Point]) -> List[FPoint]:
+    var out = List[FPoint](capacity=len(points))
+    for p in points:
+        out.append(m.apply(Float64(p.x), Float64(p.y)))
+    return out^
+
+
+def _rounded_fpoints(m: Matrix2D, points: List[FPoint]) -> List[Point]:
+    """Sub-pixel points mapped, then rounded to whole pixels for a
+    hard-edged primitive."""
+    var out = List[Point](capacity=len(points))
+    for p in points:
+        var q = m.apply(p.x, p.y)
+        out.append(Point(_round_to_int(q.x), _round_to_int(q.y)))
+    return out^
+
+
+def _mapped_rect(
+    m: Matrix2D, x: Int, y: Int, width: Int, height: Int
+) -> Tuple[Int, Int, Int, Int]:
+    """An axis-aligned map's image of a whole-pixel rectangle, as a
+    whole-pixel (x, y, width, height): both corners mapped and rounded,
+    ordered so a mirroring scale still gives a positive size.
+    """
+    var p0 = m.apply(Float64(x), Float64(y))
+    var p1 = m.apply(Float64(x + width), Float64(y + height))
+    var left = _round_to_int(min(p0.x, p1.x))
+    var right = _round_to_int(max(p0.x, p1.x))
+    var top = _round_to_int(min(p0.y, p1.y))
+    var bottom = _round_to_int(max(p0.y, p1.y))
+    return (left, top, right - left, bottom - top)
+
+
+def _mapped_bounds(
+    m: Matrix2D, x: Int, y: Int, width: Int, height: Int
+) -> Tuple[Int, Int, Int, Int]:
+    """The whole-pixel bounding box, as (x, y, width, height), of a
+    rectangle's four corners under any map."""
+    var xs = List[Float64]()
+    var ys = List[Float64]()
+    for corner in range(4):
+        var cx = Float64(x + width) if corner % 2 == 1 else Float64(x)
+        var cy = Float64(y + height) if corner >= 2 else Float64(y)
+        var q = m.apply(cx, cy)
+        xs.append(q.x)
+        ys.append(q.y)
+    var min_x = xs[0]
+    var max_x = xs[0]
+    var min_y = ys[0]
+    var max_y = ys[0]
+    for i in range(1, 4):
+        min_x = min(min_x, xs[i])
+        max_x = max(max_x, xs[i])
+        min_y = min(min_y, ys[i])
+        max_y = max(max_y, ys[i])
+    var left = Int(min_x) if min_x >= 0.0 else Int(min_x) - 1
+    var top = Int(min_y) if min_y >= 0.0 else Int(min_y) - 1
+    var right = Int(max_x) + 1
+    var bottom = Int(max_y) + 1
+    return (left, top, right - left, bottom - top)
+
+
+def _scaled_lengths(lengths: List[Float64], factor: Float64) -> List[Float64]:
+    """Dash lengths given in user space, scaled to device pixels."""
+    var out = List[Float64](capacity=len(lengths))
+    for v in lengths:
+        out.append(v * factor)
+    return out^
+
+
+def _inverse_or_identity(m: Matrix2D) -> Matrix2D:
+    """`m.inverse()`, or the identity when `m` is singular. A singular
+    transform draws nothing visible (every shape collapses to zero
+    area), so what its gradients would have sampled does not matter.
+    """
+    try:
+        return m.inverse()
+    except e:
+        return Matrix2D.identity()
