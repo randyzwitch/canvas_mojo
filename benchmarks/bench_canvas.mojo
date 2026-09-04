@@ -28,6 +28,7 @@ from std.time import perf_counter_ns
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import draw_canvas
+from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Point
 from canvas.gradient import LinearGradient
 from canvas.path import Path, fill_path_aa, fill_path_gradient_aa, stroke_path_aa
@@ -260,6 +261,16 @@ def main() raises:
         sink += Int(canvas.get_pixel(20, 30).r)
     _report(rows, "fill_path_aa glyph-sized", perf_counter_ns() - t0, iters)
 
+    # The same glyph under NONZERO: the exact-area rasterizer, which is
+    # what text goes through.
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_aa(canvas, glyph, INK, FillRule.NONZERO)
+        sink += Int(canvas.get_pixel(20, 30).r)
+    _report(
+        rows, "fill_path_aa glyph-sized (nonzero)", perf_counter_ns() - t0, iters
+    )
+
     var big_path = Path()
     big_path.move_to(60.0, 500.0)
     for i in range(1, 40):
@@ -272,6 +283,17 @@ def main() raises:
         fill_path_aa(canvas, big_path, INK)
         sink += Int(canvas.get_pixel(400, 400).r)
     _report(rows, "fill_path_aa large 39-curve", perf_counter_ns() - t0, iters)
+
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_path_aa(canvas, big_path, INK, FillRule.NONZERO)
+        sink += Int(canvas.get_pixel(400, 400).r)
+    _report(
+        rows,
+        "fill_path_aa large 39-curve (nonzero)",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     # The same fill with most of it clipped away: what a series drawn
     # past its plot area costs. The rows outside the clip should cost

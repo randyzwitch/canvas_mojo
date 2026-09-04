@@ -27,7 +27,7 @@ from canvas.geometry import (
     _round_to_int,
     _scaled_lengths,
 )
-from canvas.aa_crossing import _EdgeTable, _sweep_edges_aa
+from canvas.aa_crossing import _EdgeTable, _sweep_edges_sampled_aa
 from canvas.fill_rule import FillRule
 from canvas.shapes.dash import _DashPattern
 
@@ -549,7 +549,7 @@ def _draw_polyline_core_aa(
         miter_limit,
         Matrix2D.identity(),
     )
-    _sweep_edges_aa(
+    _sweep_edges_sampled_aa(
         canvas,
         edges,
         min_x,
@@ -606,7 +606,7 @@ def _stroke_transformed(
     if len(edges.y_lo) == 0:
         return
     var b = edges.bounds()
-    _sweep_edges_aa(
+    _sweep_edges_sampled_aa(
         canvas,
         edges,
         b[0],
