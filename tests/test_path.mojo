@@ -1241,10 +1241,10 @@ def _assert_clipped_fill_matches_reference(
             var want = reference.get_pixel(x, y) if inside else BG
             var got = clipped.get_pixel(x, y)
             if got.r != want.r or got.g != want.g or got.b != want.b:
-                var where = "pixel " + String(x) + "," + String(y)
-                assert_equal(got.r, want.r, where)
-                assert_equal(got.g, want.g, where)
-                assert_equal(got.b, want.b, where)
+                var at = "pixel " + String(x) + "," + String(y)
+                assert_equal(got.r, want.r, at)
+                assert_equal(got.g, want.g, at)
+                assert_equal(got.b, want.b, at)
 
 
 def test_fill_path_aa_under_a_clip_that_cuts_rows() raises:
