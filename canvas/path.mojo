@@ -27,6 +27,7 @@ called.
 """
 
 from std.math import ceil, cos, floor, pi, sin, sqrt
+from std.runtime.asyncrt import TaskGroup, parallelism_level
 
 from canvas.buffer import Canvas
 from canvas.color import Color, _div255
@@ -35,6 +36,7 @@ from canvas.gradient import ColorSource, LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import (
     _EdgeTable,
+    _MIN_PARALLEL_PIXELS,
     _sweep_edges_aa,
     _sweep_edges_to_mask,
 )
@@ -1084,8 +1086,103 @@ def _fill_path_source_aa[
         supersample,
     )
 
-    for py in range(lo_y, hi_y):
-        var row = (py - lo_y) * mask_width
+    # Rows are independent -- each reads its own slice of the mask and
+    # writes its own pixels -- so a large fill is split into bands, one
+    # task per band, the same shape the sweep that produced the mask
+    # uses and above the same threshold.
+    var bands = 1
+    if mask_width * mask_height >= _MIN_PARALLEL_PIXELS:
+        bands = parallelism_level()
+        if bands > mask_height:
+            bands = mask_height
+        if bands < 1:
+            bands = 1
+
+    if bands == 1:
+        _fill_source_band(
+            canvas, source, mask, mask_width, lo_x, lo_y, hi_x, lo_y, hi_y
+        )
+        return
+
+    var per_band = (mask_height + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var band_start = lo_y + b * per_band
+        var band_end = band_start + per_band
+        if band_end > hi_y:
+            band_end = hi_y
+        if band_start >= band_end:
+            continue
+        tg.create_task(
+            _fill_source_band_async(
+                canvas,
+                source,
+                mask,
+                mask_width,
+                lo_x,
+                lo_y,
+                hi_x,
+                band_start,
+                band_end,
+            )
+        )
+    tg.wait()
+
+
+async def _fill_source_band_async[
+    S: ColorSource
+](
+    mut canvas: Canvas,
+    source: S,
+    mask: List[UInt8],
+    mask_width: Int,
+    lo_x: Int,
+    mask_origin_y: Int,
+    hi_x: Int,
+    first_row: Int,
+    last_row: Int,
+):
+    """`_fill_source_band` as a task, so the single-band path stays an
+    ordinary call with no coroutine machinery around it.
+
+    `source` and `mask` are borrowed, never owned: a heap-backed
+    aggregate handed to `create_task` by value is canvas_mojo#97, and
+    a gradient owns its list of stops.
+    """
+    _fill_source_band(
+        canvas,
+        source,
+        mask,
+        mask_width,
+        lo_x,
+        mask_origin_y,
+        hi_x,
+        first_row,
+        last_row,
+    )
+
+
+def _fill_source_band[
+    S: ColorSource
+](
+    mut canvas: Canvas,
+    source: S,
+    mask: List[UInt8],
+    mask_width: Int,
+    lo_x: Int,
+    mask_origin_y: Int,
+    hi_x: Int,
+    first_row: Int,
+    last_row: Int,
+):
+    """Paint rows [first_row, last_row) of an already-swept coverage
+    mask, taking each pixel's colour from `source`.
+
+    Bands write disjoint rows and only read the mask, which is what
+    lets `canvas` be shared mutably between them.
+    """
+    for py in range(first_row, last_row):
+        var row = (py - mask_origin_y) * mask_width
         for px in range(lo_x, hi_x):
             var coverage = Int(mask[row + px - lo_x])
             if coverage == 0:
