@@ -1,9 +1,11 @@
-"""Demo: all four ellipse variants side by side, same radii, at a
-large enough scale that the jaggedness is a real algorithm property
-and not just an artifact of too few pixels to represent the curve --
-outline hard-edged vs. AA, and fill hard-edged vs. AA, so the
-aliasing difference is visible for both, not just outlines. Mirrors
-circles.mojo's layout, generalized to independent x/y radii.
+"""Demo: every ellipse variant side by side, same radii, at a large
+enough scale that the jaggedness is a real algorithm property and not
+just an artifact of too few pixels to represent the curve -- outline
+hard-edged vs. AA, fill hard-edged vs. AA, and a wide anti-aliased
+ring. Mirrors circles.mojo's layout, generalized to independent x/y
+radii, including the ring: `width` is applied to each radius
+independently, so the band is exactly that wide at the four axis
+extremes and narrower in between.
 
 Run with:
     pixi run example
@@ -22,12 +24,13 @@ from canvas.io.png import write_png
 
 
 def main() raises:
-    var c = Canvas(2040, 480, Color(255, 255, 255))
+    var c = Canvas(2520, 480, Color(255, 255, 255))
 
     draw_ellipse(c, 300, 240, 210, 135, Color(150, 40, 180))
     draw_ellipse_aa(c, 780, 240, 210, 135, Color(150, 40, 180))
     fill_ellipse(c, 1260, 240, 210, 135, Color(150, 40, 180))
     fill_ellipse_aa(c, 1740, 240, 210, 135, Color(150, 40, 180))
+    draw_ellipse_aa(c, 2220, 240, 210, 135, Color(150, 40, 180), width=30.0)
 
     write_bmp(c, "examples/out_ellipse.bmp")
     write_png(c, "examples/out_ellipse.png")
