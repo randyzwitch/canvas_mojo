@@ -8,6 +8,7 @@ project.
 from std.testing import TestSuite, assert_equal, assert_true
 
 from canvas import (
+    BlendMode,
     Canvas,
     Color,
     DrawTarget,
@@ -43,6 +44,10 @@ def test_root_exports_draw_and_round_trip() raises:
     _draw_scene(canvas)
     assert_equal(canvas.get_pixel(0, 0).r, 255)
     assert_equal(canvas.get_pixel(3, 3).r, 0)
+
+    canvas.set_blend_mode(BlendMode.MULTIPLY)
+    assert_true(canvas.blend_mode() == BlendMode.MULTIPLY)
+    canvas.set_blend_mode(BlendMode.SOURCE_OVER)
 
     var layer = Canvas(2, 2, Color(0, 255, 0))
     draw_canvas(canvas, layer, 2, 2)

@@ -16,10 +16,17 @@ annotated groups, and `restore` has nothing to close. `draw_text`'s own
 `rotation` composes after it in the same attribute. SVG applies
 `stroke-width` in the element's user space, so a stroke under a scale
 widens with it, as it does on `Canvas`.
+
+`set_blend_mode` is carried the same way, as a
+`style="mix-blend-mode:..."` attribute. CSS names the six separable
+blend modes and nothing else, so the four Porter-Duff operators past
+the default -- SOURCE, DESTINATION_IN, DESTINATION_OUT, XOR -- emit no
+attribute and render as ordinary source-over.
 """
 
 from std.math import cos, pi, sin
 
+from canvas.blend import BlendMode, _css_blend_name
 from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
@@ -265,6 +272,20 @@ def _path_d(path: Path) -> String:
     return d
 
 
+struct _SvgState(ImplicitlyCopyable, Movable):
+    """What `SvgCanvas.save` records and `restore` puts back: this
+    backend's whole drawing state, which is the transform and the
+    blend mode.
+    """
+
+    var transform: Matrix2D
+    var blend: BlendMode
+
+    def __init__(out self, transform: Matrix2D, blend: BlendMode):
+        self.transform = transform
+        self.blend = blend
+
+
 struct SvgCanvas(DrawTarget, Movable):
     """Accumulates SVG body markup for a `width x height` document.
     `width`/`height` are public fields, as on `Canvas`.
@@ -283,10 +304,12 @@ struct SvgCanvas(DrawTarget, Movable):
     # a file as malformed markup.
     var _open_group: Bool
     # The current transform (see `save`), whether it is anything but
-    # the identity, and the stack `save` pushes onto.
+    # the identity, and the current blend mode.
     var _transform: Matrix2D
     var _transformed: Bool
-    var _saved: List[Matrix2D]
+    var _blend: BlendMode
+    # What `save` pushes: everything above that `restore` puts back.
+    var _saved: List[_SvgState]
 
     def __init__(out self, width: Int, height: Int):
         """An empty `width x height` SVG document.
@@ -302,7 +325,8 @@ struct SvgCanvas(DrawTarget, Movable):
         self._open_group = False
         self._transform = Matrix2D.identity()
         self._transformed = False
-        self._saved = List[Matrix2D]()
+        self._blend = BlendMode.SOURCE_OVER
+        self._saved = List[_SvgState]()
 
     def _transform_attr(self) -> String:
         """The `transform` attribute for an element drawn now: empty at
@@ -311,6 +335,16 @@ struct SvgCanvas(DrawTarget, Movable):
         if not self._transformed:
             return ""
         return ' transform="' + self._matrix_value() + '"'
+
+    def _blend_attr(self) -> String:
+        """The `style` attribute carrying `mix-blend-mode` for an
+        element drawn now: empty under SOURCE_OVER, and empty under a
+        Porter-Duff mode, which CSS cannot express.
+        """
+        var name = _css_blend_name(self._blend)
+        if name == "":
+            return ""
+        return ' style="mix-blend-mode:' + name + '"'
 
     def _matrix_value(self) -> String:
         """`matrix(a b c d e f)` for the current transform."""
@@ -332,18 +366,21 @@ struct SvgCanvas(DrawTarget, Movable):
         )
 
     def save(mut self):
-        """Push the current transform for `restore` to put back. This
-        backend has no clip state, so the transform is all it holds.
+        """Push the current transform and blend mode for `restore` to
+        put back. This backend has no clip state, so those two are all
+        it holds.
         """
-        self._saved.append(self._transform)
+        self._saved.append(_SvgState(self._transform, self._blend))
 
     def restore(mut self):
-        """Pop the transform `save` pushed. A no-op with nothing saved,
+        """Pop the state `save` pushed. A no-op with nothing saved,
         matching `Canvas.restore`.
         """
         if len(self._saved) == 0:
             return
-        self._set_transform(self._saved.pop())
+        var state = self._saved.pop()
+        self._set_transform(state.transform)
+        self._blend = state.blend
 
     def translate(mut self, tx: Float64, ty: Float64):
         """Shift subsequent elements by (tx, ty) in the current user
@@ -411,6 +448,33 @@ struct SvgCanvas(DrawTarget, Movable):
         """
         return self._transformed
 
+    def set_blend_mode(mut self, mode: BlendMode):
+        """Set how elements drawn from here on combine with what is
+        already painted, the counterpart of `Canvas.set_blend_mode`.
+
+        A separable mode (MULTIPLY, SCREEN, OVERLAY, DARKEN, LIGHTEN,
+        DIFFERENCE) becomes a `style="mix-blend-mode:..."` attribute on
+        each element. CSS has no keyword for the Porter-Duff operators
+        -- SOURCE, DESTINATION_IN, DESTINATION_OUT, XOR -- so those
+        emit no attribute at all and render as ordinary source-over.
+        A caller needing them has to use the raster backend.
+
+        `save`/`restore` carry the mode, as they do the transform.
+
+        Args:
+            mode: The blend mode later elements carry.
+        """
+        self._blend = mode
+
+    def blend_mode(self) -> BlendMode:
+        """The blend mode elements drawn now carry.
+
+        Returns:
+            The current mode, `BlendMode.SOURCE_OVER` until
+            `set_blend_mode` says otherwise.
+        """
+        return self._blend
+
     def _set_transform(mut self, matrix: Matrix2D):
         self._transform = matrix
         self._transformed = not matrix.is_identity()
@@ -441,6 +505,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + _opacity_attr("fill", color)
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -513,6 +578,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + gid
             + ')"'
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -564,6 +630,7 @@ struct SvgCanvas(DrawTarget, Movable):
                 width, dashes, dash_offset, cap, join, miter_limit, False
             )
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -588,6 +655,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + _opacity_attr("fill", color)
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -617,6 +685,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + _opacity_attr("fill", color)
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -649,6 +718,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + _opacity_attr("stroke", color)
             + ' stroke-width="1"'
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -702,6 +772,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + _opacity_attr("fill", color)
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -773,6 +844,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + '"'
             + _opacity_attr("fill", color)
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -814,6 +886,7 @@ struct SvgCanvas(DrawTarget, Movable):
                 width, dashes, dash_offset, cap, join, miter_limit, True
             )
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -846,6 +919,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + rule
             + _opacity_attr("fill", color)
             + self._transform_attr()
+            + self._blend_attr()
             + "/>\n"
         )
 
@@ -985,6 +1059,7 @@ struct SvgCanvas(DrawTarget, Movable):
             + anchor
             + '"'
             + transform
+            + self._blend_attr()
             + ">"
             + _escape_xml_text(text)
             + "</text>\n"
