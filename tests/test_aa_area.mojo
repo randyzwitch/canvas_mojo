@@ -7,6 +7,13 @@ multiple of 1/16 (a half-pixel triangle, a rectangle with quarter-pixel
 edges), a shallow edge that has to produce more than 17 distinct
 levels, and the nonzero union/cancellation semantics the sweep already
 defines, which the accumulation has to reproduce.
+
+Pixel (px, py) is the square [px - 0.5, px + 0.5] x [py - 0.5,
+py + 0.5], as everywhere in this package, so a shape drawn from 9.75
+to 20.25 covers three quarters of column 10 and of column 20. The
+first version of the rasterizer took the pixel to start at px and put
+every nonzero fill half a pixel off; the expectations below are the
+ones that catch that.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -40,29 +47,31 @@ def _assert_near(got: Int, want: Int, tol: Int, label: String) raises:
 
 
 def test_half_pixel_triangle_is_half_covered() raises:
-    # The triangle (0,0)-(1,0)-(0,1) inside pixel (0, 0) covers exactly
-    # half of it. The sweep's 4x4 grid reports 6/16; exact area says
-    # 128.
+    # The triangle over pixel (1, 1)'s square, [0.5, 1.5]^2, cut along
+    # its diagonal: (0.5,0.5)-(1.5,0.5)-(0.5,1.5) covers exactly half
+    # of the pixel and none of its neighbours. Exact area says 128.
     var c = Canvas(4, 4, BG)
     var p = Path()
-    p.move_to(0.0, 0.0)
-    p.line_to(1.0, 0.0)
-    p.line_to(0.0, 1.0)
+    p.move_to(0.5, 0.5)
+    p.line_to(1.5, 0.5)
+    p.line_to(0.5, 1.5)
     p.close()
     fill_path_aa(c, p, INK, FillRule.NONZERO)
-    _assert_near(_alpha_of(c, 0, 0), 128, 1, "half pixel")
-    assert_equal(_alpha_of(c, 1, 0), 0)
-    assert_equal(_alpha_of(c, 0, 1), 0)
-    assert_equal(_alpha_of(c, 1, 1), 0)
+    _assert_near(_alpha_of(c, 1, 1), 128, 1, "half pixel")
+    assert_equal(_alpha_of(c, 2, 1), 0)
+    assert_equal(_alpha_of(c, 1, 2), 0)
+    assert_equal(_alpha_of(c, 0, 0), 0)
+    assert_equal(_alpha_of(c, 2, 2), 0)
 
 
 def test_quarter_pixel_rectangle_edges() raises:
-    # x from 10.25 to 20.75, y from 5.5 to 9.5: the left and right
-    # columns are 3/4 covered, the top and bottom rows 1/2, the corners
-    # 3/8, the interior whole.
+    # x from 9.75 to 20.25, y from 5.0 to 9.0. Column 10 is
+    # [9.5, 10.5], so it is 3/4 covered, as is column 20; row 5 is
+    # [4.5, 5.5], half covered, as is row 9; the corners are 3/8 and
+    # the interior whole.
     var c = Canvas(32, 16, BG)
     var p = Path()
-    p.rect(10.25, 5.5, 10.5, 4.0)
+    p.rect(9.75, 5.0, 10.5, 4.0)
     fill_path_aa(c, p, INK, FillRule.NONZERO)
     assert_equal(_alpha_of(c, 15, 7), 255, "interior")
     _assert_near(_alpha_of(c, 10, 7), 191, 1, "left column")
@@ -108,17 +117,17 @@ def test_shallow_edge_has_more_than_seventeen_levels() raises:
 def test_even_odd_still_samples() raises:
     # The same half-pixel triangle under EVEN_ODD goes through the
     # sweep, whose coverage is a count of 16 samples: the alpha is a
-    # multiple of 255/16 and, with the samples that fall inside a
-    # diagonal, not the exact 128 -- the two rules are different
+    # multiple of 255/16 and, with the samples that fall on and beside
+    # a diagonal, not the exact 128 -- the two rules are different
     # rasterizers.
     var c = Canvas(4, 4, BG)
     var p = Path()
-    p.move_to(0.0, 0.0)
-    p.line_to(1.0, 0.0)
-    p.line_to(0.0, 1.0)
+    p.move_to(0.5, 0.5)
+    p.line_to(1.5, 0.5)
+    p.line_to(0.5, 1.5)
     p.close()
     fill_path_aa(c, p, INK, FillRule.EVEN_ODD)
-    var a = _alpha_of(c, 0, 0)
+    var a = _alpha_of(c, 1, 1)
     var sixteenths = Int(Float64(a) / 255.0 * 16.0 + 0.5)
     _assert_near(a, Int(Float64(sixteenths) / 16.0 * 255.0 + 0.5), 1, "sampled")
     assert_true(a != 128 and a > 0, "sampled, not exact: " + String(a))
@@ -152,13 +161,13 @@ def test_nonzero_union_and_cancellation() raises:
 
 def test_polygon_goes_through_area_and_strokes_stay_sampled() raises:
     var tri: List[FPoint] = [
-        FPoint(0.0, 0.0),
-        FPoint(1.0, 0.0),
-        FPoint(0.0, 1.0),
+        FPoint(0.5, 0.5),
+        FPoint(1.5, 0.5),
+        FPoint(0.5, 1.5),
     ]
     var c = Canvas(4, 4, BG)
     fill_polygon_aa(c, tri, INK, FillRule.NONZERO)
-    _assert_near(_alpha_of(c, 0, 0), 128, 1, "polygon half pixel")
+    _assert_near(_alpha_of(c, 1, 1), 128, 1, "polygon half pixel")
 
     # A stroke is overlapping pieces, which accumulation over-covers at
     # their shared edge pixels (see aa_area's docstring), so strokes
@@ -186,15 +195,39 @@ def test_shape_past_the_canvas_edges() raises:
             assert_equal(_alpha_of(c, x, y), 255)
 
     # And one straddling only the left edge keeps its fractional right
-    # column.
+    # column: it ends at x = 5.0, the middle of column 5.
     var d = Canvas(16, 12, BG)
     var q = Path()
-    q.rect(-5.0, 2.0, 10.5, 5.0)
+    q.rect(-5.0, 2.0, 10.0, 5.0)
     fill_path_aa(d, q, INK, FillRule.NONZERO)
     assert_equal(_alpha_of(d, 0, 4), 255)
     assert_equal(_alpha_of(d, 4, 4), 255)
     _assert_near(_alpha_of(d, 5, 4), 128, 1, "half column")
     assert_equal(_alpha_of(d, 6, 4), 0)
+
+
+def test_nonzero_and_even_odd_agree_on_where_a_shape_is() raises:
+    # The two rasterizers must put a shape in the same place: a square
+    # from 3.0 to 9.0 is wholly inside pixels 4..8 and half inside
+    # pixels 3 and 9 either way. The first area rasterizer disagreed
+    # with the sweep by half a pixel here.
+    var p = Path()
+    p.rect(3.0, 3.0, 6.0, 6.0)
+    var area = Canvas(14, 14, BG)
+    fill_path_aa(area, p, INK, FillRule.NONZERO)
+    var sampled = Canvas(14, 14, BG)
+    fill_path_aa(sampled, p, INK, FillRule.EVEN_ODD)
+    for x in range(14):
+        var a = _alpha_of(area, x, 6)
+        var b = _alpha_of(sampled, x, 6)
+        _assert_near(a, b, 8, "row 6, column " + String(x))
+        var c = _alpha_of(area, 6, x)
+        var d = _alpha_of(sampled, 6, x)
+        _assert_near(c, d, 8, "column 6, row " + String(x))
+    _assert_near(_alpha_of(area, 3, 6), 128, 1, "half a column at 3")
+    _assert_near(_alpha_of(area, 9, 6), 128, 1, "half a column at 9")
+    assert_equal(_alpha_of(area, 2, 6), 0)
+    assert_equal(_alpha_of(area, 10, 6), 0)
 
 
 def test_clip_path_mask_has_fine_levels() raises:
