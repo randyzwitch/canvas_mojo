@@ -1602,10 +1602,11 @@ def _stroke_edges(
     per drawn run of the path (`_outline_open`), or two rings for a
     closed solid path (`_outline_closed`), for `_area_edges_aa` to fill
     under nonzero -- when every outline is simple. Each run is checked
-    first (`_run_is_simple`, arithmetic only); when a corner fails (a
-    reversal, or a turn too sharp for its segments to reach the inner
-    offset lines' crossing: a hairpin in a noisy series) the stroke is
-    built as `_stroke_pieces` instead and marked for the sampled
+    first (`_run_is_simple`, arithmetic only), and the dash walk checks
+    each corner as a run gains it; when a corner fails (a reversal, or
+    a turn too sharp for its segments to reach the inner offset lines'
+    crossing: a hairpin in a noisy series) the stroke is built as
+    `_stroke_pieces` instead and marked for the sampled
     sweep, whose per-sample winding takes the union of overlapping
     bodies exactly. Both are the same shape; they differ in how the
     coverage of an edge pixel is computed.
@@ -1629,9 +1630,9 @@ def _stroke_edges(
     if count == 0 or half_width <= 0.0:
         return _StrokeShape(_EdgeTable(), True)
     var pattern = _DashPattern(dashes, dash_offset)
-    var edges = _EdgeTable(8 * count + 32)
-    edges.set_map(matrix)
     if count == 1:
+        var edges = _EdgeTable()
+        edges.set_map(matrix)
         if pattern.is_on(0.0) and (closed or cap == LineCap.ROUND):
             _add_round_dot(edges, points[0].x, points[0].y, half_width)
         return _StrokeShape(edges^, True)
@@ -1681,6 +1682,11 @@ def _stroke_edges(
                 ),
                 False,
             )
+        # Reserved only once the outline is known to be simple: the
+        # fallback builds its own table, so a table reserved before the
+        # check is thrown away on every hairpin.
+        var edges = _EdgeTable(8 * count + 32)
+        edges.set_map(matrix)
         if closed:
             simple = _outline_closed(
                 edges, xs, ys, half_width, join, miter_limit
@@ -1739,8 +1745,40 @@ def _stroke_edges(
                     run_x.append(ax + dx * t0)
                     run_y.append(ay + dy * t0)
                     in_run = True
-                run_x.append(ax + dx * t1)
-                run_y.append(ay + dy * t1)
+                var nx = ax + dx * t1
+                var ny = ay + dy * t1
+                # The run's last point becomes an interior corner when
+                # this one lands, so a hairpin stops the walk here
+                # rather than after the whole path has been divided
+                # into runs; `_run_is_simple` below remains the
+                # authority on the runs that are built.
+                var n = len(run_x)
+                if n - run_first[len(run_first) - 1] >= 2:
+                    if not _corner_is_simple(
+                        run_x[n - 1],
+                        run_y[n - 1],
+                        run_x[n - 2],
+                        run_y[n - 2],
+                        nx,
+                        ny,
+                        half_width,
+                    ):
+                        return _StrokeShape(
+                            _stroke_pieces(
+                                points,
+                                closed,
+                                half_width,
+                                cap,
+                                dashes,
+                                dash_offset,
+                                join,
+                                miter_limit,
+                                matrix,
+                            ),
+                            False,
+                        )
+                run_x.append(nx)
+                run_y.append(ny)
                 if boundary < seg_end:
                     run_ends_path.append(False)
                     in_run = False
@@ -1753,7 +1791,7 @@ def _stroke_edges(
         run_ends_path.append(not closed)
     var runs = len(run_first)
     if runs == 0:
-        return _StrokeShape(edges^, True)
+        return _StrokeShape(_EdgeTable(), True)
     # A closed path drawn all the way round is a solid ring after all.
     if closed and runs == 1 and run_starts_path[0] and pattern.is_on(distance):
         var xs = List[Float64]()
@@ -1774,6 +1812,8 @@ def _stroke_edges(
                 ),
                 False,
             )
+        var edges = _EdgeTable(8 * count + 32)
+        edges.set_map(matrix)
         simple = _outline_closed(edges, xs, ys, half_width, join, miter_limit)
         return _finish_stroke(
             edges^,
@@ -1791,6 +1831,8 @@ def _stroke_edges(
     # A closed path whose pattern is on across its starting vertex:
     # the last run continues into the first.
     var merge_last = closed and runs >= 2 and run_starts_path[0] and in_run
+    var edges = _EdgeTable(8 * count + 32)
+    edges.set_map(matrix)
     for r in range(runs):
         if merge_last and r == 0:
             continue

@@ -18,6 +18,7 @@ ones that catch that.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
+from canvas.aa_crossing import _EdgeTable
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
@@ -251,6 +252,30 @@ def test_clip_path_mask_has_fine_levels() raises:
             distinct += 1
     assert_true(distinct > 17, String(distinct) + " mask levels")
     c.pop_clip_path()
+
+
+def test_edge_table_bounds() raises:
+    # Empty: nothing to fill, and a box that says so.
+    var empty = _EdgeTable()
+    var e = empty.bounds()
+    assert_equal(e[0], 0)
+    assert_equal(e[1], 0)
+    assert_equal(e[2], 0)
+    assert_equal(e[3], 0)
+
+    # Both ends of every edge widen the box, the end an edge leans to
+    # (x0 + dx) as much as the one it starts from, and the box is
+    # floored and ceiled outward. A horizontal edge is dropped by
+    # `add_edge` and so leaves no trace here.
+    var t = _EdgeTable()
+    t.add_edge(3.2, 1.5, 0.4, 7.9)
+    t.add_edge(2.0, -2.5, 9.6, 3.0)
+    t.add_edge(-50.0, 4.0, 60.0, 4.0)
+    var b = t.bounds()
+    assert_equal(b[0], 0)
+    assert_equal(b[1], -3)
+    assert_equal(b[2], 10)
+    assert_equal(b[3], 8)
 
 
 def main() raises:
