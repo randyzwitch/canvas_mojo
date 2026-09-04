@@ -15,7 +15,7 @@ from canvas.text.font_discovery import (
     resolve_font_file,
     resolve_font_file_for_char,
 )
-from canvas.geometry import Point, Transform2D
+from canvas.geometry import Matrix2D, Point, Transform2D
 from canvas.gradient import ColorSource, LinearGradient, RadialGradient
 from canvas.fill_rule import FillRule
 from canvas.shapes.lines import (

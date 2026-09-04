@@ -26,6 +26,7 @@ from canvas.shapes.lines import (
     draw_polyline_aa,
 )
 from canvas.shapes.polygon_fill import fill_polygon
+from canvas.path import fill_path_aa, _ring_path, _wedge_path
 
 
 # Below this many pixels in a shape's bounding box, the fill runs
@@ -469,6 +470,49 @@ def fill_arc_aa(
         color: Fill color.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
     """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(cx, cy)
+            var turn = m.rotation_angle()
+            _fill_arc_aa_device(
+                canvas,
+                p.x,
+                p.y,
+                radius * m.scale_factor(),
+                start_angle + turn,
+                end_angle + turn,
+                color,
+                supersample,
+            )
+            return
+        fill_path_aa(
+            canvas,
+            _wedge_path(cx, cy, radius, start_angle, end_angle),
+            color,
+            supersample=supersample,
+        )
+        return
+    _fill_arc_aa_device(
+        canvas, cx, cy, radius, start_angle, end_angle, color, supersample
+    )
+
+
+def _fill_arc_aa_device(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+    supersample: Int = 4,
+):
+    """`fill_arc_aa` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
+    """
     if radius <= 0.0:
         return
 
@@ -737,6 +781,62 @@ def fill_ring_sector_aa(
         end_angle: Sweep end, radians. Must be >= start_angle.
         color: Fill color.
         supersample: Sub-pixel grid side length per pixel (N -> N*N samples).
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_similarity():
+            var p = m.apply(cx, cy)
+            var s = m.scale_factor()
+            var turn = m.rotation_angle()
+            _fill_ring_sector_aa_device(
+                canvas,
+                p.x,
+                p.y,
+                inner_radius * s,
+                outer_radius * s,
+                start_angle + turn,
+                end_angle + turn,
+                color,
+                supersample,
+            )
+            return
+        fill_path_aa(
+            canvas,
+            _ring_path(
+                cx, cy, inner_radius, outer_radius, start_angle, end_angle
+            ),
+            color,
+            supersample=supersample,
+        )
+        return
+    _fill_ring_sector_aa_device(
+        canvas,
+        cx,
+        cy,
+        inner_radius,
+        outer_radius,
+        start_angle,
+        end_angle,
+        color,
+        supersample,
+    )
+
+
+def _fill_ring_sector_aa_device(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    inner_radius: Float64,
+    outer_radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+    supersample: Int = 4,
+):
+    """`fill_ring_sector_aa` for device-space arguments: the body every
+    call lands in. It has no transform check of its own, so its
+    loops compile with nothing ahead of them and it never calls
+    back into the public function.
     """
     if (
         outer_radius <= 0.0
