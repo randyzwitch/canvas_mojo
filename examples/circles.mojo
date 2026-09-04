@@ -1,8 +1,10 @@
-"""Demo: all four circle variants side by side, same radius, at a
-large enough scale that the jaggedness is a real algorithm property
-and not just an artifact of too few pixels to represent the curve --
-outline hard-edged vs. AA, and fill hard-edged vs. AA, so the
-aliasing difference is visible for both, not just outlines.
+"""Demo: every circle variant side by side, same radius, at a large
+enough scale that the jaggedness is a real algorithm property and not
+just an artifact of too few pixels to represent the curve -- outline
+hard-edged vs. AA, fill hard-edged vs. AA, so the aliasing difference
+is visible for both, and last a wide anti-aliased ring, since
+`draw_circle_aa` takes a stroke `width` and the radius stays the
+middle of that stroke.
 
 Run with:
     pixi run example
@@ -21,12 +23,16 @@ from canvas.io.png import write_png
 
 
 def main() raises:
-    var c = Canvas(2040, 480, Color(255, 255, 255))
+    var c = Canvas(2520, 480, Color(255, 255, 255))
 
     draw_circle(c, 300, 240, 180, Color(150, 40, 180))
     draw_circle_aa(c, 780, 240, 180, Color(150, 40, 180))
     fill_circle(c, 1260, 240, 180, Color(150, 40, 180))
     fill_circle_aa(c, 1740, 240, 180, Color(150, 40, 180))
+    # A 30px-wide ring at the same radius: the stroke straddles the
+    # radius, 15px either side of it, so this ring's outer edge sits
+    # where a filled disk 15px larger would end.
+    draw_circle_aa(c, 2220, 240, 180, Color(150, 40, 180), width=30.0)
 
     write_bmp(c, "examples/out_circles.bmp")
     write_png(c, "examples/out_circles.png")
