@@ -22,6 +22,38 @@ def _div255(value: Int) -> Int:
     return (value * _DIV255_MUL) >> _DIV255_SHIFT
 
 
+comptime _HEX_DIGITS = "0123456789abcdef"
+
+
+def _hex_value(byte: UInt8) raises -> Int:
+    """One ASCII hex digit's value, 0-15."""
+    var c = Int(byte)
+    if c >= ord("0") and c <= ord("9"):
+        return c - ord("0")
+    if c >= ord("a") and c <= ord("f"):
+        return c - ord("a") + 10
+    if c >= ord("A") and c <= ord("F"):
+        return c - ord("A") + 10
+    raise Error("Color(hex): '" + chr(c) + "' is not a hex digit")
+
+
+def _hex_pair(high: UInt8, low: UInt8) raises -> Int:
+    """Two ASCII hex digits as one 0-255 channel value."""
+    return _hex_value(high) * 16 + _hex_value(low)
+
+
+def _hex_byte(value: UInt8) -> String:
+    """One channel as two lowercase hex digits.
+
+    `_HEX_DIGITS` is a fixed, pure-ASCII literal, so a raw UTF-8 byte
+    index (`[byte=...]`) is exactly the character it looks like. Mojo
+    `String` has no plain positional `s[i]` indexing -- it indexes by
+    `[byte=]`/`[codepoint=]`/`[grapheme=]`.
+    """
+    var v = Int(value)
+    return String(_HEX_DIGITS[byte=v // 16]) + String(_HEX_DIGITS[byte=v % 16])
+
+
 struct Color(ImplicitlyCopyable, Movable):
     """An 8-bit-per-channel RGBA color."""
 
@@ -43,6 +75,62 @@ struct Color(ImplicitlyCopyable, Movable):
         self.g = g
         self.b = b
         self.a = a
+
+    def __init__(out self, hex: String) raises:
+        """A color from a CSS-style hex string: `"#rrggbb"` or
+        `"#rrggbbaa"`, with or without the leading `#`, in either case.
+        Digits are two per channel; the 3-digit `#rgb` shorthand is not
+        accepted.
+
+        Args:
+            hex: `"#rrggbb"` or `"#rrggbbaa"`. Alpha defaults to fully
+                opaque when the string carries only six digits.
+
+        Raises:
+            Error: `hex` is not 6 or 8 hex digits, or contains a
+                character that is not one.
+        """
+        var digits = String(hex[byte=1:]) if hex.startswith("#") else hex
+
+        var bytes = digits.as_bytes()
+        var count = len(bytes)
+        if count != 6 and count != 8:
+            raise Error(
+                "Color(hex): expected 6 or 8 hex digits, optionally led by"
+                " '#' (got '"
+                + hex
+                + "')"
+            )
+
+        self.r = UInt8(_hex_pair(bytes[0], bytes[1]))
+        self.g = UInt8(_hex_pair(bytes[2], bytes[3]))
+        self.b = UInt8(_hex_pair(bytes[4], bytes[5]))
+        self.a = UInt8(_hex_pair(bytes[6], bytes[7])) if count == 8 else 255
+
+    def with_alpha(self, a: UInt8) -> Color:
+        """This color at a different alpha, its channels untouched --
+        the usual way a palette entry is faded for a hover state or a
+        de-emphasized series.
+
+        Args:
+            a: Alpha channel for the result, 0-255.
+
+        Returns:
+            The same r/g/b at alpha `a`.
+        """
+        return Color(self.r, self.g, self.b, a)
+
+    def to_hex(self) -> String:
+        """This color as `"#rrggbb"`, lowercase.
+
+        Alpha is not included: the two consumers of a hex string here,
+        SVG and CSS, both carry opacity in a separate attribute, and
+        `svg.mojo` writes `self.a` into one. Read `.a` for it.
+
+        Returns:
+            `"#rrggbb"`.
+        """
+        return "#" + _hex_byte(self.r) + _hex_byte(self.g) + _hex_byte(self.b)
 
     def blend_over(self, bg: Color) -> Color:
         """Alpha-composite self over bg (straight-alpha src-over).
