@@ -5,6 +5,10 @@ canvas.shapes can do on their own (they're what fill_path/stroke_path
 actually call once a Path is flattened -- see path.mojo's own
 docstring).
 
+The last pair is about `arc_to`'s sweep direction: the same commands
+over the same endpoints bulge outward or bite inward depending only on
+whether the end angle is above or below the start.
+
 Run with:
     pixi run example
 """
@@ -159,6 +163,35 @@ def main() raises:
     )
     ribbon.close()
     fill_path_aa(c, ribbon, Color(60, 100, 190))
+
+    # Sweep direction, as the only difference between two shapes.
+    # Both tabs are the same three lines plus one arc_to over the same
+    # two endpoints on the top edge; the left one sweeps pi -> 2*pi and
+    # the right one sweeps pi -> 0. Angles increase clockwise on screen
+    # here (y grows downward), so the increasing sweep carries the arc
+    # up and out of the shape while the decreasing one carries it down
+    # and into it -- a bulge and a bite from the same four commands.
+    var tab_y = 1020.0
+    var tab_w = 400.0
+    var tab_h = 300.0
+
+    var bulge_x = 1500.0
+    var bulge = Path()
+    bulge.move_to(bulge_x, tab_y + tab_h)
+    bulge.line_to(bulge_x, tab_y)
+    bulge.arc_to(bulge_x + tab_w / 2.0, tab_y, tab_w / 2.0, pi, 2.0 * pi)
+    bulge.line_to(bulge_x + tab_w, tab_y + tab_h)
+    bulge.close()
+    fill_path_aa(c, bulge, Color(190, 80, 40))
+
+    var bite_x = 2100.0
+    var bite = Path()
+    bite.move_to(bite_x, tab_y + tab_h)
+    bite.line_to(bite_x, tab_y)
+    bite.arc_to(bite_x + tab_w / 2.0, tab_y, tab_w / 2.0, pi, 0.0)
+    bite.line_to(bite_x + tab_w, tab_y + tab_h)
+    bite.close()
+    fill_path_aa(c, bite, Color(190, 80, 40))
 
     write_bmp(c, "examples/out_path.bmp")
     write_png(c, "examples/out_path.png")
