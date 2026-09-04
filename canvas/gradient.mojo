@@ -1,19 +1,25 @@
-"""Color gradients: `LinearGradient` and `RadialGradient`, consumed by
-the gradient fills in canvas.shapes.rects (`fill_rect_gradient`,
-`fill_rect_radial_gradient`) and path.mojo (`fill_path_gradient`,
-`fill_path_radial_gradient` and their `_aa` variants). Those are the
-only gradient-aware fills; circle/ellipse/polygon variants aren't built.
+"""Color gradients: `LinearGradient`, `RadialGradient` and
+`ConicGradient`, consumed by the gradient fills in canvas.shapes.rects
+(`fill_rect_gradient`, `fill_rect_radial_gradient`) and path.mojo
+(`fill_path_gradient`, `fill_path_radial_gradient`,
+`fill_path_conic_gradient` and their `_aa` variants). Those are the
+only gradient-aware fills; circle/ellipse/polygon variants aren't
+built, and `ConicGradient` has no rect fill of its own.
 
-Both kinds reduce a point to a projected position `t` -- distance along
-an axis (linear) or from a center relative to a radius (radial) -- then
-share `_color_at_t` for stop lookup and interpolation. Only the
-projection differs, so only the projection lives on each struct.
+All three reduce a point to a projected position `t` -- distance along
+an axis (linear), from a center relative to a radius (radial), or the
+angle around a center relative to a full turn (conic) -- then share
+`_color_at_t` for stop lookup and interpolation. Only the projection
+differs, so only the projection lives on each struct.
 
-Extend behavior is "pad" only: a point past either endpoint or outside
-the radius takes that edge's color, clamped. No repeat or reflect.
+Linear and radial extend "pad" only: a point past either endpoint or
+outside the radius takes that edge's color, clamped. No repeat or
+reflect. A conic gradient has no such edge -- its projection wraps
+around a full turn instead of clamping, so `t` is already in [0, 1)
+before it reaches `_color_at_t`.
 """
 
-from std.math import sqrt
+from std.math import atan2, floor, pi, sqrt
 
 from canvas.color import Color
 
@@ -277,4 +283,83 @@ struct RadialGradient(ColorSource, Movable):
         var t = 1.0
         if self.radius != 0.0:
             t = dist / self.radius
+        return _color_at_t(self.stops, t)
+
+
+struct ConicGradient(ColorSource, Movable):
+    """A conic (angular) gradient centered at (cx, cy): offset 0.0 sits
+    at `start_angle`, and sweeping clockwise around the center reaches
+    offset 1.0 back at `start_angle`, a full turn later. Add stops with
+    add_stop(), then pass to fill_path_conic_gradient/
+    fill_path_conic_gradient_aa (or query color_at() directly).
+
+    `start_angle` is in radians, in the convention HTML5 Canvas's
+    `createConicGradient` uses: 0.0 points along +x, and the sweep
+    increases clockwise on screen. This package's pixel y already
+    increases downward, so that convention falls directly out of
+    `atan2(dy, dx)` -- no sign flip needed, unlike a gradient defined
+    in a y-up math frame.
+
+    There is no rect fill for this gradient: a rectangle has no
+    natural center to sweep around the way RadialGradient's highlight
+    use does, so only the path fills exist.
+    """
+
+    var cx: Float64
+    var cy: Float64
+    var start_angle: Float64
+    var stops: List[_GradientStop]
+
+    def __init__(out self, cx: Float64, cy: Float64, start_angle: Float64):
+        """A gradient with no stops yet -- add at least one with
+        add_stop() before calling color_at().
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            start_angle: Angle in radians where offset 0.0 (and 1.0)
+                sit, measured from +x, increasing clockwise.
+        """
+        self.cx = cx
+        self.cy = cy
+        self.start_angle = start_angle
+        self.stops = List[_GradientStop]()
+
+    def add_stop(mut self, offset: Float64, color: Color):
+        """Add a color stop at `offset` (0.0 at `start_angle`, 1.0 a
+        full clockwise turn later, back at `start_angle`).
+
+        Args:
+            offset: Position around the sweep, 0.0 to 1.0. Stops need
+                not be added in offset order; each is inserted into
+                place.
+            color: This stop's color.
+        """
+        _insert_stop(self.stops, offset, color)
+
+    def color_at(self, x: Float64, y: Float64) -> Color:
+        """The gradient's color at (x, y): the clockwise angle from
+        `start_angle` to (x, y) around the center, as a fraction of a
+        full turn, then the stop lookup LinearGradient.color_at uses.
+
+        (cx, cy) itself has no angle to measure. `atan2(0, 0)` is
+        conventionally 0, but resolving the center that way would tie
+        its color to `start_angle` rather than leaving it undefined,
+        so the center pixel is fixed at t=0.0 (the first stop's color)
+        regardless of `start_angle`.
+
+        Args:
+            x: Point x.
+            y: Point y.
+
+        Returns:
+            The interpolated color, transparent black if no stops have
+            been added yet.
+        """
+        var dx = x - self.cx
+        var dy = y - self.cy
+        var t = 0.0
+        if dx != 0.0 or dy != 0.0:
+            var turns = (atan2(dy, dx) - self.start_angle) / (2.0 * pi)
+            t = turns - floor(turns)
         return _color_at_t(self.stops, t)
