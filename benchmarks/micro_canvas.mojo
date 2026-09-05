@@ -39,6 +39,8 @@ from std.time import perf_counter_ns
 from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
+from canvas.fill_rule import FillRule
+from canvas.path import Path, fill_path_aa
 from canvas.shapes.lines import draw_line, draw_line_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
@@ -281,6 +283,32 @@ struct LineAaHorizontal(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
+struct FillPathGlyphSized(Movable, MicroCase):
+    """A quadrilateral the size of a glyph, filled through the
+    exact-area path: the small-shape end of the rasterizer, where
+    per-call overhead is most of the cost.
+    """
+
+    var canvas: Canvas
+    var path: Path
+
+    def __init__(out self) raises:
+        self.canvas = Canvas(W, H, WHITE)
+        self.path = Path()
+        self.path.move_to(50.3, 40.2)
+        self.path.line_to(62.7, 41.0)
+        self.path.line_to(66.1, 70.4)
+        self.path.line_to(48.9, 68.8)
+        self.path.close()
+
+    def name(self) -> String:
+        return "fill_path_aa glyph-sized quad"
+
+    def run(mut self, mut sink: Int) raises:
+        fill_path_aa(self.canvas, self.path, INK, FillRule.NONZERO)
+        sink += Int(self.canvas.get_pixel(55, 55).r)
+
+
 struct TextCached(Movable, MicroCase):
     var canvas: Canvas
     var cache: FontCache
@@ -366,6 +394,10 @@ def main() raises:
     var line_h = LineAaHorizontal()
     var line_d = LineAaDiagonal()
     compare(line_h, line_d, sink, rounds=9, iters=200)
+
+    var small = FillPathGlyphSized()
+    _ = measure(small, sink, rounds=9, iters=2000)
+    print("")
 
     var text_a = TextCached()
     var text_b = TextScaled()
