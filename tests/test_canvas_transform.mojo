@@ -28,6 +28,13 @@ from std.testing import (
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import draw_canvas
+from canvas.resize import downsample
+from canvas.text.render import (
+    _draw_block_direct,
+    _layout_block,
+)
+from canvas.text.font_discovery import FontSlant, FontWeight
+from canvas.text.text_align import TextAlign
 from canvas.geometry import FPoint, Matrix2D, Point, Transform2D
 from canvas.gradient import LinearGradient
 from canvas.path import Path, fill_path, fill_path_aa
@@ -494,6 +501,150 @@ def test_text_under_scale_and_rotation() raises:
     assert_true(_ink_column_span(up, 37) > 0, "rotated text has ink")
     assert_true(_ink_column_span(up, 45) == 0, "none right of the anchor")
     assert_true(_ink_width(up) < plain_width, "and is narrower than upright")
+
+
+def _ink_centroid(c: Canvas) -> FPoint:
+    """The ink-weighted centre of everything drawn, in pixels."""
+    var sum_x = 0.0
+    var sum_y = 0.0
+    var total = 0.0
+    for y in range(c.height):
+        for x in range(c.width):
+            var p = c.get_pixel(x, y)
+            var ink = Float64(255 - Int(p.r))
+            if ink > 0.0:
+                sum_x += ink * Float64(x)
+                sum_y += ink * Float64(y)
+                total += ink
+    if total == 0.0:
+        return FPoint(-1.0, -1.0)
+    return FPoint(sum_x / total, sum_y / total)
+
+
+def _max_channel_diff(a: Canvas, b: Canvas) -> Int:
+    var worst = 0
+    for y in range(a.height):
+        for x in range(a.width):
+            var pa = a.get_pixel(x, y)
+            var pb = b.get_pixel(x, y)
+            var d = abs(Int(pa.r) - Int(pb.r))
+            if d > worst:
+                worst = d
+    return worst
+
+
+def test_scaled_text_through_the_cache_matches_the_direct_fill() raises:
+    # Under scale(3) the glyphs come from the mask cache, rasterized
+    # at the placed size and composited at a 1/64-px-quantised origin.
+    # The direct outline fill of the same placement is the reference:
+    # the two must agree to within the quantisation's effect on edge
+    # pixels, and have the same ink extent.
+    var cache = FontCache()
+    var cached = Canvas(W, H, BG)
+    cached.scale(3.0, 3.0)
+    draw_text(cached, 3.4, 20.7, "Abc", INK, 12.0, cache=cache)
+
+    var direct = Canvas(W, H, BG)
+    var block = _layout_block(
+        "Abc",
+        12.0,
+        "Sans",
+        FontSlant.NORMAL,
+        FontWeight.NORMAL,
+        0.0,
+        TextAlign.LEFT,
+        True,
+        True,
+        cache,
+    )
+    var placement = Matrix2D.translation(3.4, 20.7).then(
+        Matrix2D.scaling(3.0, 3.0)
+    )
+    _draw_block_direct(
+        direct,
+        block,
+        placement,
+        INK,
+        12.0,
+        "Sans",
+        FontSlant.NORMAL,
+        FontWeight.NORMAL,
+        cache,
+    )
+    assert_equal(_ink_width(cached), _ink_width(direct), "same ink width")
+    var diff = _max_channel_diff(cached, direct)
+    assert_true(diff <= 48, "edge pixels within quantisation: " + String(diff))
+    var cc = _ink_centroid(cached)
+    var dc = _ink_centroid(direct)
+    assert_true(
+        abs(cc.x - dc.x) < 0.1 and abs(cc.y - dc.y) < 0.1,
+        "same centroid: " + String(cc.x) + " vs " + String(dc.x),
+    )
+
+
+def test_supersampling_places_text_where_scale_one_does() raises:
+    # Rendering at a factor s and shrinking with `downsample` averages,
+    # into output pixel p, the device block whose centre is user
+    # p + (s - 1) / (2 s), so a drawing scaled by s alone shows up that
+    # much *early* after the shrink -- 3/8 px at s = 4, for every
+    # primitive, not only text. The recipe `downsample` documents,
+    # translate by (s - 1) / 2 before the scale, cancels it; this pins
+    # both halves.
+    var cache = FontCache()
+    var plain = Canvas(W, H, BG)
+    draw_text(plain, 10.3, 25.6, "Abc", INK, 12.0, cache=cache)
+    var a = _ink_centroid(plain)
+    assert_true(a.x >= 0.0, "drew ink")
+
+    var offset = Canvas(4 * W, 4 * H, BG)
+    offset.translate(1.5, 1.5)
+    offset.scale(4.0, 4.0)
+    draw_text(offset, 10.3, 25.6, "Abc", INK, 12.0, cache=cache)
+    var b = _ink_centroid(downsample(offset, 4))
+    assert_true(
+        abs(a.x - b.x) < 0.05 and abs(a.y - b.y) < 0.05,
+        "with the offset: " + String(b.x - a.x) + ", " + String(b.y - a.y),
+    )
+
+    var bare = Canvas(4 * W, 4 * H, BG)
+    bare.scale(4.0, 4.0)
+    draw_text(bare, 10.3, 25.6, "Abc", INK, 12.0, cache=cache)
+    var c = _ink_centroid(downsample(bare, 4))
+    assert_true(
+        abs((a.x - c.x) - 0.375) < 0.03 and abs((a.y - c.y) - 0.375) < 0.03,
+        "without it, 3/8 px early: "
+        + String(c.x - a.x)
+        + ", "
+        + String(c.y - a.y),
+    )
+
+
+def test_scaled_and_rotated_text_hit_the_glyph_mask_cache() raises:
+    var cache = FontCache()
+    var c = Canvas(W, H, BG)
+    c.scale(3.0, 3.0)
+    draw_text(c, 3, 20, "Abc", INK, 12.0, cache=cache)
+    var after_first = cache.glyph_mask_count()
+    assert_true(after_first >= 3, "one mask per glyph at least")
+    draw_text(c, 3, 20, "Abc", INK, 12.0, cache=cache)
+    assert_equal(
+        cache.glyph_mask_count(), after_first, "the second draw is all hits"
+    )
+    c.reset_transform()
+    c.scale(2.0, 2.0)
+    draw_text(c, 3, 20, "Abc", INK, 12.0, cache=cache)
+    assert_true(
+        cache.glyph_mask_count() > after_first, "a new scale is a new key"
+    )
+    var before_rotated = cache.glyph_mask_count()
+    var r = Canvas(W, H, BG)
+    draw_text(r, 40, 60, "Abc", INK, 12.0, rotation=0.5, cache=cache)
+    assert_true(
+        cache.glyph_mask_count() > before_rotated, "rotated glyphs are cached"
+    )
+    var after_rotated = cache.glyph_mask_count()
+    draw_text(r, 40, 60, "Abc", INK, 12.0, rotation=0.5, cache=cache)
+    assert_equal(cache.glyph_mask_count(), after_rotated, "and hit again")
 
 
 def main() raises:

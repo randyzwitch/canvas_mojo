@@ -25,10 +25,13 @@ horizontally against that same anchor.
 
 Rotation and multi-line share one code path with the single-line case.
 `_layout_block` and draw_text's render pass both walk each line's glyphs
-from a shared anchor-relative local layout, and each glyph's pen
-position and outline are rotated around `(x, y)` and translated in one
-pass (`_place_glyph_path`). At rotation=0.0 with one line, cos=1/sin=0
-leaves every point unchanged.
+from a shared anchor-relative local layout. A rotated block, and a
+block under a canvas transform that is a similarity, places each glyph
+by mapping its pen position through one matrix and compositing a mask
+cached at that orientation and scale (`_draw_block_similarity`); a
+non-uniform scale or skew fills each mapped outline directly
+(`_draw_block_direct`). At rotation=0.0 with one line the layout's
+cos=1/sin=0 leaves every point unchanged.
 
 One shaping step (`_shape_line`) turns each line's text into the glyph
 sequence every pass then walks, which is what keeps `measure_text` and
@@ -1206,11 +1209,13 @@ def _draw_text_transformed(
 ) raises:
     """`draw_text` under a canvas transform that is more than a
     translation. The block is laid out in user space exactly as the
-    untransformed call lays it out, and each glyph's outline goes
-    through one matrix -- the block rotation about the anchor, the
-    anchor's translation, then the canvas transform -- and is filled
-    directly. The glyph mask cache holds glyphs at one scale and
-    orientation, so it is not used here.
+    untransformed call lays it out, and each glyph goes through one
+    matrix -- the block rotation about the anchor, the anchor's
+    translation, then the canvas transform. When that placement is a
+    similarity (a uniform scale and a rotation: supersampling, rotated
+    labels) the glyphs are composited from the mask cache at the placed
+    size and orientation; a non-uniform scale or a skew fills each
+    outline directly.
     """
     var block = _layout_block(
         text,
@@ -1226,42 +1231,155 @@ def _draw_text_transformed(
     )
     if not block.any_ink:
         return
-    var face = cache.resolve_face(family, slant, weight, size)
     var placement = (
         Matrix2D.rotation(rotation)
         .then(Matrix2D.translation(x, y))
         .then(matrix)
     )
     var saved = canvas._take_transform()
+    if placement.is_similarity():
+        try:
+            _draw_block_similarity(
+                canvas,
+                block,
+                placement,
+                color,
+                size,
+                family,
+                slant,
+                weight,
+                cache,
+            )
+        except e:
+            canvas._set_transform(saved)
+            raise e
+        canvas._set_transform(saved)
+        return
     try:
-        for i in range(len(block.lines)):
-            ref line = block.lines[i]
-            var pen_x = line.x
-            for shaped in line.glyphs:
-                pen_x += shaped.kern_before
-                var g = _resolve_glyph(
-                    face[],
-                    family,
-                    slant,
-                    weight,
-                    size,
-                    shaped,
-                    pen_x,
-                    line.y,
-                    cache,
-                )
-                if g.metrics.width > 0.0 and g.metrics.height > 0.0:
-                    fill_path_aa(
-                        canvas,
-                        _through(g.path, placement),
-                        color,
-                        FillRule.NONZERO,
-                    )
-                pen_x += g.metrics.advance
+        _draw_block_direct(
+            canvas, block, placement, color, size, family, slant, weight, cache
+        )
     except e:
         canvas._set_transform(saved)
         raise e
     canvas._set_transform(saved)
+
+
+def _draw_block_direct(
+    mut canvas: Canvas,
+    block: _BlockLayout,
+    placement: Matrix2D,
+    color: Color,
+    size: Float64,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    mut cache: FontCache,
+) raises:
+    """Draw a laid-out block by filling each glyph's outline through
+    `placement` directly: the path for a placement that is not a
+    similarity (a non-uniform scale, a skew), which the mask cache
+    cannot hold at one size and orientation. The canvas transform is
+    expected to be taken off already. The reference the cached
+    similarity path is tested against.
+    """
+    var face = cache.resolve_face(family, slant, weight, size)
+    for i in range(len(block.lines)):
+        ref line = block.lines[i]
+        var pen_x = line.x
+        for shaped in line.glyphs:
+            pen_x += shaped.kern_before
+            var g = _resolve_glyph(
+                face[],
+                family,
+                slant,
+                weight,
+                size,
+                shaped,
+                pen_x,
+                line.y,
+                cache,
+            )
+            if g.metrics.width > 0.0 and g.metrics.height > 0.0:
+                fill_path_aa(
+                    canvas,
+                    _through(g.path, placement),
+                    color,
+                    FillRule.NONZERO,
+                )
+            pen_x += g.metrics.advance
+
+
+def _linear_key(m: Matrix2D) -> String:
+    """The cache-key spelling of a linear map: its four entries in
+    1/4096ths, so two placements that differ by less than that share
+    masks, and a glyph is never scaled by more than that much from
+    what its key says.
+    """
+    return (
+        "m"
+        + String(Int(floor(m.a * 4096.0 + 0.5)))
+        + ","
+        + String(Int(floor(m.b * 4096.0 + 0.5)))
+        + ","
+        + String(Int(floor(m.c * 4096.0 + 0.5)))
+        + ","
+        + String(Int(floor(m.d * 4096.0 + 0.5)))
+        + "|"
+    )
+
+
+def _draw_block_similarity(
+    mut canvas: Canvas,
+    block: _BlockLayout,
+    placement: Matrix2D,
+    color: Color,
+    size: Float64,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    mut cache: FontCache,
+) raises:
+    """Draw a laid-out block whose placement is a similarity -- a
+    uniform scale and a rotation about the anchor, then a translation
+    -- through the glyph mask cache, each glyph's mask rasterized once
+    at the placed size and orientation and composited at its placed
+    origin. The pen advances in layout space; only the origin is
+    mapped. This is what a supersampling `scale()` and a rotated label
+    take, so neither pays the direct outline fill per glyph.
+    """
+    var face = cache.resolve_face(family, slant, weight, size)
+    var linear = Matrix2D(
+        placement.a, placement.b, placement.c, placement.d, 0.0, 0.0
+    )
+    var key_prefix = (
+        _cache_key(family, slant, weight)
+        + "@"
+        + String(Int(ceil(size)))
+        + "|"
+        + _linear_key(linear)
+    )
+    for i in range(len(block.lines)):
+        ref line = block.lines[i]
+        var pen_x = line.x
+        for shaped in line.glyphs:
+            pen_x += shaped.kern_before
+            var origin = placement.apply(pen_x, line.y)
+            pen_x += _draw_cached_glyph(
+                canvas,
+                face[],
+                family,
+                slant,
+                weight,
+                size,
+                shaped,
+                origin.x,
+                origin.y,
+                key_prefix,
+                color,
+                cache,
+                linear,
+            )
 
 
 def _composite_glyph_mask(
@@ -1313,22 +1431,44 @@ def _rasterize_glyph(
     frac_x: Float64,
     frac_y: Float64,
     mut cache: FontCache,
+    linear: Matrix2D = Matrix2D.identity(),
 ) raises -> _GlyphMask:
     """A glyph's advance and coverage with its origin at (frac_x,
     frac_y), both in [0, 1): the outline `_resolve_glyph` would build
     for the render pass, swept with the same fill rule, sample grid and
     curve flattening `fill_path_aa` applies to it, kept as counts.
+
+    `linear` is the map the outline goes through about its origin
+    before the sub-pixel shift -- a uniform scale, a rotation -- for a
+    glyph drawn under a similarity transform. The identity takes the
+    outline as resolved. The advance is the untransformed one either
+    way: the pen advances in the space the text was laid out in.
     """
+    if linear.is_identity():
+        var g = _resolve_glyph(
+            primary, family, slant, weight, size, shaped, frac_x, frac_y, cache
+        )
+        if not (g.metrics.width > 0.0 and g.metrics.height > 0.0):
+            return _GlyphMask(
+                g.metrics.advance, _CoverageMask(List[UInt8](), 0, 0, 0, 0, 16)
+            )
+        return _GlyphMask(
+            g.metrics.advance,
+            _path_coverage_counts(g.path, FillRule.NONZERO, 4, 0),
+        )
     var g = _resolve_glyph(
-        primary, family, slant, weight, size, shaped, frac_x, frac_y, cache
+        primary, family, slant, weight, size, shaped, 0.0, 0.0, cache
     )
     if not (g.metrics.width > 0.0 and g.metrics.height > 0.0):
         return _GlyphMask(
             g.metrics.advance, _CoverageMask(List[UInt8](), 0, 0, 0, 0, 16)
         )
+    var placed = _through(
+        g.path, linear.then(Matrix2D.translation(frac_x, frac_y))
+    )
     return _GlyphMask(
         g.metrics.advance,
-        _path_coverage_counts(g.path, FillRule.NONZERO, 4, 0),
+        _path_coverage_counts(placed, FillRule.NONZERO, 4, 0),
     )
 
 
@@ -1345,14 +1485,16 @@ def _draw_cached_glyph(
     key_prefix: String,
     color: Color,
     mut cache: FontCache,
+    linear: Matrix2D = Matrix2D.identity(),
 ) raises -> Float64:
     """Composite one glyph with its origin at (origin_x, origin_y)
     through the cache, rasterizing it on a miss, and return its
-    advance. The key is the face and size (`key_prefix`), then the
-    glyph's identity, then the origin's sub-pixel part in
-    1/`_SUBPIXEL_STEPS` px; the whole-pixel part becomes the composite
-    offset. A whole-pixel origin rasterizes at step 0, exactly where
-    the direct fill would.
+    advance. The key is the face and size (`key_prefix`, which also
+    names `linear` when it is not the identity), then the glyph's
+    identity, then the origin's sub-pixel part in 1/`_SUBPIXEL_STEPS`
+    px; the whole-pixel part becomes the composite offset. A
+    whole-pixel origin rasterizes at step 0, exactly where the direct
+    fill would.
 
     A glyph's identity is its codepoint where it still has one, and
     "g" plus a primary-face glyph index where a `GSUB` substitution
@@ -1395,6 +1537,7 @@ def _draw_cached_glyph(
                 frac_x,
                 frac_y,
                 cache,
+                linear,
             ),
         )
     ref entry = cache._glyph_masks[key]
@@ -1551,31 +1694,20 @@ def draw_text(
                 )
         return
 
-    var c = cos(rotation)
-    var s = sin(rotation)
-    var anchor_x = x
-    var anchor_y = y
-
-    for i in range(len(block.lines)):
-        ref line = block.lines[i]
-        var pen_x = line.x
-        for shaped in line.glyphs:
-            pen_x += shaped.kern_before
-            var g = _resolve_glyph(
-                face[],
-                family,
-                slant,
-                weight,
-                size,
-                shaped,
-                pen_x,
-                line.y,
-                cache,
-            )
-            if g.metrics.width > 0.0 and g.metrics.height > 0.0:
-                var placed = _place_glyph_path(g.path, c, s, anchor_x, anchor_y)
-                fill_path_aa(canvas, placed, color, FillRule.NONZERO)
-            pen_x += g.metrics.advance
+    # A rotated block is a similarity placement: rotate about the
+    # anchor, then move to it. Its glyphs are cached at that
+    # orientation, keyed by it.
+    _draw_block_similarity(
+        canvas,
+        block,
+        Matrix2D.rotation(rotation).then(Matrix2D.translation(x, y)),
+        color,
+        size,
+        family,
+        slant,
+        weight,
+        cache,
+    )
 
 
 def stroke_text(
