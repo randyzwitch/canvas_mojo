@@ -999,6 +999,16 @@ struct FontDatabase(Movable):
             for face in _parse_font_file(path):
                 self.faces.append(face.copy())
 
+    def __init__(out self, var faces: List[FontFace]):
+        """A database over `faces` alone, with no scan of the installed
+        fonts: what `FontCache` holds until its first lookup, and a way
+        to build a database over known faces.
+
+        Args:
+            faces: The faces the database resolves against.
+        """
+        self.faces = faces^
+
     def resolve(
         self,
         family: String,

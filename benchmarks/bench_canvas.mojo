@@ -26,6 +26,7 @@ from std.math import cos, pi, sin
 from std.time import perf_counter_ns
 
 from canvas.blend import BlendMode
+from canvas.blur import blur
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import Filter, draw_canvas
@@ -552,6 +553,32 @@ def main() raises:
         var small = downsample(supersampled, 2)
         sink += Int(small.get_pixel(10, 10).r)
     _report(rows, "downsample 1600x1200 -> 2x", perf_counter_ns() - t0, iters)
+
+    # --- blur ------------------------------------------------------
+    # blur() runs the same three box-blur passes whatever the radius --
+    # only the derived box widths change, and each pass is a sliding
+    # window sum that costs the same however wide its box is (see
+    # blur.mojo's _box_blur_line) -- so r=4 and r=16 are timed
+    # separately to show the cost is flat across radius, not to compare
+    # them as a quality/speed tradeoff.
+    var blur_source = Canvas(W, H, WHITE)
+    fill_circle_aa(blur_source, 400.0, 300.0, 250.0, INK)
+    fill_rect(blur_source, 100, 100, 200, 150, TRANSLUCENT)
+
+    iters = 20
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var c = Canvas(W, H, blur_source.pixels.copy())
+        blur(c, 4.0)
+        sink += Int(c.get_pixel(400, 300).r)
+    _report(rows, "blur 800x600 r=4", perf_counter_ns() - t0, iters)
+
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var c = Canvas(W, H, blur_source.pixels.copy())
+        blur(c, 16.0)
+        sink += Int(c.get_pixel(400, 300).r)
+    _report(rows, "blur 800x600 r=16", perf_counter_ns() - t0, iters)
 
     # --- clipping --------------------------------------------------
     # A clip path is a whole-canvas coverage mask plus a per-pixel
