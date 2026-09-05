@@ -8,10 +8,11 @@ gpos,gsub,chapter2}).
 
 Scope:
 
-- **TrueType (`glyf`) outlines only.** A font whose `sfntVersion` is
-  `OTTO` (CFF outlines) raises rather than being misread; CFF is a
-  different Type 2 charstring bytecode, natively cubic where TrueType is
-  quadratic-with-implied-midpoints.
+- **TrueType (`glyf`) and CFF outlines.** An `OTTO` font's `CFF `
+  table is read by cff.mojo, whose Type 2 charstring interpreter
+  produces cubic contours where `glyf` gives quadratic ones with
+  implied midpoints; `RawGlyphOutline.cubic` says which, and
+  `outline_to_path` decomposes accordingly. `CFF2` is not read.
 - **Pair kerning**, through `kern_adjustment`: `GPOS` lookup type 2
   (PairPos formats 1 and 2, including behind an extension lookup type
   9) under the `kern` feature, and the `kern` table's format 0
@@ -45,6 +46,7 @@ Scope:
 from std.memory import ArcPointer
 
 from canvas.path import Path
+from canvas.text.cff import _CffFont, _cff_glyph_outline, _parse_cff
 
 
 def _u8(data: List[UInt8], pos: Int) raises -> Int:
@@ -970,12 +972,17 @@ struct RawGlyphOutline(Movable):
     var points_y: List[Int]
     var on_curve: List[Bool]
     var contour_ends: List[Int]
+    # Whether off-curve points come in pairs as cubic controls (CFF)
+    # rather than singly as quadratic controls with implied midpoints
+    # (glyf). Decides which decomposition `outline_to_path` runs.
+    var cubic: Bool
 
     def __init__(out self):
         self.points_x = List[Int]()
         self.points_y = List[Int]()
         self.on_curve = List[Bool]()
         self.contour_ends = List[Int]()
+        self.cubic = False
 
     def copied(self) -> RawGlyphOutline:
         """An independent copy of this outline's point lists."""
@@ -984,6 +991,7 @@ struct RawGlyphOutline(Movable):
         out.points_y = self.points_y.copy()
         out.on_curve = self.on_curve.copy()
         out.contour_ends = self.contour_ends.copy()
+        out.cubic = self.cubic
         return out^
 
     def bounding_box(self) -> Tuple[Int, Int, Int, Int]:
@@ -1075,6 +1083,12 @@ struct TTFFace(Movable):
     picks between them by script tag.
     """
 
+    var _has_cff: Bool
+    """Whether outlines come from a `CFF ` table rather than `glyf`."""
+
+    var _cff: _CffFont
+    """The parsed `CFF ` table when `_has_cff`, else empty."""
+
     var _pixel_size: Int
     """-1 until `set_pixel_size` is called, so an unset size is not a
     valid one. Every read goes through `scale()`, which raises rather
@@ -1102,18 +1116,14 @@ struct TTFFace(Movable):
         comptime _SFNT_VERSION_TRUETYPE = 0x00010000
         # 'true', Apple's own legacy TrueType tag, also valid
         comptime _SFNT_VERSION_TRUETYPE_APPLE = 0x74727565
-        # 'OTTO' -- CFF/OpenType-CFF outlines, not supported
+        # 'OTTO' -- CFF outlines in a `CFF ` table, see cff.mojo
         comptime _SFNT_VERSION_OTTO = 0x4F54544F
 
         var sfnt_version = _u32(data, 0)
-        if sfnt_version == _SFNT_VERSION_OTTO:
-            raise Error(
-                "ttf: CFF/OpenType-CFF font ('OTTO') -- only TrueType 'glyf'"
-                " outlines are supported"
-            )
         if (
             sfnt_version != _SFNT_VERSION_TRUETYPE
             and sfnt_version != _SFNT_VERSION_TRUETYPE_APPLE
+            and sfnt_version != _SFNT_VERSION_OTTO
         ):
             raise Error(
                 String("ttf: unrecognized sfntVersion 0x", hex(sfnt_version))
@@ -1131,6 +1141,7 @@ struct TTFFace(Movable):
         var kern_off = -1
         var gpos_off = -1
         var gsub_off = -1
+        var cff_off = -1
 
         var pos = 12
         for _ in range(num_tables):
@@ -1156,6 +1167,8 @@ struct TTFFace(Movable):
                 gpos_off = offset
             elif tag == "GSUB":
                 gsub_off = offset
+            elif tag == "CFF ":
+                cff_off = offset
             pos += 16
 
         if (
@@ -1168,10 +1181,10 @@ struct TTFFace(Movable):
             raise Error(
                 "ttf: missing a required table (head/maxp/hhea/hmtx/cmap)"
             )
-        if glyf_off == -1 or loca_off == -1:
+        if (glyf_off == -1 or loca_off == -1) and cff_off == -1:
             raise Error(
-                "ttf: no glyf/loca table -- likely a CFF/OpenType-CFF font, not"
-                " supported"
+                "ttf: no glyf/loca table and no CFF table -- no outlines to"
+                " read"
             )
 
         self.units_per_em = _u16(data, head_off + 18)
@@ -1188,6 +1201,11 @@ struct TTFFace(Movable):
         self._hmtx_offset = hmtx_off
         self._glyph_cache = Dict[Int, ArcPointer[RawGlyphOutline]]()
         self._cmap_cache = Dict[Int, Int]()
+        self._has_cff = cff_off != -1 and (glyf_off == -1 or loca_off == -1)
+        if self._has_cff:
+            self._cff = _parse_cff(data, cff_off, self.num_glyphs)
+        else:
+            self._cff = _CffFont()
         # Collecting the kerning and substitution subtable offsets
         # walks a few hundred bytes of list headers, not the pair or
         # ligature data itself, so it runs here rather than lazily on
@@ -1695,6 +1713,8 @@ struct TTFFace(Movable):
                 String("ttf: glyph index ", glyph_index, " out of range")
             )
 
+        if self._has_cff:
+            return _cff_glyph_outline(self._cff, self.data, glyph_index, 0)
         var loca = self._loca_entry(glyph_index)
         var glyph_start = self._glyf_offset + loca[0]
         var glyph_len = loca[1] - loca[0]
@@ -1867,6 +1887,55 @@ def _native_py(pen_y: Float64, raw: Int, scale: Float64) -> Float64:
     return pen_y - Float64(raw) * scale
 
 
+def _decompose_contour_cubic(
+    outline: RawGlyphOutline,
+    first: Int,
+    last: Int,
+    mut path: Path,
+    pen_x: Float64,
+    pen_y: Float64,
+    scale: Float64,
+) raises:
+    """One contour of a cubic outline: it starts on-curve, and after
+    that an on-curve point is a line and two off-curve points followed
+    by an on-curve one are a cubic segment, as the CFF interpreter
+    records them. Closed back to its start like a `glyf` contour.
+    """
+    if last < first:
+        return
+    var start_x = _native_px(pen_x, outline.points_x[first], scale)
+    var start_y = _native_py(pen_y, outline.points_y[first], scale)
+    path.move_to(start_x, start_y)
+    var i = first + 1
+    while i <= last:
+        if outline.on_curve[i]:
+            path.line_to(
+                _native_px(pen_x, outline.points_x[i], scale),
+                _native_py(pen_y, outline.points_y[i], scale),
+            )
+            i += 1
+        elif i + 2 <= last:
+            path.cubic_curve_to(
+                _native_px(pen_x, outline.points_x[i], scale),
+                _native_py(pen_y, outline.points_y[i], scale),
+                _native_px(pen_x, outline.points_x[i + 1], scale),
+                _native_py(pen_y, outline.points_y[i + 1], scale),
+                _native_px(pen_x, outline.points_x[i + 2], scale),
+                _native_py(pen_y, outline.points_y[i + 2], scale),
+            )
+            i += 3
+        else:
+            # A control point with no end: the interpreter never
+            # writes one, so treat it as a line and move on.
+            path.line_to(
+                _native_px(pen_x, outline.points_x[i], scale),
+                _native_py(pen_y, outline.points_y[i], scale),
+            )
+            i += 1
+    path.line_to(start_x, start_y)
+    path.close()
+
+
 def _decompose_contour_native(
     outline: RawGlyphOutline,
     first: Int,
@@ -2005,7 +2074,12 @@ def outline_to_path(
     for n in range(len(outline.contour_ends)):
         var first = last + 1
         last = outline.contour_ends[n]
-        _decompose_contour_native(
-            outline, first, last, path, pen_x, pen_y, scale
-        )
+        if outline.cubic:
+            _decompose_contour_cubic(
+                outline, first, last, path, pen_x, pen_y, scale
+            )
+        else:
+            _decompose_contour_native(
+                outline, first, last, path, pen_x, pen_y, scale
+            )
     return path^

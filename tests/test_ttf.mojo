@@ -17,7 +17,10 @@ from std.testing import assert_equal, assert_true, TestSuite
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.path import fill_path_aa
-from canvas.text.font_discovery import resolve_font_file
+from canvas.text.cff import _interpret
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontDatabase, resolve_font_file
+from canvas.text.render import draw_text, measure_text
 from canvas.text.ttf import (
     TTFFace,
     outline_to_path,
@@ -215,23 +218,190 @@ def test_advance_width_matches_hmtx() raises:
     assert_equal(face.advance_width(gid), 1612)
 
 
-def test_cff_font_raises_a_clear_error() raises:
-    # A real CFF/OpenType-CFF font: "Nimbus Sans" from
-    # `fonts-urw-base35`, URW's metric-compatible replacements for the
-    # 35 PostScript Level 2 base fonts. Its sfntVersion really is
-    # 'OTTO' (0x4F54544F), so this is the case the rejection path
-    # exists for rather than a synthetic stand-in.
-    var path = resolve_font_file("Nimbus Sans")
-    var raised = False
-    var message = String()
-    try:
-        var face = TTFFace(path)
-        _ = face
-    except e:
-        raised = True
-        message = String(e)
-    assert_true(raised)
-    assert_true("CFF" in message or "OpenType-CFF" in message)
+def _cff_face() raises -> TTFFace:
+    # "Nimbus Sans" from fonts-urw-base35: a real OpenType-CFF font
+    # (sfntVersion 'OTTO'), on both CI platforms.
+    var face = TTFFace(resolve_font_file("Nimbus Sans"))
+    face.set_pixel_size(40)
+    return face^
+
+
+def test_cff_font_loads_with_cubic_outlines() raises:
+    var face = _cff_face()
+    assert_true(face.num_glyphs > 100)
+    # "O": two contours, curves, marked cubic so outline_to_path reads
+    # the off-curve points in pairs.
+    var o = face.glyph_outline(face.glyph_index_for_codepoint(0x4F))
+    assert_true(o.cubic)
+    assert_equal(len(o.contour_ends), 2)
+    var any_off = False
+    for i in range(len(o.on_curve)):
+        if not o.on_curve[i]:
+            any_off = True
+    assert_true(any_off, "O has curves")
+    # "I": one contour of straight segments only.
+    var i_glyph = face.glyph_outline(face.glyph_index_for_codepoint(0x49))
+    assert_equal(len(i_glyph.contour_ends), 1)
+    for k in range(len(i_glyph.on_curve)):
+        assert_true(i_glyph.on_curve[k], "I is all lines")
+    assert_true(len(i_glyph.points_x) >= 4)
+
+
+def _ink_count(c: Canvas) -> Int:
+    var n = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            var p = c.get_pixel(x, y)
+            if not (p.r == BG.r and p.g == BG.g and p.b == BG.b):
+                n += 1
+    return n
+
+
+def test_cff_o_renders_a_ring_with_a_hole() raises:
+    # The glyf test's twin, through the cubic decomposition.
+    var face = _cff_face()
+    var scale = 40.0 / Float64(face.units_per_em)
+    var gid = face.glyph_index_for_codepoint(0x4F)
+    var path = outline_to_path(face.glyph_outline(gid), 5.0, 45.0, scale)
+    var c = Canvas(60, 60, BG)
+    fill_path_aa(c, path, FG)
+    assert_true(_ink_count(c) > 100, "the ring has ink")
+    var advance_px = Float64(face.advance_width(gid)) * scale
+    var center = c.get_pixel(5 + Int(advance_px / 2.0), 45 - 15)
+    assert_equal(center.r, BG.r, "and a hole at the center")
+
+
+def test_cff_accented_glyph_has_ink_above_the_base() raises:
+    # "é": the accent sits above the x-height, the base below it.
+    # Whether the font draws it as one program or composes it with
+    # endchar's accent operands, both regions carry ink.
+    var face = _cff_face()
+    var scale = 40.0 / Float64(face.units_per_em)
+    var gid = face.glyph_index_for_codepoint(0xE9)
+    var path = outline_to_path(face.glyph_outline(gid), 5.0, 45.0, scale)
+    var c = Canvas(60, 60, BG)
+    fill_path_aa(c, path, FG)
+    var above = 0
+    var below = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            var p = c.get_pixel(x, y)
+            if p.r != BG.r:
+                if y < 45 - 22:
+                    above += 1
+                else:
+                    below += 1
+    assert_true(above > 5, "the accent: " + String(above))
+    assert_true(below > 50, "the e: " + String(below))
+
+
+def test_cff_face_is_renderable_in_discovery() raises:
+    var database = FontDatabase()
+    var found = False
+    for face in database.faces:
+        if face.path.lower().endswith("nimbussans-regular.otf"):
+            found = True
+            assert_true(face.renderable, "an OTTO face is renderable now")
+    assert_true(found, "Nimbus Sans Regular is installed")
+
+
+def test_draw_text_with_a_cff_family() raises:
+    var cache = FontCache()
+    var c = Canvas(160, 50, BG)
+    draw_text(c, 5, 35, "Nimbus", FG, 22.0, family="Nimbus Sans", cache=cache)
+    assert_true(_ink_count(c) > 200, "text renders")
+    var m = measure_text("Nimbus", 22.0, family="Nimbus Sans", cache=cache)
+    assert_true(m.width > 40.0 and m.advance > m.width - 5.0)
+
+
+def _program(values: List[Int]) -> List[UInt8]:
+    """Charstring bytes: an Int in -107..107 is an operand (b0 = v +
+    139); a value of 1000 + op is the operator op; larger operands are
+    written two-byte.
+    """
+    var out = List[UInt8]()
+    for v in values:
+        if v >= 1000:
+            out.append(UInt8(v - 1000))
+        elif v >= -107 and v <= 107:
+            out.append(UInt8(v + 139))
+        elif v > 107:
+            var w = v - 108
+            out.append(UInt8(247 + w // 256))
+            out.append(UInt8(w % 256))
+        else:
+            var w = -v - 108
+            out.append(UInt8(251 + w // 256))
+            out.append(UInt8(w % 256))
+    return out^
+
+
+def test_synthetic_charstring_decodes_lines_and_curves() raises:
+    # 100 100 rmoveto 50 0 rlineto 0 50 rlineto -50 0 rlineto endchar:
+    # a square, four on-curve points, one contour.
+    var square = _program(
+        [100, 100, 1021, 50, 0, 1005, 0, 50, 1005, -50, 0, 1005, 1014]
+    )
+    var st = _interpret(square, 0, len(square), List[Int](), List[Int]())
+    assert_true(st.outline.cubic)
+    assert_equal(len(st.outline.points_x), 4)
+    assert_equal(len(st.outline.contour_ends), 1)
+    assert_equal(st.outline.contour_ends[0], 3)
+    assert_equal(st.outline.points_x[2], 150)
+    assert_equal(st.outline.points_y[2], 150)
+    assert_equal(st.outline.points_x[3], 100)
+    assert_equal(st.outline.points_y[3], 150)
+    for i in range(4):
+        assert_true(st.outline.on_curve[i])
+
+    # 0 0 rmoveto 10 20 30 40 50 60 rrcurveto endchar: controls at
+    # (10, 20) and (40, 60), end at (90, 120).
+    var curve = _program([0, 0, 1021, 10, 20, 30, 40, 50, 60, 1008, 1014])
+    st = _interpret(curve, 0, len(curve), List[Int](), List[Int]())
+    assert_equal(len(st.outline.points_x), 4)
+    assert_true(not st.outline.on_curve[1] and not st.outline.on_curve[2])
+    assert_equal(st.outline.points_x[1], 10)
+    assert_equal(st.outline.points_y[1], 20)
+    assert_equal(st.outline.points_x[2], 40)
+    assert_equal(st.outline.points_y[2], 60)
+    assert_equal(st.outline.points_x[3], 90)
+    assert_equal(st.outline.points_y[3], 120)
+    assert_true(st.outline.on_curve[3])
+
+
+def test_synthetic_charstring_skips_width_stems_and_hintmask() raises:
+    # 500 10 20 hstem hintmask <mask> 100 100 rmoveto endchar: the odd
+    # operand ahead of hstem is the width, one stem means one mask
+    # byte to skip, and the moveto still lands at (100, 100).
+    var prog = _program([500, 10, 20, 1001, 1019])
+    prog.append(0x80)
+    var tail = _program([100, 100, 1021, 1014])
+    for b in tail:
+        prog.append(b)
+    var st = _interpret(prog, 0, len(prog), List[Int](), List[Int]())
+    assert_equal(st.nstems, 1)
+    assert_equal(len(st.outline.points_x), 1)
+    assert_equal(st.outline.points_x[0], 100)
+    assert_equal(st.outline.points_y[0], 100)
+
+
+def test_synthetic_charstring_calls_a_global_subroutine() raises:
+    # One global subr, "50 0 rlineto return"; the program moves to
+    # (100, 100) and calls it as index 0, which is operand -107 under
+    # the small-table bias.
+    var subr = _program([50, 0, 1005, 1011])
+    var main_prog = _program([100, 100, 1021, -107, 1029, 1014])
+    var data = List[UInt8]()
+    for b in subr:
+        data.append(b)
+    var main_start = len(data)
+    for b in main_prog:
+        data.append(b)
+    var gsubrs: List[Int] = [0, len(subr)]
+    var st = _interpret(data, main_start, len(data), gsubrs, List[Int]())
+    assert_equal(len(st.outline.points_x), 2)
+    assert_equal(st.outline.points_x[1], 150)
+    assert_equal(st.outline.points_y[1], 100)
 
 
 def main() raises:
