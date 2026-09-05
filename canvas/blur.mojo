@@ -158,18 +158,28 @@ def _box_blur_line(
     already edge-clamped, so the whole sweep costs O(count) however
     wide the box (`r`) is. `r` is assumed positive; the caller skips
     zero-radius boxes as a no-op.
+
+    Reads and writes go through pointers rather than `List`'s checked
+    `[]`: every index is `start + k * stride` for `k` in `[0, count)`,
+    which `_box_blur_h_band`/`_box_blur_v_band` size to stay inside the
+    plane's length.
     """
-    var window = Float64(2 * r + 1)
+    var sp = src.unsafe_ptr()
+    var dp = dst.unsafe_ptr()
+    var inv_window = 1.0 / Float64(2 * r + 1)
     var sum = 0.0
     for i in range(-r, r + 1):
-        sum += src[start + _clamp_index(i, count) * stride]
-    dst[start] = sum / window
+        sum += sp[unsafe_offset=start + _clamp_index(i, count) * stride]
+    dp[unsafe_offset=start] = sum * inv_window
 
     for x in range(1, count):
         var add = _clamp_index(x + r, count)
         var drop = _clamp_index(x - 1 - r, count)
-        sum += src[start + add * stride] - src[start + drop * stride]
-        dst[start + x * stride] = sum / window
+        sum += (
+            sp[unsafe_offset=start + add * stride]
+            - sp[unsafe_offset=start + drop * stride]
+        )
+        dp[unsafe_offset=start + x * stride] = sum * inv_window
 
 
 def _box_blur_h_band(
@@ -326,16 +336,25 @@ def _premultiply_planes(
     `blur()` call, against the up-to-24 banded sweeps (3 boxes x 2
     directions x 4 channels) the convolution itself does, so it is not
     where the parallelism would pay for itself.
+
+    Both the pixel buffer and the four planes are indexed through
+    pointers: `i` ranges over `[0, canvas.width * canvas.height)`,
+    which `blur()` sizes every plane to hold, and `idx` stays inside
+    the pixel buffer since it is `i * BYTES_PER_PIXEL` plus at most 3.
     """
     var p = canvas.pixels.unsafe_ptr()
+    var rp = pr.unsafe_ptr()
+    var gp = pg.unsafe_ptr()
+    var bp = pb.unsafe_ptr()
+    var ap = pa.unsafe_ptr()
     for i in range(canvas.width * canvas.height):
         var idx = i * BYTES_PER_PIXEL
         var a = Float64(p[unsafe_offset=idx + 3])
         var af = a / 255.0
-        pr[i] = Float64(p[unsafe_offset=idx]) * af
-        pg[i] = Float64(p[unsafe_offset=idx + 1]) * af
-        pb[i] = Float64(p[unsafe_offset=idx + 2]) * af
-        pa[i] = a
+        rp[unsafe_offset=i] = Float64(p[unsafe_offset=idx]) * af
+        gp[unsafe_offset=i] = Float64(p[unsafe_offset=idx + 1]) * af
+        bp[unsafe_offset=i] = Float64(p[unsafe_offset=idx + 2]) * af
+        ap[unsafe_offset=i] = a
 
 
 def _round_byte(value: Float64) -> UInt8:
@@ -358,11 +377,18 @@ def _unpremultiply_planes(
 ):
     """Write the four (still premultiplied) planes back into `canvas`
     as straight RGBA, the inverse of `_premultiply_planes`.
+
+    Indexed through pointers on the same bound `_premultiply_planes`
+    documents: `i` ranges over `[0, canvas.width * canvas.height)`.
     """
     var p = canvas.pixels.unsafe_ptr()
+    var rp = pr.unsafe_ptr()
+    var gp = pg.unsafe_ptr()
+    var bp = pb.unsafe_ptr()
+    var ap = pa.unsafe_ptr()
     for i in range(canvas.width * canvas.height):
         var idx = i * BYTES_PER_PIXEL
-        var a = pa[i]
+        var a = ap[unsafe_offset=i]
         var a_byte = _round_byte(a)
         if a_byte == 0:
             p[unsafe_offset=idx] = 0
@@ -370,9 +396,9 @@ def _unpremultiply_planes(
             p[unsafe_offset=idx + 2] = 0
             p[unsafe_offset=idx + 3] = 0
             continue
-        p[unsafe_offset=idx] = _round_byte(pr[i] * 255.0 / a)
-        p[unsafe_offset=idx + 1] = _round_byte(pg[i] * 255.0 / a)
-        p[unsafe_offset=idx + 2] = _round_byte(pb[i] * 255.0 / a)
+        p[unsafe_offset=idx] = _round_byte(rp[unsafe_offset=i] * 255.0 / a)
+        p[unsafe_offset=idx + 1] = _round_byte(gp[unsafe_offset=i] * 255.0 / a)
+        p[unsafe_offset=idx + 2] = _round_byte(bp[unsafe_offset=i] * 255.0 / a)
         p[unsafe_offset=idx + 3] = a_byte
 
 
