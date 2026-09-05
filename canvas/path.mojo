@@ -62,6 +62,7 @@ from canvas.shapes.lines import (
     draw_polygon_aa,
     LineCap,
     LineJoin,
+    _stroke_edges,
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_fpoints
@@ -617,6 +618,98 @@ struct Path(Movable):
                     min_y = p.y
                 if p.y > max_y:
                     max_y = p.y
+        return (min_x, min_y, max_x, max_y)
+
+    def stroke_bounds(
+        self,
+        width: Float64 = 1.0,
+        curve_steps: Int = 0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
+    ) -> Tuple[Float64, Float64, Float64, Float64]:
+        """The axis-aligned box `stroke_path_aa` paints with the same
+        arguments, as (min_x, min_y, max_x, max_y) in canvas
+        coordinates.
+
+        Measured on the stroke's own outline, so it includes what
+        `bounds()` padded by half the width would miss or overstate: a
+        SQUARE or ROUND cap's overhang past an endpoint, a MITER
+        join's spike past a corner, and a dash pattern that ends
+        short of the path. A round cap or join is polygonised the way
+        the stroke draws it, so its extent is within a hundredth of a
+        pixel of the true disk's. A single-point sub-path
+        contributes its point; an empty path returns all zeros.
+
+        Args:
+            width: Stroke width in pixels.
+            curve_steps: Straight-line segments per quad/cubic Bezier;
+                0 (the default) chooses per segment, as the strokes do.
+            dashes: On/off segment lengths in pixels, cycled along the
+                stroke. Empty (default) measures a solid stroke.
+            dash_offset: Distance into the dash pattern the stroke
+                starts at.
+            cap: How an open sub-path's two ends are finished -- see
+                LineCap.
+            join: How corners are turned -- see LineJoin.
+            miter_limit: Ratio past which a MITER join falls back to
+                BEVEL, as a multiple of half the stroke width.
+
+        Returns:
+            (min_x, min_y, max_x, max_y).
+        """
+        var subpaths = _flatten(self, curve_steps)
+        var min_x = 0.0
+        var min_y = 0.0
+        var max_x = 0.0
+        var max_y = 0.0
+        var seen = False
+        for sp_idx in range(len(subpaths)):
+            ref sp = subpaths[sp_idx]
+            var count = len(sp.points)
+            if count == 0:
+                continue
+            var lo_x: Float64
+            var lo_y: Float64
+            var hi_x: Float64
+            var hi_y: Float64
+            if count == 1:
+                lo_x = sp.points[0].x
+                lo_y = sp.points[0].y
+                hi_x = lo_x
+                hi_y = lo_y
+            else:
+                var shape = _stroke_edges(
+                    sp.points,
+                    sp.closed,
+                    width / 2.0,
+                    cap,
+                    dashes,
+                    dash_offset,
+                    join,
+                    miter_limit,
+                    Matrix2D.identity(),
+                )
+                if len(shape.edges.y_lo) == 0:
+                    continue
+                var e = shape.edges.extent()
+                lo_x = e[0]
+                lo_y = e[1]
+                hi_x = e[2]
+                hi_y = e[3]
+            if not seen:
+                min_x = lo_x
+                min_y = lo_y
+                max_x = hi_x
+                max_y = hi_y
+                seen = True
+            else:
+                min_x = min(min_x, lo_x)
+                min_y = min(min_y, lo_y)
+                max_x = max(max_x, hi_x)
+                max_y = max(max_y, hi_y)
         return (min_x, min_y, max_x, max_y)
 
     def close(mut self) raises:
