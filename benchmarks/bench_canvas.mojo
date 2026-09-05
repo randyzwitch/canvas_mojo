@@ -22,15 +22,15 @@ scatter of a few thousand markers, a series with a few thousand
 segments, a paragraph of real text.
 """
 
-from std.math import cos, sin
+from std.math import cos, pi, sin
 from std.time import perf_counter_ns
 
 from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
-from canvas.compose import draw_canvas
+from canvas.compose import Filter, draw_canvas
 from canvas.fill_rule import FillRule
-from canvas.geometry import FPoint, Point
+from canvas.geometry import FPoint, Matrix2D, Point
 from canvas.gradient import ConicGradient, LinearGradient, RadialGradient
 from canvas.path import (
     Path,
@@ -633,6 +633,43 @@ def main() raises:
     _report(
         rows,
         "draw_canvas 800x600 at half opacity",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    # A tile drawn through a matrix: every destination pixel in the
+    # mapped rectangle's bounding box is inverse-mapped and sampled,
+    # so the work is per destination pixel and the filter decides how
+    # many source reads each one costs.
+    var tile = Canvas(200, 200, Color(240, 240, 245))
+    fill_circle_aa(tile, 100.0, 100.0, 80.0, INK)
+    fill_rect(tile, 20, 20, 60, 40, Color(220, 90, 60))
+    var placed = (
+        Matrix2D.scaling(1.7, 1.7)
+        .then(Matrix2D.rotation(pi / 6.0))
+        .then(Matrix2D.translation(300.0, 120.0))
+    )
+
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_canvas(canvas, tile, placed, filter=Filter.NEAREST)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "draw_canvas 200x200 1.7x rot 30 nearest",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_canvas(canvas, tile, placed, filter=Filter.BILINEAR)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "draw_canvas 200x200 1.7x rot 30 bilinear",
         perf_counter_ns() - t0,
         iters,
     )

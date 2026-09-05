@@ -1,7 +1,7 @@
 from canvas.blend import BlendMode
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.compose import draw_canvas
+from canvas.compose import Filter, draw_canvas
 from canvas.resize import downsample
 from canvas.io.bmp import read_bmp, write_bmp
 from canvas.io.png import read_png, write_png
