@@ -2,9 +2,10 @@
 fill) and fill_path_gradient (an arbitrary shape, here reusing the
 donut from path.mojo's own example, so a gradient fill interacting
 with a punched-through hole is visible directly) -- plus
-RadialGradient with fill_rect_radial_gradient (a swatch with a radial
-highlight) and fill_path_radial_gradient (the same donut, with a
-concentric gradient around its center).
+RadialGradient with fill_rect_radial_gradient (a swatch with an
+off-center highlight, the two-circle focal form) and
+fill_path_radial_gradient (the same donut, with a concentric gradient
+around its center).
 
 Run with:
     pixi run example
@@ -87,11 +88,15 @@ def main() raises:
 
     # A rectangular swatch with a radial highlight and no circle
     # primitive involved -- just a rect sourcing its fill from a
-    # RadialGradient centered on it, as a glow panel background or a
-    # legend swatch wanting a soft highlight would.
+    # RadialGradient, as a glow panel background or a legend swatch
+    # wanting a soft highlight would. The focal point sits up and to
+    # the left of the outer circle's center, so the highlight reads
+    # as a light from that side rather than a glow from the middle.
     var swatch_cx = 1650.0
     var swatch_cy = 390.0
-    var swatch_radial = RadialGradient(swatch_cx, swatch_cy, 270.0)
+    var swatch_radial = RadialGradient(
+        swatch_cx, swatch_cy, 270.0, fx=swatch_cx - 100.0, fy=swatch_cy - 120.0
+    )
     swatch_radial.add_stop(0.0, Color(255, 240, 200))
     swatch_radial.add_stop(1.0, Color(120, 70, 20))
     fill_rect_radial_gradient(c, 1410, 120, 480, 540, swatch_radial)

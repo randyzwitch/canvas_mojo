@@ -20,6 +20,7 @@ from canvas.shapes.arcs import fill_arc
 from canvas.shapes.ellipses import fill_ellipse_aa
 from canvas.shapes.rects import fill_rect
 from canvas.shapes.polygon_fill import fill_polygon, fill_polygon_aa
+from canvas.shapes.lines import LineCap, LineJoin
 from canvas.path import (
     Path,
     FPoint,
@@ -1193,6 +1194,329 @@ def test_bounds_of_an_empty_path_are_zero() raises:
     var b = Path().bounds()
     assert_equal(b[0], 0.0)
     assert_equal(b[2], 0.0)
+
+
+def _assert_box(
+    got: Tuple[Float64, Float64, Float64, Float64],
+    min_x: Float64,
+    min_y: Float64,
+    max_x: Float64,
+    max_y: Float64,
+    tol: Float64,
+    msg: String,
+) raises:
+    assert_true(
+        abs(got[0] - min_x) <= tol, msg + " (min_x " + String(got[0]) + ")"
+    )
+    assert_true(
+        abs(got[1] - min_y) <= tol, msg + " (min_y " + String(got[1]) + ")"
+    )
+    assert_true(
+        abs(got[2] - max_x) <= tol, msg + " (max_x " + String(got[2]) + ")"
+    )
+    assert_true(
+        abs(got[3] - max_y) <= tol, msg + " (max_y " + String(got[3]) + ")"
+    )
+
+
+def _horizontal_line() raises -> Path:
+    var p = Path()
+    p.move_to(10.0, 20.0)
+    p.line_to(50.0, 20.0)
+    return p^
+
+
+def test_stroke_bounds_of_a_line_follow_the_cap() raises:
+    # Width 4 on y = 20 spans y 18..22 under every cap; the caps decide
+    # x. BUTT stops at the endpoints; SQUARE and ROUND overhang each by
+    # half the width, 2.
+    var p = _horizontal_line()
+    _assert_box(
+        p.stroke_bounds(4.0, cap=LineCap.BUTT),
+        10.0,
+        18.0,
+        50.0,
+        22.0,
+        1e-9,
+        "butt",
+    )
+    _assert_box(
+        p.stroke_bounds(4.0, cap=LineCap.SQUARE),
+        8.0,
+        18.0,
+        52.0,
+        22.0,
+        1e-9,
+        "square",
+    )
+    # A round cap is a polygonised disk, so its extent is the disk's to
+    # within the polygon's sag.
+    _assert_box(
+        p.stroke_bounds(4.0, cap=LineCap.ROUND),
+        8.0,
+        18.0,
+        52.0,
+        22.0,
+        0.05,
+        "round",
+    )
+
+
+def _v_shape() raises -> Path:
+    # Apex at (30, 10), arms down to (10, 40) and (50, 40).
+    var p = Path()
+    p.move_to(10.0, 40.0)
+    p.line_to(30.0, 10.0)
+    p.line_to(50.0, 40.0)
+    return p^
+
+
+def test_stroke_bounds_of_a_sharp_corner_follow_the_join() raises:
+    # The arms are (20, 30) and (-20, 30) from the apex, so the angle
+    # between them has cos = (-400 + 900) / 1300 = 5/13 and
+    # sin(half) = sqrt((1 - 5/13) / 2) = 2 / sqrt(13). Half the width
+    # is 2.
+    # MITER: the spike reaches 2 / sin(half) = sqrt(13) = 3.6056 past
+    # the apex, so min_y = 10 - sqrt(13) = 6.3944.
+    var p = _v_shape()
+    var miter_top = 10.0 - sqrt(13.0)
+    var b = p.stroke_bounds(4.0, cap=LineCap.BUTT, join=LineJoin.MITER)
+    assert_true(abs(b[1] - miter_top) < 1e-6, "miter spike: " + String(b[1]))
+    # BEVEL: the corner is cut at the two outer offset points, each
+    # 2 * sin(half) = 4 / sqrt(13) = 1.1094 above the apex, so
+    # min_y = 8.8906.
+    var bevel_top = 10.0 - 4.0 / sqrt(13.0)
+    b = p.stroke_bounds(4.0, cap=LineCap.BUTT, join=LineJoin.BEVEL)
+    assert_true(abs(b[1] - bevel_top) < 1e-6, "bevel cut: " + String(b[1]))
+    # ROUND: the join disk reaches exactly half the width above the
+    # apex, to within the polygon's sag.
+    b = p.stroke_bounds(4.0, cap=LineCap.BUTT, join=LineJoin.ROUND)
+    assert_true(abs(b[1] - 8.0) < 0.05, "round join: " + String(b[1]))
+    # The miter ratio here is 1 / sin(half) = sqrt(13) / 2 = 1.803. A
+    # limit below that falls back to the bevel; one above keeps the
+    # spike.
+    b = p.stroke_bounds(
+        4.0, cap=LineCap.BUTT, join=LineJoin.MITER, miter_limit=1.5
+    )
+    assert_true(abs(b[1] - bevel_top) < 1e-6, "limit 1.5 falls back")
+    b = p.stroke_bounds(
+        4.0, cap=LineCap.BUTT, join=LineJoin.MITER, miter_limit=2.0
+    )
+    assert_true(abs(b[1] - miter_top) < 1e-6, "limit 2.0 keeps the spike")
+
+
+def test_stroke_bounds_of_a_curve_use_the_same_flattening() raises:
+    # The curve's apex is horizontal, so a stroke of width 2 reaches
+    # exactly 1 past the fill extent there -- provided the stroke and
+    # bounds() flatten the curve the same way.
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.quad_curve_to(10.0, 20.0, 20.0, 0.0)
+    var fill = p.bounds()
+    var stroke = p.stroke_bounds(2.0, cap=LineCap.BUTT, join=LineJoin.MITER)
+    assert_true(
+        abs(stroke[3] - (fill[3] + 1.0)) < 0.01,
+        "apex plus half the width: " + String(stroke[3]),
+    )
+    assert_true(stroke[0] < fill[0] and stroke[2] > fill[2], "and wider")
+
+
+def test_stroke_bounds_stop_where_the_dashes_do() raises:
+    # A 10-on/10-off pattern along x 10..50 draws 10..20 and 30..40,
+    # so the box ends at 40 rather than 50.
+    var p = _horizontal_line()
+    var dashes: List[Float64] = [10.0, 10.0]
+    _assert_box(
+        p.stroke_bounds(4.0, dashes=dashes, cap=LineCap.BUTT),
+        10.0,
+        18.0,
+        40.0,
+        22.0,
+        1e-9,
+        "dashed butt",
+    )
+    # The path's own start takes the cap; a dash boundary is always
+    # butt, so a round cap overhangs the start by 2 and nothing at 40.
+    var b = p.stroke_bounds(4.0, dashes=dashes, cap=LineCap.ROUND)
+    assert_true(abs(b[0] - 8.0) < 0.05, "capped start: " + String(b[0]))
+    assert_true(abs(b[2] - 40.0) < 1e-9, "butt dash end: " + String(b[2]))
+
+
+def test_stroke_bounds_of_a_closed_shape_and_several_sub_paths() raises:
+    # A closed rectangle has no caps; width 2 with miter corners pads
+    # each side by exactly 1. A second sub-path extends the box.
+    var p = Path()
+    p.rect(10.0, 10.0, 20.0, 20.0)
+    _assert_box(
+        p.stroke_bounds(2.0, join=LineJoin.MITER),
+        9.0,
+        9.0,
+        31.0,
+        31.0,
+        1e-9,
+        "rect",
+    )
+    p.move_to(60.0, 5.0)
+    p.line_to(60.0, 50.0)
+    _assert_box(
+        p.stroke_bounds(2.0, cap=LineCap.BUTT, join=LineJoin.MITER),
+        9.0,
+        5.0,
+        61.0,
+        50.0,
+        1e-9,
+        "rect plus a line",
+    )
+
+
+def test_in_fill_of_a_convex_polygon() raises:
+    # A right triangle with the hypotenuse x + y = 20.
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.line_to(20.0, 0.0)
+    p.line_to(0.0, 20.0)
+    p.close()
+    assert_true(p.in_fill(5.0, 5.0), "inside")
+    assert_true(not p.in_fill(15.0, 15.0), "outside, past the hypotenuse")
+    assert_true(not p.in_fill(-1.0, 5.0), "outside, left")
+    assert_true(not p.in_fill(5.0, 25.0), "outside, below")
+    # The boundary is half-open: left and top edges are in, the
+    # hypotenuse (a right edge here) is out.
+    assert_true(p.in_fill(0.0, 5.0), "on the left edge")
+    assert_true(p.in_fill(5.0, 0.0), "on the top edge")
+    assert_true(not p.in_fill(10.0, 10.0), "on the hypotenuse")
+
+
+def test_in_fill_of_a_rect_uses_the_half_open_boundary() raises:
+    var p = Path()
+    p.rect(10.0, 10.0, 20.0, 20.0)
+    assert_true(p.in_fill(10.0, 20.0), "left edge is in")
+    assert_true(p.in_fill(20.0, 10.0), "top edge is in")
+    assert_true(not p.in_fill(30.0, 20.0), "right edge is out")
+    assert_true(not p.in_fill(20.0, 30.0), "bottom edge is out")
+
+
+def _pentagram(cx: Float64, cy: Float64, r: Float64) raises -> Path:
+    # Five points around the circle, connected every second one, so
+    # the center is wound twice.
+    var p = Path()
+    for i in range(5):
+        var a = -pi / 2.0 + Float64(i) * 4.0 * pi / 5.0
+        var x = cx + r * cos(a)
+        var y = cy + r * sin(a)
+        if i == 0:
+            p.move_to(x, y)
+        else:
+            p.line_to(x, y)
+    p.close()
+    return p^
+
+
+def test_in_fill_of_a_self_intersecting_star_depends_on_the_rule() raises:
+    var p = _pentagram(50.0, 50.0, 40.0)
+    # The center's winding number is 2: a hole under even-odd, solid
+    # under nonzero.
+    assert_true(not p.in_fill(50.0, 50.0, FillRule.EVEN_ODD), "even-odd hole")
+    assert_true(p.in_fill(50.0, 50.0, FillRule.NONZERO), "nonzero solid")
+    # A point inside the top tip is wound once, inside under both.
+    assert_true(p.in_fill(50.0, 15.0, FillRule.EVEN_ODD), "tip, even-odd")
+    assert_true(p.in_fill(50.0, 15.0, FillRule.NONZERO), "tip, nonzero")
+    assert_true(not p.in_fill(50.0, 95.0, FillRule.NONZERO), "outside")
+
+
+def test_in_stroke_of_a_line_and_its_caps() raises:
+    # Width 4 on y = 20 from x 10 to 50: the band y 18..22.
+    var p = _horizontal_line()
+    assert_true(p.in_stroke(30.0, 21.0, 4.0, cap=LineCap.BUTT), "in the band")
+    assert_true(
+        not p.in_stroke(30.0, 23.0, 4.0, cap=LineCap.BUTT), "past the band"
+    )
+    # An open two-point path encloses nothing, so the same point is
+    # not in the fill.
+    assert_true(not p.in_fill(30.0, 21.0), "a line has no fill")
+    # One pixel past the endpoint: only the overhanging caps reach it.
+    assert_true(not p.in_stroke(51.0, 20.0, 4.0, cap=LineCap.BUTT), "butt")
+    assert_true(p.in_stroke(51.0, 20.0, 4.0, cap=LineCap.SQUARE), "square")
+    assert_true(p.in_stroke(51.0, 20.0, 4.0, cap=LineCap.ROUND), "round")
+    # The cap's corner: 1.5 out and 1.5 down is inside the square cap
+    # but sqrt(4.5) = 2.12 from the endpoint, past the round cap's 2.
+    assert_true(
+        p.in_stroke(51.5, 21.5, 4.0, cap=LineCap.SQUARE), "square corner"
+    )
+    assert_true(
+        not p.in_stroke(51.5, 21.5, 4.0, cap=LineCap.ROUND), "round corner"
+    )
+
+
+def test_in_stroke_and_in_fill_of_a_rect_are_different_regions() raises:
+    var p = Path()
+    p.rect(10.0, 10.0, 20.0, 20.0)
+    assert_true(p.in_fill(20.0, 20.0), "center is filled")
+    assert_true(not p.in_stroke(20.0, 20.0, 2.0), "center is not stroked")
+    assert_true(p.in_fill(10.5, 20.0), "just inside the edge: filled")
+    assert_true(p.in_stroke(10.5, 20.0, 2.0), "and stroked")
+    assert_true(not p.in_fill(9.5, 20.0), "just outside: not filled")
+    assert_true(p.in_stroke(9.5, 20.0, 2.0), "but stroked")
+    assert_true(not p.in_stroke(8.5, 20.0, 2.0), "past the stroke")
+
+
+def test_in_stroke_of_a_dashed_line_misses_the_gaps() raises:
+    var p = _horizontal_line()
+    var dashes: List[Float64] = [10.0, 10.0]
+    assert_true(p.in_stroke(15.0, 20.0, 4.0, dashes=dashes), "first dash")
+    assert_true(not p.in_stroke(25.0, 20.0, 4.0, dashes=dashes), "gap")
+    assert_true(p.in_stroke(35.0, 20.0, 4.0, dashes=dashes), "second dash")
+    assert_true(not p.in_stroke(45.0, 20.0, 4.0, dashes=dashes), "last gap")
+
+
+def test_in_stroke_of_a_corner_follows_the_join() raises:
+    # The V from the stroke_bounds tests: the miter spike reaches
+    # y = 6.39 above the apex, the bevel cut stops at 8.89, the round
+    # join at 8.0. A point at y = 7.5 is inside only the miter.
+    var p = _v_shape()
+    assert_true(p.in_stroke(30.0, 7.5, 4.0, join=LineJoin.MITER), "miter")
+    assert_true(not p.in_stroke(30.0, 7.5, 4.0, join=LineJoin.BEVEL), "bevel")
+    assert_true(not p.in_stroke(30.0, 7.5, 4.0, join=LineJoin.ROUND), "round")
+    # At y = 8.5 the round join reaches it (its top is 8.0) but the
+    # bevel cut, at 8.89, does not; at 9.0 all three do.
+    assert_true(p.in_stroke(30.0, 8.5, 4.0, join=LineJoin.ROUND), "round 8.5")
+    assert_true(
+        not p.in_stroke(30.0, 8.5, 4.0, join=LineJoin.BEVEL), "bevel 8.5"
+    )
+    assert_true(p.in_stroke(30.0, 9.0, 4.0, join=LineJoin.BEVEL), "bevel 9.0")
+    assert_true(p.in_stroke(30.0, 9.0, 4.0, join=LineJoin.ROUND), "round 9.0")
+
+
+def test_in_stroke_of_a_curve_follows_the_curve() raises:
+    # The quad from the bounds test peaks at y = 10 (from bounds());
+    # a width-2 stroke covers y 9..11 at x = 10 and nothing near the
+    # control point at y = 20.
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.quad_curve_to(10.0, 20.0, 20.0, 0.0)
+    assert_true(p.in_stroke(10.0, 10.5, 2.0), "on the apex")
+    assert_true(not p.in_stroke(10.0, 12.0, 2.0), "past the apex")
+    assert_true(not p.in_stroke(10.0, 20.0, 2.0), "the control point")
+
+
+def test_in_stroke_of_degenerate_paths() raises:
+    assert_true(not Path().in_stroke(5.0, 5.0, 4.0), "empty path")
+    assert_true(not Path().in_fill(5.0, 5.0), "empty path fill")
+    # A lone move_to is the one pixel the stroke sets there.
+    var p = Path()
+    p.move_to(5.0, 7.0)
+    assert_true(p.in_stroke(5.2, 6.8, 4.0), "rounds to the pixel")
+    assert_true(not p.in_stroke(6.0, 7.0, 4.0), "the next pixel over")
+
+
+def test_stroke_bounds_of_degenerate_paths() raises:
+    var b = Path().stroke_bounds(4.0)
+    assert_equal(b[0], 0.0)
+    assert_equal(b[3], 0.0)
+    # A lone move_to strokes as one pixel; its box is the point.
+    var p = Path()
+    p.move_to(5.0, 7.0)
+    _assert_box(p.stroke_bounds(4.0), 5.0, 7.0, 5.0, 7.0, 1e-9, "point")
 
 
 def test_transformed_leaves_the_original_alone() raises:
