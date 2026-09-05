@@ -42,6 +42,12 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
         ... draw ...
         var out = downsample(big, f)
 
+    The recipe is exact for continuous coordinates: paths, text, and
+    the `Float64` overloads. An `Int` `fill_rect` maps its indices as
+    edges under a transform rather than its pixel centres, so it lands
+    half a device pixel off under the offset (and exactly without it);
+    see #244 for unifying the two.
+
     Args:
         source: Canvas to shrink.
         factor: Integer shrink factor; must evenly divide both
