@@ -13,7 +13,7 @@ from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
-from canvas.gradient import LinearGradient
+from canvas.gradient import LinearGradient, RadialGradient
 from canvas.path import Path
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.vector.draw_target import DrawTarget
@@ -147,6 +147,87 @@ def test_fill_rect_gradient_preserves_relative_order_of_stops_at_an_equal_offset
             " (green before blue)"
         ),
     )
+
+
+def test_fill_rect_radial_gradient_emits_radialgradient_and_rect() raises:
+    # cx/cy/radius pass through under userSpaceOnUse; the plain
+    # constructor has no focal circle, so no fx/fy/fr appear.
+    var svg = SvgCanvas(100, 80)
+    var g = RadialGradient(35.0, 35.0, 25.0)
+    g.add_stop(0.0, Color(255, 255, 255))
+    g.add_stop(1.0, Color(0, 0, 0, 128))
+    svg.fill_rect_radial_gradient(10, 10, 50, 50, g)
+    var s = svg.to_string()
+    assert_true(
+        '<defs><radialGradient id="grad1" gradientUnits="userSpaceOnUse"'
+        ' cx="35.000" cy="35.000" r="25.000">'
+        '<stop offset="0.000" stop-color="#ffffff" stop-opacity="1.000"/>'
+        '<stop offset="1.000" stop-color="#000000" stop-opacity="0.502"/>'
+        "</radialGradient></defs>"
+        in s,
+        "hand-derived <radialGradient> markup: " + s,
+    )
+    assert_true(
+        '<rect x="10" y="10" width="50" height="50" fill="url(#grad1)"/>' in s
+    )
+
+
+def test_radial_gradient_with_a_focal_circle_emits_fx_fy_fr() raises:
+    var svg = SvgCanvas(100, 80)
+    var g = RadialGradient(50.0, 50.0, 40.0, fx=30.0, fy=45.0, fr=5.0)
+    g.add_stop(0.0, Color(255, 0, 0))
+    g.add_stop(1.0, Color(0, 0, 255))
+    svg.fill_rect_radial_gradient(0, 0, 100, 80, g)
+    assert_true(
+        ' cx="50.000" cy="50.000" r="40.000" fx="30.000" fy="45.000"'
+        ' fr="5.000">'
+        in svg.to_string(),
+        "focal attributes follow r: " + svg.to_string(),
+    )
+
+
+def test_fill_path_gradient_aa_emits_a_path_filled_from_a_def() raises:
+    var svg = SvgCanvas(100, 80)
+    var g = LinearGradient(0.0, 0.0, 40.0, 0.0)
+    g.add_stop(0.0, Color(0, 0, 0))
+    g.add_stop(1.0, Color(255, 255, 255))
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.line_to(40.0, 0.0)
+    p.line_to(20.0, 30.0)
+    p.close()
+    svg.fill_path_gradient_aa(p, g)
+    var s = svg.to_string()
+    assert_true('<defs><linearGradient id="grad1"' in s)
+    assert_true(
+        '<path d="M0.000,0.000 L40.000,0.000 L20.000,30.000 Z"'
+        ' fill="url(#grad1)" fill-rule="evenodd"/>'
+        in s,
+        "the path references the def and writes the default rule: " + s,
+    )
+    # NONZERO adds no attribute, as fill_path_aa's does not.
+    var nz = SvgCanvas(100, 80)
+    nz.fill_path_gradient_aa(p, g, FillRule.NONZERO)
+    assert_true('fill="url(#grad1)"/>' in nz.to_string())
+    assert_true("fill-rule" not in nz.to_string())
+
+
+def test_fill_path_radial_gradient_aa_mints_ids_alongside_the_others() raises:
+    # Linear and radial defs share one id counter, so two fills on one
+    # document never collide.
+    var svg = SvgCanvas(100, 80)
+    var lin = LinearGradient(0.0, 0.0, 40.0, 0.0)
+    lin.add_stop(0.0, Color(0, 0, 0))
+    var rad = RadialGradient(20.0, 20.0, 20.0)
+    rad.add_stop(0.0, Color(255, 0, 0))
+    var p = Path()
+    p.rect(0.0, 0.0, 40.0, 40.0)
+    svg.fill_rect_gradient(0, 0, 40, 40, lin)
+    svg.fill_path_radial_gradient_aa(p, rad)
+    var s = svg.to_string()
+    assert_true('<radialGradient id="grad2"' in s, "second def is grad2: " + s)
+    assert_true('fill="url(#grad2)"' in s)
+    assert_equal(s.count("<defs>"), 2)
 
 
 def test_draw_line_aa_emits_expected_line_element_with_default_width() raises:
