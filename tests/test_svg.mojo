@@ -781,8 +781,7 @@ def test_set_title_puts_role_label_title_and_desc_on_the_root() raises:
             '<desc>Bars per "quarter"</desc>\n'
             "<rect "
         ),
-        "the root tag, then title, then desc, then the first element: "
-        + out,
+        "the root tag, then title, then desc, then the first element: " + out,
     )
 
 
@@ -802,8 +801,14 @@ def test_set_title_can_be_replaced_or_cleared() raises:
     assert_true("<title>Second</title>" in svg.to_string())
     svg.set_title("")
     var out = svg.to_string()
-    assert_true("<title>" not in out and "role=" not in out, "cleared: " + out)
-    assert_true(out.startswith('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" viewBox="0 0 10 5">\n'))
+    assert_true(not ("<title>" in out), "cleared title: " + out)
+    assert_true(not ("role=" in out), "cleared role: " + out)
+    assert_true(
+        out.startswith(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5"'
+            ' viewBox="0 0 10 5">\n'
+        )
+    )
 
 
 def test_annotated_group_wraps_elements_with_an_escaped_title() raises:
