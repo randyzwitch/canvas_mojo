@@ -8,7 +8,16 @@ from std.testing import (
     TestSuite,
 )
 
-from canvas.geometry import Point, Transform2D
+from canvas.geometry import Point, Transform2D, round_to_int
+
+
+def test_round_to_int_rounds_half_away_from_zero() raises:
+    assert_equal(round_to_int(2.4), 2)
+    assert_equal(round_to_int(2.5), 3)
+    assert_equal(round_to_int(-2.4), -2)
+    assert_equal(round_to_int(-2.5), -3)
+    assert_equal(round_to_int(0.0), 0)
+    assert_equal(round_to_int(-0.49), 0)
 
 
 def test_transform2d_identity_rounds_fractional_input() raises:

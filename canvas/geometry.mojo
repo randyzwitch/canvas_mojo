@@ -53,14 +53,23 @@ struct FPoint(ImplicitlyCopyable, Movable):
         self.y = y
 
 
-def _round_to_int(value: Float64) -> Int:
-    """Round-half-away-from-zero. Float64->Int truncates toward zero,
-    so negative values need the opposite offset from positive ones to
-    round correctly (e.g. -2.5 must become -3, not -2).
+def round_to_int(value: Float64) -> Int:
+    """Round-half-away-from-zero, the rounding every primitive here
+    applies when it takes a sub-pixel coordinate to a whole pixel.
+    Float64->Int truncates toward zero, so negative values need the
+    opposite offset from positive ones to round correctly (e.g. -2.5
+    must become -3, not -2).
 
-    Imported by path.mojo and canvas.shapes.arcs for the same
-    rounding need: the leading underscore means "not part of the public
-    API," not "private to this file."
+    Public because a caller laying out in `Float64` and drawing
+    through the `Int`-taking primitives (`fill_rect`, `fill_circle_aa`)
+    needs the same rounding the package uses, so the two agree on
+    which pixel a coordinate lands in.
+
+    Args:
+        value: The coordinate to round.
+
+    Returns:
+        The nearest integer, halves rounded away from zero.
     """
     if value >= 0.0:
         return Int(value + 0.5)
@@ -162,7 +171,7 @@ struct Transform2D(ImplicitlyCopyable, Movable):
             The transformed point, rounded to the nearest pixel.
         """
         var p = self.to_point(x, y)
-        return Point(_round_to_int(p.x), _round_to_int(p.y))
+        return Point(round_to_int(p.x), round_to_int(p.y))
 
     def inverse_point(self, px: Float64, py: Float64) raises -> FPoint:
         """Map a pixel-space point back to the data-space point
@@ -480,7 +489,7 @@ def _mapped_points(m: Matrix2D, points: List[Point]) -> List[Point]:
     var out = List[Point](capacity=len(points))
     for p in points:
         var q = m.apply(Float64(p.x), Float64(p.y))
-        out.append(Point(_round_to_int(q.x), _round_to_int(q.y)))
+        out.append(Point(round_to_int(q.x), round_to_int(q.y)))
     return out^
 
 
@@ -497,7 +506,7 @@ def _rounded_fpoints(m: Matrix2D, points: List[FPoint]) -> List[Point]:
     var out = List[Point](capacity=len(points))
     for p in points:
         var q = m.apply(p.x, p.y)
-        out.append(Point(_round_to_int(q.x), _round_to_int(q.y)))
+        out.append(Point(round_to_int(q.x), round_to_int(q.y)))
     return out^
 
 
@@ -510,10 +519,10 @@ def _mapped_rect(
     """
     var p0 = m.apply(Float64(x), Float64(y))
     var p1 = m.apply(Float64(x + width), Float64(y + height))
-    var left = _round_to_int(min(p0.x, p1.x))
-    var right = _round_to_int(max(p0.x, p1.x))
-    var top = _round_to_int(min(p0.y, p1.y))
-    var bottom = _round_to_int(max(p0.y, p1.y))
+    var left = round_to_int(min(p0.x, p1.x))
+    var right = round_to_int(max(p0.x, p1.x))
+    var top = round_to_int(min(p0.y, p1.y))
+    var bottom = round_to_int(max(p0.y, p1.y))
     return (left, top, right - left, bottom - top)
 
 

@@ -32,7 +32,7 @@ from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
-from canvas.geometry import _round_to_int
+from canvas.geometry import round_to_int
 from canvas.path import (
     Path,
     _ARC_TO,
@@ -66,7 +66,7 @@ def _write_svg_float(mut out: String, value: Float64):
     element cost to emit (#193).
     """
     # 1000, 100, 10: 10 ** _SVG_DECIMALS and the pad thresholds below it.
-    var scaled = _round_to_int(value * 1000.0)
+    var scaled = round_to_int(value * 1000.0)
     var digits = scaled
     if scaled < 0:
         out.write("-")

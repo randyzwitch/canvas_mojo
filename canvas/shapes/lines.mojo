@@ -24,7 +24,7 @@ from canvas.geometry import (
     Point,
     FPoint,
     _mapped_points,
-    _round_to_int,
+    round_to_int,
     _scaled_lengths,
 )
 from canvas.aa_area import _area_edges_aa
@@ -166,10 +166,10 @@ def draw_line(
         var s = m.scale_factor()
         _draw_line_device(
             canvas,
-            _round_to_int(p0.x),
-            _round_to_int(p0.y),
-            _round_to_int(p1.x),
-            _round_to_int(p1.y),
+            round_to_int(p0.x),
+            round_to_int(p0.y),
+            round_to_int(p1.x),
+            round_to_int(p1.y),
             color,
             _scaled_lengths(dashes, s),
             dash_offset * s,
@@ -512,7 +512,7 @@ def _draw_polyline_core_aa(
         return
     if count == 1:
         canvas.set_pixel(
-            _round_to_int(points[0].x), _round_to_int(points[0].y), color
+            round_to_int(points[0].x), round_to_int(points[0].y), color
         )
         return
 
@@ -560,7 +560,7 @@ def _stroke_transformed(
     var matrix = canvas.current_transform()
     if count == 1:
         var p = matrix.apply(points[0].x, points[0].y)
-        canvas.set_pixel(_round_to_int(p.x), _round_to_int(p.y), color)
+        canvas.set_pixel(round_to_int(p.x), round_to_int(p.y), color)
         return
 
     var shape = _stroke_edges(
