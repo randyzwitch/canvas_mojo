@@ -54,6 +54,7 @@ def _titles() -> Dict[String, String]:
     d["png_output"] = "PNG I/O"
     d["transparency"] = "Transparency"
     d["text"] = "Text"
+    d["text_on_path"] = "Text on a Path & Stroked Text"
     d["vector"] = "Vector Output"
     return d^
 
@@ -130,9 +131,10 @@ def _categories() -> List[Category]:
             "Text",
             (
                 "Real system-font text rendering -- native font matching,"
-                " TrueType parsing, bidi."
+                " TrueType parsing, bidi, text along a curve, and outlined"
+                " glyphs."
             ),
-            ["text"],
+            ["text", "text_on_path"],
         )
     )
     cats.append(

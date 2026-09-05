@@ -41,6 +41,7 @@ from canvas.text.render import (
     draw_text,
     measure_text,
     measure_text_block,
+    stroke_text,
     TextAlign,
     _visual_codepoints,
 )
@@ -104,6 +105,15 @@ def _ink_bbox(c: Canvas, bg: Color) -> _InkBBox:
                 if y > max_y:
                     max_y = y
     return _InkBBox(min_x, max_x, min_y, max_y, found_any)
+
+
+def _is_bg(c: Canvas, x: Int, y: Int) -> Bool:
+    var p = c.get_pixel(x, y)
+    return p.r == BG.r and p.g == BG.g and p.b == BG.b
+
+
+def _within(a: Int, b: Int, slack: Int) -> Bool:
+    return a - b <= slack and b - a <= slack
 
 
 def test_empty_string_is_noop() raises:
@@ -908,6 +918,126 @@ def test_a_ligature_gets_its_own_glyph_mask() raises:
     draw_text(again, 20, 90, "ffi", FG, 64.0, cache=ligated_cache)
     assert_equal(ligated_cache.glyph_mask_count(), 1)
     _assert_same_pixels(ligated, again, "ligated redraw through a warm cache")
+
+
+# Stroked text. `stroke_text` reuses draw_text's whole layout and
+# swaps fill_path_aa for stroke_path_aa, so what is worth asserting is
+# the difference between a filled glyph and its outline: an outline is
+# ink at the glyph's edges and background in the middle of the wall
+# between them, where the fill is solid.
+
+
+def test_stroke_text_empty_string_is_noop() raises:
+    var c = Canvas(40, 40, BG)
+    stroke_text(c, 5.0, 20.0, "", FG, 24.0, width=2.0)
+    _assert_canvas_untouched(c, BG, "empty string stroked something")
+
+
+def test_stroke_text_outlines_the_glyph_rather_than_filling_it() raises:
+    # "O" at 120 px: a wide counter and a wall thick enough that a
+    # 2 px stroke centred on each contour leaves clear background
+    # between the two.
+    var cache = FontCache()
+    var filled = Canvas(220, 200, BG)
+    draw_text(filled, 20.0, 150.0, "O", FG, 120.0, cache=cache)
+    var box = _ink_bbox(filled, BG)
+    assert_true(box.found_any, "the filled reference drew something")
+
+    # On the row through the middle of the glyph, walk the left wall:
+    # the first inked pixel is the outer contour, the last of that run
+    # is the inner one, and the middle of the run is solid fill.
+    var row = (box.min_y + box.max_y) // 2
+    var left_edge = box.min_x
+    while left_edge <= box.max_x and _is_bg(filled, left_edge, row):
+        left_edge += 1
+    var wall_end = left_edge
+    while wall_end <= box.max_x and not _is_bg(filled, wall_end, row):
+        wall_end += 1
+    wall_end -= 1
+    assert_true(
+        wall_end - left_edge >= 5,
+        "the wall is thick enough for the assertion below to mean something",
+    )
+    var wall_mid = (left_edge + wall_end) // 2
+
+    var stroked = Canvas(220, 200, BG)
+    stroke_text(stroked, 20.0, 150.0, "O", FG, 120.0, width=2.0, cache=cache)
+
+    # Ink on the contour the fill's left edge sits on -- within a
+    # pixel either way, a 2 px stroke being centred on it.
+    assert_true(
+        not _is_bg(stroked, left_edge - 1, row)
+        or not _is_bg(stroked, left_edge, row)
+        or not _is_bg(stroked, left_edge + 1, row),
+        "the stroke covers the glyph's outer contour",
+    )
+    # And nothing in the middle of the wall, which the fill covers
+    # solidly.
+    assert_true(not _is_bg(filled, wall_mid, row), "the fill covers the wall")
+    assert_true(
+        _is_bg(stroked, wall_mid, row),
+        "the stroke leaves the middle of the wall empty",
+    )
+    # The counter -- the hole in the "O" -- is empty either way.
+    var centre_x = (box.min_x + box.max_x) // 2
+    assert_true(_is_bg(filled, centre_x, row), "the counter is a hole")
+    assert_true(_is_bg(stroked, centre_x, row), "and stays one when stroked")
+
+
+def test_stroke_text_matches_the_filled_bounding_box() raises:
+    # The same layout drawn two ways, so the two boxes differ only by
+    # the half stroke width the outline adds on each side plus its
+    # anti-aliased fringe -- inside one stroke width on every edge.
+    var cache = FontCache()
+    var text = String("Handgloves")
+    var filled = Canvas(400, 120, BG)
+    draw_text(filled, 20.0, 90.0, text, FG, 48.0, cache=cache)
+    var stroked = Canvas(400, 120, BG)
+    stroke_text(stroked, 20.0, 90.0, text, FG, 48.0, width=2.0, cache=cache)
+
+    var f = _ink_bbox(filled, BG)
+    var s = _ink_bbox(stroked, BG)
+    assert_true(f.found_any and s.found_any, "both drew something")
+    assert_true(_within(s.min_x, f.min_x, 2), "left edges agree")
+    assert_true(_within(s.max_x, f.max_x, 2), "right edges agree")
+    assert_true(_within(s.min_y, f.min_y, 2), "top edges agree")
+    assert_true(_within(s.max_y, f.max_y, 2), "bottom edges agree")
+
+
+def test_stroke_text_rotated_90_swaps_ink_bbox_dimensions() raises:
+    # Rotation is draw_text's, applied to the same placed outline
+    # before it is stroked rather than filled.
+    var cache = FontCache()
+    var flat = Canvas(200, 200, BG)
+    stroke_text(flat, 30.0, 120.0, "Axis", FG, 32.0, width=2.0, cache=cache)
+    var turned = Canvas(200, 200, BG)
+    stroke_text(
+        turned,
+        120.0,
+        170.0,
+        "Axis",
+        FG,
+        32.0,
+        width=2.0,
+        rotation=-pi / 2.0,
+        cache=cache,
+    )
+    var f = _ink_bbox(flat, BG)
+    var t = _ink_bbox(turned, BG)
+    assert_true(f.found_any and t.found_any, "both drew something")
+    assert_true(f.max_x - f.min_x > f.max_y - f.min_y, "the flat label is wide")
+    assert_true(t.max_y - t.min_y > t.max_x - t.min_x, "the turned one is tall")
+
+
+def test_stroke_text_leaves_the_glyph_mask_cache_alone() raises:
+    # The mask cache holds a glyph's fill coverage; the outline around
+    # that shape is a different figure, so stroking stores nothing and
+    # reads nothing.
+    var cache = FontCache()
+    var c = Canvas(300, 120, BG)
+    stroke_text(c, 20.0, 90.0, "Outline", FG, 48.0, width=2.0, cache=cache)
+    assert_equal(cache.glyph_mask_count(), 0, "stroking caches no masks")
+    assert_true(_ink_bbox(c, BG).found_any, "and still renders")
 
 
 def main() raises:

@@ -60,6 +60,15 @@ family renders through whatever installed font has it; one missing
 everywhere degrades to the unconstrained best match. Fallback faces
 cache alongside the primary face.
 
+Two entry points draw the same layout differently. `stroke_text` hands
+each glyph's outline to `stroke_path_aa` instead of filling it, which
+is a label that reads over a busy background. `draw_text_on_path` puts
+the baseline on a curve: the string is laid out straight, then each
+glyph is placed at its own arc length along the path
+(`_ArcLengthPath`) and turned to the tangent there. Neither is a
+different layout -- both go through `_shape_line` and `_kern_offset`,
+so text on a curve kerns and ligates exactly as straight text does.
+
 FontSlant/FontWeight come from font_discovery.mojo and TextAlign from
 text_align.mojo, both re-exported here.
 """
@@ -84,7 +93,9 @@ from canvas.text.glyph_outline import (
 from canvas.text.ttf import TTFFace
 from canvas.path import (
     fill_path_aa,
+    stroke_path_aa,
     Path,
+    _ArcLengthPath,
     _CoverageMask,
     _path_coverage_counts,
     _through,
@@ -94,6 +105,7 @@ from canvas.path import (
     _MOVE_TO,
     _QUAD_TO,
 )
+from canvas.shapes.lines import LineJoin
 from canvas.text.text_align import TextAlign
 
 # Sub-pixel positions per pixel the glyph mask cache distinguishes.
@@ -1393,3 +1405,510 @@ def draw_text(
                 var placed = _place_glyph_path(g.path, c, s, anchor_x, anchor_y)
                 fill_path_aa(canvas, placed, color, FillRule.NONZERO)
             pen_x += g.metrics.advance
+
+
+def stroke_text(
+    mut canvas: Canvas,
+    x: Float64,
+    y: Float64,
+    text: String,
+    color: Color,
+    size: Float64,
+    width: Float64 = 1.0,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
+    kerning: Bool = True,
+    ligatures: Bool = True,
+) raises:
+    """`draw_text`'s outline instead of its fill, resolving fonts fresh
+    every call. See the `cache=` overload below for the parameters and
+    `draw_text` for what resolving fresh costs.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Anchor x -- baseline left end for LEFT alignment.
+        y: Anchor y -- baseline.
+        text: Text to draw, "\\n"-separated lines.
+        color: Stroke color.
+        size: Font size in points.
+        width: Stroke width in pixels.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+        join: How a corner of the outline is turned -- see LineJoin.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+    """
+    var cache = FontCache()
+    stroke_text(
+        canvas,
+        x,
+        y,
+        text,
+        color,
+        size,
+        width,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        join,
+        miter_limit,
+        kerning,
+        ligatures,
+        cache=cache,
+    )
+
+
+def stroke_text(
+    mut canvas: Canvas,
+    x: Float64,
+    y: Float64,
+    text: String,
+    color: Color,
+    size: Float64,
+    width: Float64 = 1.0,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    join: LineJoin = LineJoin.ROUND,
+    miter_limit: Float64 = 4.0,
+    kerning: Bool = True,
+    ligatures: Bool = True,
+    *,
+    mut cache: FontCache,
+) raises:
+    """Outline `text` rather than filling it: the layout `draw_text`
+    produces, with each glyph's outline handed to `stroke_path_aa`
+    instead of `fill_path_aa`. Cairo's `text_path` + `stroke` and the
+    HTML5 canvas's `strokeText`; an outlined label reads over a busy
+    background where a filled one does not.
+
+    Everything but the rasterization step is `draw_text`'s: the same
+    shaping, kerning, line breaking, alignment and rotation about the
+    `(x, y)` anchor, so a stroked string and a filled one sit on the
+    same baseline and occupy the same box, give or take half a stroke
+    width of outline on each side.
+
+    No glyph mask cache. It holds a glyph's *coverage*, which is a
+    property of the filled shape; the stroke around that shape is a
+    different figure and would need a cache keyed by width, join and
+    limit as well.
+
+    `cap` is not a parameter: every TrueType contour is closed
+    (`ttf.mojo`'s `outline_to_path` closes each one), so a glyph
+    outline has no ends to finish and `stroke_path_aa` would ignore
+    the value.
+
+    The canvas transform applies through `stroke_path_aa`, so the
+    stroke width is in user space and scales with the transform, as it
+    does for any other stroked path.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Anchor x -- baseline left end for LEFT alignment.
+        y: Anchor y -- baseline.
+        text: Text to draw, "\\n"-separated lines.
+        color: Stroke color.
+        size: Font size in points.
+        width: Stroke width in pixels.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+        join: How a corner of the outline is turned -- see LineJoin.
+        miter_limit: Ratio past which a MITER join falls back to
+            BEVEL, as a multiple of half the stroke width.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        cache: Shared cache for font resolution and parsed faces.
+    """
+    if text == "":
+        return
+    var block = _layout_block(
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        ligatures,
+        cache,
+    )
+    if not block.any_ink:
+        return
+    var face = cache.resolve_face(family, slant, weight, size)
+    var c = cos(rotation)
+    var s = sin(rotation)
+
+    for i in range(len(block.lines)):
+        ref line = block.lines[i]
+        var pen_x = line.x
+        var previous = 0
+        for shaped in line.glyphs:
+            if kerning:
+                pen_x += _kern_offset(face[], previous, shaped.glyph)
+            previous = shaped.glyph
+            var g = _resolve_glyph(
+                face[],
+                family,
+                slant,
+                weight,
+                size,
+                shaped,
+                pen_x,
+                line.y,
+                cache,
+            )
+            if g.metrics.width > 0.0 and g.metrics.height > 0.0:
+                stroke_path_aa(
+                    canvas,
+                    _place_glyph_path(g.path, c, s, x, y),
+                    color,
+                    width,
+                    join=join,
+                    miter_limit=miter_limit,
+                )
+            pen_x += g.metrics.advance
+
+
+struct _PlacedGlyph(ImplicitlyCopyable, Movable):
+    """One glyph positioned on a curve: the glyph itself, the origin
+    its baseline sits at, and the unit tangent of the curve there,
+    which is the direction the glyph's own baseline runs in.
+    """
+
+    var shaped: _ShapedGlyph
+    var x: Float64
+    var y: Float64
+    var tx: Float64
+    var ty: Float64
+
+    def __init__(
+        out self,
+        shaped: _ShapedGlyph,
+        x: Float64,
+        y: Float64,
+        tx: Float64,
+        ty: Float64,
+    ):
+        self.shaped = shaped
+        self.x = x
+        self.y = y
+        self.tx = tx
+        self.ty = ty
+
+
+def _text_on_path_placements(
+    text: String,
+    path: Path,
+    size: Float64,
+    offset: Float64,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    align: TextAlign,
+    kerning: Bool,
+    ligatures: Bool,
+    mut cache: FontCache,
+) raises -> List[_PlacedGlyph]:
+    """Where each of `text`'s glyphs lands on `path` -- the whole of
+    draw_text_on_path that is layout rather than rasterization.
+
+    The line is laid out straight first, through the same
+    `_shape_line`/`_kern_offset` pass every other text call uses, which
+    gives each glyph a pen offset and an advance. A glyph is then
+    placed by its *centre*: the point at arc length
+    `start + pen + advance/2` along the path, rotated to the tangent
+    there, with its origin backed off half an advance along that same
+    tangent. Cairo/Pango and SVG's `textPath` place a glyph the same
+    way, and it is what keeps a glyph upright on a curve that turns
+    under it rather than pivoting about its left edge.
+
+    `start` is where the string begins along the path: `offset` for
+    LEFT, `offset` minus half the total advance for CENTER, `offset`
+    minus the whole advance for RIGHT.
+
+    A glyph whose centre falls outside [0, the path's length] is left
+    out entirely, SVG's rule -- the alternative, clamping it to an end,
+    stacks the overflow into an unreadable pile there. A glyph with no
+    ink is left out too, having nothing to draw.
+
+    On a straight horizontal path this reduces exactly to draw_text's
+    own placement rather than approximately: the tangent is (1, 0) bit
+    for bit, so `sample` returns the path's start x plus the arc length
+    unrounded, and backing off half an advance recovers the pen
+    position, every term being a multiple of the font's design-unit
+    pixel size.
+    """
+    var face = cache.resolve_face(family, slant, weight, size)
+    var glyphs = _shape_line(face[], text, ligatures)
+    var count = len(glyphs)
+
+    # One metrics pass: the pen position each glyph starts at, its
+    # advance, and whether it has ink. The total advance is what
+    # CENTER/RIGHT align against, so it has to be known before the
+    # first glyph is placed.
+    var pens = List[Float64](capacity=count)
+    var advances = List[Float64](capacity=count)
+    var inked = List[Bool](capacity=count)
+    var pen = 0.0
+    var previous = 0
+    for shaped in glyphs:
+        if kerning:
+            pen += _kern_offset(face[], previous, shaped.glyph)
+        previous = shaped.glyph
+        var gm = _resolve_glyph_metrics(
+            face[], family, slant, weight, size, shaped, cache
+        )
+        pens.append(pen)
+        advances.append(gm.advance)
+        inked.append(gm.width > 0.0 and gm.height > 0.0)
+        pen += gm.advance
+
+    var start = offset
+    if align == TextAlign.CENTER:
+        start = offset - pen / 2.0
+    elif align == TextAlign.RIGHT:
+        start = offset - pen
+
+    var curve = _ArcLengthPath(path)
+    var placed = List[_PlacedGlyph]()
+    for i in range(count):
+        if not inked[i]:
+            continue
+        var half = advances[i] / 2.0
+        var centre = start + pens[i] + half
+        if centre < 0.0 or centre > curve.total:
+            continue
+        var s = curve.sample(centre)
+        placed.append(
+            _PlacedGlyph(
+                glyphs[i], s.x - half * s.tx, s.y - half * s.ty, s.tx, s.ty
+            )
+        )
+    return placed^
+
+
+def _draw_placed_glyphs(
+    mut canvas: Canvas,
+    matrix: Matrix2D,
+    placements: List[_PlacedGlyph],
+    color: Color,
+    size: Float64,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    mut cache: FontCache,
+) raises:
+    """Fill every glyph `_text_on_path_placements` produced, under
+    `matrix` -- the canvas transform, already taken off the canvas by
+    the caller so nothing applies it twice.
+
+    A glyph whose tangent is exactly (1, 0) under a matrix that is no
+    more than a translation is an unrotated glyph at a translated
+    anchor, which is what draw_text's glyph mask cache is for, and it
+    goes through the same `_draw_cached_glyph`. That is what makes a
+    straight horizontal path draw pixel for pixel what draw_text draws:
+    a cached composite and a direct fill of one outline agree within a
+    coverage step, not exactly. Every other glyph is rotated, so it
+    fills directly, as rotated text does.
+    """
+    var face = cache.resolve_face(family, slant, weight, size)
+    # Faces are shared per (font file, whole pixel size), so the mask
+    # key follows the same rounding of `size` draw_text's does.
+    var key_prefix = (
+        _cache_key(family, slant, weight) + "@" + String(Int(ceil(size))) + "|"
+    )
+    var translation = matrix.is_translation()
+    for i in range(len(placements)):
+        ref p = placements[i]
+        if translation and p.tx == 1.0 and p.ty == 0.0:
+            _ = _draw_cached_glyph(
+                canvas,
+                face[],
+                family,
+                slant,
+                weight,
+                size,
+                p.shaped,
+                p.x + matrix.e,
+                p.y + matrix.f,
+                key_prefix,
+                color,
+                cache,
+            )
+            continue
+        var g = _resolve_glyph(
+            face[], family, slant, weight, size, p.shaped, 0.0, 0.0, cache
+        )
+        # The glyph is built at its own origin and placed by one
+        # matrix: turn to the tangent, translate onto the curve, then
+        # the canvas transform.
+        var placement = Matrix2D(p.tx, p.ty, -p.ty, p.tx, p.x, p.y).then(matrix)
+        fill_path_aa(
+            canvas, _through(g.path, placement), color, FillRule.NONZERO
+        )
+
+
+def draw_text_on_path(
+    mut canvas: Canvas,
+    path: Path,
+    text: String,
+    color: Color,
+    size: Float64,
+    offset: Float64 = 0.0,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
+    ligatures: Bool = True,
+) raises:
+    """Text along a curve, resolving fonts fresh every call. See the
+    `cache=` overload below for the parameters and `draw_text` for what
+    resolving fresh costs.
+
+    Args:
+        canvas: Canvas to draw into.
+        path: Curve the baseline follows.
+        text: Text to draw, treated as a single line.
+        color: Text color.
+        size: Font size in points.
+        offset: Distance along the path the string is placed at.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        align: Where `offset` sits in the string -- its start, middle
+            or end.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+    """
+    var cache = FontCache()
+    draw_text_on_path(
+        canvas,
+        path,
+        text,
+        color,
+        size,
+        offset,
+        family,
+        slant,
+        weight,
+        align,
+        kerning,
+        ligatures,
+        cache=cache,
+    )
+
+
+def draw_text_on_path(
+    mut canvas: Canvas,
+    path: Path,
+    text: String,
+    color: Color,
+    size: Float64,
+    offset: Float64 = 0.0,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
+    ligatures: Bool = True,
+    *,
+    mut cache: FontCache,
+) raises:
+    """Draw `text` with its baseline running along `path`: a label
+    around a donut segment, a curved axis label on a polar grid.
+
+    `path` replaces draw_text's `(x, y)` anchor and its `rotation`
+    both: `offset` is a distance measured along the path rather than a
+    point, and each glyph turns to the path's tangent where it sits,
+    so a string on a circle leans round it. `align` says where `offset`
+    falls in the string -- LEFT starts it there, CENTER centres its
+    total advance about it, RIGHT ends it there.
+
+    Arc length is measured over the path flattened the way
+    `stroke_path_aa` flattens it, so the distance a glyph is placed at
+    is a distance along the curve that gets drawn. Sub-paths add end to
+    end with no distance between them.
+
+    A glyph whose centre falls before the start or past the end of the
+    path is not drawn (SVG's `textPath` rule): text longer than the
+    curve loses its overflow rather than piling it up at the end. A
+    string with no glyphs left on the path draws nothing.
+
+    `text` is one line -- an embedded "\\n" gets no line-break
+    handling, since a path gives no second baseline to break onto.
+
+    Args:
+        canvas: Canvas to draw into.
+        path: Curve the baseline follows.
+        text: Text to draw, treated as a single line.
+        color: Text color.
+        size: Font size in points.
+        offset: Distance along the path the string is placed at.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        align: Where `offset` sits in the string -- its start, middle
+            or end.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        cache: Shared cache for font resolution and parsed faces.
+    """
+    if text == "":
+        return
+    var placements = _text_on_path_placements(
+        text,
+        path,
+        size,
+        offset,
+        family,
+        slant,
+        weight,
+        align,
+        kerning,
+        ligatures,
+        cache,
+    )
+    if len(placements) == 0:
+        return
+    # The placement matrix carries the canvas transform itself, so it
+    # comes off the canvas for the duration -- fill_path_aa would
+    # otherwise apply it a second time, and the cached-glyph path
+    # writes device pixels and would not apply it at all.
+    var matrix = Matrix2D.identity()
+    if canvas.has_transform():
+        matrix = canvas._take_transform()
+    try:
+        _draw_placed_glyphs(
+            canvas,
+            matrix,
+            placements,
+            color,
+            size,
+            family,
+            slant,
+            weight,
+            cache,
+        )
+    except e:
+        canvas._set_transform(matrix)
+        raise e
+    canvas._set_transform(matrix)

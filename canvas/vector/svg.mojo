@@ -152,6 +152,15 @@ def _join_name(join: LineJoin) -> StaticString:
     return "round"
 
 
+def _anchor_name(align: TextAlign) -> StaticString:
+    """`text-anchor`'s three values, which are TextAlign's three."""
+    if align == TextAlign.CENTER:
+        return "middle"
+    if align == TextAlign.RIGHT:
+        return "end"
+    return "start"
+
+
 def _write_stroke_attrs(
     mut out: String,
     width: Float64,
@@ -292,6 +301,10 @@ struct SvgCanvas(DrawTarget, Movable):
     # a fresh `<defs>` id ("grad" + String(...)) per call so two
     # fill_rect_gradient calls never collide.
     var _gradient_count: Int
+    # How many text paths this document has emitted, minting a fresh
+    # `<defs>` id ("tp" + String(...)) per draw_text_on_path call the
+    # way `_gradient_count` does for gradients.
+    var _text_path_count: Int
     # Whether a `<g>` opened by begin_annotated_group is still waiting
     # for its `</g>`. Groups do not nest, so one flag is the whole
     # state; `to_string` consults it so an unclosed group cannot reach
@@ -316,6 +329,7 @@ struct SvgCanvas(DrawTarget, Movable):
         self.height = height
         self._body = ""
         self._gradient_count = 0
+        self._text_path_count = 0
         self._open_group = False
         self._transform = Matrix2D.identity()
         self._transformed = False
@@ -1071,11 +1085,7 @@ struct SvgCanvas(DrawTarget, Movable):
             weight: Normal/bold weight.
         """
         var escaped_family = _escape_xml_attr(family)
-        var anchor = "start"
-        if align == TextAlign.CENTER:
-            anchor = "middle"
-        elif align == TextAlign.RIGHT:
-            anchor = "end"
+        var anchor = _anchor_name(align)
         var font_weight = ""
         if weight == FontWeight.BOLD:
             font_weight = ' font-weight="bold"'
@@ -1108,6 +1118,167 @@ struct SvgCanvas(DrawTarget, Movable):
             self._body.write('"')
         self._write_blend()
         self._body.write(">", _escape_xml_text(text), "</text>\n")
+
+    def stroke_text(
+        mut self,
+        x: Int,
+        y: Int,
+        text: String,
+        color: Color,
+        size: Float64,
+        align: TextAlign,
+        width: Float64 = 1.0,
+        family: String = "sans-serif",
+        rotation: Float64 = 0.0,
+        weight: FontWeight = FontWeight.NORMAL,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
+    ):
+        """Draw a `<text>` element outlined rather than filled:
+        `fill="none"` plus the stroke attributes. The vector
+        counterpart of raster `stroke_text`, and like `draw_text` not
+        part of `DrawTarget`.
+
+        Everything `draw_text` says about `(x, y)`, `family`, `align`,
+        `rotation` and `weight` holds here unchanged; only the paint
+        differs.
+
+        No `stroke-linecap` is emitted: a glyph outline is a set of
+        closed contours, so it has no ends to cap, and the raster side
+        takes no `cap` parameter for the same reason.
+
+        SVG applies `stroke-width` in the element's user space, so an
+        outlined label under a scale thickens with it, as on `Canvas`.
+
+        Args:
+            x: Anchor x -- baseline left end for TextAlign.LEFT.
+            y: Anchor y -- baseline.
+            text: Text to draw. No line-break handling for embedded
+                "\\n".
+            color: Stroke color.
+            size: Font size in pixels.
+            align: Horizontal alignment relative to (x, y).
+            width: Stroke width in user-space pixels.
+            family: A literal CSS `font-family` value, not a
+                font-matching query -- see draw_text.
+            rotation: Radians, rotating the whole `<text>` element
+                around (x, y).
+            weight: Normal/bold weight.
+            join: How a corner of the outline is turned -- see
+                LineJoin.
+            miter_limit: Ratio past which a MITER join falls back to
+                BEVEL, as a multiple of half the stroke width.
+        """
+        var escaped_family = _escape_xml_attr(family)
+        var anchor = _anchor_name(align)
+        var font_weight = ""
+        if weight == FontWeight.BOLD:
+            font_weight = ' font-weight="bold"'
+        self._body.write('<text x="', x, '" y="', y, '" font-size="')
+        _write_svg_float(self._body, size)
+        self._body.write(
+            '" font-family="',
+            escaped_family,
+            '"',
+            font_weight,
+            ' fill="none" stroke="',
+            _to_hex(color),
+            '"',
+        )
+        _write_opacity(self._body, "stroke", color)
+        self._body.write(' stroke-width="')
+        _write_svg_float(self._body, width)
+        self._body.write('" stroke-linejoin="', _join_name(join), '"')
+        if join == LineJoin.MITER and miter_limit != 4.0:
+            self._body.write(' stroke-miterlimit="')
+            _write_svg_float(self._body, miter_limit)
+            self._body.write('"')
+        self._body.write(' text-anchor="', anchor, '"')
+        # A transform list applies right to left, so the canvas
+        # transform goes first and the label's own rotation about its
+        # anchor happens before it, as in draw_text.
+        if self._transformed or rotation != 0.0:
+            self._body.write(' transform="')
+            if self._transformed:
+                self._write_matrix()
+            if rotation != 0.0:
+                if self._transformed:
+                    self._body.write(" ")
+                self._body.write("rotate(")
+                _write_svg_float(self._body, rotation * (180.0 / pi))
+                self._body.write(" ", x, " ", y, ")")
+            self._body.write('"')
+        self._write_blend()
+        self._body.write(">", _escape_xml_text(text), "</text>\n")
+
+    def draw_text_on_path(
+        mut self,
+        path: Path,
+        text: String,
+        color: Color,
+        size: Float64,
+        align: TextAlign,
+        offset: Float64 = 0.0,
+        family: String = "sans-serif",
+        weight: FontWeight = FontWeight.NORMAL,
+    ):
+        """Draw `text` along `path`, as a `<textPath>` referring to a
+        `<path>` in a `<defs>` block emitted just before it. The vector
+        counterpart of raster `draw_text_on_path`.
+
+        Each call mints a fresh id (`tpN`), so two calls never collide
+        and a path drawn as well as labelled is written twice rather
+        than shared -- the visible path carries its own paint.
+
+        `offset` becomes `startOffset`, a distance along the path, for
+        all three alignments: SVG anchors a `<textPath>` at
+        `startOffset` and then applies `text-anchor` about it, which is
+        exactly what the raster side's `align` does.
+
+        A renderer drops the glyphs that do not fit on the path, the
+        rule the raster side applies to a glyph whose centre falls past
+        an end.
+
+        Args:
+            path: Curve the baseline follows.
+            text: Text to draw, one line.
+            color: Text color.
+            size: Font size in pixels.
+            align: Where `offset` sits in the string -- its start,
+                middle or end.
+            offset: Distance along the path the string is placed at.
+            family: A literal CSS `font-family` value, not a
+                font-matching query -- see draw_text.
+            weight: Normal/bold weight.
+        """
+        self._text_path_count += 1
+        self._body.write('<defs><path id="tp', self._text_path_count, '" d="')
+        _write_path_d(self._body, path)
+        self._body.write('"/></defs>\n')
+
+        var escaped_family = _escape_xml_attr(family)
+        var font_weight = ""
+        if weight == FontWeight.BOLD:
+            font_weight = ' font-weight="bold"'
+        self._body.write('<text font-size="')
+        _write_svg_float(self._body, size)
+        self._body.write(
+            '" font-family="',
+            escaped_family,
+            '"',
+            font_weight,
+            ' fill="',
+            _to_hex(color),
+            '"',
+        )
+        _write_opacity(self._body, "fill", color)
+        self._body.write(' text-anchor="', _anchor_name(align), '"')
+        self._write_transform()
+        self._write_blend()
+        self._body.write('><textPath href="#tp', self._text_path_count)
+        self._body.write('" startOffset="')
+        _write_svg_float(self._body, offset)
+        self._body.write('">', _escape_xml_text(text), "</textPath></text>\n")
 
     def to_string(self) -> String:
         return (

@@ -66,8 +66,10 @@ from canvas.shapes.arcs import (
 )
 from canvas.text.render import (
     draw_text,
+    draw_text_on_path,
     measure_text,
     measure_text_block,
+    stroke_text,
     TextAlign,
     TextMetrics,
     TextBlockBounds,
