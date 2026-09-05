@@ -677,13 +677,19 @@ def test_glyph_cache_composites_under_clips() raises:
     _assert_same_pixels(reference2, masked, "under a clip path")
 
 
-def test_rotated_text_bypasses_the_glyph_cache() raises:
+def test_rotated_text_is_cached_at_its_orientation() raises:
     var cache = FontCache()
     var c = Canvas(120, 120, BG)
     draw_text(c, 20, 100, "Up", FG, 16.0, rotation=-pi / 2.0, cache=cache)
-    assert_equal(cache.glyph_mask_count(), 0, "rotated glyphs fill directly")
+    var first = cache.glyph_mask_count()
+    assert_true(first >= 2, "one mask per rotated glyph")
     var bbox = _ink_bbox(c, BG)
-    assert_true(bbox.found_any, "and still render")
+    assert_true(bbox.found_any, "and it renders")
+    draw_text(c, 20, 100, "Up", FG, 16.0, rotation=-pi / 2.0, cache=cache)
+    assert_equal(cache.glyph_mask_count(), first, "drawn again from the cache")
+    # A different orientation is a different mask.
+    draw_text(c, 20, 100, "Up", FG, 16.0, rotation=0.3, cache=cache)
+    assert_true(cache.glyph_mask_count() > first, "keyed by orientation")
 
 
 # Kerning. Every expected value below is DejaVu Sans at 64 px: it has
