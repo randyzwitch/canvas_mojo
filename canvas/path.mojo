@@ -443,8 +443,8 @@ struct Path(Movable):
         one. `arc_to` cannot build it: it takes a single `radius`.
 
         Args:
-            cx: Centre x.
-            cy: Centre y.
+            cx: Center x.
+            cy: Center y.
             rx: Horizontal radius in pixels.
             ry: Vertical radius in pixels.
 
@@ -520,11 +520,11 @@ struct Path(Movable):
 
         Bezier control points map directly, since an affine transform of
         a Bezier is the Bezier of the transformed control points.
-        `arc_to` describes a *circular* arc by centre, radius and angles,
+        `arc_to` describes a *circular* arc by center, radius and angles,
         and only a transform that maps circles to circles folds back into
         those five numbers:
 
-        - Equal scale magnitudes: exact. The centre maps, the radius
+        - Equal scale magnitudes: exact. The center maps, the radius
           scales, and the angles shift by the transform's rotation. A
           negative scale mirrors the angles first -- a y-flip maps an
           angle a to -a, an x-flip to pi - a, and both together to
@@ -575,7 +575,7 @@ struct Path(Movable):
                 # p1 = (cx, cy), p2 = (radius, start_angle),
                 # p3.x = end_angle -- see PathCommand.
                 if uniform:
-                    var centre = transform.to_point(cmd.p1.x, cmd.p1.y)
+                    var center = transform.to_point(cmd.p1.x, cmd.p1.y)
                     var start = cmd.p2.y
                     var end = cmd.p3.x
                     if transform.scale_x < 0.0 and transform.scale_y < 0.0:
@@ -588,8 +588,8 @@ struct Path(Movable):
                         start = pi - start
                         end = pi - end
                     out.arc_to(
-                        centre.x,
-                        centre.y,
+                        center.x,
+                        center.y,
                         cmd.p2.x * sx,
                         start + transform.rotation,
                         end + transform.rotation,
@@ -616,7 +616,7 @@ struct Path(Movable):
 
         Bezier control points map directly. An `arc_to` stays an arc
         when the matrix keeps circles circular (a rotation, a uniform
-        scale, a translation, or a mirror of those): its centre maps,
+        scale, a translation, or a mirror of those): its center maps,
         its radius scales, its start angle is read off the mapped start
         point, and its sweep keeps its size, reversing under a mirror.
         Any other matrix turns the arc into an ellipse, which `arc_to`
@@ -660,20 +660,20 @@ struct Path(Movable):
                 # p1 = (cx, cy), p2 = (radius, start_angle),
                 # p3.x = end_angle -- see PathCommand.
                 if circular:
-                    var centre = matrix.apply(cmd.p1.x, cmd.p1.y)
+                    var center = matrix.apply(cmd.p1.x, cmd.p1.y)
                     var start_pt = matrix.apply(
                         cmd.p1.x + cmd.p2.x * cos(cmd.p2.y),
                         cmd.p1.y + cmd.p2.x * sin(cmd.p2.y),
                     )
                     var start = atan2(
-                        start_pt.y - centre.y, start_pt.x - centre.x
+                        start_pt.y - center.y, start_pt.x - center.x
                     )
                     var sweep = cmd.p3.x - cmd.p2.y
                     if mirrored:
                         sweep = -sweep
                     out.arc_to(
-                        centre.x,
-                        centre.y,
+                        center.x,
+                        center.y,
                         cmd.p2.x * length_scale,
                         start,
                         start + sweep,
@@ -747,7 +747,7 @@ struct Path(Movable):
         `bounds()` padded by half the width would miss or overstate: a
         SQUARE or ROUND cap's overhang past an endpoint, a MITER
         join's spike past a corner, and a dash pattern that ends
-        short of the path. A round cap or join is polygonised the way
+        short of the path. A round cap or join is polygonized the way
         the stroke draws it, so its extent is within a hundredth of a
         pixel of the true disk's. A single-point sub-path
         contributes its point; an empty path returns all zeros.
@@ -1224,7 +1224,7 @@ struct _ArcLengthPath(Movable):
         there. A distance outside [0, `total`] clamps to the nearer
         end; an empty path reports the origin pointing along +x.
 
-        The point is its segment's start plus the distance travelled
+        The point is its segment's start plus the distance traveled
         into it along the unit tangent, not an interpolation between
         the segment's two endpoints: on a single horizontal segment
         that makes the x coordinate the start plus exactly `distance`,
@@ -1248,14 +1248,14 @@ struct _ArcLengthPath(Movable):
                 lo = mid
             else:
                 hi = mid - 1
-        var travelled = distance - self.at[lo]
-        if travelled < 0.0:
-            travelled = 0.0
-        elif travelled > self.length[lo]:
-            travelled = self.length[lo]
+        var traveled = distance - self.at[lo]
+        if traveled < 0.0:
+            traveled = 0.0
+        elif traveled > self.length[lo]:
+            traveled = self.length[lo]
         return _PathSample(
-            self.start_x[lo] + travelled * self.tx[lo],
-            self.start_y[lo] + travelled * self.ty[lo],
+            self.start_x[lo] + traveled * self.tx[lo],
+            self.start_y[lo] + traveled * self.ty[lo],
             self.tx[lo],
             self.ty[lo],
         )
@@ -1296,7 +1296,7 @@ def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
 
 
 struct _SolidColor(ColorSource, ImplicitlyCopyable, Movable):
-    """One flat colour as a `ColorSource`, so the solid fills share
+    """One flat color as a `ColorSource`, so the solid fills share
     the gradient fills' bodies.
     """
 
@@ -1362,7 +1362,7 @@ def _wedge_path(
     start_angle: Float64,
     end_angle: Float64,
 ) -> Path:
-    """`fill_arc_aa`'s pie wedge as a path: centre, out to the arc's
+    """`fill_arc_aa`'s pie wedge as a path: center, out to the arc's
     start, round the arc, and back.
     """
     var out = Path()
@@ -1656,7 +1656,7 @@ struct _CoverageMask(Copyable, Movable):
 
     What the glyph mask cache stores: compositing the counts through
     the same alpha arithmetic `_sweep_band` uses gives the pixels
-    `fill_path_aa` would have written, for any colour, at any whole-
+    `fill_path_aa` would have written, for any color, at any whole-
     pixel offset.
     """
 
@@ -1747,7 +1747,7 @@ def _path_coverage_mask(
     a clip mask.
 
     The same flatten-and-sweep `fill_path_aa` runs, with the coverage
-    kept as a number instead of a colour's alpha, so a clip boundary and
+    kept as a number instead of a color's alpha, so a clip boundary and
     a fill boundary of the same path land in the same places. It needs
     `_flatten`, so it lives here rather than in buffer.mojo.
     """
@@ -1785,7 +1785,7 @@ def _fill_path_source[
     to_user: Matrix2D,
 ):
     """`fill_path`'s hard-edged scanline fill, taking each pixel's
-    colour from `source` instead of one flat Color. `to_user` takes
+    color from `source` instead of one flat Color. `to_user` takes
     each device pixel back to the space the source was defined in: the
     inverse of the canvas transform, or the identity.
     """
@@ -1815,7 +1815,7 @@ def _fill_path_source_aa[
     curve_steps: Int,
     to_user: Matrix2D,
 ):
-    """`fill_path_aa`'s anti-aliased fill, taking each pixel's colour
+    """`fill_path_aa`'s anti-aliased fill, taking each pixel's color
     from `source` instead of one flat Color. `to_user` takes each
     device pixel back to the space the source was defined in: the
     inverse of the canvas transform, or the identity.
@@ -1828,7 +1828,7 @@ def _fill_path_source_aa[
     canvas: a small gradient-filled marker should not zero and then
     walk every pixel of the image.
 
-    Coverage scales the source colour's alpha, so a translucent gradient
+    Coverage scales the source color's alpha, so a translucent gradient
     stop stays translucent and a partly-covered edge pixel compounds the
     two, as `Canvas._set_pixel_masked` does for clip masks.
     """
@@ -1968,7 +1968,7 @@ def _fill_source_band[
     to_user: Matrix2D,
 ):
     """Paint rows [first_row, last_row) of an already-swept coverage
-    mask, taking each pixel's colour from `source` at the device
+    mask, taking each pixel's color from `source` at the device
     pixel's position in the source's own space (`to_user`).
 
     Bands write disjoint rows and only read the mask, which is what

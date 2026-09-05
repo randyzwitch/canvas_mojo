@@ -81,7 +81,7 @@ def test_pop_on_empty_stack_is_a_noop() raises:
 
 def test_clip_edge_is_antialiased_not_a_hard_stencil() raises:
     # The clip path's left edge sits at x = 10.25, which is a quarter
-    # of the way into the pixel centred at x=10 (that pixel spans
+    # of the way into the pixel centered at x=10 (that pixel spans
     # [9.5, 10.5]). At the default 4x supersample its columns sit at
     # 9.625, 9.875, 10.125 and 10.375, of which one is inside -- so the
     # pixel lets a quarter through, and an opaque white fill lands at
@@ -201,7 +201,7 @@ def test_clip_path_honours_the_fill_rule() raises:
 
 
 def test_clip_path_applies_to_translucent_drawing() raises:
-    # Clip coverage multiplies the drawn colour's own alpha rather than
+    # Clip coverage multiplies the drawn color's own alpha rather than
     # replacing it: half coverage of a half-alpha fill is a quarter.
     var c = Canvas(40, 40, BG)
     var p = Path()

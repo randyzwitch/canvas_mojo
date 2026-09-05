@@ -19,7 +19,7 @@ defines:
   own (tatweel U+0640, ZWJ U+200D)
 - **U** non-joining -- breaks a join (ZWNJ U+200C, digits,
   punctuation, every character outside the covered blocks)
-- **T** transparent -- skipped when looking for a neighbour, so a
+- **T** transparent -- skipped when looking for a neighbor, so a
   vowel mark between two letters does not break their join (the
   harakat, and every other combining mark)
 
@@ -222,12 +222,12 @@ def joining_forms(codepoints: List[Int]) -> List[Int]:
     """The contextual form each character of a run is eligible for, one
     per codepoint.
 
-    A character joins to the neighbour on a given side when both are
-    willing: the neighbour must be able to join on the side that faces
+    A character joins to the neighbor on a given side when both are
+    willing: the neighbor must be able to join on the side that faces
     it, and the character itself must be able to join on that side. R
     joins only to what precedes it, L only to what follows, D and C to
     both. Transparent characters are skipped when looking for a
-    neighbour, so a vowel mark between two letters leaves their join
+    neighbor, so a vowel mark between two letters leaves their join
     intact.
 
     The forms follow: a D joined on both sides is medial, joined only to

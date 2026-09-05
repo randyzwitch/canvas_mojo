@@ -181,7 +181,7 @@ def _channel_gap(a: Color, b: Color) -> Int:
 
 
 def test_golden_shapes() raises:
-    """Circles, ellipses, wedges and a ring, at sub-pixel centres so
+    """Circles, ellipses, wedges and a ring, at sub-pixel centers so
     every boundary carries partial coverage.
     """
     var c = Canvas(_W, _H, _PAPER)

@@ -102,7 +102,7 @@ def _sample_x(x0: Float64, g: Int, s: Int) -> Float64:
 struct _EdgeTable(Movable):
     """Every non-horizontal edge of a shape, as flat arrays, plus
     `order`, the edge indices by ascending `y_lo` once `sort_by_top`
-    has run. The order lives on the table rather than travelling as a
+    has run. The order lives on the table rather than traveling as a
     separate argument because the table is what the sweep's band tasks
     already receive; a List of its own handed to `create_task` is the
     #97 failure.

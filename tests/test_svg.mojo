@@ -1343,7 +1343,7 @@ def test_circle_and_ellipse_outlines_reach_both_backends_through_the_trait() rai
 
     var raster = Canvas(40, 20, Color(255, 255, 255))
     _outlined_circle_and_ellipse(raster)
-    # (10+5, 10) and (25+6, 10) sit on each ring's own centre line, so
+    # (10+5, 10) and (25+6, 10) sit on each ring's own center line, so
     # both are fully covered by the stroke.
     assert_equal(raster.get_pixel(15, 10).r, 0, "circle outline drew ink")
     assert_equal(raster.get_pixel(31, 10).r, 0, "ellipse outline drew ink")
@@ -1403,7 +1403,7 @@ def test_dashes_reach_both_backends_through_the_trait() raises:
 
 def test_stroke_text_emits_fill_none_and_stroke_attributes() raises:
     # The same element draw_text emits, painted the other way round:
-    # fill="none" and the colour on `stroke`. Default width 1, default
+    # fill="none" and the color on `stroke`. Default width 1, default
     # round join, and no stroke-linecap at all -- a glyph outline is
     # closed, so there is nothing to cap.
     var svg = SvgCanvas(100, 100)
@@ -1418,7 +1418,7 @@ def test_stroke_text_emits_fill_none_and_stroke_attributes() raises:
 
 
 def test_stroke_text_carries_width_join_limit_weight_and_alpha() raises:
-    # A translucent colour puts its alpha on stroke-opacity, not
+    # A translucent color puts its alpha on stroke-opacity, not
     # fill-opacity, and a MITER join past the default limit writes
     # stroke-miterlimit; the default 4.0 would not.
     var svg = SvgCanvas(100, 100)

@@ -244,7 +244,7 @@ def test_source_overwrites_the_pixel_outright() raises:
         20,
         30,
         64,
-        "source replaces colour and alpha",
+        "source replaces color and alpha",
     )
     # An opaque source under SOURCE is the same pixel source-over would
     # write, which is what makes the mode safe to leave set.
@@ -254,7 +254,7 @@ def test_source_overwrites_the_pixel_outright() raises:
 
 
 def test_destination_in_and_out_keep_the_backdrop_colour() raises:
-    # Both have Fa = 0, so no source colour reaches the pixel and
+    # Both have Fa = 0, so no source color reaches the pixel and
     # Co = (wb*Cb) // wb = Cb; only the alpha moves.
     # destination-in: Fb = as, so ao = (200 * 128) // 255 = 100.
     _assert_rgba(
@@ -281,7 +281,7 @@ def test_destination_in_and_out_keep_the_backdrop_colour() raises:
         "destination-out cuts the backdrop alpha by the source's",
     )
     # An opaque source under destination-out erases the pixel outright:
-    # Fb = 0, so ao = 0 and no colour is defined.
+    # Fb = 0, so ao = 0 and no color is defined.
     _assert_rgba(
         _drawn(BlendMode.DESTINATION_OUT, SRC, BG),
         0,
@@ -490,7 +490,7 @@ def test_saturation_takes_the_source_sat_and_clips_below_zero() raises:
     #   g -> (0.3922 - 0.1961) / 0.5882 = 0.3333. Lum of that is 0.4967.
     # SetLum(.., 0.4882) subtracts 0.0085: (0.9915, 0.3248, -0.0085),
     # and the negative blue is what ClipColor pulls back, scaling the
-    # distance from grey 0.4882 by 0.4882 / 0.4967 = 0.9829:
+    # distance from gray 0.4882 by 0.4882 / 0.4967 = 0.9829:
     #   (0.9830, 0.3277, 0) -> (251, 84, 0)
     _assert_rgba(
         _drawn(BlendMode.SATURATION, SRC, BG), 251, 84, 0, 255, "saturation"
@@ -511,7 +511,7 @@ def test_saturation_takes_the_source_sat_and_clips_below_zero() raises:
 def test_color_keeps_the_backdrop_lum_under_the_source_colour() raises:
     # SetLum(Cs, Lum(Cb)): Lum(Cs) = 0.7406, so subtract 0.2524 from Cs:
     # (0.2496, 0.7476, -0.2524). ClipColor scales by
-    # 0.4882 / (0.4882 + 0.2524) = 0.6592 about grey 0.4882:
+    # 0.4882 / (0.4882 + 0.2524) = 0.6592 about gray 0.4882:
     #   (0.3309, 0.6592, 0) -> (84, 168, 0)
     _assert_rgba(_drawn(BlendMode.COLOR, SRC, BG), 84, 168, 0, 255, "color")
     #   r: (128*84  + 127*200) // 255 = (10752 + 25400) // 255 = 141
@@ -530,7 +530,7 @@ def test_color_keeps_the_backdrop_lum_under_the_source_colour() raises:
 def test_luminosity_keeps_the_backdrop_colour_and_clips_above_one() raises:
     # SetLum(Cb, Lum(Cs)): add 0.2524 to Cb: (1.0367, 0.6446, 0.4485).
     # Red is past 1, so ClipColor scales by
-    # (1 - 0.7406) / (1.0367 - 0.7406) = 0.8760 about grey 0.7406:
+    # (1 - 0.7406) / (1.0367 - 0.7406) = 0.8760 about gray 0.7406:
     #   (1.0, 0.6565, 0.4847) -> (255, 167, 124)
     _assert_rgba(
         _drawn(BlendMode.LUMINOSITY, SRC, BG), 255, 167, 124, 255, "luminosity"
@@ -871,7 +871,7 @@ def test_restore_with_nothing_saved_leaves_the_mode_alone() raises:
 
 def test_an_opaque_source_over_fill_is_byte_identical_before_and_after() raises:
     # The packed whole-word store is only correct for source-over with
-    # an opaque colour. Setting a mode and setting it back has to leave
+    # an opaque color. Setting a mode and setting it back has to leave
     # that path exactly as it was, byte for byte across the buffer --
     # this is the assertion standing between a blend mode and every
     # golden image.

@@ -232,7 +232,7 @@ def _reference_hatch(
 ) raises -> Canvas:
     """The repeated pattern drawn directly onto a 3x3-tile canvas: the
     family of parallel stripes one tile apart, every one a single
-    continuous line with its ends far outside the canvas. Its centre
+    continuous line with its ends far outside the canvas. Its center
     tile is what a seamless hatch tile has to equal.
     """
     var s = Float64(spacing)
@@ -270,11 +270,11 @@ def _reference_hatch(
 def test_diagonal_hatch_tiles_without_a_seam() raises:
     # Repeated, a diagonal hatch is the family of parallel stripes one
     # tile apart, and the tile's pixels near its off-diagonal corners
-    # are covered by the neighbouring stripes, not its own: at spacing
+    # are covered by the neighboring stripes, not its own: at spacing
     # 8 and width 3, the corner pixel (7, 0) is 0.7 px from the next
-    # stripe's centre. A tile that only draws its own stripe leaves
+    # stripe's center. A tile that only draws its own stripe leaves
     # those corners background and shows a notch at every tile
-    # boundary. The tile must equal the centre tile of the pattern
+    # boundary. The tile must equal the center tile of the pattern
     # drawn directly, pixel for pixel, for DIAGONAL and CROSS.
     var spacing = 8
     var width = 3.0
@@ -283,7 +283,7 @@ def test_diagonal_hatch_tiles_without_a_seam() raises:
     var tile = hatch_tile(spacing, width, ink, bg, Hatch.DIAGONAL)
     assert_true(
         tile.get_pixel(spacing - 1, 0).r < 255,
-        "the corner under the neighbouring stripe carries ink",
+        "the corner under the neighboring stripe carries ink",
     )
     assert_true(tile.get_pixel(0, spacing - 1).r < 255, "and the other")
 

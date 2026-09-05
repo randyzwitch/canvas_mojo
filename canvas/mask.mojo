@@ -9,7 +9,7 @@ canvas's alpha channel (`Mask.from_alpha`, so a blurred disk becomes
 a soft-edged stencil) or from its luminance (`Mask.from_luminance`,
 so a white-on-black painting is one), then used any number of times:
 
-- `fill_mask` paints a colour through it, and `fill_mask_source` any
+- `fill_mask` paints a color through it, and `fill_mask_source` any
   `ColorSource` -- a gradient or a pattern -- so a mask is what makes
   a gradient take an arbitrary soft shape.
 - `push_clip_mask` puts it on the clip stack, where it nests with
@@ -22,7 +22,7 @@ canvas transform does not apply to it. Masks are raster-only; a
 consumer wanting the same silhouette on `SvgCanvas` clips to the path
 the mask came from (`push_clip_path`, which both backends have) rather
 than painting through a mask. Coverage scales the alpha of
-whatever passes through it, so a translucent colour through a
+whatever passes through it, so a translucent color through a
 half-covered pixel lands at a quarter, as a clip path's edge does.
 """
 
@@ -202,7 +202,7 @@ def fill_mask(
     mut canvas: Canvas, mask: Mask, color: Color, x: Int = 0, y: Int = 0
 ):
     """Paint `color` through `mask`, its top-left corner at (x, y):
-    each pixel the mask covers is written with the colour's alpha
+    each pixel the mask covers is written with the color's alpha
     scaled by the coverage there. Goes through `set_pixel`, so the
     active clip and blend mode apply, and the part of the mask off the
     canvas is skipped.
@@ -210,7 +210,7 @@ def fill_mask(
     Args:
         canvas: Canvas painted into.
         mask: Coverage to paint through.
-        color: Colour painted. Its own alpha compounds with the
+        color: Color painted. Its own alpha compounds with the
             coverage.
         x: Canvas column of the mask's left edge.
         y: Canvas row of the mask's top edge.
@@ -233,14 +233,14 @@ def fill_mask(
 def fill_mask_source[
     S: ColorSource
 ](mut canvas: Canvas, mask: Mask, source: S, x: Int = 0, y: Int = 0):
-    """`fill_mask` taking each pixel's colour from `source` -- a
-    gradient or a pattern -- instead of one flat colour. The source is
+    """`fill_mask` taking each pixel's color from `source` -- a
+    gradient or a pattern -- instead of one flat color. The source is
     queried in canvas pixel coordinates, as the gradient fills do.
 
     Args:
         canvas: Canvas painted into.
         mask: Coverage to paint through.
-        source: Fill source, asked for its colour at every covered
+        source: Fill source, asked for its color at every covered
             pixel.
         x: Canvas column of the mask's left edge.
         y: Canvas row of the mask's top edge.
@@ -294,7 +294,7 @@ def push_clip_mask(mut canvas: Canvas, mask: Mask, x: Int = 0, y: Int = 0):
 def apply_mask(canvas: Canvas, mask: Mask) -> Canvas:
     """A copy of `canvas` with every pixel's alpha scaled by the
     mask's coverage at the same position; pixels the mask does not
-    reach become transparent. Colour channels are untouched.
+    reach become transparent. Color channels are untouched.
 
     Args:
         canvas: Canvas to copy. Unchanged.

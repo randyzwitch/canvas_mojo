@@ -243,7 +243,7 @@ comptime _MIN_SPAN_RADIUS = 8.0
 
 
 def _pixel_inside(px: Int, cx: Float64, far_dy: Float64, r2: Float64) -> Bool:
-    """Whether the pixel square centred at `px` on a row whose farthest
+    """Whether the pixel square centered at `px` on a row whose farthest
     vertical reach is `far_dy` lies entirely within the disk.
     """
     var far_dx = abs(Float64(px) - cx) + 0.5

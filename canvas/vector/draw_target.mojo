@@ -47,11 +47,11 @@ rule holds on both: strokes are built in user space, so under a
 state is for placement and rotation, and data still maps through
 scales.
 
-Placement is one rule on both backends. Pixel (px, py) is centred at
+Placement is one rule on both backends. Pixel (px, py) is centered at
 (px, py) and spans half a pixel each way. `Int` arguments are pixel
 indices: a rectangle from column x with width w covers pixels x
 through x + w - 1, whose geometric edges are x - 0.5 and x + w - 0.5;
-a circle's centre (cx, cy) is a pixel's centre. `Float64` arguments
+a circle's center (cx, cy) is a pixel's center. `Float64` arguments
 are geometry: a rectangle from x spanning w has edges at x and x + w,
 and `fill_rect` snaps each edge to the nearest pixel boundary, so
 `fill_rect(19.5, 4.5, 40.0, 30.0)` and `fill_rect(20, 5, 40, 30)` are
@@ -109,7 +109,7 @@ trait DrawTarget:
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
     ):
         """Fill the pixels x through x + width - 1 by y through
-        y + height - 1 with a solid colour.
+        y + height - 1 with a solid color.
 
         Args:
             x: First column.
@@ -459,7 +459,7 @@ trait DrawTarget:
         ...
 
     def begin_annotated_group(mut self, title: String):
-        """Open a group labelled `title`, covering every primitive
+        """Open a group labeled `title`, covering every primitive
         drawn until `end_annotated_group`. A backend that can carry the
         label does; one that cannot ignores it.
 

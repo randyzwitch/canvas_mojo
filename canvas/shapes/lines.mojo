@@ -802,7 +802,7 @@ def _add_quad(
     nx: Float64,
     ny: Float64,
 ):
-    """One segment's body: the rectangle of half-width |n| centred on
+    """One segment's body: the rectangle of half-width |n| centered on
     a->b, with (nx, ny) its offset normal.
 
     Wound consistently with `_add_disk` below, which is what lets
@@ -836,7 +836,7 @@ def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
 
     # Vertices pushed out to the mid-radius rather than sitting on the
     # circle. An inscribed polygon only ever under-covers; splitting
-    # the difference centres the error instead of biasing every join
+    # the difference centers the error instead of biasing every join
     # and cap thin.
     var r = radius * (1.0 + 1.0 / cos(pi / Float64(steps))) * 0.5
     # Wound the same way `_add_quad` winds, which for a segment along
@@ -1014,7 +1014,7 @@ def _stroke_pieces(
         # wedge of depth half_width * (1 - cos(theta/2)), so a
         # nearly-straight joint that is drawn on both sides is already
         # covered and needs no disk. That test is not a micro-
-        # optimisation: a flattened curve is thousands of
+        # optimization: a flattened curve is thousands of
         # nearly-collinear segments, and a disk at every one of them
         # buries the sweep in edges it gains nothing from.
         var nxt = (seg + 1) % num_segments

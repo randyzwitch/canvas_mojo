@@ -13,7 +13,7 @@ layer.
 whole job is arranging a call to `blur()`: it tints a layer, blurs the
 tint, and composites the result. Keeping it beside `blur()` keeps the
 shadow-specific tinting step (`_tint_and_place`) out of `compose.mojo`,
-which otherwise knows nothing about colour beyond the straight-alpha
+which otherwise knows nothing about color beyond the straight-alpha
 blend every composite already does.
 
 Both of `draw_shadowed`'s composites need the active clip *and* blend
@@ -50,7 +50,7 @@ boxes,
 
 and `m` boxes of width `wl` plus `n - m` of width `wu` (n=3 here)
 approximate a Gaussian of standard deviation `sigma` to within about
-3% of its peak error. Odd widths keep every box centred exactly on the
+3% of its peak error. Odd widths keep every box centered exactly on the
 output pixel, so no half-pixel offset bookkeeping is needed between
 passes.
 
@@ -63,10 +63,10 @@ a Gaussian at that resolution stacked on top of that mapping.
 
 ## Premultiplied alpha and edge handling
 
-Both blur passes run on premultiplied colour (`channel * alpha / 255`),
+Both blur passes run on premultiplied color (`channel * alpha / 255`),
 converted once at the start and divided back out once at the end, so
 that a transparent pixel next to an opaque one contributes none of its
-(otherwise meaningless) colour to the average -- the same reasoning
+(otherwise meaningless) color to the average -- the same reasoning
 `draw_canvas`'s bilinear sampler documents for interpolation.
 
 Each 1-D box average clamps at the buffer's edge: the sample one step
@@ -309,7 +309,7 @@ def _box_blur_plane(
     """Box-blur `plane` (row-major, `w x h`) in place by radius `r`:
     horizontal sweep into `scratch`, then vertical sweep back into
     `plane`. `scratch` is the caller's to reuse across the three
-    approximation passes and the four colour planes, so this allocates
+    approximation passes and the four color planes, so this allocates
     nothing.
 
     Horizontal bands split disjoint rows; vertical bands split disjoint
@@ -331,7 +331,7 @@ def _premultiply_planes(
     mut pb: List[Float64],
     mut pa: List[Float64],
 ):
-    """Fill the four planes with `canvas`'s pixels, colour
+    """Fill the four planes with `canvas`'s pixels, color
     premultiplied by alpha. One pass, not banded: it runs once per
     `blur()` call, against the up-to-24 banded sweeps (3 boxes x 2
     directions x 4 channels) the convolution itself does, so it is not
@@ -466,7 +466,7 @@ def _tint_and_place(
     mut shadow: Canvas, layer: Canvas, ox: Int, oy: Int, color: Color
 ):
     """Copy `layer` into `shadow` at (ox, oy), replacing every pixel's
-    colour with `color` and scaling its alpha by `color`'s own alpha --
+    color with `color` and scaling its alpha by `color`'s own alpha --
     the "make a shadow layer" step of `draw_shadowed`. `shadow` is
     assumed fresh, transparent, and exactly `layer`'s size plus padding
     on every side, so every write below is in bounds.
@@ -517,7 +517,7 @@ def draw_shadowed(
 
     1. builds a shadow layer the same size as `layer` plus padding
        (see `_shadow_pad`), `layer`'s alpha tinted to `shadow_color`
-       (colour replaced, alpha multiplied by `shadow_color`'s own
+       (color replaced, alpha multiplied by `shadow_color`'s own
        alpha);
     2. blurs the shadow layer by `blur_radius`;
     3. composites it onto `dst` at
@@ -534,7 +534,7 @@ def draw_shadowed(
             background. Unchanged.
         x: Destination column for `layer`'s left edge.
         y: Destination row for `layer`'s top edge.
-        shadow_color: Colour of the shadow/glow.
+        shadow_color: Color of the shadow/glow.
         blur_radius: `blur()` radius applied to the shadow layer.
         offset_x: Horizontal shift of the shadow from the shape.
         offset_y: Vertical shift of the shadow from the shape.

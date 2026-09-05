@@ -293,17 +293,17 @@ struct _AngleSpan(ImplicitlyCopyable, Movable):
 
 
 def _square_in_cone(span: _AngleSpan, ox: Float64, oy: Float64) -> Bool:
-    """Whether the whole pixel square centred at offset (ox, oy) from
-    the wedge's own centre lies within the wedge's angular sweep.
+    """Whether the whole pixel square centered at offset (ox, oy) from
+    the wedge's own center lies within the wedge's angular sweep.
 
     Only sound for a sweep of at most half a turn, which the caller
     checks: a sector is the intersection of two half-planes through the
-    centre, convex exactly while the sweep stays within pi, and a convex
+    center, convex exactly while the sweep stays within pi, and a convex
     set containing all four corners of a square contains the square. Past
     pi the sector is non-convex and four corners prove nothing, so a
     wider wedge gets no fast path.
 
-    The square straddling the centre is excluded, since the apex has no
+    The square straddling the center is excluded, since the apex has no
     defined angle and no sector narrower than a half turn contains a
     square around it. At most one pixel per wedge falls through to
     sampling.
@@ -546,8 +546,8 @@ def _fill_arc_aa_device(
     # split into bands, one task per band. Same pattern as the fill
     # sweep in canvas.aa_crossing.
     #
-    # Everything a band needs is scalars: centre, radius, the angle
-    # span (itself a struct of plain floats and bools) and the colour.
+    # Everything a band needs is scalars: center, radius, the angle
+    # span (itself a struct of plain floats and bools) and the color.
     # That matters here, because the aggregate arguments that corrupt
     # under `create_task` are the heap-backed ones -- see #97. There is
     # no List anywhere in this call.
@@ -1019,7 +1019,7 @@ def _fill_ring_band(
 
             # Provably inside. The square sits within the annulus when
             # its nearest point to
-            # the centre already clears the inner radius and its
+            # the center already clears the inner radius and its
             # farthest stays inside the outer -- an exact test needing
             # no convexity, since it is a distance range. Combined with
             # the square lying inside the angular cone, that puts it

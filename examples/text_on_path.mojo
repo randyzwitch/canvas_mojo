@@ -3,9 +3,9 @@ stroke_text() outlining glyphs instead of filling them.
 
 Three things a straight filled label cannot do:
 
-  - a donut segment labelled around its own arc, the label following
+  - a donut segment labeled around its own arc, the label following
     the wedge rather than sitting beside it
-  - a polar grid's angular axis labelled around its outer ring
+  - a polar grid's angular axis labeled around its outer ring
   - a title over a busy background, outlined in the background's own
     ink so it reads against every part of it
 
@@ -54,7 +54,7 @@ def _arc_path(
 
 
 def _is_below(mid_angle: Float64) -> Bool:
-    """Is a label centred on this angle below the circle's centre?
+    """Is a label centered on this angle below the circle's center?
 
     Glyphs stand up from the baseline on the side the arc turns away
     from, so an arc swept with increasing angle reads the right way up
@@ -84,7 +84,7 @@ def _label_arc(
     mid_angle: Float64,
     half_span: Float64,
 ) raises -> Path:
-    """A label's baseline, centred on `mid_angle` and swept in
+    """A label's baseline, centered on `mid_angle` and swept in
     whichever direction leaves the text the right way up. `radius` is
     `_label_radius`'s, not the ring's.
     """
@@ -101,9 +101,9 @@ def _donut(mut c: Canvas, mut cache: FontCache) raises:
     """A three-segment donut with each slice's name curved around it.
 
     The label sits on an arc drawn at the middle of the ring's
-    thickness, centred on the middle of the slice: CENTER alignment
+    thickness, centered on the middle of the slice: CENTER alignment
     against an offset of half the arc's length puts the string's own
-    centre there, whatever its width.
+    center there, whatever its width.
     """
     var cx = 320.0
     var cy = 400.0
@@ -130,7 +130,7 @@ def _donut(mut c: Canvas, mut cache: FontCache) raises:
         var mid_angle = starts[i] + half_span
         var baseline_radius = _label_radius(mid - 12.0, mid_angle, 34.0)
         var baseline = _label_arc(cx, cy, baseline_radius, mid_angle, half_span)
-        # CENTER against half the arc's own length: the string's centre
+        # CENTER against half the arc's own length: the string's center
         # lands on the middle of the slice whatever its width.
         draw_text_on_path(
             c,
@@ -157,7 +157,7 @@ def _donut(mut c: Canvas, mut cache: FontCache) raises:
 
 
 def _polar_grid(mut c: Canvas, mut cache: FontCache) raises:
-    """A polar grid whose angular axis is labelled around its outer
+    """A polar grid whose angular axis is labeled around its outer
     ring, each label upright against the ring at the angle it names.
 
     The rings themselves come from the DrawTarget trait's
@@ -182,8 +182,8 @@ def _polar_grid(mut c: Canvas, mut cache: FontCache) raises:
             1.5,
         )
 
-    # A ring 26 px outside the grid, one label centred on each spoke.
-    # The label arc is short and centred on the spoke's angle, so the
+    # A ring 26 px outside the grid, one label centered on each spoke.
+    # The label arc is short and centered on the spoke's angle, so the
     # text reads left to right along the ring rather than upside down
     # on the far side.
     var label_radius = outer + 26.0
@@ -202,7 +202,7 @@ def _polar_grid(mut c: Canvas, mut cache: FontCache) raises:
         var width = measure_text(labels[spoke], 24.0, cache=cache).advance
         var radius = _label_radius(label_radius, angle, 24.0)
         # An arc twice the label's width, so the string sits well
-        # inside it and its centre lands on the spoke.
+        # inside it and its center lands on the spoke.
         var half_span = width / radius
         var baseline = _label_arc(cx, cy, radius, angle, half_span)
         draw_text_on_path(

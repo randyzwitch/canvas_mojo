@@ -3,15 +3,15 @@
 `Canvas` stores per-pixel alpha, so a canvas can start fully
 transparent -- `Color(0, 0, 0, 0)` -- rather than on an opaque sheet of
 white. Shapes drawn onto it keep their own alpha, and `write_png`
-notices and emits a real alpha channel (PNG colour type 6).
+notices and emits a real alpha channel (PNG color type 6).
 
-That is what a chart dropped into a document of unknown page colour
+That is what a chart dropped into a document of unknown page color
 needs, or one that has to work on both a light and a dark background:
 flattened onto white it would carry a white box with it.
 
 Writes two files from the same drawing so the difference is visible:
 
-  out_transparency.png  -- transparent background, colour type 6
+  out_transparency.png  -- transparent background, color type 6
   out_transparency.bmp  -- the same thing flattened onto white, since
                            24-bit BMP has nowhere to put alpha
 """

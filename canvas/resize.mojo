@@ -29,9 +29,9 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     averaged alongside r/g/b -- see the comment on `pixels` below for
     what that does and does not hold for.
 
-    Supersampling with it: pixel (px, py) is centred at (px, py), and
+    Supersampling with it: pixel (px, py) is centered at (px, py), and
     output pixel p averages source pixels `factor * p` through
-    `factor * p + factor - 1`, whose centre is `factor * p +
+    `factor * p + factor - 1`, whose center is `factor * p +
     (factor - 1) / 2`. A drawing scaled by `factor` alone therefore
     shows up `(factor - 1) / (2 * factor)` px early after the shrink --
     3/8 px at 4 -- for every primitive. Translate by `(factor - 1) / 2`
@@ -44,7 +44,7 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
 
     The recipe is exact for continuous coordinates: paths, text, and
     the `Float64` overloads. An `Int` `fill_rect` maps its indices as
-    edges under a transform rather than its pixel centres, so it lands
+    edges under a transform rather than its pixel centers, so it lands
     half a device pixel off under the offset (and exactly without it);
     see #244 for unifying the two.
 
@@ -80,17 +80,17 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     var out_height = source.height // factor
     var n = factor * factor
 
-    # Alpha is averaged alongside the colour channels. That is the
+    # Alpha is averaged alongside the color channels. That is the
     # right answer for the case this exists for -- supersample at 2x,
     # downsample to 1x -- where a block straddling a shape's edge on a
     # transparent background should come out partly transparent, in
     # exactly the proportion of the block the shape covered.
     #
     # It is *not* correct in general: averaging straight (rather than
-    # premultiplied) colour lets a fully transparent pixel's colour
+    # premultiplied) color lets a fully transparent pixel's color
     # bleed into the result. For a downsample of a rendered image that
     # is harmless, since a transparent pixel here carries the
-    # background colour it was initialised with rather than arbitrary
+    # background color it was initialized with rather than arbitrary
     # data. Worth knowing before reusing this on an arbitrary RGBA
     # image.
     #

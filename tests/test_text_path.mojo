@@ -188,13 +188,13 @@ def test_vertical_path_turns_every_glyph_a_quarter_turn() raises:
 
 
 def test_semicircle_puts_the_middle_glyph_on_the_apex() raises:
-    # A semicircle from angle pi to 2*pi, centre (300, 320), radius
+    # A semicircle from angle pi to 2*pi, center (300, 320), radius
     # 200: it starts at (100, 320), rises over the apex (300, 120) --
     # y is down, so 3*pi/2 is the top -- and ends at (500, 320).
     #
-    # "OOO" centred at half the path's length puts the middle "O"
-    # exactly on the string's centre, since all three glyphs have the
-    # same advance, and the string's centre is the apex. The glyph
+    # "OOO" centered at half the path's length puts the middle "O"
+    # exactly on the string's center, since all three glyphs have the
+    # same advance, and the string's center is the apex. The glyph
     # origin is backed off half an advance along the tangent, which is
     # horizontal there, so it sits half an advance to the left of the
     # apex.
@@ -225,7 +225,7 @@ def test_semicircle_puts_the_middle_glyph_on_the_apex() raises:
     assert_true(
         middle.x > 300.0 - half - 0.5 and middle.x < 300.0 - half + 0.5,
         (
-            "the middle glyph's centre is on the apex, its origin half an"
+            "the middle glyph's center is on the apex, its origin half an"
             " advance left of it"
         ),
     )
@@ -254,14 +254,14 @@ def test_semicircle_puts_the_middle_glyph_on_the_apex() raises:
 
 
 def test_glyphs_past_the_end_of_the_path_are_dropped() raises:
-    # SVG's textPath rule: a glyph whose centre falls past either end
+    # SVG's textPath rule: a glyph whose center falls past either end
     # of the path is not drawn, rather than clamped to the end where it
-    # would pile up on its neighbours.
+    # would pile up on its neighbors.
     var cache = FontCache()
 
     # "AAAAAAAA" at 64 px: a 1401-unit "A" advances 43.78125 px and the
     # AA pair kerns +57 units = +1.78125 px, so the pen steps 45.5625
-    # px per glyph and glyph i's centre is at 45.5625 * i + 21.890625.
+    # px per glyph and glyph i's center is at 45.5625 * i + 21.890625.
     # On a 100 px path that is on the path for i = 0 (21.89) and i = 1
     # (67.45) and past it for i = 2 (113.02).
     assert_equal(measure_text("A", 64.0, cache=cache).advance, 43.78125)
@@ -270,13 +270,13 @@ def test_glyphs_past_the_end_of_the_path_are_dropped() raises:
     var placed = _placements(
         "AAAAAAAA", short, 64.0, 0.0, TextAlign.LEFT, True, True, cache
     )
-    assert_equal(len(placed), 2, "two centres land on a 100 px path")
+    assert_equal(len(placed), 2, "two centers land on a 100 px path")
     assert_equal(placed[0].x, 20.0)
     assert_equal(placed[1].x, 65.5625)
 
     # A negative offset drops from the front by the same rule: at
-    # offset -50 the first glyph's centre is at -28.11, off the front,
-    # and the string starts at its second glyph, whose centre is at
+    # offset -50 the first glyph's center is at -28.11, off the front,
+    # and the string starts at its second glyph, whose center is at
     # 17.45.
     var from_front = _placements(
         "AAAAAAAA", short, 64.0, -50.0, TextAlign.LEFT, True, True, cache
@@ -340,7 +340,7 @@ def test_ligatures_apply_on_a_curve() raises:
 
 
 def test_align_places_the_whole_string_against_the_offset() raises:
-    # LEFT starts the string at `offset`, CENTER centres its total
+    # LEFT starts the string at `offset`, CENTER centers its total
     # advance about it, RIGHT ends it there. "AV" kerns to 83.46875 px
     # of advance (test_text.mojo derives it), so against offset 200 on
     # a horizontal path starting at x = 20 the three first-glyph
@@ -378,7 +378,7 @@ def test_empty_and_whitespace_only_strings_draw_nothing() raises:
 
 def test_zero_length_path_draws_nothing() raises:
     # Every segment is dropped as having no direction, so the path has
-    # no length and no glyph centre can land on it.
+    # no length and no glyph center can land on it.
     var cache = FontCache()
     var degenerate = Path()
     degenerate.move_to(50.0, 50.0)

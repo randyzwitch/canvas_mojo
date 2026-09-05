@@ -22,7 +22,7 @@ Not implemented here:
   existing codepoints only. `joining.mojo` picks each Arabic letter's
   contextual form, and `render.mojo` shapes each run `visual_runs`
   reports before reordering it, since joining is defined between
-  logical neighbours.
+  logical neighbors.
 
 Hebrew has no contextual shaping, so Hebrew text laid out through this
 module renders fully.
@@ -295,7 +295,7 @@ def visual_runs(codepoints: List[Int], base_level: Int) -> List[BidiRun]:
     reversing the runs and then reversing inside each odd-level run
     reproduces `visual_order`'s sequence exactly. Splitting it that way
     is what lets a caller shape each run against its *logical*
-    neighbours -- Arabic joining and ligature formation are defined
+    neighbors -- Arabic joining and ligature formation are defined
     there, not against the reversed sequence -- and reorder afterwards.
 
     Args:

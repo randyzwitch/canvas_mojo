@@ -5,7 +5,7 @@ that keep an alpha channel.
 The property that matters most here is the one that *isn't* new: a
 render onto an opaque background must produce exactly what it did
 before the canvas had an alpha channel at all. Several of these tests
-pin that, alongside the genuinely new behaviour.
+pin that, alongside the genuinely new behavior.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -43,14 +43,14 @@ def test_opaque_draw_onto_transparent_becomes_opaque() raises:
 
 
 def test_translucent_draw_onto_transparent_keeps_its_own_alpha() raises:
-    # Source-over onto nothing is the source: the colour survives
+    # Source-over onto nothing is the source: the color survives
     # undiluted and the alpha carries straight through. Under the old
     # RGB storage this composited onto the background instead, which is
     # exactly the information that was being thrown away.
     var c = Canvas(8, 8, CLEAR)
     fill_rect(c, 0, 0, 8, 8, Color(200, 100, 50, 128))
     var p = c.get_pixel(4, 4)
-    assert_equal(p.r, 200, "colour is undiluted over a transparent dst")
+    assert_equal(p.r, 200, "color is undiluted over a transparent dst")
     assert_equal(p.g, 100)
     assert_equal(p.b, 50)
     assert_equal(p.a, 128, "alpha carries through")
@@ -99,7 +99,7 @@ def test_png_round_trips_an_alpha_channel() raises:
 
 
 def test_png_uses_color_type_6_only_when_alpha_is_present() raises:
-    # The IHDR colour-type byte sits at a fixed offset: 8-byte
+    # The IHDR color-type byte sits at a fixed offset: 8-byte
     # signature + 4-byte length + 4-byte "IHDR" + 4-byte width +
     # 4-byte height + 1-byte bit depth = offset 25.
     var clear_canvas = Canvas(4, 4, CLEAR)
@@ -107,7 +107,7 @@ def test_png_uses_color_type_6_only_when_alpha_is_present() raises:
     var f1 = open(_PNG_PATH, "r")
     var with_alpha = f1.read_bytes()
     f1.close()
-    assert_equal(Int(with_alpha[25]), 6, "transparency needs colour type 6")
+    assert_equal(Int(with_alpha[25]), 6, "transparency needs color type 6")
 
     var opaque = Canvas(4, 4, OPAQUE_WHITE)
     write_png(opaque, _PNG_PATH)
@@ -115,12 +115,12 @@ def test_png_uses_color_type_6_only_when_alpha_is_present() raises:
     var no_alpha = f2.read_bytes()
     f2.close()
     assert_equal(
-        Int(no_alpha[25]), 2, "a fully opaque image stays colour type 2"
+        Int(no_alpha[25]), 2, "a fully opaque image stays color type 2"
     )
     # Deliberately not asserting the type-2 file is *smaller*: at this
     # size DEFLATE's own overhead dominates, and an all-zero RGBA image
     # compresses better than an opaque RGB one. The contract is which
-    # colour type is emitted, not what it compresses to. What is worth
+    # color type is emitted, not what it compresses to. What is worth
     # checking is that the narrower file still decodes to fully opaque
     # pixels.
     var reread = read_png(_PNG_PATH)
@@ -129,7 +129,7 @@ def test_png_uses_color_type_6_only_when_alpha_is_present() raises:
             assert_equal(
                 reread.get_pixel(x, y).a,
                 255,
-                "a colour-type-2 file decodes as fully opaque",
+                "a color-type-2 file decodes as fully opaque",
             )
 
 
