@@ -727,6 +727,13 @@ def test_gradient_stops_stand_alone_as_a_ramp() raises:
     assert_equal(len(ramp), 2)
     assert_equal(ramp[0].offset, 0.0, "sorted on insert")
     assert_equal(ramp[1].offset, 1.0)
+    var seen = 0
+    var last = -1.0
+    for stop in ramp:
+        assert_true(stop.offset > last, "iterates in offset order")
+        last = stop.offset
+        seen += 1
+    assert_equal(seen, 2, "iterates every stop")
     # 0.5 * 255 = 127.5 -> 128.
     assert_equal(ramp.color_at(0.5).r, 128)
     assert_equal(ramp.color_at(-3.0).r, 0, "pads below")

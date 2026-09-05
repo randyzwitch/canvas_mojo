@@ -74,9 +74,11 @@ from canvas.shapes.arcs import _arc_fpoints
 comptime _KAPPA = 0.5522847498307936
 
 
-struct PathOp(Copyable, ImplicitlyCopyable, Movable):
+struct PathOp(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """Which builder call a `PathCommand` records: one of `MOVE_TO`,
-    `LINE_TO`, `QUAD_TO`, `CUBIC_TO`, `CLOSE`, `ARC_TO`.
+    `LINE_TO`, `QUAD_TO`, `CUBIC_TO`, `CLOSE`, `ARC_TO`. Prints as its
+    name, so `assert_equal(cmd.op, PathOp.MOVE_TO)` reports which op
+    it found.
     """
 
     var _value: Int
@@ -103,6 +105,27 @@ struct PathOp(Copyable, ImplicitlyCopyable, Movable):
 
     def __ne__(self, other: Self) -> Bool:
         return self._value != other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == 0:
+            writer.write("MOVE_TO")
+        elif self._value == 1:
+            writer.write("LINE_TO")
+        elif self._value == 2:
+            writer.write("QUAD_TO")
+        elif self._value == 3:
+            writer.write("CUBIC_TO")
+        elif self._value == 4:
+            writer.write("CLOSE")
+        elif self._value == 5:
+            writer.write("ARC_TO")
+        else:
+            writer.write("PathOp(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
 
 struct PathCommand(ImplicitlyCopyable, Movable):
@@ -473,14 +496,16 @@ struct Path(Movable):
             for i in range(1, n):
                 self.line_to(points[i].x, points[i].y)
             return
-        var k = tension / 6.0
+        # Divided then scaled per component, in that order: it is the
+        # more accurate of the two, and a caller replacing its own
+        # Catmull-Rom builder gets control points bit for bit.
         for i in range(n - 1):
             var prev = i - 1 if i > 0 else i
             var next2 = i + 2 if i + 2 < n else i + 1
-            var t1x = (points[i + 1].x - points[prev].x) * k
-            var t1y = (points[i + 1].y - points[prev].y) * k
-            var t2x = (points[next2].x - points[i].x) * k
-            var t2y = (points[next2].y - points[i].y) * k
+            var t1x = (points[i + 1].x - points[prev].x) / 6.0 * tension
+            var t1y = (points[i + 1].y - points[prev].y) / 6.0 * tension
+            var t2x = (points[next2].x - points[i].x) / 6.0 * tension
+            var t2y = (points[next2].y - points[i].y) / 6.0 * tension
             self.cubic_curve_to(
                 points[i].x + t1x,
                 points[i].y + t1y,

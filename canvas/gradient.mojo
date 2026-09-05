@@ -53,7 +53,8 @@ struct GradientStops(Copyable, Movable, Sized):
     gradient that does not depend on geometry, and on its own the
     colour scale a data value maps through once it is normalised.
 
-    Index and measure it like a list: `len(stops)` and `stops[i]`.
+    Index, measure and iterate it like a list: `len(stops)`,
+    `stops[i]` and `for stop in stops`.
     """
 
     var _stops: List[GradientStop]
@@ -69,6 +70,9 @@ struct GradientStops(Copyable, Movable, Sized):
 
     def __getitem__(self, i: Int) -> GradientStop:
         return self._stops[i]
+
+    def __iter__(ref self) -> type_of(self._stops.__iter__()):
+        return self._stops.__iter__()
 
     def add_stop(mut self, offset: Float64, color: Color):
         """Add a stop, keeping the ramp sorted by offset with insertion
