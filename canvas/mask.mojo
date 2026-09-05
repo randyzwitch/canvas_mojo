@@ -18,7 +18,10 @@ so a white-on-black painting is one), then used any number of times:
   overload taking a mask composites a layer through it.
 
 A mask is in device space: it is placed at a pixel offset, and the
-canvas transform does not apply to it. Coverage scales the alpha of
+canvas transform does not apply to it. Masks are raster-only; a
+consumer wanting the same silhouette on `SvgCanvas` clips to the path
+the mask came from (`push_clip_path`, which both backends have) rather
+than painting through a mask. Coverage scales the alpha of
 whatever passes through it, so a translucent colour through a
 half-covered pixel lands at a quarter, as a clip path's edge does.
 """

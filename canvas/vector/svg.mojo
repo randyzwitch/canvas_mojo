@@ -7,7 +7,8 @@ displays at, so content drawn through this carries no fixed pixel size.
 The surface implements every `DrawTarget` method. It is not a
 general-purpose SVG builder: linear and radial gradients on rects and
 paths only (a conic gradient has no SVG element and stays raster-only),
-no clipping, and no groups beyond `begin_annotated_group`.
+rectangle and path clips as nested `<g clip-path>` wrappers, and no
+groups beyond those and `begin_annotated_group`.
 
 The transform state (`save`/`restore`, `translate`/`rotate`/`scale`)
 is carried as a `transform="matrix(a b c d e f)"` attribute on each
@@ -279,10 +280,14 @@ struct _SvgState(ImplicitlyCopyable, Movable):
 
     var transform: Matrix2D
     var blend: BlendMode
+    var clip_depth: Int
 
-    def __init__(out self, transform: Matrix2D, blend: BlendMode):
+    def __init__(
+        out self, transform: Matrix2D, blend: BlendMode, clip_depth: Int
+    ):
         self.transform = transform
         self.blend = blend
+        self.clip_depth = clip_depth
 
 
 struct SvgCanvas(DrawTarget, Movable):
@@ -306,6 +311,10 @@ struct SvgCanvas(DrawTarget, Movable):
     # state; `to_string` consults it so an unclosed group cannot reach
     # a file as malformed markup.
     var _open_group: Bool
+    # How many `<g clip-path=...>` wrappers are open, and how many
+    # `<clipPath>` defs have been minted ("clip" + String(...)).
+    var _clip_depth: Int
+    var _clip_count: Int
     # The current transform (see `save`), whether it is anything but
     # the identity, and the current blend mode.
     var _transform: Matrix2D
@@ -333,6 +342,8 @@ struct SvgCanvas(DrawTarget, Movable):
         self._gradient_count = 0
         self._text_path_count = 0
         self._open_group = False
+        self._clip_depth = 0
+        self._clip_count = 0
         self._transform = Matrix2D.identity()
         self._transformed = False
         self._blend = BlendMode.SOURCE_OVER
@@ -376,11 +387,12 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body.write(")")
 
     def save(mut self):
-        """Push the current transform and blend mode for `restore` to
-        put back. This backend has no clip state, so those two are all
-        it holds.
+        """Push the current transform, blend mode and clip depth for
+        `restore` to put back, as `Canvas.save` does.
         """
-        self._saved.append(_SvgState(self._transform, self._blend))
+        self._saved.append(
+            _SvgState(self._transform, self._blend, self._clip_depth)
+        )
 
     def restore(mut self):
         """Pop the state `save` pushed. A no-op with nothing saved,
@@ -389,6 +401,8 @@ struct SvgCanvas(DrawTarget, Movable):
         if len(self._saved) == 0:
             return
         var state = self._saved.pop()
+        while self._clip_depth > state.clip_depth:
+            self.pop_clip_path()
         self._set_transform(state.transform)
         self._blend = state.blend
 
@@ -1115,6 +1129,91 @@ struct SvgCanvas(DrawTarget, Movable):
         self._write_blend()
         self._body.write("/>\n")
 
+    def push_clip(mut self, x: Int, y: Int, width: Int, height: Int):
+        """Restrict subsequent elements to a rectangle, the counterpart
+        of `Canvas.push_clip`: a `<clipPath id="clipN">` holding the
+        `<rect>` (in the current user space, so it carries the
+        transform attribute an element drawn now would) and a
+        `<g clip-path="url(#clipN)">` every element until the matching
+        pop lands inside. Clips nest, and the viewer intersects them.
+
+        Clips and annotated groups do not interleave: pushing or
+        popping a clip closes an open annotated group first, so the
+        markup stays well-formed.
+
+        Args:
+            x: Clip rectangle's left edge.
+            y: Clip rectangle's top edge.
+            width: Clip rectangle's width.
+            height: Clip rectangle's height.
+        """
+        self.end_annotated_group()
+        self._clip_count += 1
+        self._body.write(
+            '<defs><clipPath id="clip',
+            self._clip_count,
+            '"><rect x="',
+            x,
+            '" y="',
+            y,
+            '" width="',
+            width,
+            '" height="',
+            height,
+            '"',
+        )
+        self._write_transform()
+        self._body.write("/></clipPath></defs>\n")
+        self._open_clip()
+
+    def push_clip_path(
+        mut self, path: Path, fill_rule: FillRule = FillRule.EVEN_ODD
+    ):
+        """Restrict subsequent elements to `path`'s interior, the
+        counterpart of `Canvas.push_clip_path`: a `<clipPath>` holding
+        the `<path>` with its fill rule as `clip-rule`, and a `<g>`
+        referencing it. See `push_clip` for how clips nest and how they
+        relate to annotated groups.
+
+        Args:
+            path: Shape to clip to. Its interior is what stays visible.
+            fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        """
+        self.end_annotated_group()
+        self._clip_count += 1
+        self._body.write(
+            '<defs><clipPath id="clip', self._clip_count, '"><path d="'
+        )
+        _write_path_d(self._body, path)
+        self._body.write('"')
+        if fill_rule == FillRule.EVEN_ODD:
+            self._body.write(' clip-rule="evenodd"')
+        self._write_transform()
+        self._body.write("/></clipPath></defs>\n")
+        self._open_clip()
+
+    def _open_clip(mut self):
+        self._body.write('<g clip-path="url(#clip', self._clip_count, ')">\n')
+        self._clip_depth += 1
+
+    def pop_clip(mut self):
+        """Remove the most recently pushed clip, rectangle or path:
+        this backend keeps one stack of `<g>` wrappers, so the two
+        pops are the same operation. A no-op with nothing pushed,
+        matching `Canvas.pop_clip`.
+        """
+        self.pop_clip_path()
+
+    def pop_clip_path(mut self):
+        """Remove the most recently pushed clip, rectangle or path --
+        see `pop_clip`.
+        """
+        if self._clip_depth == 0:
+            return
+        self.end_annotated_group()
+        self._body += "</g>\n"
+        self._clip_depth -= 1
+
     def begin_annotated_group(mut self, title: String):
         """Open `<g><title>title</title>`, labelling every element
         emitted until `end_annotated_group`. Browsers show a `<title>`
@@ -1455,8 +1554,19 @@ struct SvgCanvas(DrawTarget, Movable):
             # emitted unbalanced, so `to_string` and `write_svg` always
             # produce well-formed markup.
             + ("</g>\n" if self._open_group else "")
+            + _closing_tags(self._clip_depth)
             + "</svg>\n"
         )
+
+
+def _closing_tags(depth: Int) -> String:
+    """`</g>` for every clip wrapper still open when `to_string` runs,
+    closed here rather than emitted unbalanced.
+    """
+    var out = String()
+    for _ in range(depth):
+        out += "</g>\n"
+    return out
 
 
 def write_svg(svg: SvgCanvas, path: String) raises:
