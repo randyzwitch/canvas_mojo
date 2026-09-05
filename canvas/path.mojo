@@ -406,6 +406,56 @@ struct Path(Movable):
         self.cubic_curve_to(cx + ox, cy - ry, cx + rx, cy - oy, cx + rx, cy)
         self.close()
 
+    def curve_through(
+        mut self, points: List[FPoint], tension: Float64 = 1.0
+    ) raises:
+        """Add a smooth open sub-path through `points`: a move_to to the
+        first, then one cubic Bezier per consecutive pair with
+        Catmull-Rom tangents, so the curve passes through every point.
+
+        Each segment's control points are the endpoint plus or minus
+        `(next - previous) / 6 * tension`, the first and last points
+        taking a one-sided tangent. `tension` scales the tangents
+        directly: 1.0 is the textbook Catmull-Rom curve, 0.5 bows half
+        as far, and 0.0 (or less) takes an explicit line_to branch, so
+        a polyline built this way is command-for-command the one
+        `line_to` builds rather than a flattened straight cubic, which
+        samples at different intermediate points.
+
+        Args:
+            points: Points to pass through, in order. Empty adds
+                nothing; a single point adds only the move_to.
+            tension: Tangent scale, 1.0 for Catmull-Rom.
+
+        Raises:
+            Error: Never in practice -- every internal call follows
+                this method's own move_to.
+        """
+        var n = len(points)
+        if n == 0:
+            return
+        self.move_to(points[0].x, points[0].y)
+        if tension <= 0.0:
+            for i in range(1, n):
+                self.line_to(points[i].x, points[i].y)
+            return
+        var k = tension / 6.0
+        for i in range(n - 1):
+            var prev = i - 1 if i > 0 else i
+            var next2 = i + 2 if i + 2 < n else i + 1
+            var t1x = (points[i + 1].x - points[prev].x) * k
+            var t1y = (points[i + 1].y - points[prev].y) * k
+            var t2x = (points[next2].x - points[i].x) * k
+            var t2y = (points[next2].y - points[i].y) * k
+            self.cubic_curve_to(
+                points[i].x + t1x,
+                points[i].y + t1y,
+                points[i + 1].x - t2x,
+                points[i + 1].y - t2y,
+                points[i + 1].x,
+                points[i + 1].y,
+            )
+
     def transformed(self, transform: Transform2D) raises -> Path:
         """This path mapped through `transform`, as a new path.
 

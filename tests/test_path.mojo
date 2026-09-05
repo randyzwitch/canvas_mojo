@@ -34,6 +34,9 @@ from canvas.path import (
     _quad_point,
     _cubic_point,
     _point_in_subpaths,
+    _CUBIC_TO,
+    _LINE_TO,
+    _MOVE_TO,
 )
 
 comptime BG = Color(0, 0, 0)
@@ -1162,6 +1165,104 @@ def test_transformed_arc_survives_a_y_flip() raises:
             pts[i].x >= 49.999 and pts[i].y <= 50.001,
             "and confined to the quarter the original covered",
         )
+
+
+def _assert_fpoint(got: FPoint, x: Float64, y: Float64, msg: String) raises:
+    assert_true(
+        abs(got.x - x) < 1e-9 and abs(got.y - y) < 1e-9,
+        msg + ": (" + String(got.x) + ", " + String(got.y) + ")",
+    )
+
+
+def _three_points() -> List[FPoint]:
+    return [FPoint(0.0, 0.0), FPoint(10.0, 10.0), FPoint(20.0, 0.0)]
+
+
+def test_curve_through_at_zero_tension_is_the_polyline() raises:
+    # Command for command what move_to + line_to builds, not a
+    # flattened straight cubic.
+    var smooth = Path()
+    smooth.curve_through(_three_points(), 0.0)
+    var straight = Path()
+    straight.move_to(0.0, 0.0)
+    straight.line_to(10.0, 10.0)
+    straight.line_to(20.0, 0.0)
+    assert_equal(len(smooth.commands), len(straight.commands))
+    for i in range(len(straight.commands)):
+        assert_equal(smooth.commands[i].kind, straight.commands[i].kind)
+        _assert_fpoint(
+            smooth.commands[i].p1,
+            straight.commands[i].p1.x,
+            straight.commands[i].p1.y,
+            "command " + String(i),
+        )
+    assert_equal(smooth.commands[1].kind, _LINE_TO)
+
+
+def test_curve_through_passes_through_every_point_with_catmull_rom_tangents() raises:
+    # Points (0,0), (10,10), (20,0). The first segment's tangents are
+    # one-sided at the start, (p1 - p0)/6 = (10/6, 10/6), and central
+    # at the end, (p2 - p0)/6 = (20/6, 0), so its control points are
+    # (1.6667, 1.6667) and (10 - 3.3333, 10) = (6.6667, 10). The last
+    # segment mirrors: (10 + 3.3333, 10) and (20 - 10/6, 0 + 10/6).
+    var p = Path()
+    p.curve_through(_three_points())
+    assert_equal(len(p.commands), 3)
+    assert_equal(p.commands[0].kind, _MOVE_TO)
+    assert_equal(p.commands[1].kind, _CUBIC_TO)
+    assert_equal(p.commands[2].kind, _CUBIC_TO)
+    _assert_fpoint(p.commands[1].p1, 10.0 / 6.0, 10.0 / 6.0, "c1 of seg 0")
+    _assert_fpoint(p.commands[1].p2, 10.0 - 20.0 / 6.0, 10.0, "c2 of seg 0")
+    _assert_fpoint(p.commands[1].p3, 10.0, 10.0, "seg 0 ends on p1")
+    _assert_fpoint(p.commands[2].p1, 10.0 + 20.0 / 6.0, 10.0, "c1 of seg 1")
+    _assert_fpoint(
+        p.commands[2].p2, 20.0 - 10.0 / 6.0, 10.0 / 6.0, "c2 of seg 1"
+    )
+    _assert_fpoint(p.commands[2].p3, 20.0, 0.0, "seg 1 ends on p2")
+    # The first segment's midpoint, (p0 + 3c1 + 3c2 + p1)/8, is
+    # (4.375, 5.625): off the chord's midpoint (5, 5) by (-0.625, 0.625).
+    var mid = _cubic_point(
+        p.commands[0].p1,
+        p.commands[1].p1,
+        p.commands[1].p2,
+        p.commands[1].p3,
+        0.5,
+    )
+    _assert_fpoint(mid, 4.375, 5.625, "midpoint bows off the chord")
+
+
+def test_curve_through_tension_scales_the_bow() raises:
+    # Half the tension moves the control points half as far from the
+    # endpoints, and the midpoint half as far from the chord:
+    # (5 - 0.3125, 5 + 0.3125).
+    var p = Path()
+    p.curve_through(_three_points(), 0.5)
+    _assert_fpoint(p.commands[1].p1, 10.0 / 12.0, 10.0 / 12.0, "c1 halved")
+    var mid = _cubic_point(
+        p.commands[0].p1,
+        p.commands[1].p1,
+        p.commands[1].p2,
+        p.commands[1].p3,
+        0.5,
+    )
+    _assert_fpoint(mid, 4.6875, 5.3125, "half the bow")
+
+
+def test_curve_through_degenerate_inputs() raises:
+    var empty = Path()
+    empty.curve_through(List[FPoint]())
+    assert_equal(len(empty.commands), 0, "nothing for no points")
+    var one = Path()
+    one.curve_through([FPoint(3.0, 4.0)])
+    assert_equal(len(one.commands), 1, "a lone move_to")
+    assert_equal(one.commands[0].kind, _MOVE_TO)
+    # Two points: one segment, both tangents one-sided along the chord,
+    # so the curve is the chord.
+    var two = Path()
+    two.curve_through([FPoint(0.0, 0.0), FPoint(12.0, 0.0)])
+    assert_equal(len(two.commands), 2)
+    _assert_fpoint(two.commands[1].p1, 2.0, 0.0, "c1 on the chord")
+    _assert_fpoint(two.commands[1].p2, 10.0, 0.0, "c2 on the chord")
 
 
 def test_bounds_follow_the_flattened_curve_not_the_control_point() raises:
