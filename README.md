@@ -76,7 +76,7 @@ flowchart LR
         direction TB
         Prim["Shape primitives<br/>fill_circle_aa, fill_rect,<br/>fill_arc_aa, draw_line_aa …"]
         PathAPI["Path<br/>move_to → line_to / curve_to / arc_to<br/>→ fill_path_aa / stroke_path_aa"]
-        Text["draw_text<br/>(native font discovery → native TTF parser<br/>→ fill_path_aa)"]
+        Text["draw_text / stroke_text / draw_text_on_path<br/>(native font discovery → native TTF parser<br/>→ fill_path_aa / stroke_path_aa)"]
         Grad["LinearGradient / RadialGradient<br/>(fill source for either above)"]
 
         Text --> PathAPI

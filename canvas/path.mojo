@@ -836,6 +836,133 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
     return subpaths^
 
 
+struct _PathSample(ImplicitlyCopyable, Movable):
+    """A point on a flattened path and the direction the path runs
+    there, as a unit vector rather than an angle: a caller placing
+    something along the path needs cos/sin of that direction, and going
+    through atan2 and back would lose the exact (1, 0) a horizontal
+    segment has.
+    """
+
+    var x: Float64
+    var y: Float64
+    var tx: Float64
+    var ty: Float64
+
+    def __init__(out self, x: Float64, y: Float64, tx: Float64, ty: Float64):
+        self.x = x
+        self.y = y
+        self.tx = tx
+        self.ty = ty
+
+
+struct _ArcLengthPath(Movable):
+    """A path flattened once and indexed by distance along it, so a
+    caller can ask where a given arc length lands and which way the
+    path points there.
+
+    The segments come from `_flatten`, so this measures the same curve
+    `fill_path_aa` and `stroke_path_aa` draw rather than the ideal one.
+    Zero-length segments are dropped, since they have no direction, and
+    a closed sub-path's closing segment back to its start is included
+    -- `_flatten` marks a sub-path closed without repeating its first
+    point.
+
+    Two sub-paths are not joined: their lengths add and the gap between
+    them takes no distance, which is how SVG's `textPath` measures a
+    multi-sub-path path.
+    """
+
+    var start_x: List[Float64]
+    var start_y: List[Float64]
+    var tx: List[Float64]
+    var ty: List[Float64]
+    var at: List[Float64]
+    var length: List[Float64]
+    var total: Float64
+
+    def __init__(out self, path: Path, curve_steps: Int = 0):
+        """Flatten `path` and accumulate its segment lengths.
+
+        Args:
+            path: Path to measure.
+            curve_steps: Straight-line segments per quad/cubic Bezier;
+                0 (the default) chooses per segment, matching
+                `stroke_path_aa`.
+        """
+        self.start_x = List[Float64]()
+        self.start_y = List[Float64]()
+        self.tx = List[Float64]()
+        self.ty = List[Float64]()
+        self.at = List[Float64]()
+        self.length = List[Float64]()
+        var running = 0.0
+        var subpaths = _flatten(path, curve_steps)
+        for sp_idx in range(len(subpaths)):
+            ref sp = subpaths[sp_idx]
+            var count = len(sp.points)
+            var edges = count - 1
+            if sp.closed and count > 1:
+                edges = count
+            for i in range(edges):
+                var a = sp.points[i]
+                var b = sp.points[(i + 1) % count]
+                var dx = b.x - a.x
+                var dy = b.y - a.y
+                var seg = sqrt(dx * dx + dy * dy)
+                if seg == 0.0:
+                    continue
+                self.start_x.append(a.x)
+                self.start_y.append(a.y)
+                self.tx.append(dx / seg)
+                self.ty.append(dy / seg)
+                self.at.append(running)
+                self.length.append(seg)
+                running += seg
+        self.total = running
+
+    def sample(self, distance: Float64) -> _PathSample:
+        """Where `distance` along the path lands, and the unit tangent
+        there. A distance outside [0, `total`] clamps to the nearer
+        end; an empty path reports the origin pointing along +x.
+
+        The point is its segment's start plus the distance travelled
+        into it along the unit tangent, not an interpolation between
+        the segment's two endpoints: on a single horizontal segment
+        that makes the x coordinate the start plus exactly `distance`,
+        with no division and multiplication to round it.
+
+        Args:
+            distance: Arc length from the path's start.
+
+        Returns:
+            The point there and the unit tangent through it.
+        """
+        var count = len(self.at)
+        if count == 0:
+            return _PathSample(0.0, 0.0, 1.0, 0.0)
+        # The last segment whose start is at or before `distance`.
+        var lo = 0
+        var hi = count - 1
+        while lo < hi:
+            var mid = (lo + hi + 1) // 2
+            if self.at[mid] <= distance:
+                lo = mid
+            else:
+                hi = mid - 1
+        var travelled = distance - self.at[lo]
+        if travelled < 0.0:
+            travelled = 0.0
+        elif travelled > self.length[lo]:
+            travelled = self.length[lo]
+        return _PathSample(
+            self.start_x[lo] + travelled * self.tx[lo],
+            self.start_y[lo] + travelled * self.ty[lo],
+            self.tx[lo],
+            self.ty[lo],
+        )
+
+
 def _row_crossings(subpaths: List[_Subpath], y: Int) -> List[_Crossing]:
     """Every sub-path's edge crossings of row y, combined into one
     list; shared by fill_path/fill_path_gradient. The multi-sub-path

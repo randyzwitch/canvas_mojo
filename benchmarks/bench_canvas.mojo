@@ -50,7 +50,12 @@ from canvas.shapes.lines import draw_line, draw_line_aa, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
-from canvas.text.render import draw_text, measure_text, measure_text_block
+from canvas.text.render import (
+    draw_text,
+    draw_text_on_path,
+    measure_text,
+    measure_text_block,
+)
 
 comptime W = 800
 comptime H = 600
@@ -512,6 +517,28 @@ def main() raises:
         sink += Int(canvas.get_pixel(45, 95).r)
     _report(
         rows, "draw_text 3 lines @13px (uncached)", perf_counter_ns() - t0, iters
+    )
+
+    # Text along a curve: 20 glyphs on a quarter-circle arc, through
+    # the same shared cache. Every glyph here is rotated, so none of
+    # them takes the glyph mask cache and each fills its own outline --
+    # compare it against the cached draw_text row above, not the
+    # uncached one.
+    var label_arc = Path()
+    label_arc.move_to(400.0 + 260.0, 320.0)
+    label_arc.arc_to(400.0, 320.0, 260.0, 0.0, pi / 2.0)
+    var curved = String("Twenty glyphs on arc")
+    draw_text_on_path(canvas, label_arc, curved, INK, 20.0, cache=cache)
+    iters = 40
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_text_on_path(canvas, label_arc, curved, INK, 20.0, cache=cache)
+        sink += Int(canvas.get_pixel(650, 340).r)
+    _report(
+        rows,
+        "draw_text_on_path 20 glyphs on an arc",
+        perf_counter_ns() - t0,
+        iters,
     )
 
     # What the cached path pays once and the uncached path pays per

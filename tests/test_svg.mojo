@@ -1132,5 +1132,142 @@ def test_dashes_reach_both_backends_through_the_trait() raises:
     assert_true('stroke-dasharray="6.000 6.000"' in vector.to_string())
 
 
+def test_stroke_text_emits_fill_none_and_stroke_attributes() raises:
+    # The same element draw_text emits, painted the other way round:
+    # fill="none" and the colour on `stroke`. Default width 1, default
+    # round join, and no stroke-linecap at all -- a glyph outline is
+    # closed, so there is nothing to cap.
+    var svg = SvgCanvas(100, 100)
+    svg.stroke_text(10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    assert_true(
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif"'
+        ' fill="none" stroke="#000000" stroke-width="1.000"'
+        ' stroke-linejoin="round" text-anchor="start">hi</text>'
+        in svg.to_string(),
+        "stroke_text's element, exact attributes",
+    )
+
+
+def test_stroke_text_carries_width_join_limit_weight_and_alpha() raises:
+    # A translucent colour puts its alpha on stroke-opacity, not
+    # fill-opacity, and a MITER join past the default limit writes
+    # stroke-miterlimit; the default 4.0 would not.
+    var svg = SvgCanvas(100, 100)
+    svg.stroke_text(
+        10,
+        20,
+        "hi",
+        Color(18, 52, 86, 128),
+        12.0,
+        TextAlign.RIGHT,
+        width=2.5,
+        weight=FontWeight.BOLD,
+        join=LineJoin.MITER,
+        miter_limit=8.0,
+    )
+    assert_true(
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif"'
+        ' font-weight="bold" fill="none" stroke="#123456"'
+        ' stroke-opacity="0.502" stroke-width="2.500"'
+        ' stroke-linejoin="miter" stroke-miterlimit="8.000"'
+        ' text-anchor="end">hi</text>'
+        in svg.to_string(),
+        "width, join, miter limit, weight and alpha all in one element",
+    )
+
+
+def test_stroke_text_rotation_matches_draw_texts_transform() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.stroke_text(
+        10, 20, "hi", Color(0, 0, 0), 12.0, TextAlign.LEFT, rotation=pi / 2.0
+    )
+    assert_true(
+        'text-anchor="start" transform="rotate(90.000 10 20)">hi</text>'
+        in svg.to_string(),
+        "rotate(<degrees> <x> <y>), around the label's own anchor",
+    )
+
+
+def test_draw_text_on_path_emits_defs_and_textpath() raises:
+    # The path goes into a <defs> block of its own and the <text>
+    # refers to it by id. First text path in a fresh SvgCanvas, so its
+    # id is "tp1", the way the first gradient's is "grad1".
+    var svg = SvgCanvas(100, 100)
+    var p = Path()
+    p.move_to(10.0, 50.0)
+    p.line_to(90.0, 50.0)
+    svg.draw_text_on_path(p, "arc", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    assert_true(
+        '<defs><path id="tp1" d="M10.000,50.000 L90.000,50.000"/></defs>'
+        in svg.to_string(),
+        "the path itself, in a defs block, with no paint of its own",
+    )
+    assert_true(
+        '<text font-size="12.000" font-family="sans-serif" fill="#000000"'
+        ' text-anchor="start"><textPath href="#tp1"'
+        ' startOffset="0.000">arc</textPath></text>'
+        in svg.to_string(),
+        "no x/y: a textPath's position comes from the path and startOffset",
+    )
+
+
+def test_draw_text_on_path_ids_do_not_collide() raises:
+    var svg = SvgCanvas(100, 100)
+    var p = Path()
+    p.move_to(10.0, 50.0)
+    p.line_to(90.0, 50.0)
+    svg.draw_text_on_path(p, "one", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    svg.draw_text_on_path(p, "two", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    var out = svg.to_string()
+    assert_true('<defs><path id="tp1" ' in out, "first path's id")
+    assert_true('<textPath href="#tp1" ' in out, "and the text that uses it")
+    assert_true('<defs><path id="tp2" ' in out, "second path's id")
+    assert_true('<textPath href="#tp2" ' in out, "and the text that uses it")
+
+
+def test_draw_text_on_path_offset_and_align_map_to_svgs_own_pair() raises:
+    # SVG anchors a textPath at startOffset and applies text-anchor
+    # about it, which is what the raster side's align does: the offset
+    # is the same number for all three, only the anchor changes.
+    var svg = SvgCanvas(100, 100)
+    var p = Path()
+    p.move_to(10.0, 50.0)
+    p.line_to(90.0, 50.0)
+    svg.draw_text_on_path(
+        p, "mid", Color(0, 0, 0), 12.0, TextAlign.CENTER, 40.0
+    )
+    svg.draw_text_on_path(p, "end", Color(0, 0, 0), 12.0, TextAlign.RIGHT, 40.0)
+    var out = svg.to_string()
+    assert_true(
+        'text-anchor="middle"><textPath href="#tp1" startOffset="40.000">mid<'
+        in out,
+        "CENTER -> text-anchor=middle about startOffset",
+    )
+    assert_true(
+        'text-anchor="end"><textPath href="#tp2" startOffset="40.000">end<'
+        in out,
+        "RIGHT -> text-anchor=end at startOffset",
+    )
+
+
+def test_draw_text_on_path_escapes_content_and_carries_transform() raises:
+    var svg = SvgCanvas(100, 100)
+    svg.translate(5.0, 7.0)
+    var p = Path()
+    p.move_to(10.0, 50.0)
+    p.line_to(90.0, 50.0)
+    svg.draw_text_on_path(
+        p, "a < b & c", Color(0, 0, 0, 128), 12.0, TextAlign.LEFT
+    )
+    assert_true(
+        '<text font-size="12.000" font-family="sans-serif" fill="#000000"'
+        ' fill-opacity="0.502" text-anchor="start" transform="matrix(1.000'
+        ' 0.000 0.000 1.000 5.000 7.000)"><textPath href="#tp1"'
+        ' startOffset="0.000">a &lt; b &amp; c</textPath></text>'
+        in svg.to_string(),
+        "content escaped, canvas transform on the <text> element",
+    )
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
