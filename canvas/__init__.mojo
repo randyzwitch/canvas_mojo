@@ -1,6 +1,7 @@
 from canvas.blend import BlendMode
 from canvas.blur import blur, draw_shadowed
 from canvas.color import Color
+from canvas.named_colors import *
 from canvas.buffer import Canvas
 from canvas.compose import Filter, draw_canvas
 from canvas.resize import downsample
@@ -17,10 +18,12 @@ from canvas.text.font_discovery import (
     resolve_font_file,
     resolve_font_file_for_char,
 )
-from canvas.geometry import Matrix2D, Point, Transform2D
+from canvas.geometry import Matrix2D, Point, Transform2D, round_to_int
 from canvas.gradient import (
     ColorSource,
     ConicGradient,
+    GradientStop,
+    GradientStops,
     LinearGradient,
     RadialGradient,
 )
