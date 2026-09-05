@@ -788,6 +788,77 @@ struct Canvas(Copyable, DrawTarget, Movable):
         p[unsafe_offset=idx + 2] = blended.b
         p[unsafe_offset=idx + 3] = blended.a
 
+    def composite_alpha_row(
+        mut self,
+        x: Int,
+        y: Int,
+        alphas: List[UInt8],
+        base: Int,
+        count: Int,
+        color: Color,
+    ):
+        """`write_pixel` of `color` at alpha `alphas[base + i]` for each
+        of `count` pixels from (x, y) rightward, as one loop over the
+        row: what compositing a cached glyph mask does per pixel,
+        without a method call, an index computation and a clip test
+        for each. The caller has already intersected the row with the
+        canvas and the rectangle clip, and there is no clip path
+        active. Each pixel's result is exactly `write_pixel`'s: the
+        same shortcuts, the same `Color.blend_over_opaque` and
+        `blend_over`.
+
+        Args:
+            x: Column of the first pixel.
+            y: Row.
+            alphas: Per-pixel alpha, 0-255, read from `base`.
+            base: Index in `alphas` of the first pixel's alpha.
+            count: Pixels to write.
+            color: Colour to write; its own alpha is replaced per pixel.
+        """
+        if not self._blend.is_source_over():
+            for i in range(count):
+                var a = alphas[base + i]
+                if a != 0:
+                    self._write_pixel_blended(x + i, y, color.with_alpha(a))
+            return
+        var p = self.pixels.unsafe_ptr()
+        var ap = alphas.unsafe_ptr()
+        var idx = (y * self.width + x) * BYTES_PER_PIXEL
+        for i in range(count):
+            var a = ap[unsafe_offset=base + i]
+            if a == 0:
+                idx += BYTES_PER_PIXEL
+                continue
+            if a == 255:
+                p[unsafe_offset=idx] = color.r
+                p[unsafe_offset=idx + 1] = color.g
+                p[unsafe_offset=idx + 2] = color.b
+                p[unsafe_offset=idx + 3] = 255
+            elif p[unsafe_offset=idx + 3] == 255:
+                var blended = color.with_alpha(a).blend_over_opaque(
+                    p[unsafe_offset=idx],
+                    p[unsafe_offset=idx + 1],
+                    p[unsafe_offset=idx + 2],
+                )
+                p[unsafe_offset=idx] = blended.r
+                p[unsafe_offset=idx + 1] = blended.g
+                p[unsafe_offset=idx + 2] = blended.b
+                p[unsafe_offset=idx + 3] = 255
+            else:
+                var blended = color.with_alpha(a).blend_over(
+                    Color(
+                        p[unsafe_offset=idx],
+                        p[unsafe_offset=idx + 1],
+                        p[unsafe_offset=idx + 2],
+                        p[unsafe_offset=idx + 3],
+                    )
+                )
+                p[unsafe_offset=idx] = blended.r
+                p[unsafe_offset=idx + 1] = blended.g
+                p[unsafe_offset=idx + 2] = blended.b
+                p[unsafe_offset=idx + 3] = blended.a
+            idx += BYTES_PER_PIXEL
+
     def _write_pixel_blended(mut self, x: Int, y: Int, color: Color):
         """`write_pixel` under any mode but SOURCE_OVER, kept out of
         line so the default path above compiles with one field test
