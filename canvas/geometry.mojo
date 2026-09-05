@@ -516,32 +516,60 @@ def _rounded_fpoints(m: Matrix2D, points: List[FPoint]) -> List[Point]:
     return out^
 
 
+def _snap_rect(
+    x0: Float64, y0: Float64, x1: Float64, y1: Float64
+) -> Tuple[Int, Int, Int, Int]:
+    """The whole-pixel (x, y, width, height) a geometric box snaps to.
+    Pixel k spans [k - 0.5, k + 0.5], so a box's edges snap to the
+    nearest half-integer boundaries and the pixels between them are
+    the ones it covers: an edge at 19.5 puts pixel 20 in, one at 20.4
+    leaves it out and starts at 21. Corners may come in any order, so
+    a mirroring map still gives a positive size.
+    """
+    var left = round_to_int(min(x0, x1) + 0.5)
+    var right = round_to_int(max(x0, x1) + 0.5)
+    var top = round_to_int(min(y0, y1) + 0.5)
+    var bottom = round_to_int(max(y0, y1) + 0.5)
+    return (left, top, right - left, bottom - top)
+
+
+def _mapped_rect(
+    m: Matrix2D, x: Float64, y: Float64, width: Float64, height: Float64
+) -> Tuple[Int, Int, Int, Int]:
+    """An axis-aligned map's image of the geometric box from (x, y)
+    spanning width x height, snapped to whole pixels by `_snap_rect`.
+    """
+    var p0 = m.apply(x, y)
+    var p1 = m.apply(x + width, y + height)
+    return _snap_rect(p0.x, p0.y, p1.x, p1.y)
+
+
 def _mapped_rect(
     m: Matrix2D, x: Int, y: Int, width: Int, height: Int
 ) -> Tuple[Int, Int, Int, Int]:
-    """An axis-aligned map's image of a whole-pixel rectangle, as a
-    whole-pixel (x, y, width, height): both corners mapped and rounded,
-    ordered so a mirroring scale still gives a positive size.
+    """An axis-aligned map's image of a whole-pixel rectangle -- the
+    pixels x through x + width - 1 -- as a whole-pixel rectangle. The
+    pixels' geometric edges, x - 0.5 and x + width - 0.5, are what is
+    mapped, so an index rectangle lands where a path around the same
+    pixels would; under the identity it comes back unchanged.
     """
-    var p0 = m.apply(Float64(x), Float64(y))
-    var p1 = m.apply(Float64(x + width), Float64(y + height))
-    var left = round_to_int(min(p0.x, p1.x))
-    var right = round_to_int(max(p0.x, p1.x))
-    var top = round_to_int(min(p0.y, p1.y))
-    var bottom = round_to_int(max(p0.y, p1.y))
-    return (left, top, right - left, bottom - top)
+    return _mapped_rect(
+        m, Float64(x) - 0.5, Float64(y) - 0.5, Float64(width), Float64(height)
+    )
 
 
 def _mapped_bounds(
     m: Matrix2D, x: Int, y: Int, width: Int, height: Int
 ) -> Tuple[Int, Int, Int, Int]:
     """The whole-pixel bounding box, as (x, y, width, height), of a
-    rectangle's four corners under any map."""
+    whole-pixel rectangle's geometric corners under any map."""
     var xs = List[Float64]()
     var ys = List[Float64]()
+    var x0 = Float64(x) - 0.5
+    var y0 = Float64(y) - 0.5
     for corner in range(4):
-        var cx = Float64(x + width) if corner % 2 == 1 else Float64(x)
-        var cy = Float64(y + height) if corner >= 2 else Float64(y)
+        var cx = x0 + Float64(width) if corner % 2 == 1 else x0
+        var cy = y0 + Float64(height) if corner >= 2 else y0
         var q = m.apply(cx, cy)
         xs.append(q.x)
         ys.append(q.y)

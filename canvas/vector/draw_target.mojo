@@ -47,6 +47,21 @@ rule holds on both: strokes are built in user space, so under a
 state is for placement and rotation, and data still maps through
 scales.
 
+Placement is one rule on both backends. Pixel (px, py) is centred at
+(px, py) and spans half a pixel each way. `Int` arguments are pixel
+indices: a rectangle from column x with width w covers pixels x
+through x + w - 1, whose geometric edges are x - 0.5 and x + w - 0.5;
+a circle's centre (cx, cy) is a pixel's centre. `Float64` arguments
+are geometry: a rectangle from x spanning w has edges at x and x + w,
+and `fill_rect` snaps each edge to the nearest pixel boundary, so
+`fill_rect(19.5, 4.5, 40.0, 30.0)` and `fill_rect(20, 5, 40, 30)` are
+the same call. Under a transform every primitive maps its geometry --
+an `Int` rectangle maps its edges at x - 0.5, not x -- and a
+rectangle then snaps in the space it is drawn in: device space on
+`Canvas`, user space on `SvgCanvas`, which has no device pixels. That
+one rule is what makes the supersampling recipe on `downsample` exact
+for rectangles as well as paths and text.
+
 The blend mode is on the trait as well: `set_blend_mode` and
 `blend_mode`, carried by `save`/`restore`, with the formulas in
 canvas/blend.mojo. `SvgCanvas` emits the blend modes as
@@ -93,13 +108,37 @@ trait DrawTarget:
     def fill_rect(
         mut self, x: Int, y: Int, width: Int, height: Int, color: Color
     ):
-        """Fill a solid rectangle (x, y is the top-left corner).
+        """Fill the pixels x through x + width - 1 by y through
+        y + height - 1 with a solid colour.
 
         Args:
-            x: Rectangle's left edge.
-            y: Rectangle's top edge.
-            width: Rectangle's width.
-            height: Rectangle's height.
+            x: First column.
+            y: First row.
+            width: Columns.
+            height: Rows.
+            color: Fill color.
+        """
+        ...
+
+    def fill_rect(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        color: Color,
+    ):
+        """Fill the geometric box from (x, y) spanning width x height,
+        snapped to whole pixels: each edge goes to the nearest pixel
+        boundary (pixel k spans k - 0.5 to k + 0.5), so a caller laying
+        out in `Float64` gets crisp edges without rounding itself. See
+        the placement rule in this module's docstring.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width.
+            height: Height.
             color: Fill color.
         """
         ...
@@ -116,10 +155,30 @@ trait DrawTarget:
         `gradient` rather than one flat color.
 
         Args:
-            x: Rectangle's left edge.
-            y: Rectangle's top edge.
-            width: Rectangle's width.
-            height: Rectangle's height.
+            x: First column.
+            y: First row.
+            width: Columns.
+            height: Rows.
+            gradient: Fill source, projected across the rectangle.
+        """
+        ...
+
+    def fill_rect_gradient(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        gradient: LinearGradient,
+    ):
+        """`fill_rect_gradient` for a geometric box, snapped to whole
+        pixels as the `Float64` `fill_rect` is.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width.
+            height: Height.
             gradient: Fill source, projected across the rectangle.
         """
         ...
@@ -157,12 +216,60 @@ trait DrawTarget:
         """
         ...
 
+    def draw_line_aa(
+        mut self,
+        x0: Float64,
+        y0: Float64,
+        x1: Float64,
+        y1: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
+    ):
+        """An anti-aliased line between sub-pixel endpoints, round-capped
+        by default.
+
+        Args:
+            x0: Start point x.
+            y0: Start point y.
+            x1: End point x.
+            y1: End point y.
+            color: Line color.
+            width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the line. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the line starts
+                at.
+            cap: How the two ends are finished -- see LineCap.
+            join: Unused for a single segment, which has no corners.
+            miter_limit: Unused for a single segment.
+        """
+        ...
+
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """An anti-aliased filled disk.
 
         Args:
             cx: Center x.
             cy: Center y.
+            radius: Circle radius in pixels.
+            color: Fill color.
+        """
+        ...
+
+    def fill_circle_aa(
+        mut self, cx: Float64, cy: Float64, radius: Float64, color: Color
+    ):
+        """An anti-aliased filled disk at a sub-pixel center and
+        radius.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
             radius: Circle radius in pixels.
             color: Fill color.
         """
@@ -197,6 +304,26 @@ trait DrawTarget:
         Args:
             cx: Center x.
             cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Fill color.
+        """
+        ...
+
+    def fill_ellipse_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+    ):
+        """An anti-aliased filled ellipse at a sub-pixel center and
+        radii.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
             rx: Horizontal radius in pixels.
             ry: Vertical radius in pixels.
             color: Fill color.

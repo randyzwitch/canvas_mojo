@@ -32,6 +32,44 @@ def test_fill_rect_emits_expected_rect_element() raises:
     )
 
 
+def test_float_fill_rect_snaps_and_emits_the_int_rect() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.fill_rect(19.5, 4.5, 40.0, 30.0, Color(18, 52, 86))
+    svg.fill_rect(20.4, 4.5, 40.0, 30.0, Color(18, 52, 86))
+    var s = svg.to_string()
+    assert_true(
+        '<rect x="20" y="5" width="40" height="30" fill="#123456"/>' in s,
+        "half-integer edges snap to the Int rect: " + s,
+    )
+    assert_true(
+        '<rect x="21" y="5" width="40" height="30" fill="#123456"/>' in s,
+        "an edge at 20.4 starts at 21, as the raster backend does: " + s,
+    )
+
+
+def test_float_circle_ellipse_and_line_emit_sub_pixel_attributes() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.fill_circle_aa(50.25, 40.5, 12.125, Color(255, 0, 0))
+    svg.fill_ellipse_aa(50.5, 40.25, 20.0, 12.75, Color(0, 128, 255))
+    svg.draw_line_aa(0.5, 0.25, 10.75, 10.0, Color(0, 0, 0))
+    var s = svg.to_string()
+    assert_true(
+        '<circle cx="50.250" cy="40.500" r="12.125" fill="#ff0000"/>' in s,
+        "circle: " + s,
+    )
+    assert_true(
+        '<ellipse cx="50.500" cy="40.250" rx="20.000" ry="12.750"'
+        ' fill="#0080ff"/>'
+        in s,
+        "ellipse: " + s,
+    )
+    assert_true(
+        '<line x1="0.500" y1="0.250" x2="10.750" y2="10.000" stroke="#000000"'
+        in s,
+        "line: " + s,
+    )
+
+
 def test_fill_rect_gradient_emits_expected_lineargradient_and_rect() raises:
     # x0/y0/x1/y1 pass through to the <linearGradient> element's
     # x1/y1/x2/y2 unchanged under userSpaceOnUse, and each stop's

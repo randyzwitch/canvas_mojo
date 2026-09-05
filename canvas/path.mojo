@@ -1321,16 +1321,26 @@ def _through(path: Path, matrix: Matrix2D) -> Path:
         return Path()
 
 
-def _rect_path(x: Int, y: Int, width: Int, height: Int) -> Path:
-    """A whole-pixel rectangle as a path, for a rectangle primitive
+def _rect_path(x: Float64, y: Float64, width: Float64, height: Float64) -> Path:
+    """A geometric rectangle as a path, for a rectangle primitive
     routed through the path fill under a rotated or skewed transform.
     """
     var out = Path()
     try:
-        out.rect(Float64(x), Float64(y), Float64(width), Float64(height))
+        out.rect(x, y, width, height)
     except e:
         return Path()
     return out^
+
+
+def _rect_path(x: Int, y: Int, width: Int, height: Int) -> Path:
+    """A whole-pixel rectangle -- the pixels x through x + width - 1 --
+    as a path around their geometric edges, x - 0.5 to x + width - 0.5,
+    so it lands where the index rectangle does.
+    """
+    return _rect_path(
+        Float64(x) - 0.5, Float64(y) - 0.5, Float64(width), Float64(height)
+    )
 
 
 def _ellipse_path(cx: Float64, cy: Float64, rx: Float64, ry: Float64) -> Path:

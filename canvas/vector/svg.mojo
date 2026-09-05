@@ -31,7 +31,7 @@ from std.math import cos, pi, sin
 from canvas.blend import BlendMode, _css_blend_name
 from canvas.color import Color
 from canvas.fill_rule import FillRule
-from canvas.geometry import Matrix2D
+from canvas.geometry import Matrix2D, _snap_rect
 from canvas.gradient import GradientStops, LinearGradient, RadialGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.geometry import round_to_int
@@ -533,6 +533,49 @@ struct SvgCanvas(DrawTarget, Movable):
         self._write_blend()
         self._body.write("/>\n")
 
+    def fill_rect(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        color: Color,
+    ):
+        """`fill_rect` for a geometric box, snapped to whole pixels in
+        user space -- the same snap the raster backend applies, so both
+        emit the same rectangle -- and written as the `Int` form.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width.
+            height: Height.
+            color: Fill color.
+        """
+        var r = _snap_rect(x, y, x + width, y + height)
+        self.fill_rect(r[0], r[1], r[2], r[3], color)
+
+    def fill_rect_gradient(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        gradient: LinearGradient,
+    ):
+        """`fill_rect_gradient` for a geometric box, snapped to whole
+        pixels as the `Float64` `fill_rect` is.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width.
+            height: Height.
+            gradient: Fill source, projected across the rectangle.
+        """
+        var r = _snap_rect(x, y, x + width, y + height)
+        self.fill_rect_gradient(r[0], r[1], r[2], r[3], gradient)
+
     def _write_stops(mut self, stops: GradientStops):
         """The `<stop>` children of a gradient def. The ramp is kept
         sorted by offset on insert, which is what SVG needs: `<stop>`
@@ -776,6 +819,84 @@ struct SvgCanvas(DrawTarget, Movable):
         self._write_blend()
         self._body.write("/>\n")
 
+    def draw_line_aa(
+        mut self,
+        x0: Float64,
+        y0: Float64,
+        x1: Float64,
+        y1: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
+    ):
+        """Emit a `<line>` element, round-capped by default.
+
+        Args:
+            x0: Start point x.
+            y0: Start point y.
+            x1: End point x.
+            y1: End point y.
+            color: Line color.
+            width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the line. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the line starts
+                at.
+            cap: How the two ends are finished -- see LineCap.
+            join: Unused for a single segment, which has no corners.
+            miter_limit: Unused for a single segment.
+        """
+        self._body.write('<line x1="')
+        _write_svg_float(self._body, x0)
+        self._body.write('" y1="')
+        _write_svg_float(self._body, y0)
+        self._body.write('" x2="')
+        _write_svg_float(self._body, x1)
+        self._body.write('" y2="')
+        _write_svg_float(self._body, y1)
+        self._body.write('" stroke="', _to_hex(color), '"')
+        _write_opacity(self._body, "stroke", color)
+        _write_stroke_attrs(
+            self._body,
+            width,
+            dashes,
+            dash_offset,
+            cap,
+            join,
+            miter_limit,
+            False,
+        )
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
+
+    def fill_circle_aa(
+        mut self, cx: Float64, cy: Float64, radius: Float64, color: Color
+    ):
+        """A `<circle>` at a sub-pixel centre and radius.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Circle radius in pixels.
+            color: Fill color.
+        """
+        self._body.write('<circle cx="')
+        _write_svg_float(self._body, cx)
+        self._body.write('" cy="')
+        _write_svg_float(self._body, cy)
+        self._body.write('" r="')
+        _write_svg_float(self._body, radius)
+        self._body.write('" fill="', _to_hex(color), '"')
+        _write_opacity(self._body, "fill", color)
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
+
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """Emit a `<circle>` element.
 
@@ -838,6 +959,37 @@ struct SvgCanvas(DrawTarget, Movable):
             4.0,
             False,
         )
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
+
+    def fill_ellipse_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+    ):
+        """An `<ellipse>` at a sub-pixel centre and radii.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            rx: Horizontal radius in pixels.
+            ry: Vertical radius in pixels.
+            color: Fill color.
+        """
+        self._body.write('<ellipse cx="')
+        _write_svg_float(self._body, cx)
+        self._body.write('" cy="')
+        _write_svg_float(self._body, cy)
+        self._body.write('" rx="')
+        _write_svg_float(self._body, rx)
+        self._body.write('" ry="')
+        _write_svg_float(self._body, ry)
+        self._body.write('" fill="', _to_hex(color), '"')
+        _write_opacity(self._body, "fill", color)
         self._write_transform()
         self._write_blend()
         self._body.write("/>\n")

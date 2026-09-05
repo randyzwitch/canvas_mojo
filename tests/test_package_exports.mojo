@@ -49,6 +49,9 @@ def _draw_scene[T: DrawTarget](mut target: T):
     blend mode is reachable through it on every backend.
     """
     target.fill_rect(0, 0, 2, 2, Color(255, 0, 0))
+    # The Float64 overloads reach both backends through the trait.
+    target.fill_rect(2.5, 2.5, 1.0, 1.0, Color(0, 255, 0))
+    target.fill_circle_aa(1.5, 1.5, 0.5, Color(0, 0, 255))
     target.set_blend_mode(BlendMode.MULTIPLY)
     target.fill_rect(0, 0, 1, 1, Color(255, 255, 255))
     target.set_blend_mode(BlendMode.SOURCE_OVER)

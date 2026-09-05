@@ -283,6 +283,16 @@ hard-edged twin, which is subtle enough to survive casual review — so
 new AA primitives should assert agreement with their hard-edged
 counterpart on deep-interior pixels, as `test_circles.mojo` does.
 
+The same convention decides what an `Int` argument means. An `Int` is a
+pixel index: `fill_rect(20, 5, 40, 30)` covers pixels 20 through 59,
+whose geometric edges are 19.5 and 59.5. A `Float64` is geometry: an
+edge at 19.5. Under a transform a primitive maps its geometry, never
+its indices — an `Int` rectangle maps `x - 0.5`, not `x` — and a
+rectangle snaps to whole pixels afterwards, in device space. The
+`DrawTarget` docstring states the rule in full; `_snap_rect` and
+`_mapped_rect` in `geometry.mojo` implement it, and any new primitive
+taking a rectangle goes through them.
+
 ### Every pixel gets exactly one `set_pixel`
 
 Translucent colors make double-blending visible, and several algorithms
