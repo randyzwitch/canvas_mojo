@@ -15,6 +15,7 @@ comptime _DIV255_MUL = 32897
 comptime _DIV255_SHIFT = 23
 
 
+@always_inline
 def _div255(value: Int) -> Int:
     """`value // 255`, division-free. Valid for 0 <= value <= 65025,
     which is every numerator blend_over forms.

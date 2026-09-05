@@ -220,44 +220,45 @@ struct BlendMode(Copyable, ImplicitlyCopyable, Movable):
         return self._value >= 24
 
 
-def _blend_channel(mode: BlendMode, cb: Int, cs: Int) -> Int:
-    """`B(Cb, Cs)` for one channel of a separable mode, 0-255 in and
-    out. The identity for anything else, which is what makes one
-    `_blend_pixel` cover the Porter-Duff operators too.
-    """
-    if mode == BlendMode.MULTIPLY:
-        return _div255(cb * cs)
-    if mode == BlendMode.SCREEN:
-        return cb + cs - _div255(cb * cs)
-    if mode == BlendMode.OVERLAY:
-        return _hard_light(cs, cb)
-    if mode == BlendMode.DARKEN:
-        return min(cb, cs)
-    if mode == BlendMode.LIGHTEN:
-        return max(cb, cs)
-    if mode == BlendMode.DIFFERENCE:
-        return cb - cs if cb > cs else cs - cb
-    if mode == BlendMode.EXCLUSION:
-        return cb + cs - 2 * _div255(cb * cs)
-    if mode == BlendMode.COLOR_DODGE:
-        if cb == 0:
-            return 0
-        if cs == 255:
-            return 255
-        return min(255, cb * 255 // (255 - cs))
-    if mode == BlendMode.COLOR_BURN:
-        if cb == 255:
-            return 255
-        if cs == 0:
-            return 0
-        return 255 - min(255, (255 - cb) * 255 // cs)
-    if mode == BlendMode.HARD_LIGHT:
-        return _hard_light(cb, cs)
-    if mode == BlendMode.SOFT_LIGHT:
-        return _soft_light(cb, cs)
-    return cs
+@always_inline
+def _multiply(cb: Int, cs: Int) -> Int:
+    return _div255(cb * cs)
 
 
+@always_inline
+def _screen(cb: Int, cs: Int) -> Int:
+    return cb + cs - _div255(cb * cs)
+
+
+@always_inline
+def _difference(cb: Int, cs: Int) -> Int:
+    return cb - cs if cb > cs else cs - cb
+
+
+@always_inline
+def _exclusion(cb: Int, cs: Int) -> Int:
+    return cb + cs - 2 * _div255(cb * cs)
+
+
+@always_inline
+def _color_dodge(cb: Int, cs: Int) -> Int:
+    if cb == 0:
+        return 0
+    if cs == 255:
+        return 255
+    return min(255, cb * 255 // (255 - cs))
+
+
+@always_inline
+def _color_burn(cb: Int, cs: Int) -> Int:
+    if cb == 255:
+        return 255
+    if cs == 0:
+        return 0
+    return 255 - min(255, (255 - cb) * 255 // cs)
+
+
+@always_inline
 def _hard_light(cb: Int, cs: Int) -> Int:
     """Hard light: the source channel picks multiply or screen. Overlay
     is the same function with the operands swapped.
@@ -272,6 +273,7 @@ def _hard_light(cb: Int, cs: Int) -> Int:
     return cb + t - _div255(cb * t)
 
 
+@always_inline
 def _soft_light(cb: Int, cs: Int) -> Int:
     """Soft light, in floating point: the formula has a square root
     and a cubic in it, and rounds to the nearest channel value.
@@ -289,6 +291,41 @@ def _soft_light(cb: Int, cs: Int) -> Int:
             d = sqrt(b)
         r = b + (2.0 * s - 1.0) * (d - b)
     return Int(r * 255.0 + 0.5)
+
+
+@always_inline
+def _blend_channel[MODE: Int](cb: Int, cs: Int) -> Int:
+    """`B(Cb, Cs)` for one channel of a separable mode, 0-255 in and
+    out, with the mode a compile-time parameter so the choice folds
+    away. The identity for anything else, which is what makes one
+    `_blend_pixel` cover the Porter-Duff operators too.
+    """
+
+    @parameter
+    if MODE == 13:
+        return _multiply(cb, cs)
+    elif MODE == 14:
+        return _screen(cb, cs)
+    elif MODE == 15:
+        return _hard_light(cs, cb)
+    elif MODE == 16:
+        return min(cb, cs)
+    elif MODE == 17:
+        return max(cb, cs)
+    elif MODE == 18:
+        return _difference(cb, cs)
+    elif MODE == 19:
+        return _exclusion(cb, cs)
+    elif MODE == 20:
+        return _color_dodge(cb, cs)
+    elif MODE == 21:
+        return _color_burn(cb, cs)
+    elif MODE == 22:
+        return _hard_light(cb, cs)
+    elif MODE == 23:
+        return _soft_light(cb, cs)
+    else:
+        return cs
 
 
 struct _Rgb(Copyable, ImplicitlyCopyable, Movable):
@@ -311,14 +348,17 @@ struct _Rgb(Copyable, ImplicitlyCopyable, Movable):
         self.b = Float64(b) / 255.0
 
 
+@always_inline
 def _lum(c: _Rgb) -> Float64:
     return 0.3 * c.r + 0.59 * c.g + 0.11 * c.b
 
 
+@always_inline
 def _sat(c: _Rgb) -> Float64:
     return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))
 
 
+@always_inline
 def _clip_color(c: _Rgb) -> _Rgb:
     """Pull a colour back into 0-1 without moving its luminosity, by
     scaling its distance from the grey of that luminosity.
@@ -342,11 +382,13 @@ def _clip_color(c: _Rgb) -> _Rgb:
     return _Rgb(r, g, b)
 
 
+@always_inline
 def _set_lum(c: _Rgb, l: Float64) -> _Rgb:
     var d = l - _lum(c)
     return _clip_color(_Rgb(c.r + d, c.g + d, c.b + d))
 
 
+@always_inline
 def _set_sat(c: _Rgb, s: Float64) -> _Rgb:
     """Rescale a colour's channels so its saturation is `s`: the
     smallest channel goes to 0, the largest to `s`, and the middle one
@@ -362,36 +404,30 @@ def _set_sat(c: _Rgb, s: Float64) -> _Rgb:
     return _Rgb((c.r - mn) * k, (c.g - mn) * k, (c.b - mn) * k)
 
 
-def _blend_triple(mode: BlendMode, cb: _Rgb, cs: _Rgb) -> _Rgb:
+@always_inline
+def _blend_triple[MODE: Int](cb: _Rgb, cs: _Rgb) -> _Rgb:
     """`B(Cb, Cs)` for a non-separable mode, on the whole colour."""
-    if mode == BlendMode.HUE:
+
+    @parameter
+    if MODE == 24:
         return _set_lum(_set_sat(cs, _sat(cb)), _lum(cb))
-    if mode == BlendMode.SATURATION:
+    elif MODE == 25:
         return _set_lum(_set_sat(cb, _sat(cs)), _lum(cb))
-    if mode == BlendMode.COLOR:
+    elif MODE == 26:
         return _set_lum(cs, _lum(cb))
-    return _set_lum(cb, _lum(cs))
+    else:
+        return _set_lum(cb, _lum(cs))
 
 
+@always_inline
 def _to_channel(v: Float64) -> Int:
     """A 0-1 float to the nearest 0-255 channel, clamped."""
     var c = Int(v * 255.0 + 0.5)
     return min(255, max(0, c))
 
 
-def _blend_source_channel(mode: BlendMode, ba: Int, cb: Int, cs: Int) -> Int:
-    """`Cs'`: the source channel with the mode's blend function mixed
-    in against the backdrop, in proportion to the backdrop's own alpha.
-    A transparent backdrop leaves the source colour alone, which is why
-    a blend mode does nothing over an untouched transparent canvas.
-    """
-    if not mode.is_separable():
-        return cs
-    var b = _blend_channel(mode, cb, cs)
-    return _mix_source(ba, cb, cs, b)
-
-
-def _mix_source(ba: Int, cb: Int, cs: Int, b: Int) -> Int:
+@always_inline
+def _mix_source(ba: Int, cs: Int, b: Int) -> Int:
     """`(1 - ab)*Cs + ab*B`, the backdrop-alpha mix of a source channel
     with its blended value. The two weights sum to 255, so the
     numerator stays at or under 255 * 255 and _div255 applies.
@@ -399,14 +435,13 @@ def _mix_source(ba: Int, cb: Int, cs: Int, b: Int) -> Int:
     return _div255((255 - ba) * cs + ba * b)
 
 
-def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
-    """`src` combined with `dst` under `mode`, straight alpha in and
-    out -- the general path `Canvas.write_pixel` takes for any mode but
-    SOURCE_OVER.
-
-    Passing SOURCE_OVER returns exactly what `Color.blend_over` does;
-    the buffer keeps its own source-over paths for speed, not for a
-    different answer.
+@always_inline
+def _blend_pixel[MODE: Int](src: Color, dst: Color) -> Color:
+    """`_blend_pixel` with the mode a compile-time parameter: the
+    fraction table and the blend function are chosen when this is
+    instantiated, so a loop over pixels carries no mode branches. The
+    runtime `_blend_pixel` and `_blend_span` reach the right
+    instantiation once per call.
     """
     var sa = Int(src.a)
     var ba = Int(dst.a)
@@ -416,36 +451,38 @@ def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
     # _blend_channel or _blend_triple instead.
     var fa = 255
     var fb = 255 - sa
-    if mode == BlendMode.SOURCE:
+
+    @parameter
+    if MODE == 1:  # SOURCE
         fb = 0
-    elif mode == BlendMode.DESTINATION_IN:
+    elif MODE == 2:  # DESTINATION_IN
         fa = 0
         fb = sa
-    elif mode == BlendMode.DESTINATION_OUT:
+    elif MODE == 3:  # DESTINATION_OUT
         fa = 0
-    elif mode == BlendMode.XOR:
+    elif MODE == 4:  # XOR
         fa = 255 - ba
-    elif mode == BlendMode.CLEAR:
+    elif MODE == 5:  # CLEAR
         fa = 0
         fb = 0
-    elif mode == BlendMode.DESTINATION:
+    elif MODE == 6:  # DESTINATION
         fa = 0
         fb = 255
-    elif mode == BlendMode.DESTINATION_OVER:
+    elif MODE == 7:  # DESTINATION_OVER
         fa = 255 - ba
         fb = 255
-    elif mode == BlendMode.SOURCE_IN:
+    elif MODE == 8:  # SOURCE_IN
         fa = ba
         fb = 0
-    elif mode == BlendMode.SOURCE_OUT:
+    elif MODE == 9:  # SOURCE_OUT
         fa = 255 - ba
         fb = 0
-    elif mode == BlendMode.SOURCE_ATOP:
+    elif MODE == 10:  # SOURCE_ATOP
         fa = ba
-    elif mode == BlendMode.DESTINATION_ATOP:
+    elif MODE == 11:  # DESTINATION_ATOP
         fa = 255 - ba
         fb = sa
-    elif mode == BlendMode.ADD:
+    elif MODE == 12:  # ADD
         fb = 255
 
     # as*Fa and ab*Fb, the premultiplied weight each side contributes.
@@ -461,28 +498,204 @@ def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
         # and dividing by out_a below would not be either.
         return Color(0, 0, 0, 0)
 
-    var sr: Int
-    var sg: Int
-    var sb: Int
-    if mode.is_non_separable():
-        var b = _blend_triple(
-            mode,
-            _Rgb(Int(dst.r), Int(dst.g), Int(dst.b)),
-            _Rgb(Int(src.r), Int(src.g), Int(src.b)),
+    var dr = Int(dst.r)
+    var dg = Int(dst.g)
+    var db = Int(dst.b)
+    var sr = Int(src.r)
+    var sg = Int(src.g)
+    var sb = Int(src.b)
+
+    @parameter
+    if MODE >= 24:
+        var b = _blend_triple[MODE](_Rgb(dr, dg, db), _Rgb(sr, sg, sb))
+        sr = _mix_source(ba, sr, _to_channel(b.r))
+        sg = _mix_source(ba, sg, _to_channel(b.g))
+        sb = _mix_source(ba, sb, _to_channel(b.b))
+    elif MODE >= 13:
+        sr = _mix_source(ba, sr, _blend_channel[MODE](dr, sr))
+        sg = _mix_source(ba, sg, _blend_channel[MODE](dg, sg))
+        sb = _mix_source(ba, sb, _blend_channel[MODE](db, sb))
+    if wa + wb == 255:
+        # An opaque result with unclamped weights, the common case
+        # over an opaque backdrop: each numerator is at most 255 * 255,
+        # so the division is _div255's exact shift and the clamp
+        # cannot bind. ADD with weights summing past 255 takes the
+        # general form below, where the clamp is what defines it.
+        return Color(
+            UInt8(_div255(wa * sr + wb * dr)),
+            UInt8(_div255(wa * sg + wb * dg)),
+            UInt8(_div255(wa * sb + wb * db)),
+            255,
         )
-        sr = _mix_source(ba, Int(dst.r), Int(src.r), _to_channel(b.r))
-        sg = _mix_source(ba, Int(dst.g), Int(src.g), _to_channel(b.g))
-        sb = _mix_source(ba, Int(dst.b), Int(src.b), _to_channel(b.b))
-    else:
-        sr = _blend_source_channel(mode, ba, Int(dst.r), Int(src.r))
-        sg = _blend_source_channel(mode, ba, Int(dst.g), Int(src.g))
-        sb = _blend_source_channel(mode, ba, Int(dst.b), Int(src.b))
     return Color(
-        UInt8(min(255, (wa * sr + wb * Int(dst.r)) // out_a)),
-        UInt8(min(255, (wa * sg + wb * Int(dst.g)) // out_a)),
-        UInt8(min(255, (wa * sb + wb * Int(dst.b)) // out_a)),
+        UInt8(min(255, (wa * sr + wb * dr) // out_a)),
+        UInt8(min(255, (wa * sg + wb * dg) // out_a)),
+        UInt8(min(255, (wa * sb + wb * db) // out_a)),
         UInt8(out_a),
     )
+
+
+def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
+    """`src` combined with `dst` under `mode`, straight alpha in and
+    out -- the general path `Canvas.write_pixel` takes for any mode but
+    SOURCE_OVER.
+
+    Passing SOURCE_OVER returns exactly what `Color.blend_over` does;
+    the buffer keeps its own source-over paths for speed, not for a
+    different answer.
+    """
+    var v = mode._value
+    if v == 1:
+        return _blend_pixel[1](src, dst)
+    elif v == 2:
+        return _blend_pixel[2](src, dst)
+    elif v == 3:
+        return _blend_pixel[3](src, dst)
+    elif v == 4:
+        return _blend_pixel[4](src, dst)
+    elif v == 5:
+        return _blend_pixel[5](src, dst)
+    elif v == 6:
+        return _blend_pixel[6](src, dst)
+    elif v == 7:
+        return _blend_pixel[7](src, dst)
+    elif v == 8:
+        return _blend_pixel[8](src, dst)
+    elif v == 9:
+        return _blend_pixel[9](src, dst)
+    elif v == 10:
+        return _blend_pixel[10](src, dst)
+    elif v == 11:
+        return _blend_pixel[11](src, dst)
+    elif v == 12:
+        return _blend_pixel[12](src, dst)
+    elif v == 13:
+        return _blend_pixel[13](src, dst)
+    elif v == 14:
+        return _blend_pixel[14](src, dst)
+    elif v == 15:
+        return _blend_pixel[15](src, dst)
+    elif v == 16:
+        return _blend_pixel[16](src, dst)
+    elif v == 17:
+        return _blend_pixel[17](src, dst)
+    elif v == 18:
+        return _blend_pixel[18](src, dst)
+    elif v == 19:
+        return _blend_pixel[19](src, dst)
+    elif v == 20:
+        return _blend_pixel[20](src, dst)
+    elif v == 21:
+        return _blend_pixel[21](src, dst)
+    elif v == 22:
+        return _blend_pixel[22](src, dst)
+    elif v == 23:
+        return _blend_pixel[23](src, dst)
+    elif v == 24:
+        return _blend_pixel[24](src, dst)
+    elif v == 25:
+        return _blend_pixel[25](src, dst)
+    elif v == 26:
+        return _blend_pixel[26](src, dst)
+    elif v == 27:
+        return _blend_pixel[27](src, dst)
+    return _blend_pixel[0](src, dst)
+
+
+def _blend_span_impl[
+    MODE: Int
+](mut pixels: List[UInt8], start: Int, count: Int, src: Color):
+    """`_blend_pixel` over `count` consecutive pixels of `pixels` from
+    pixel index `start`, with the mode a compile-time parameter: the
+    mode's branches fold away and the loop is the arithmetic and the
+    loads and stores. One instantiation per mode, reached through
+    `_blend_span`.
+    """
+    var p = pixels.unsafe_ptr()
+    var idx = start * 4
+    for _ in range(count):
+        var out = _blend_pixel[MODE](
+            src,
+            Color(
+                p[unsafe_offset=idx],
+                p[unsafe_offset=idx + 1],
+                p[unsafe_offset=idx + 2],
+                p[unsafe_offset=idx + 3],
+            ),
+        )
+        p[unsafe_offset=idx] = out.r
+        p[unsafe_offset=idx + 1] = out.g
+        p[unsafe_offset=idx + 2] = out.b
+        p[unsafe_offset=idx + 3] = out.a
+        idx += 4
+
+
+def _blend_span(
+    mode: BlendMode, mut pixels: List[UInt8], start: Int, count: Int, src: Color
+):
+    """Blend `src` onto `count` consecutive pixels of `pixels` from
+    pixel index `start` under `mode`: the row loop of a filled region
+    under any mode but SOURCE_OVER. The mode is resolved once here
+    and the loop runs with it fixed; per pixel the result is exactly
+    `_blend_pixel`'s.
+    """
+    var v = mode._value
+    if v == 1:
+        _blend_span_impl[1](pixels, start, count, src)
+    elif v == 2:
+        _blend_span_impl[2](pixels, start, count, src)
+    elif v == 3:
+        _blend_span_impl[3](pixels, start, count, src)
+    elif v == 4:
+        _blend_span_impl[4](pixels, start, count, src)
+    elif v == 5:
+        _blend_span_impl[5](pixels, start, count, src)
+    elif v == 6:
+        _blend_span_impl[6](pixels, start, count, src)
+    elif v == 7:
+        _blend_span_impl[7](pixels, start, count, src)
+    elif v == 8:
+        _blend_span_impl[8](pixels, start, count, src)
+    elif v == 9:
+        _blend_span_impl[9](pixels, start, count, src)
+    elif v == 10:
+        _blend_span_impl[10](pixels, start, count, src)
+    elif v == 11:
+        _blend_span_impl[11](pixels, start, count, src)
+    elif v == 12:
+        _blend_span_impl[12](pixels, start, count, src)
+    elif v == 13:
+        _blend_span_impl[13](pixels, start, count, src)
+    elif v == 14:
+        _blend_span_impl[14](pixels, start, count, src)
+    elif v == 15:
+        _blend_span_impl[15](pixels, start, count, src)
+    elif v == 16:
+        _blend_span_impl[16](pixels, start, count, src)
+    elif v == 17:
+        _blend_span_impl[17](pixels, start, count, src)
+    elif v == 18:
+        _blend_span_impl[18](pixels, start, count, src)
+    elif v == 19:
+        _blend_span_impl[19](pixels, start, count, src)
+    elif v == 20:
+        _blend_span_impl[20](pixels, start, count, src)
+    elif v == 21:
+        _blend_span_impl[21](pixels, start, count, src)
+    elif v == 22:
+        _blend_span_impl[22](pixels, start, count, src)
+    elif v == 23:
+        _blend_span_impl[23](pixels, start, count, src)
+    elif v == 24:
+        _blend_span_impl[24](pixels, start, count, src)
+    elif v == 25:
+        _blend_span_impl[25](pixels, start, count, src)
+    elif v == 26:
+        _blend_span_impl[26](pixels, start, count, src)
+    elif v == 27:
+        _blend_span_impl[27](pixels, start, count, src)
+    else:
+        _blend_span_impl[0](pixels, start, count, src)
 
 
 def _css_blend_name(mode: BlendMode) -> String:
