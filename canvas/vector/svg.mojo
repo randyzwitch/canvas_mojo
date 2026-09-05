@@ -18,10 +18,10 @@ annotated groups, and `restore` has nothing to close. `draw_text`'s own
 widens with it, as it does on `Canvas`.
 
 `set_blend_mode` is carried the same way, as a
-`style="mix-blend-mode:..."` attribute. CSS names the six separable
-blend modes and nothing else, so the four Porter-Duff operators past
-the default -- SOURCE, DESTINATION_IN, DESTINATION_OUT, XOR -- emit no
-attribute and render as ordinary source-over.
+`style="mix-blend-mode:..."` attribute. CSS names the separable and
+non-separable blend modes and nothing else, so the Porter-Duff
+operators past the default -- SOURCE, DESTINATION_IN, XOR and the
+rest -- emit no attribute and render as ordinary source-over.
 """
 
 from std.math import cos, pi, sin
@@ -460,12 +460,12 @@ struct SvgCanvas(DrawTarget, Movable):
         """Set how elements drawn from here on combine with what is
         already painted, the counterpart of `Canvas.set_blend_mode`.
 
-        A separable mode (MULTIPLY, SCREEN, OVERLAY, DARKEN, LIGHTEN,
-        DIFFERENCE) becomes a `style="mix-blend-mode:..."` attribute on
-        each element. CSS has no keyword for the Porter-Duff operators
-        -- SOURCE, DESTINATION_IN, DESTINATION_OUT, XOR -- so those
-        emit no attribute at all and render as ordinary source-over.
-        A caller needing them has to use the raster backend.
+        A blend mode (MULTIPLY through LUMINOSITY) becomes a
+        `style="mix-blend-mode:..."` attribute on each element. CSS
+        has no keyword for the Porter-Duff operators -- SOURCE,
+        DESTINATION_IN, XOR, ADD and the rest -- so those emit no
+        attribute at all and render as ordinary source-over. A caller
+        needing them has to use the raster backend.
 
         `save`/`restore` carry the mode, as they do the transform.
 

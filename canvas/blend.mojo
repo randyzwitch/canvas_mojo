@@ -25,25 +25,60 @@ mode's blend function `B` has already mixed into the backdrop:
 
     Cs' = (1 - ab)*Cs + ab*B(Cb, Cs)
 
-The four Porter-Duff modes leave `B(Cb, Cs) = Cs`, so `Cs' = Cs`, and
+The Porter-Duff operators leave `B(Cb, Cs) = Cs`, so `Cs' = Cs`, and
 differ only in the fractions:
 
-    SOURCE_OVER       Fa = 1,      Fb = 1 - as
+    CLEAR             Fa = 0,      Fb = 0
     SOURCE            Fa = 1,      Fb = 0
+    DESTINATION       Fa = 0,      Fb = 1
+    SOURCE_OVER       Fa = 1,      Fb = 1 - as
+    DESTINATION_OVER  Fa = 1 - ab, Fb = 1
+    SOURCE_IN         Fa = ab,     Fb = 0
     DESTINATION_IN    Fa = 0,      Fb = as
+    SOURCE_OUT        Fa = 1 - ab, Fb = 0
     DESTINATION_OUT   Fa = 0,      Fb = 1 - as
+    SOURCE_ATOP       Fa = ab,     Fb = 1 - as
+    DESTINATION_ATOP  Fa = 1 - ab, Fb = as
     XOR               Fa = 1 - ab, Fb = 1 - as
+    ADD               Fa = 1,      Fb = 1
 
-The six separable blend modes composite source-over (`Fa = 1`,
-`Fb = 1 - as`) and differ only in `B`:
+ADD is the one operator whose weights can sum past 1: `ao` and each
+premultiplied channel are clamped to 1, which is the `lighter` of the
+HTML5 canvas and Cairo's `ADD`.
 
-    MULTIPLY    B = Cb*Cs
-    SCREEN      B = Cb + Cs - Cb*Cs
-    OVERLAY     B = 2*Cb*Cs                  when Cb <= 0.5
-                B = 1 - 2*(1 - Cb)*(1 - Cs)  otherwise
-    DARKEN      B = min(Cb, Cs)
-    LIGHTEN     B = max(Cb, Cs)
-    DIFFERENCE  B = |Cb - Cs|
+The separable blend modes composite source-over (`Fa = 1`,
+`Fb = 1 - as`) and differ only in `B`, applied per channel:
+
+    MULTIPLY     B = Cb*Cs
+    SCREEN       B = Cb + Cs - Cb*Cs
+    OVERLAY      B = HARD_LIGHT(Cs, Cb)
+    DARKEN       B = min(Cb, Cs)
+    LIGHTEN      B = max(Cb, Cs)
+    DIFFERENCE   B = |Cb - Cs|
+    EXCLUSION    B = Cb + Cs - 2*Cb*Cs
+    COLOR_DODGE  B = 0 if Cb = 0; 1 if Cs = 1; else min(1, Cb / (1 - Cs))
+    COLOR_BURN   B = 1 if Cb = 1; 0 if Cs = 0; else 1 - min(1, (1 - Cb) / Cs)
+    HARD_LIGHT   B = 2*Cb*Cs                  when Cs <= 0.5
+                 B = 1 - 2*(1 - Cb)*(1 - Cs)  otherwise
+    SOFT_LIGHT   B = Cb - (1 - 2*Cs)*Cb*(1 - Cb)   when Cs <= 0.5
+                 B = Cb + (2*Cs - 1)*(D(Cb) - Cb)  otherwise, with
+                 D(Cb) = ((16*Cb - 12)*Cb + 4)*Cb  when Cb <= 0.25
+                 D(Cb) = sqrt(Cb)                  otherwise
+
+The non-separable blend modes take the whole RGB triple, since each
+moves one of hue, saturation and luminosity from one side to the other:
+
+    HUE         B = SetLum(SetSat(Cs, Sat(Cb)), Lum(Cb))
+    SATURATION  B = SetLum(SetSat(Cb, Sat(Cs)), Lum(Cb))
+    COLOR       B = SetLum(Cs, Lum(Cb))
+    LUMINOSITY  B = SetLum(Cb, Lum(Cs))
+
+with `Lum(C) = 0.3*R + 0.59*G + 0.11*B`, `Sat(C) = max(C) - min(C)`,
+and `SetLum`/`SetSat` the helpers of the same names in the W3C
+compositing specification. These four and SOFT_LIGHT are computed in
+floating point and rounded to the nearest channel value; every other
+mode is integer arithmetic that truncates, the way `Color.blend_over`
+does.
 
 These are the formulas of the W3C compositing and blending
 specification, which is what `globalCompositeOperation` on the HTML5
@@ -62,7 +97,7 @@ modes:
   `destination-in` there clears every pixel the source misses; here a
   pixel no primitive touches is left as it was. DESTINATION_IN is
   therefore "scale the alpha of what this shape covers", not "erase
-  everything outside it".
+  everything outside it", and CLEAR erases the shape, not the canvas.
 - Coverage folds into the source alpha. An anti-aliased edge, and a
   clip path's own soft edge, reach the blend as a source whose alpha is
   scaled -- so a SOURCE fill writes a translucent pixel along its edge
@@ -70,7 +105,14 @@ modes:
 - `draw_canvas` (canvas/compose.mojo) composites source-over whatever
   the canvas mode is: it blends buffer into buffer without going
   through `set_pixel`.
+
+`SvgCanvas` expresses the blend modes as `mix-blend-mode`, which CSS
+defines for every one of them. The Porter-Duff operators have no CSS
+keyword and are raster-only: `SvgCanvas` draws source-over under any
+of them.
 """
+
+from std.math import sqrt
 
 from canvas.color import Color, _div255
 
@@ -79,25 +121,47 @@ struct BlendMode(Copyable, ImplicitlyCopyable, Movable):
     """How a drawn colour combines with the pixel underneath.
 
     SOURCE_OVER, the default, is ordinary alpha compositing: the source
-    covers the backdrop in proportion to its alpha. The other ten are
-    the four remaining Porter-Duff operators the HTML5 canvas exposes
-    and the six separable blend modes; see this module's docstring for
-    the formula each one applies.
+    covers the backdrop in proportion to its alpha. The rest are the
+    other twelve Porter-Duff operators, the eleven separable blend
+    modes and the four non-separable ones; see this module's docstring
+    for the formula each one applies.
     """
 
     var _value: Int
 
+    # Porter-Duff operators: B is the identity, the fractions differ.
     comptime SOURCE_OVER = Self(0)
     comptime SOURCE = Self(1)
     comptime DESTINATION_IN = Self(2)
     comptime DESTINATION_OUT = Self(3)
     comptime XOR = Self(4)
-    comptime MULTIPLY = Self(5)
-    comptime SCREEN = Self(6)
-    comptime OVERLAY = Self(7)
-    comptime DARKEN = Self(8)
-    comptime LIGHTEN = Self(9)
-    comptime DIFFERENCE = Self(10)
+    comptime CLEAR = Self(5)
+    comptime DESTINATION = Self(6)
+    comptime DESTINATION_OVER = Self(7)
+    comptime SOURCE_IN = Self(8)
+    comptime SOURCE_OUT = Self(9)
+    comptime SOURCE_ATOP = Self(10)
+    comptime DESTINATION_ATOP = Self(11)
+    comptime ADD = Self(12)
+
+    # Separable blend modes: source-over fractions, B per channel.
+    comptime MULTIPLY = Self(13)
+    comptime SCREEN = Self(14)
+    comptime OVERLAY = Self(15)
+    comptime DARKEN = Self(16)
+    comptime LIGHTEN = Self(17)
+    comptime DIFFERENCE = Self(18)
+    comptime EXCLUSION = Self(19)
+    comptime COLOR_DODGE = Self(20)
+    comptime COLOR_BURN = Self(21)
+    comptime HARD_LIGHT = Self(22)
+    comptime SOFT_LIGHT = Self(23)
+
+    # Non-separable blend modes: source-over fractions, B on the triple.
+    comptime HUE = Self(24)
+    comptime SATURATION = Self(25)
+    comptime COLOR = Self(26)
+    comptime LUMINOSITY = Self(27)
 
     def __init__(out self, value: Int):
         """Prefer the comptime constants over constructing one
@@ -105,8 +169,14 @@ struct BlendMode(Copyable, ImplicitlyCopyable, Movable):
 
         Args:
             value: 0 SOURCE_OVER, 1 SOURCE, 2 DESTINATION_IN,
-                3 DESTINATION_OUT, 4 XOR, 5 MULTIPLY, 6 SCREEN,
-                7 OVERLAY, 8 DARKEN, 9 LIGHTEN, 10 DIFFERENCE.
+                3 DESTINATION_OUT, 4 XOR, 5 CLEAR, 6 DESTINATION,
+                7 DESTINATION_OVER, 8 SOURCE_IN, 9 SOURCE_OUT,
+                10 SOURCE_ATOP, 11 DESTINATION_ATOP, 12 ADD,
+                13 MULTIPLY, 14 SCREEN, 15 OVERLAY, 16 DARKEN,
+                17 LIGHTEN, 18 DIFFERENCE, 19 EXCLUSION,
+                20 COLOR_DODGE, 21 COLOR_BURN, 22 HARD_LIGHT,
+                23 SOFT_LIGHT, 24 HUE, 25 SATURATION, 26 COLOR,
+                27 LUMINOSITY.
         """
         self._value = value
 
@@ -129,44 +199,184 @@ struct BlendMode(Copyable, ImplicitlyCopyable, Movable):
         return self._value == 0
 
     def is_separable(self) -> Bool:
-        """Whether this is one of the six separable blend modes --
-        MULTIPLY, SCREEN, OVERLAY, DARKEN, LIGHTEN, DIFFERENCE -- as
-        opposed to a Porter-Duff operator. The separable modes are the
-        ones with a `B` other than the identity, and the ones SVG can
-        express as `mix-blend-mode`.
+        """Whether this is one of the eleven separable blend modes,
+        MULTIPLY through SOFT_LIGHT: a `B` applied to each channel on
+        its own.
 
         Returns:
-            True for the six blend modes, False for the five
-            Porter-Duff operators.
+            True for the separable blend modes, False for the
+            Porter-Duff operators and the non-separable modes.
         """
-        return self._value >= 5
+        return self._value >= 13 and self._value <= 23
+
+    def is_non_separable(self) -> Bool:
+        """Whether this is one of the four non-separable blend modes,
+        HUE, SATURATION, COLOR and LUMINOSITY: a `B` that needs the
+        whole RGB triple.
+
+        Returns:
+            True for the four non-separable modes.
+        """
+        return self._value >= 24
 
 
 def _blend_channel(mode: BlendMode, cb: Int, cs: Int) -> Int:
-    """`B(Cb, Cs)` for one channel, 0-255 in and out. The identity for
-    a Porter-Duff mode, which is what makes one `_blend_pixel` cover
-    both halves of the list.
+    """`B(Cb, Cs)` for one channel of a separable mode, 0-255 in and
+    out. The identity for anything else, which is what makes one
+    `_blend_pixel` cover the Porter-Duff operators too.
     """
     if mode == BlendMode.MULTIPLY:
         return _div255(cb * cs)
     if mode == BlendMode.SCREEN:
         return cb + cs - _div255(cb * cs)
     if mode == BlendMode.OVERLAY:
-        var d = 2 * cb
-        if d <= 255:
-            # multiply(Cs, 2*Cb). The guard is also what keeps the
-            # product at or under 255 * 255, _div255's valid range.
-            return _div255(cs * d)
-        # screen(Cs, 2*Cb - 1), the other half of hard-light.
-        var t = d - 255
-        return cs + t - _div255(cs * t)
+        return _hard_light(cs, cb)
     if mode == BlendMode.DARKEN:
         return min(cb, cs)
     if mode == BlendMode.LIGHTEN:
         return max(cb, cs)
     if mode == BlendMode.DIFFERENCE:
         return cb - cs if cb > cs else cs - cb
+    if mode == BlendMode.EXCLUSION:
+        return cb + cs - 2 * _div255(cb * cs)
+    if mode == BlendMode.COLOR_DODGE:
+        if cb == 0:
+            return 0
+        if cs == 255:
+            return 255
+        return min(255, cb * 255 // (255 - cs))
+    if mode == BlendMode.COLOR_BURN:
+        if cb == 255:
+            return 255
+        if cs == 0:
+            return 0
+        return 255 - min(255, (255 - cb) * 255 // cs)
+    if mode == BlendMode.HARD_LIGHT:
+        return _hard_light(cb, cs)
+    if mode == BlendMode.SOFT_LIGHT:
+        return _soft_light(cb, cs)
     return cs
+
+
+def _hard_light(cb: Int, cs: Int) -> Int:
+    """Hard light: the source channel picks multiply or screen. Overlay
+    is the same function with the operands swapped.
+    """
+    var d = 2 * cs
+    if d <= 255:
+        # multiply(Cb, 2*Cs). The guard is also what keeps the product
+        # at or under 255 * 255, _div255's valid range.
+        return _div255(cb * d)
+    # screen(Cb, 2*Cs - 1).
+    var t = d - 255
+    return cb + t - _div255(cb * t)
+
+
+def _soft_light(cb: Int, cs: Int) -> Int:
+    """Soft light, in floating point: the formula has a square root
+    and a cubic in it, and rounds to the nearest channel value.
+    """
+    var b = Float64(cb) / 255.0
+    var s = Float64(cs) / 255.0
+    var r: Float64
+    if s <= 0.5:
+        r = b - (1.0 - 2.0 * s) * b * (1.0 - b)
+    else:
+        var d: Float64
+        if b <= 0.25:
+            d = ((16.0 * b - 12.0) * b + 4.0) * b
+        else:
+            d = sqrt(b)
+        r = b + (2.0 * s - 1.0) * (d - b)
+    return Int(r * 255.0 + 0.5)
+
+
+struct _Rgb(Copyable, ImplicitlyCopyable, Movable):
+    """A colour as three 0-1 floats, the form the non-separable modes
+    compute in.
+    """
+
+    var r: Float64
+    var g: Float64
+    var b: Float64
+
+    def __init__(out self, r: Float64, g: Float64, b: Float64):
+        self.r = r
+        self.g = g
+        self.b = b
+
+    def __init__(out self, r: Int, g: Int, b: Int):
+        self.r = Float64(r) / 255.0
+        self.g = Float64(g) / 255.0
+        self.b = Float64(b) / 255.0
+
+
+def _lum(c: _Rgb) -> Float64:
+    return 0.3 * c.r + 0.59 * c.g + 0.11 * c.b
+
+
+def _sat(c: _Rgb) -> Float64:
+    return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))
+
+
+def _clip_color(c: _Rgb) -> _Rgb:
+    """Pull a colour back into 0-1 without moving its luminosity, by
+    scaling its distance from the grey of that luminosity.
+    """
+    var l = _lum(c)
+    var n = min(c.r, min(c.g, c.b))
+    var x = max(c.r, max(c.g, c.b))
+    var r = c.r
+    var g = c.g
+    var b = c.b
+    if n < 0.0:
+        var k = l / (l - n)
+        r = l + (r - l) * k
+        g = l + (g - l) * k
+        b = l + (b - l) * k
+    if x > 1.0:
+        var k = (1.0 - l) / (x - l)
+        r = l + (r - l) * k
+        g = l + (g - l) * k
+        b = l + (b - l) * k
+    return _Rgb(r, g, b)
+
+
+def _set_lum(c: _Rgb, l: Float64) -> _Rgb:
+    var d = l - _lum(c)
+    return _clip_color(_Rgb(c.r + d, c.g + d, c.b + d))
+
+
+def _set_sat(c: _Rgb, s: Float64) -> _Rgb:
+    """Rescale a colour's channels so its saturation is `s`: the
+    smallest channel goes to 0, the largest to `s`, and the middle one
+    keeps its position between them.
+    """
+    var mx = max(c.r, max(c.g, c.b))
+    var mn = min(c.r, min(c.g, c.b))
+    if mx <= mn:
+        return _Rgb(0.0, 0.0, 0.0)
+    var k = s / (mx - mn)
+    # The largest channel lands on exactly s and the smallest on 0
+    # under the same scaling, so all three go through it.
+    return _Rgb((c.r - mn) * k, (c.g - mn) * k, (c.b - mn) * k)
+
+
+def _blend_triple(mode: BlendMode, cb: _Rgb, cs: _Rgb) -> _Rgb:
+    """`B(Cb, Cs)` for a non-separable mode, on the whole colour."""
+    if mode == BlendMode.HUE:
+        return _set_lum(_set_sat(cs, _sat(cb)), _lum(cb))
+    if mode == BlendMode.SATURATION:
+        return _set_lum(_set_sat(cb, _sat(cs)), _lum(cb))
+    if mode == BlendMode.COLOR:
+        return _set_lum(cs, _lum(cb))
+    return _set_lum(cb, _lum(cs))
+
+
+def _to_channel(v: Float64) -> Int:
+    """A 0-1 float to the nearest 0-255 channel, clamped."""
+    var c = Int(v * 255.0 + 0.5)
+    return min(255, max(0, c))
 
 
 def _blend_source_channel(mode: BlendMode, ba: Int, cb: Int, cs: Int) -> Int:
@@ -178,8 +388,14 @@ def _blend_source_channel(mode: BlendMode, ba: Int, cb: Int, cs: Int) -> Int:
     if not mode.is_separable():
         return cs
     var b = _blend_channel(mode, cb, cs)
-    # The two weights sum to 255, so the numerator stays at or under
-    # 255 * 255 and _div255 applies.
+    return _mix_source(ba, cb, cs, b)
+
+
+def _mix_source(ba: Int, cb: Int, cs: Int, b: Int) -> Int:
+    """`(1 - ab)*Cs + ab*B`, the backdrop-alpha mix of a source channel
+    with its blended value. The two weights sum to 255, so the
+    numerator stays at or under 255 * 255 and _div255 applies.
+    """
     return _div255((255 - ba) * cs + ba * b)
 
 
@@ -197,7 +413,7 @@ def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
 
     # Fa and Fb as 0-255 fractions. Every mode not named here
     # composites source-over and carries its difference in
-    # _blend_channel instead.
+    # _blend_channel or _blend_triple instead.
     var fa = 255
     var fb = 255 - sa
     if mode == BlendMode.SOURCE:
@@ -209,33 +425,69 @@ def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
         fa = 0
     elif mode == BlendMode.XOR:
         fa = 255 - ba
+    elif mode == BlendMode.CLEAR:
+        fa = 0
+        fb = 0
+    elif mode == BlendMode.DESTINATION:
+        fa = 0
+        fb = 255
+    elif mode == BlendMode.DESTINATION_OVER:
+        fa = 255 - ba
+        fb = 255
+    elif mode == BlendMode.SOURCE_IN:
+        fa = ba
+        fb = 0
+    elif mode == BlendMode.SOURCE_OUT:
+        fa = 255 - ba
+        fb = 0
+    elif mode == BlendMode.SOURCE_ATOP:
+        fa = ba
+    elif mode == BlendMode.DESTINATION_ATOP:
+        fa = 255 - ba
+        fb = sa
+    elif mode == BlendMode.ADD:
+        fb = 255
 
     # as*Fa and ab*Fb, the premultiplied weight each side contributes.
-    # Their sum is the output alpha and never exceeds 255: it is
-    # as + ab*(1 - as) for the source-over fractions, and at most
-    # max(as, ab) for the others.
+    # Their sum is the output alpha and, for every mode but ADD, never
+    # exceeds 255: it is as + ab*(1 - as) for the source-over
+    # fractions, and at most max(as, ab) for the others. ADD's sum is
+    # as + ab outright and is clamped, along with each channel below.
     var wa = _div255(sa * fa)
     var wb = _div255(ba * fb)
-    var out_a = wa + wb
+    var out_a = min(255, wa + wb)
     if out_a == 0:
         # Nothing survives from either side, so no colour is defined --
         # and dividing by out_a below would not be either.
         return Color(0, 0, 0, 0)
 
-    var sr = _blend_source_channel(mode, ba, Int(dst.r), Int(src.r))
-    var sg = _blend_source_channel(mode, ba, Int(dst.g), Int(src.g))
-    var sb = _blend_source_channel(mode, ba, Int(dst.b), Int(src.b))
+    var sr: Int
+    var sg: Int
+    var sb: Int
+    if mode.is_non_separable():
+        var b = _blend_triple(
+            mode,
+            _Rgb(Int(dst.r), Int(dst.g), Int(dst.b)),
+            _Rgb(Int(src.r), Int(src.g), Int(src.b)),
+        )
+        sr = _mix_source(ba, Int(dst.r), Int(src.r), _to_channel(b.r))
+        sg = _mix_source(ba, Int(dst.g), Int(src.g), _to_channel(b.g))
+        sb = _mix_source(ba, Int(dst.b), Int(src.b), _to_channel(b.b))
+    else:
+        sr = _blend_source_channel(mode, ba, Int(dst.r), Int(src.r))
+        sg = _blend_source_channel(mode, ba, Int(dst.g), Int(src.g))
+        sb = _blend_source_channel(mode, ba, Int(dst.b), Int(src.b))
     return Color(
-        UInt8((wa * sr + wb * Int(dst.r)) // out_a),
-        UInt8((wa * sg + wb * Int(dst.g)) // out_a),
-        UInt8((wa * sb + wb * Int(dst.b)) // out_a),
+        UInt8(min(255, (wa * sr + wb * Int(dst.r)) // out_a)),
+        UInt8(min(255, (wa * sg + wb * Int(dst.g)) // out_a)),
+        UInt8(min(255, (wa * sb + wb * Int(dst.b)) // out_a)),
         UInt8(out_a),
     )
 
 
 def _css_blend_name(mode: BlendMode) -> String:
-    """The CSS `mix-blend-mode` keyword for a separable mode, or `""`
-    for a Porter-Duff one, which CSS has no keyword for. `SvgCanvas`
+    """The CSS `mix-blend-mode` keyword for a blend mode, or `""` for
+    a Porter-Duff operator, which CSS has no keyword for. `SvgCanvas`
     emits the attribute only when this is non-empty.
     """
     if mode == BlendMode.MULTIPLY:
@@ -250,4 +502,22 @@ def _css_blend_name(mode: BlendMode) -> String:
         return "lighten"
     if mode == BlendMode.DIFFERENCE:
         return "difference"
+    if mode == BlendMode.EXCLUSION:
+        return "exclusion"
+    if mode == BlendMode.COLOR_DODGE:
+        return "color-dodge"
+    if mode == BlendMode.COLOR_BURN:
+        return "color-burn"
+    if mode == BlendMode.HARD_LIGHT:
+        return "hard-light"
+    if mode == BlendMode.SOFT_LIGHT:
+        return "soft-light"
+    if mode == BlendMode.HUE:
+        return "hue"
+    if mode == BlendMode.SATURATION:
+        return "saturation"
+    if mode == BlendMode.COLOR:
+        return "color"
+    if mode == BlendMode.LUMINOSITY:
+        return "luminosity"
     return ""
