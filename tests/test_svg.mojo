@@ -1038,6 +1038,112 @@ def test_rotate_and_scale_compose_in_call_order() raises:
     )
 
 
+def test_push_clip_path_wraps_elements_in_a_clip_group() raises:
+    var svg = SvgCanvas(100, 80)
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.line_to(40.0, 0.0)
+    p.line_to(20.0, 30.0)
+    p.close()
+    svg.push_clip_path(p)
+    svg.fill_rect(0, 0, 100, 80, Color(255, 0, 0))
+    svg.pop_clip_path()
+    svg.fill_rect(0, 0, 10, 10, Color(0, 0, 255))
+    var s = svg.to_string()
+    assert_true(
+        '<defs><clipPath id="clip1"><path d="M0.000,0.000 L40.000,0.000'
+        ' L20.000,30.000 Z" clip-rule="evenodd"/></clipPath></defs>\n'
+        '<g clip-path="url(#clip1)">\n'
+        '<rect x="0" y="0" width="100" height="80" fill="#ff0000"/>\n'
+        "</g>\n"
+        '<rect x="0" y="0" width="10" height="10" fill="#0000ff"/>\n'
+        in s,
+        "def, wrapper, element, close, then the unclipped element: " + s,
+    )
+
+
+def test_push_clip_emits_a_rect_clip_and_nonzero_omits_the_rule() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.push_clip(5, 6, 30, 20)
+    svg.fill_circle_aa(10, 10, 5, Color(0, 0, 0))
+    svg.pop_clip()
+    var s = svg.to_string()
+    assert_true(
+        '<defs><clipPath id="clip1"><rect x="5" y="6" width="30"'
+        ' height="20"/></clipPath></defs>\n<g clip-path="url(#clip1)">\n'
+        in s,
+        "rect clip: " + s,
+    )
+    var nz = SvgCanvas(100, 80)
+    var p = Path()
+    p.rect(0.0, 0.0, 10.0, 10.0)
+    nz.push_clip_path(p, FillRule.NONZERO)
+    assert_true("clip-rule" not in nz.to_string())
+
+
+def test_clips_nest_and_pop_in_order() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.push_clip(0, 0, 50, 50)
+    svg.push_clip(10, 10, 50, 50)
+    svg.fill_rect(0, 0, 5, 5, Color(0, 0, 0))
+    svg.pop_clip()
+    svg.fill_rect(0, 0, 6, 6, Color(0, 0, 0))
+    svg.pop_clip()
+    svg.pop_clip()  # nothing left: a no-op
+    var s = svg.to_string()
+    assert_true('<g clip-path="url(#clip1)">\n<defs><clipPath id="clip2">' in s)
+    assert_equal(s.count("</g>"), 2, "one close per push, no stray")
+    var inner = s.find('width="5"')
+    var first_close = s.find("</g>")
+    var outer = s.find('width="6"')
+    assert_true(inner < first_close and first_close < outer, "order: " + s)
+
+
+def test_restore_pops_the_clips_pushed_since_save() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.push_clip(0, 0, 50, 50)
+    svg.save()
+    svg.push_clip(10, 10, 20, 20)
+    svg.push_clip(12, 12, 10, 10)
+    svg.restore()
+    svg.fill_rect(0, 0, 5, 5, Color(0, 0, 0))
+    var s = svg.to_string()
+    var rect = s.find('width="5"')
+    assert_equal(
+        String(s[byte=0:rect]).count("</g>"), 2, "restore closed two: " + s
+    )
+    assert_equal(s.count("</g>"), 3, "to_string closed the outer one")
+
+
+def test_a_clip_under_a_transform_carries_the_matrix() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.translate(5.0, 7.0)
+    svg.push_clip(0, 0, 10, 10)
+    var s = svg.to_string()
+    assert_true(
+        '<rect x="0" y="0" width="10" height="10"'
+        ' transform="matrix(1.000 0.000 0.000 1.000 5.000 7.000)"/></clipPath>'
+        in s,
+        "the clip rect is in the same user space as the elements: " + s,
+    )
+
+
+def test_a_clip_push_closes_an_open_annotated_group() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.begin_annotated_group("bar")
+    svg.push_clip(0, 0, 10, 10)
+    svg.fill_rect(0, 0, 5, 5, Color(0, 0, 0))
+    var s = svg.to_string()
+    var title_close = s.find("</title>")
+    var group_close = s.find("</g>")
+    var clip_open = s.find("<g clip-path")
+    assert_true(
+        title_close < group_close and group_close < clip_open,
+        "the annotated group closes before the clip opens: " + s,
+    )
+    assert_equal(s.count("</g>"), 2, "and to_string closes the clip")
+
+
 def test_save_restore_and_set_transform() raises:
     var svg = SvgCanvas(100, 100)
     svg.save()
