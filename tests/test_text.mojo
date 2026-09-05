@@ -18,10 +18,10 @@ this module is responsible for:
   - two identical calls produce identical output, so no state leaks
     between them
 
-Only `test_measure_text_matches_known_glyph_extents` asserts exact
-values, which depend on `ttf.mojo`'s unhinted metrics: a hinting
-rasterizer rounds thin stems like "I"'s single stroke to whole pixels,
-and `ttf.mojo` never hints.
+`test_measure_text_matches_known_glyph_extents` and the kerning tests
+are the ones asserting exact values, which depend on `ttf.mojo`'s
+unhinted metrics: a hinting rasterizer rounds thin stems like "I"'s
+single stroke to whole pixels, and `ttf.mojo` never hints.
 
 Needs a "Sans"-resolvable system font (the generic sans-serif
 alias), true of most Linux/macOS systems but not guaranteed the way a
@@ -664,6 +664,110 @@ def test_rotated_text_bypasses_the_glyph_cache() raises:
     assert_equal(cache.glyph_mask_count(), 0, "rotated glyphs fill directly")
     var bbox = _ink_bbox(c, BG)
     assert_true(bbox.found_any, "and still render")
+
+
+# Kerning. Every expected value below is DejaVu Sans at 64 px: it has
+# 2048 units per em, so a design unit is 64/2048 = 1/32 px and every
+# quantity here is an exact binary fraction, the reasoning
+# test_measure_text_matches_known_glyph_extents gives for its numbers.
+# The design-unit counts are the font's own, cross-checked by the
+# Python oracle test_ttf.mojo's kerning tests use:
+#
+#     hmtx advance   A 1401   V 1401   T 1251   R 1423
+#     GPOS pairs     AV -131  VA -131  AT -159  TA -159  AR 0
+
+
+def test_kerning_pulls_a_kerned_pair_together() raises:
+    # A 1401 + V 1401 = 2802 units = 87.5625 px of plain advance, and
+    # the AV pair adjusts by -131 units = -4.09375 px, leaving
+    # 83.46875. measure_text kerns by default.
+    assert_equal(measure_text("A", 64.0).advance, 43.78125)
+    assert_equal(measure_text("V", 64.0).advance, 43.78125)
+    assert_equal(measure_text("AV", 64.0, kerning=False).advance, 87.5625)
+    assert_equal(measure_text("AV", 64.0).advance, 83.46875)
+
+    # The issue's own statement of the property: a kerned pair measures
+    # narrower than its two characters measured apart.
+    var apart = (
+        measure_text("A", 64.0).advance + measure_text("V", 64.0).advance
+    )
+    assert_true(measure_text("AV", 64.0).advance < apart)
+
+
+def test_kerning_off_restores_the_sum_of_advances() raises:
+    # "AVATAR" kerns at four of its five pairs (-131, -131, -159, -159,
+    # 0 = -580 units = -18.125 px), so the two settings are far apart;
+    # with kerning off the total is exactly the per-character advances
+    # added up, each measured on its own where no pair exists.
+    var cache = FontCache()
+    var text = String("AVATAR")
+    var summed = 0.0
+    for cp in text.codepoints():
+        summed += measure_text(String(cp), 64.0, cache=cache).advance
+    assert_equal(summed, 258.6875)
+    assert_equal(
+        measure_text(text, 64.0, kerning=False, cache=cache).advance, 258.6875
+    )
+    assert_equal(measure_text(text, 64.0, cache=cache).advance, 240.5625)
+    assert_equal(258.6875 - 240.5625, 18.125)
+
+
+def test_measure_and_draw_agree_on_a_kerned_string() raises:
+    # The property the whole change turns on: one advance accumulation,
+    # so a measured width and a rendered one cannot drift. Rendered
+    # against measure_text_block's prediction, kerned and unkerned,
+    # within the pixel or two of floor-rounding and AA fringe that
+    # test_measure_text_block_matches_rendered_ink_unrotated allows.
+    var cache = FontCache()
+    var text = String("AVATAR")
+    var anchor_x = 20
+
+    var kerned = Canvas(400, 120, BG)
+    draw_text(kerned, anchor_x, 90, text, FG, 64.0, cache=cache)
+    var kerned_ink = _ink_bbox(kerned, BG)
+    assert_true(kerned_ink.found_any)
+    var kerned_box = measure_text_block(text, 64.0, cache=cache)
+    var kerned_right = Float64(anchor_x) + kerned_box.x + kerned_box.width
+    assert_true(
+        kerned_right > Float64(kerned_ink.max_x) - 2.0
+        and kerned_right < Float64(kerned_ink.max_x) + 2.0
+    )
+
+    var plain = Canvas(400, 120, BG)
+    draw_text(plain, anchor_x, 90, text, FG, 64.0, kerning=False, cache=cache)
+    var plain_ink = _ink_bbox(plain, BG)
+    assert_true(plain_ink.found_any)
+    var plain_box = measure_text_block(text, 64.0, kerning=False, cache=cache)
+    var plain_right = Float64(anchor_x) + plain_box.x + plain_box.width
+    assert_true(
+        plain_right > Float64(plain_ink.max_x) - 2.0
+        and plain_right < Float64(plain_ink.max_x) + 2.0
+    )
+
+    # Both renders start at the same place and the kerned one ends
+    # earlier: the string tightens rather than shifting.
+    assert_equal(kerned_ink.min_x, plain_ink.min_x)
+    assert_true(kerned_ink.max_x < plain_ink.max_x)
+
+
+def test_kerning_leaves_the_glyph_mask_cache_alone() raises:
+    # Kerning moves the pen, not the glyph, so the mask cache is keyed
+    # and filled as before: drawing the same kerned string twice adds
+    # no entries the second time. The kerned and unkerned counts are
+    # not compared, since a kerned pen lands on different sub-pixel
+    # offsets and those are part of the key by design.
+    var cache = FontCache()
+    var text = String("AVATAR")
+
+    var first = Canvas(400, 120, BG)
+    draw_text(first, 20, 90, text, FG, 64.0, cache=cache)
+    var after_first = cache.glyph_mask_count()
+    assert_true(after_first > 0)
+
+    var second = Canvas(400, 120, BG)
+    draw_text(second, 20, 90, text, FG, 64.0, cache=cache)
+    assert_equal(cache.glyph_mask_count(), after_first)
+    _assert_same_pixels(first, second, "kerned redraw through a warm cache")
 
 
 def main() raises:
