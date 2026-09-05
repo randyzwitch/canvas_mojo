@@ -12,17 +12,24 @@ from canvas import (
     Canvas,
     Color,
     DrawTarget,
+    Extend,
     FontCache,
     FontDatabase,
     FontSlant,
     FontWeight,
+    Hatch,
     LinearGradient,
     Path,
+    PatternSource,
     SvgCanvas,
     TextAlign,
     downsample,
     draw_canvas,
     fill_path_aa,
+    fill_path_pattern,
+    fill_path_pattern_aa,
+    fill_rect_pattern,
+    hatch_tile,
     read_bmp,
     read_png,
     resolve_font_file,
@@ -94,6 +101,30 @@ def test_root_exports_text_types() raises:
     _ = len(database.faces)
     _ = cache^
     _ = resolve_font_file  # the free function is re-exported too
+
+
+def test_root_exports_pattern_fills() raises:
+    # hatch_tile/PatternSource/Extend/Hatch, and both fills that take a
+    # PatternSource, resolve from the package root and produce a
+    # solid-ink pixel at the tile's own center.
+    var tile = hatch_tile(
+        8, 3.0, Color(0, 0, 0), Color(255, 255, 255), Hatch.DOTS
+    )
+    var pattern = PatternSource(tile, Extend.REPEAT)
+
+    var rect_canvas = Canvas(8, 8, Color(255, 255, 255))
+    fill_rect_pattern(rect_canvas, 0, 0, 8, 8, pattern)
+    assert_equal(rect_canvas.get_pixel(4, 4).r, 0)
+
+    var path = Path()
+    path.rect(0.0, 0.0, 8.0, 8.0)
+    var path_canvas = Canvas(8, 8, Color(255, 255, 255))
+    fill_path_pattern(path_canvas, path, pattern)
+    assert_equal(path_canvas.get_pixel(4, 4).r, 0)
+
+    var aa_canvas = Canvas(8, 8, Color(255, 255, 255))
+    fill_path_pattern_aa(aa_canvas, path, pattern)
+    assert_equal(aa_canvas.get_pixel(4, 4).r, 0)
 
 
 def main() raises:

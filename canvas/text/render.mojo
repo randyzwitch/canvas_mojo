@@ -34,6 +34,15 @@ Each line's codepoints pass through `bidi.visual_order` first
 (`_visual_codepoints`), so mixed Hebrew/Arabic/Latin/digit text lays out
 in reading order without draw_text or _measure_line handling direction.
 
+Adjacent glyphs kern against each other (`_kern_offset`), through the
+font's `GPOS` pair adjustment or `kern` table (`ttf.mojo`). The
+adjustment moves the pen between two glyphs and nothing else: it is
+applied in the one loop each pass runs over a line's visual-order
+codepoints, so `measure_text` and `draw_text` accumulate the same
+positions, and the glyph mask cache -- which holds a glyph's coverage,
+not its place on the line -- is keyed and filled exactly as before.
+`kerning=False` on either restores the plain sum of `hmtx` advances.
+
 Every glyph also goes through font fallback (`_resolve_glyph`). If the
 requested family has no real glyph for a codepoint (`has_glyph`
 distinguishes one from ".notdef", index 0), that character resolves
@@ -292,6 +301,32 @@ def _resolve_glyph_metrics(
     return glyph_metrics(fallback[], codepoint)
 
 
+def _kern_offset(
+    mut face: TTFFace, left_codepoint: Int, right_codepoint: Int
+) raises -> Float64:
+    """The pair kerning between two adjacent codepoints, in pixels at
+    `face`'s active size.
+
+    Zero unless both codepoints have a glyph in `face`: a pair
+    adjustment is defined between two glyphs of one font, so a
+    character that fell back to another face kerns against neither of
+    its neighbours. `glyph_index_for_codepoint` returning 0
+    (".notdef") is exactly that test, and is already memoized.
+    """
+    if not face.has_kerning():
+        return 0.0
+    var left = face.glyph_index_for_codepoint(left_codepoint)
+    if left == 0:
+        return 0.0
+    var right = face.glyph_index_for_codepoint(right_codepoint)
+    if right == 0:
+        return 0.0
+    var units = face.kern_adjustment(left, right)
+    if units == 0:
+        return 0.0
+    return Float64(units) * face.scale()
+
+
 def _measure_line(
     mut face: TTFFace,
     line_text: String,
@@ -299,12 +334,13 @@ def _measure_line(
     slant: FontSlant,
     weight: FontWeight,
     size: Float64,
+    kerning: Bool,
     mut cache: FontCache,
 ) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
     all zero for a blank/whitespace-only line) and total advance.
     Walks every codepoint in bidi visual order, accumulating advances
-    and combining inked glyphs into one tight bbox.
+    and pair kerning and combining inked glyphs into one tight bbox.
     `family`/`slant`/`weight`/`size`/`cache` serve only
     _resolve_glyph's fallback lookup; `face` determines the rest.
     """
@@ -314,9 +350,14 @@ def _measure_line(
     var min_y = 1.0e18
     var max_y = -1.0e18
     var any_ink = False
+    var previous = -1
     for cp in _visual_codepoints(line_text):
+        var codepoint = Int(cp)
+        if kerning and previous >= 0:
+            pen_x += _kern_offset(face, previous, codepoint)
+        previous = codepoint
         var gm = _resolve_glyph_metrics(
-            face, family, slant, weight, size, Int(cp), cache
+            face, family, slant, weight, size, codepoint, cache
         )
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
@@ -351,6 +392,7 @@ def _layout_block(
     weight: FontWeight,
     rotation: Float64,
     align: TextAlign,
+    kerning: Bool,
     mut cache: FontCache,
 ) raises -> _BlockLayout:
     """The two-pass layout math: measure every "\\n"-separated line,
@@ -369,7 +411,7 @@ def _layout_block(
     for i in range(len(raw_lines)):
         var line_text = String(raw_lines[i])
         var measured = _measure_line(
-            face[], line_text, family, slant, weight, size, cache
+            face[], line_text, family, slant, weight, size, kerning, cache
         )
         var baseline_y = Float64(i) * line_height
         var x_offset = 0.0
@@ -438,6 +480,7 @@ def measure_text(
     family: String = "Sans",
     slant: FontSlant = FontSlant.NORMAL,
     weight: FontWeight = FontWeight.NORMAL,
+    kerning: Bool = True,
 ) raises -> TextMetrics:
     """Measure `text` at `size` points in `family` without drawing it.
 
@@ -457,12 +500,13 @@ def measure_text(
         family: Font family name or generic alias.
         slant: Requested upright/italic/oblique style.
         weight: Requested normal/bold weight.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
 
     Returns:
         `text`'s width/height/advance at that size.
     """
     var cache = FontCache()
-    return measure_text(text, size, family, slant, weight, cache=cache)
+    return measure_text(text, size, family, slant, weight, kerning, cache=cache)
 
 
 def measure_text(
@@ -471,6 +515,7 @@ def measure_text(
     family: String = "Sans",
     slant: FontSlant = FontSlant.NORMAL,
     weight: FontWeight = FontWeight.NORMAL,
+    kerning: Bool = True,
     *,
     mut cache: FontCache,
 ) raises -> TextMetrics:
@@ -483,6 +528,7 @@ def measure_text(
         family: Font family name or generic alias.
         slant: Requested upright/italic/oblique style.
         weight: Requested normal/bold weight.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
         cache: Shared cache for font resolution and parsed faces.
 
     Returns:
@@ -490,7 +536,7 @@ def measure_text(
     """
     var face = cache.resolve_face(family, slant, weight, size)
     var measured = _measure_line(
-        face[], text, family, slant, weight, size, cache
+        face[], text, family, slant, weight, size, kerning, cache
     )
     return TextMetrics(measured.width, measured.height, measured.advance)
 
@@ -541,6 +587,7 @@ def measure_text_block(
     weight: FontWeight = FontWeight.NORMAL,
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
 ) raises -> TextBlockBounds:
     """The bounding box draw_text(canvas, x, y, text, ..., rotation=
     rotation, align=align) would render into, anchor-relative and
@@ -561,13 +608,22 @@ def measure_text_block(
         weight: Requested normal/bold weight.
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
 
     Returns:
         The block's anchor-relative bounding box.
     """
     var cache = FontCache()
     return measure_text_block(
-        text, size, family, slant, weight, rotation, align, cache=cache
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        cache=cache,
     )
 
 
@@ -579,6 +635,7 @@ def measure_text_block(
     weight: FontWeight = FontWeight.NORMAL,
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
     *,
     mut cache: FontCache,
 ) raises -> TextBlockBounds:
@@ -593,6 +650,7 @@ def measure_text_block(
         weight: Requested normal/bold weight.
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
         cache: Shared cache for font resolution and parsed faces.
 
     Returns:
@@ -601,7 +659,7 @@ def measure_text_block(
     if text == "":
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
     var block = _layout_block(
-        text, size, family, slant, weight, rotation, align, cache
+        text, size, family, slant, weight, rotation, align, kerning, cache
     )
     if not block.any_ink:
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
@@ -683,6 +741,7 @@ def draw_text(
     weight: FontWeight = FontWeight.NORMAL,
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
 ) raises:
     """Render `text` (one or more "\\n"-separated lines) anchored at
     `(x, y)` in `family` at `size` points, compositing onto `canvas` in
@@ -713,6 +772,7 @@ def draw_text(
         weight: Requested normal/bold weight.
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
     """
     var cache = FontCache()
     draw_text(
@@ -727,6 +787,7 @@ def draw_text(
         weight,
         rotation,
         align,
+        kerning,
         cache=cache,
     )
 
@@ -743,6 +804,7 @@ def draw_text(
     weight: FontWeight = FontWeight.NORMAL,
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
     *,
     mut cache: FontCache,
 ) raises:
@@ -762,6 +824,7 @@ def draw_text(
         weight: Requested normal/bold weight.
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
         cache: Shared cache for font resolution and parsed faces.
     """
     draw_text(
@@ -776,6 +839,7 @@ def draw_text(
         weight,
         rotation,
         align,
+        kerning,
         cache=cache,
     )
 
@@ -792,6 +856,7 @@ def draw_text(
     weight: FontWeight = FontWeight.NORMAL,
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
 ) raises:
     """`draw_text` anchored at a sub-pixel position, resolving fonts
     fresh. See the sub-pixel cached overload below for what the anchor
@@ -810,6 +875,7 @@ def draw_text(
         weight: Requested normal/bold weight.
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
     """
     var cache = FontCache()
     draw_text(
@@ -824,6 +890,7 @@ def draw_text(
         weight,
         rotation,
         align,
+        kerning,
         cache=cache,
     )
 
@@ -841,6 +908,7 @@ def _draw_text_transformed(
     weight: FontWeight,
     rotation: Float64,
     align: TextAlign,
+    kerning: Bool,
     mut cache: FontCache,
 ) raises:
     """`draw_text` under a canvas transform that is more than a
@@ -852,7 +920,7 @@ def _draw_text_transformed(
     orientation, so it is not used here.
     """
     var block = _layout_block(
-        text, size, family, slant, weight, rotation, align, cache
+        text, size, family, slant, weight, rotation, align, kerning, cache
     )
     if not block.any_ink:
         return
@@ -868,7 +936,11 @@ def _draw_text_transformed(
             if line.text == "":
                 continue
             var pen_x = line.x
+            var previous = -1
             for codepoint in _visual_codepoints(line.text):
+                if kerning and previous >= 0:
+                    pen_x += _kern_offset(face[], previous, codepoint)
+                previous = codepoint
                 var g = _resolve_glyph(
                     face[],
                     family,
@@ -1037,6 +1109,7 @@ def draw_text(
     weight: FontWeight = FontWeight.NORMAL,
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
     *,
     mut cache: FontCache,
 ) raises:
@@ -1065,6 +1138,7 @@ def draw_text(
         weight: Requested normal/bold weight.
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
         cache: Shared cache for font resolution and parsed faces.
     """
     if canvas.has_transform():
@@ -1083,6 +1157,7 @@ def draw_text(
                 weight,
                 rotation,
                 align,
+                kerning,
                 cache,
             )
             return
@@ -1102,6 +1177,7 @@ def draw_text(
                 weight,
                 rotation,
                 align,
+                kerning,
                 cache=cache,
             )
         except e:
@@ -1116,7 +1192,7 @@ def draw_text(
     # unchanged inside _layout_block, reducing to that line's
     # unrotated ink box.
     var block = _layout_block(
-        text, size, family, slant, weight, rotation, align, cache
+        text, size, family, slant, weight, rotation, align, kerning, cache
     )
     if not block.any_ink:
         # Every line whitespace-only/empty -- nothing to draw.
@@ -1137,7 +1213,11 @@ def draw_text(
             if line.text == "":
                 continue
             var pen_x = line.x
+            var previous = -1
             for codepoint in _visual_codepoints(line.text):
+                if kerning and previous >= 0:
+                    pen_x += _kern_offset(face[], previous, codepoint)
+                previous = codepoint
                 pen_x += _draw_cached_glyph(
                     canvas,
                     face[],
@@ -1163,7 +1243,11 @@ def draw_text(
         if line.text == "":
             continue
         var pen_x = line.x
+        var previous = -1
         for codepoint in _visual_codepoints(line.text):
+            if kerning and previous >= 0:
+                pen_x += _kern_offset(face[], previous, codepoint)
+            previous = codepoint
             var g = _resolve_glyph(
                 face[],
                 family,

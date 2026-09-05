@@ -1,9 +1,9 @@
 """Native TrueType (`sfnt`/`glyf`) font file parser: reads a font file's
 binary tables directly (table directory, `head`, `maxp`, `hhea`,
-`hmtx`, `cmap`, `glyf`, `loca`) rather than linking a font library.
-Field offsets and decode algorithms follow Microsoft's OpenType 1.9.1
-specification (learn.microsoft.com/typography/opentype/spec/{otff,head,
-maxp,hhea,hmtx,cmap,loca,glyf}).
+`hmtx`, `cmap`, `glyf`, `loca`, `kern`, `GPOS`) rather than linking a
+font library. Field offsets and decode algorithms follow Microsoft's
+OpenType 1.9.1 specification (learn.microsoft.com/typography/opentype/
+spec/{otff,head,maxp,hhea,hmtx,cmap,loca,glyf,kern,gpos,chapter2}).
 
 Scope:
 
@@ -11,6 +11,13 @@ Scope:
   `OTTO` (CFF outlines) raises rather than being misread; CFF is a
   different Type 2 charstring bytecode, natively cubic where TrueType is
   quadratic-with-implied-midpoints.
+- **Pair kerning only**, through `kern_adjustment`: `GPOS` lookup type 2
+  (PairPos formats 1 and 2, including behind an extension lookup type
+  9) under the `kern` feature, and the `kern` table's format 0
+  horizontal subtables. No `GSUB` (ligatures, contextual substitution),
+  no mark attachment, no contextual positioning, and lookup flags such
+  as IgnoreMarks are not honored -- an intervening mark glyph breaks a
+  pair here where a full shaper would kern through it.
 - **No hinting.** Every glyph goes through `fill_path_aa`'s supersampled
   coverage AA instead, which keeps unhinted outlines correct at the sizes
   a chart uses.
@@ -76,6 +83,371 @@ def _tag_at(data: List[UInt8], pos: Int) raises -> String:
     for i in range(4):
         s += chr(_u8(data, pos + i))
     return s
+
+
+# `kern` subtable coverage bits (low byte of the `coverage` field; the
+# high byte is the subtable format).
+comptime _KERN_HORIZONTAL = 0x0001
+comptime _KERN_MINIMUM = 0x0002
+comptime _KERN_OVERRIDE = 0x0008
+
+# GPOS lookup types read here: pair adjustment, and the extension
+# wrapper that holds one when the table is large enough to need 32-bit
+# subtable offsets.
+comptime _GPOS_LOOKUP_PAIR = 2
+comptime _GPOS_LOOKUP_EXTENSION = 9
+
+# ValueRecord field bits. Only XAdvance is read; XPlacement and
+# YPlacement precede it in the record when set, so their bits decide
+# where it sits.
+comptime _VALUE_X_PLACEMENT = 0x0001
+comptime _VALUE_Y_PLACEMENT = 0x0002
+comptime _VALUE_X_ADVANCE = 0x0004
+
+
+def _append_unique(mut values: List[Int], value: Int):
+    for i in range(len(values)):
+        if values[i] == value:
+            return
+    values.append(value)
+
+
+def _contains(values: List[Int], value: Int) -> Bool:
+    for i in range(len(values)):
+        if values[i] == value:
+            return True
+    return False
+
+
+def _value_record_size(value_format: Int) -> Int:
+    """A ValueRecord's byte length: one 16-bit field per set bit of
+    `valueFormat`, the eight defined bits being four metrics and four
+    device-table offsets.
+    """
+    var size = 0
+    for bit in range(8):
+        if (value_format & (1 << bit)) != 0:
+            size += 2
+    return size
+
+
+def _x_advance(data: List[UInt8], pos: Int, value_format: Int) raises -> Int:
+    """A ValueRecord's `xAdvance`, in font design units, or 0 when the
+    record does not carry one. Fields appear in `valueFormat` bit
+    order, so only XPlacement and YPlacement can precede it.
+    """
+    if (value_format & _VALUE_X_ADVANCE) == 0:
+        return 0
+    var offset = pos
+    if (value_format & _VALUE_X_PLACEMENT) != 0:
+        offset += 2
+    if (value_format & _VALUE_Y_PLACEMENT) != 0:
+        offset += 2
+    return _i16(data, offset)
+
+
+def _coverage_index(
+    data: List[UInt8], coverage: Int, glyph_index: Int
+) raises -> Int:
+    """`glyph_index`'s position in a Coverage table, or -1 if absent.
+    Both formats store their entries sorted by glyph id, so both are
+    searched by bisection.
+    """
+    var format = _u16(data, coverage)
+    if format == 1:
+        var count = _u16(data, coverage + 2)
+        var lo = 0
+        var hi = count - 1
+        while lo <= hi:
+            var mid = (lo + hi) // 2
+            var g = _u16(data, coverage + 4 + mid * 2)
+            if g == glyph_index:
+                return mid
+            elif g < glyph_index:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return -1
+    if format == 2:
+        var count = _u16(data, coverage + 2)
+        var lo = 0
+        var hi = count - 1
+        while lo <= hi:
+            var mid = (lo + hi) // 2
+            var record = coverage + 4 + mid * 6
+            var start = _u16(data, record)
+            var end = _u16(data, record + 2)
+            if glyph_index < start:
+                hi = mid - 1
+            elif glyph_index > end:
+                lo = mid + 1
+            else:
+                return _u16(data, record + 4) + (glyph_index - start)
+        return -1
+    return -1
+
+
+def _class_value(
+    data: List[UInt8], class_def: Int, glyph_index: Int
+) raises -> Int:
+    """`glyph_index`'s class in a ClassDef table. A glyph listed by
+    neither format is class 0, the spec's catch-all for "everything
+    else".
+    """
+    var format = _u16(data, class_def)
+    if format == 1:
+        var start = _u16(data, class_def + 2)
+        var count = _u16(data, class_def + 4)
+        if glyph_index < start or glyph_index >= start + count:
+            return 0
+        return _u16(data, class_def + 6 + (glyph_index - start) * 2)
+    if format == 2:
+        var count = _u16(data, class_def + 2)
+        var lo = 0
+        var hi = count - 1
+        while lo <= hi:
+            var mid = (lo + hi) // 2
+            var record = class_def + 4 + mid * 6
+            var start = _u16(data, record)
+            var end = _u16(data, record + 2)
+            if glyph_index < start:
+                hi = mid - 1
+            elif glyph_index > end:
+                lo = mid + 1
+            else:
+                return _u16(data, record + 4)
+        return 0
+    return 0
+
+
+def _pair_pos_lookup(
+    data: List[UInt8], subtable: Int, left: Int, right: Int
+) raises -> Tuple[Bool, Int]:
+    """One PairPos subtable's x-advance adjustment for (`left`,
+    `right`), and whether the subtable covers the pair at all. A
+    covered pair adjusting by 0 returns (True, 0), which stops the
+    search through its lookup's remaining subtables; an uncovered one
+    returns (False, 0) and lets the search continue.
+
+    Format 1 stores an explicit PairValueRecord per second glyph,
+    sorted by it. Format 2 assigns both glyphs a class and indexes a
+    class1_count x class2_count matrix, which is how a font expresses
+    kerning for thousands of pairs in a few kilobytes.
+    """
+    var format = _u16(data, subtable)
+    var coverage_offset = _u16(data, subtable + 2)
+    if coverage_offset == 0:
+        return (False, 0)
+    var value_format1 = _u16(data, subtable + 4)
+    var value_format2 = _u16(data, subtable + 6)
+    var index = _coverage_index(data, subtable + coverage_offset, left)
+    if index < 0:
+        return (False, 0)
+
+    if format == 1:
+        if index >= _u16(data, subtable + 8):
+            return (False, 0)
+        var pair_set_offset = _u16(data, subtable + 10 + index * 2)
+        if pair_set_offset == 0:
+            return (False, 0)
+        var pair_set = subtable + pair_set_offset
+        var pair_count = _u16(data, pair_set)
+        var record_size = (
+            2
+            + _value_record_size(value_format1)
+            + _value_record_size(value_format2)
+        )
+        var lo = 0
+        var hi = pair_count - 1
+        while lo <= hi:
+            var mid = (lo + hi) // 2
+            var record = pair_set + 2 + mid * record_size
+            var second = _u16(data, record)
+            if second == right:
+                return (True, _x_advance(data, record + 2, value_format1))
+            elif second < right:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return (False, 0)
+
+    if format == 2:
+        var class_def1 = _u16(data, subtable + 8)
+        var class_def2 = _u16(data, subtable + 10)
+        var class1_count = _u16(data, subtable + 12)
+        var class2_count = _u16(data, subtable + 14)
+        # A null ClassDef offset puts every glyph in class 0.
+        var c1 = 0 if class_def1 == 0 else _class_value(
+            data, subtable + class_def1, left
+        )
+        var c2 = 0 if class_def2 == 0 else _class_value(
+            data, subtable + class_def2, right
+        )
+        if c1 >= class1_count or c2 >= class2_count:
+            return (False, 0)
+        var record_size = _value_record_size(
+            value_format1
+        ) + _value_record_size(value_format2)
+        var record = subtable + 16 + (c1 * class2_count + c2) * record_size
+        return (True, _x_advance(data, record, value_format1))
+
+    return (False, 0)
+
+
+struct _PairPosLookups(Movable):
+    """Every PairPos subtable the `kern` feature reaches, grouped by
+    the lookup holding it: `subtables[bounds[i]]` through
+    `subtables[bounds[i + 1]]` are lookup `i`'s, in the order the font
+    lists them. The grouping is what makes the lookup rule expressible
+    -- within one lookup the first subtable covering a pair wins, and
+    across lookups the adjustments add.
+    """
+
+    var subtables: List[Int]
+    var bounds: List[Int]
+
+    def __init__(out self):
+        self.subtables = List[Int]()
+        self.bounds = List[Int]()
+        self.bounds.append(0)
+
+
+def _gpos_kern_lookups(
+    data: List[UInt8], gpos_offset: Int
+) raises -> _PairPosLookups:
+    """Walk `GPOS`'s script -> feature -> lookup lists and collect the
+    PairPos subtables the `kern` feature selects.
+
+    Every script's default language system contributes its feature
+    indices; the language-specific LangSys records are not read, so a
+    font whose kerning hangs off one of those alone kerns as if it had
+    none. Lookups are visited in LookupList order, which is the order
+    the spec applies them in.
+    """
+    var out = _PairPosLookups()
+    if gpos_offset < 0:
+        return out^
+    var script_list = gpos_offset + _u16(data, gpos_offset + 4)
+    var feature_list = gpos_offset + _u16(data, gpos_offset + 6)
+    var lookup_list = gpos_offset + _u16(data, gpos_offset + 8)
+
+    var feature_indices = List[Int]()
+    var script_count = _u16(data, script_list)
+    for i in range(script_count):
+        var script = script_list + _u16(data, script_list + 2 + i * 6 + 4)
+        var default_lang_sys = _u16(data, script)
+        if default_lang_sys == 0:
+            continue
+        var lang_sys = script + default_lang_sys
+        var count = _u16(data, lang_sys + 4)
+        for k in range(count):
+            _append_unique(feature_indices, _u16(data, lang_sys + 6 + k * 2))
+
+    var lookup_indices = List[Int]()
+    for i in range(len(feature_indices)):
+        var record = feature_list + 2 + feature_indices[i] * 6
+        if _tag_at(data, record) != "kern":
+            continue
+        var feature = feature_list + _u16(data, record + 4)
+        var count = _u16(data, feature + 2)
+        for k in range(count):
+            _append_unique(lookup_indices, _u16(data, feature + 4 + k * 2))
+
+    var lookup_count = _u16(data, lookup_list)
+    for index in range(lookup_count):
+        if not _contains(lookup_indices, index):
+            continue
+        var lookup = lookup_list + _u16(data, lookup_list + 2 + index * 2)
+        var lookup_type = _u16(data, lookup)
+        if (
+            lookup_type != _GPOS_LOOKUP_PAIR
+            and lookup_type != _GPOS_LOOKUP_EXTENSION
+        ):
+            continue
+        var sub_count = _u16(data, lookup + 4)
+        var added = False
+        for k in range(sub_count):
+            var subtable = lookup + _u16(data, lookup + 6 + k * 2)
+            if lookup_type == _GPOS_LOOKUP_EXTENSION:
+                # ExtensionPos format 1: the wrapped lookup's type plus
+                # a 32-bit offset from the wrapper's own start.
+                if _u16(data, subtable) != 1:
+                    continue
+                if _u16(data, subtable + 2) != _GPOS_LOOKUP_PAIR:
+                    continue
+                subtable += _u32(data, subtable + 4)
+            var format = _u16(data, subtable)
+            if format != 1 and format != 2:
+                continue
+            out.subtables.append(subtable)
+            added = True
+        if added:
+            out.bounds.append(len(out.subtables))
+    return out^
+
+
+def _kern_format0_subtables(
+    data: List[UInt8], kern_offset: Int
+) raises -> List[Int]:
+    """Offsets of the `kern` table's format 0 horizontal subtables, in
+    table order.
+
+    Only Microsoft's version 0 header is read (a 16-bit version and a
+    16-bit subtable count); Apple's version 1 lays its header and its
+    subtable headers out differently, and a font carrying one kerns as
+    if it had no `kern` table. Subtables flagged "minimum" state a
+    floor on the distance between two glyphs rather than an adjustment
+    to it, so they are skipped as well.
+    """
+    var out = List[Int]()
+    if kern_offset < 0:
+        return out^
+    if _u16(data, kern_offset) != 0:
+        return out^
+    var num_subtables = _u16(data, kern_offset + 2)
+    var pos = kern_offset + 4
+    for _ in range(num_subtables):
+        var length = _u16(data, pos + 2)
+        var coverage = _u16(data, pos + 4)
+        var format = coverage >> 8
+        if (
+            format == 0
+            and (coverage & _KERN_HORIZONTAL) != 0
+            and (coverage & _KERN_MINIMUM) == 0
+        ):
+            out.append(pos)
+        if length == 0:
+            break
+        pos += length
+    return out^
+
+
+def _kern_format0_lookup(
+    data: List[UInt8], subtable: Int, left: Int, right: Int
+) raises -> Tuple[Bool, Int]:
+    """One format 0 `kern` subtable's adjustment for (`left`, `right`),
+    and whether the pair is listed at all. Pairs are sorted by the
+    32-bit value (left << 16) | right, so a bisection on that key is
+    the lookup -- what the subtable's own searchRange/entrySelector/
+    rangeShift fields exist to drive, and which this recomputes rather
+    than trusting.
+    """
+    var num_pairs = _u16(data, subtable + 6)
+    var first_pair = subtable + 14
+    var target = (left << 16) | right
+    var lo = 0
+    var hi = num_pairs - 1
+    while lo <= hi:
+        var mid = (lo + hi) // 2
+        var record = first_pair + mid * 6
+        var key = (_u16(data, record) << 16) | _u16(data, record + 2)
+        if key == target:
+            return (True, _i16(data, record + 4))
+        elif key < target:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return (False, 0)
 
 
 struct RawGlyphOutline(Movable):
@@ -171,6 +543,21 @@ struct TTFFace(Movable):
     var _cmap_cache: Dict[Int, Int]
     """Codepoint -> glyph index, memoizing the `cmap` subtable scan."""
 
+    var _gpos_kern: _PairPosLookups
+    """PairPos subtables the `GPOS` `kern` feature reaches, grouped by
+    lookup. Empty when the font has no `GPOS` kerning.
+    """
+
+    var _kern_subtables: List[Int]
+    """Format 0 horizontal `kern` subtable offsets, the fallback when
+    `_gpos_kern` is empty.
+    """
+
+    var _kern_cache: Dict[Int, Int]
+    """(left << 16) | right -> x-advance adjustment in font design
+    units, memoizing `kern_adjustment`'s table walk.
+    """
+
     var _pixel_size: Int
     """-1 until `set_pixel_size` is called, so an unset size is not a
     valid one. Every read goes through `scale()`, which raises rather
@@ -224,6 +611,8 @@ struct TTFFace(Movable):
         var maxp_off = -1
         var hhea_off = -1
         var hmtx_off = -1
+        var kern_off = -1
+        var gpos_off = -1
 
         var pos = 12
         for _ in range(num_tables):
@@ -243,6 +632,10 @@ struct TTFFace(Movable):
                 hhea_off = offset
             elif tag == "hmtx":
                 hmtx_off = offset
+            elif tag == "kern":
+                kern_off = offset
+            elif tag == "GPOS":
+                gpos_off = offset
             pos += 16
 
         if (
@@ -275,6 +668,12 @@ struct TTFFace(Movable):
         self._hmtx_offset = hmtx_off
         self._glyph_cache = Dict[Int, ArcPointer[RawGlyphOutline]]()
         self._cmap_cache = Dict[Int, Int]()
+        # Collecting the kerning subtable offsets walks a few hundred
+        # bytes of list headers, not the pair data itself, so it runs
+        # here rather than lazily on the first pair queried.
+        self._gpos_kern = _gpos_kern_lookups(data, gpos_off)
+        self._kern_subtables = _kern_format0_subtables(data, kern_off)
+        self._kern_cache = Dict[Int, Int]()
         self._pixel_size = -1
         self.data = data^
 
@@ -315,6 +714,85 @@ struct TTFFace(Movable):
             < self.num_h_metrics else self.num_h_metrics - 1
         )
         return _u16(self.data, self._hmtx_offset + index * 4)
+
+    def has_kerning(self) -> Bool:
+        """Whether this font carries pair kerning this module reads --
+        a `GPOS` `kern` feature with PairPos lookups, or a format 0
+        horizontal `kern` subtable.
+
+        Returns:
+            True if `kern_adjustment` can return a nonzero value.
+        """
+        return (
+            len(self._gpos_kern.subtables) > 0 or len(self._kern_subtables) > 0
+        )
+
+    def kern_adjustment(mut self, left: Int, right: Int) raises -> Int:
+        """The x-advance adjustment to apply between two adjacent
+        glyphs, in font design units. Negative pulls them together,
+        which is what most kerned pairs ("AV", "To") ask for.
+
+        `GPOS` takes precedence over the `kern` table when the font has
+        both, since a font shipping both writes `GPOS` for shapers and
+        `kern` for the legacy path, and every shaper resolves the
+        overlap the same way. Memoized, since text repeats pairs.
+
+        Args:
+            left: Glyph index of the left-hand glyph.
+            right: Glyph index of the right-hand glyph.
+
+        Returns:
+            The pair's x-advance adjustment in font design units, 0
+            when the font kerns neither pair nor at all.
+        """
+        if left == 0 or right == 0:
+            return 0
+        var key = (left << 16) | right
+        if key in self._kern_cache:
+            return self._kern_cache[key]
+        var value: Int
+        if len(self._gpos_kern.subtables) > 0:
+            value = self._gpos_pair_adjustment(left, right)
+        else:
+            value = self._kern_table_adjustment(left, right)
+        self._kern_cache[key] = value
+        return value
+
+    def _gpos_pair_adjustment(self, left: Int, right: Int) raises -> Int:
+        """Sum the `kern` feature's lookups, each contributing the
+        first of its subtables that covers the pair -- the spec's rule
+        that a lookup stops at its first match while the lookups
+        themselves all apply.
+        """
+        var total = 0
+        for i in range(len(self._gpos_kern.bounds) - 1):
+            for k in range(
+                self._gpos_kern.bounds[i], self._gpos_kern.bounds[i + 1]
+            ):
+                var found = _pair_pos_lookup(
+                    self.data, self._gpos_kern.subtables[k], left, right
+                )
+                if found[0]:
+                    total += found[1]
+                    break
+        return total
+
+    def _kern_table_adjustment(self, left: Int, right: Int) raises -> Int:
+        """Accumulate the format 0 subtables in table order. A subtable
+        flagged "override" replaces what the earlier ones accumulated
+        rather than adding to it.
+        """
+        var total = 0
+        for i in range(len(self._kern_subtables)):
+            var subtable = self._kern_subtables[i]
+            var found = _kern_format0_lookup(self.data, subtable, left, right)
+            if not found[0]:
+                continue
+            if (_u16(self.data, subtable + 4) & _KERN_OVERRIDE) != 0:
+                total = found[1]
+            else:
+                total += found[1]
+        return total
 
     def glyph_index_for_codepoint(mut self, codepoint: Int) raises -> Int:
         """Look up `codepoint` in the `cmap` table, preferring a
