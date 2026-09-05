@@ -1187,23 +1187,25 @@ def test_commands_read_back_every_op_and_its_points() raises:
     p.arc_to(20.0, 20.0, 5.0, 0.0, 1.5)
     p.close()
     assert_equal(len(p.commands), 6)
-    assert_true(p.commands[0].op == PathOp.MOVE_TO)
+    assert_equal(p.commands[0].op, PathOp.MOVE_TO)
     _assert_fpoint(p.commands[0].p1, 1.0, 2.0, "move_to endpoint")
-    assert_true(p.commands[1].op == PathOp.LINE_TO)
+    assert_equal(p.commands[1].op, PathOp.LINE_TO)
     _assert_fpoint(p.commands[1].p1, 3.0, 4.0, "line_to endpoint")
-    assert_true(p.commands[2].op == PathOp.QUAD_TO)
+    assert_equal(p.commands[2].op, PathOp.QUAD_TO)
     _assert_fpoint(p.commands[2].p1, 5.0, 6.0, "quad control")
     _assert_fpoint(p.commands[2].p2, 7.0, 8.0, "quad endpoint")
-    assert_true(p.commands[3].op == PathOp.CUBIC_TO)
+    assert_equal(p.commands[3].op, PathOp.CUBIC_TO)
     _assert_fpoint(p.commands[3].p1, 9.0, 10.0, "cubic control 1")
     _assert_fpoint(p.commands[3].p2, 11.0, 12.0, "cubic control 2")
     _assert_fpoint(p.commands[3].p3, 13.0, 14.0, "cubic endpoint")
-    assert_true(p.commands[4].op == PathOp.ARC_TO)
+    assert_equal(p.commands[4].op, PathOp.ARC_TO)
     _assert_fpoint(p.commands[4].p1, 20.0, 20.0, "arc center")
     _assert_fpoint(p.commands[4].p2, 5.0, 0.0, "arc radius and start")
     assert_true(abs(p.commands[4].p3.x - 1.5) < 1e-12, "arc end angle")
-    assert_true(p.commands[5].op == PathOp.CLOSE)
+    assert_equal(p.commands[5].op, PathOp.CLOSE)
     assert_true(PathOp.CLOSE != PathOp.MOVE_TO)
+    assert_equal(String(PathOp.CUBIC_TO), "CUBIC_TO", "prints as its name")
+    assert_equal(String(PathOp.CLOSE), "CLOSE")
 
 
 def test_curve_through_at_zero_tension_is_the_polyline() raises:
@@ -1217,14 +1219,14 @@ def test_curve_through_at_zero_tension_is_the_polyline() raises:
     straight.line_to(20.0, 0.0)
     assert_equal(len(smooth.commands), len(straight.commands))
     for i in range(len(straight.commands)):
-        assert_true(smooth.commands[i].op == straight.commands[i].op)
+        assert_equal(smooth.commands[i].op, straight.commands[i].op)
         _assert_fpoint(
             smooth.commands[i].p1,
             straight.commands[i].p1.x,
             straight.commands[i].p1.y,
             "command " + String(i),
         )
-    assert_true(smooth.commands[1].op == PathOp.LINE_TO)
+    assert_equal(smooth.commands[1].op, PathOp.LINE_TO)
 
 
 def test_curve_through_passes_through_every_point_with_catmull_rom_tangents() raises:
@@ -1236,10 +1238,22 @@ def test_curve_through_passes_through_every_point_with_catmull_rom_tangents() ra
     var p = Path()
     p.curve_through(_three_points())
     assert_equal(len(p.commands), 3)
-    assert_true(p.commands[0].op == PathOp.MOVE_TO)
-    assert_true(p.commands[1].op == PathOp.CUBIC_TO)
-    assert_true(p.commands[2].op == PathOp.CUBIC_TO)
+    assert_equal(p.commands[0].op, PathOp.MOVE_TO)
+    assert_equal(p.commands[1].op, PathOp.CUBIC_TO)
+    assert_equal(p.commands[2].op, PathOp.CUBIC_TO)
     _assert_fpoint(p.commands[1].p1, 10.0 / 6.0, 10.0 / 6.0, "c1 of seg 0")
+    # Exactly, not to a tolerance: divided then scaled per component,
+    # so a builder written that way is replaced bit for bit. The
+    # operands come from the list at run time, so the expression is
+    # not constant-folded with different rounding.
+    var pts = _three_points()
+    var tension = 1.0
+    assert_equal(
+        p.commands[1].p1.x, pts[0].x + (pts[1].x - pts[0].x) / 6.0 * tension
+    )
+    assert_equal(
+        p.commands[1].p2.x, pts[1].x - (pts[2].x - pts[0].x) / 6.0 * tension
+    )
     _assert_fpoint(p.commands[1].p2, 10.0 - 20.0 / 6.0, 10.0, "c2 of seg 0")
     _assert_fpoint(p.commands[1].p3, 10.0, 10.0, "seg 0 ends on p1")
     _assert_fpoint(p.commands[2].p1, 10.0 + 20.0 / 6.0, 10.0, "c1 of seg 1")
@@ -1283,7 +1297,7 @@ def test_curve_through_degenerate_inputs() raises:
     var one = Path()
     one.curve_through([FPoint(3.0, 4.0)])
     assert_equal(len(one.commands), 1, "a lone move_to")
-    assert_true(one.commands[0].op == PathOp.MOVE_TO)
+    assert_equal(one.commands[0].op, PathOp.MOVE_TO)
     # Two points: one segment, both tangents one-sided along the chord,
     # so the curve is the chord.
     var two = Path()
