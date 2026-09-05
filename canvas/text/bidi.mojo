@@ -19,11 +19,13 @@ Not implemented here:
   base+diacritic pair in an RTL script (Hebrew niqqud, Arabic tashkeel)
   has its mark repositioned by the per-codepoint reversal.
 - Arabic contextual letter-shaping: this module reorders and mirrors
-  existing codepoints only.
+  existing codepoints only. `joining.mojo` picks each Arabic letter's
+  contextual form, and `render.mojo` shapes each run `visual_runs`
+  reports before reordering it, since joining is defined between
+  logical neighbours.
 
 Hebrew has no contextual shaping, so Hebrew text laid out through this
-module renders fully. Arabic gets the correct right-to-left order and
-mirrored punctuation, with each letter in its isolated form.
+module renders fully.
 """
 
 
@@ -258,6 +260,74 @@ def _mirror_codepoint(cp: Int) -> Int:
     return cp
 
 
+struct BidiRun(ImplicitlyCopyable, Movable):
+    """One maximal span of a line at a single embedding level.
+    `codepoints[start]` through `codepoints[start + length - 1]` are the
+    run's characters *in logical order*; an odd `level` means the run
+    draws right to left, so its glyphs reverse after they are shaped.
+    """
+
+    var start: Int
+    var length: Int
+    var level: Int
+
+    def __init__(out self, start: Int, length: Int, level: Int):
+        self.start = start
+        self.length = length
+        self.level = level
+
+    def is_rtl(self) -> Bool:
+        """Whether this run draws right to left.
+
+        Returns:
+            True for an odd embedding level.
+        """
+        return self.level % 2 == 1
+
+
+def visual_runs(codepoints: List[Int], base_level: Int) -> List[BidiRun]:
+    """The line's level runs, left to right, each still holding its
+    characters in logical order.
+
+    This is rule L2 applied at run granularity rather than to single
+    positions, which is the same reordering: a maximal span of positions
+    at or above some level is always a whole number of level runs, so
+    reversing the runs and then reversing inside each odd-level run
+    reproduces `visual_order`'s sequence exactly. Splitting it that way
+    is what lets a caller shape each run against its *logical*
+    neighbours -- Arabic joining and ligature formation are defined
+    there, not against the reversed sequence -- and reorder afterwards.
+
+    Args:
+        codepoints: A line's Unicode codepoints, in logical order.
+        base_level: The paragraph's base embedding level -- 0 for LTR,
+            1 for RTL, typically from detect_base_level.
+
+    Returns:
+        The runs in visual order. A pure left-to-right line is one run.
+    """
+    var levels = _resolve_levels(codepoints, base_level)
+    var n = len(levels)
+    var starts = List[Int]()
+    var lengths = List[Int]()
+    var run_levels = List[Int]()
+    var i = 0
+    while i < n:
+        var j = i + 1
+        while j < n and levels[j] == levels[i]:
+            j += 1
+        starts.append(i)
+        lengths.append(j - i)
+        run_levels.append(levels[i])
+        i = j
+
+    var order = _reorder_indices(run_levels)
+    var out = List[BidiRun](capacity=len(order))
+    for idx in order:
+        out.append(BidiRun(starts[idx], lengths[idx], run_levels[idx]))
+    return out^
+
+
 def visual_order(codepoints: List[Int], base_level: Int) -> List[Int]:
     """The full pipeline: resolve each codepoint's embedding level,
     reorder into visual (left-to-right-drawable) order, and mirror any
@@ -274,12 +344,12 @@ def visual_order(codepoints: List[Int], base_level: Int) -> List[Int]:
         The codepoints in visual order, mirrored where an RTL level
         requires it.
     """
-    var levels = _resolve_levels(codepoints, base_level)
-    var order = _reorder_indices(levels)
     var result = List[Int](capacity=len(codepoints))
-    for idx in order:
-        var cp = codepoints[idx]
-        if levels[idx] % 2 == 1:
-            cp = _mirror_codepoint(cp)
-        result.append(cp)
+    for run in visual_runs(codepoints, base_level):
+        if run.is_rtl():
+            for i in range(run.start + run.length - 1, run.start - 1, -1):
+                result.append(_mirror_codepoint(codepoints[i]))
+        else:
+            for i in range(run.start, run.start + run.length):
+                result.append(codepoints[i])
     return result^

@@ -37,14 +37,19 @@ from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.path import Path
 from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.render import (
     draw_text,
     measure_text,
     measure_text_block,
     stroke_text,
     TextAlign,
-    _visual_codepoints,
+    _apply_run_kerning,
+    _shape_line,
+    _ShapedGlyph,
 )
+from canvas.text.ttf import TTFFace
+from std.memory import ArcPointer
 
 comptime BG = Color(255, 255, 255)
 comptime FG = Color(200, 20, 20, 255)
@@ -507,8 +512,8 @@ def test_hebrew_word_renders_ink() raises:
 def test_hebrew_measure_matches_rendered_ink() raises:
     # The unrotated cross-check applied to a right-to-left script.
     # draw_text's render pass and measure_text both go through
-    # bidi.visual_order via _visual_codepoints, so this catches the
-    # reordering being applied on one side only.
+    # _shape_line, so this catches the reordering being applied on one
+    # side only.
     var c = Canvas(150, 60, BG)
     draw_text(c, 20, 40, "שלום", FG, 30.0)
     var actual = _ink_bbox(c, BG)
@@ -521,21 +526,26 @@ def test_hebrew_measure_matches_rendered_ink() raises:
 
 
 def test_measure_and_draw_agree_on_bidi_reordering() raises:
-    # _visual_codepoints is the one integration point both
-    # _measure_line and draw_text's render pass go through. Calling it
-    # directly (Mojo doesn't enforce leading-underscore privacy, as
-    # test_dash.mojo already relies on) checks the wiring, which is
-    # what drifts if a change touches one call site and not the other.
-    # test_bidi.mojo covers the reordering algorithm itself.
-    var out = _visual_codepoints("שלום 12")
+    # _shape_line is the one integration point both _measure_line and
+    # draw_text's render pass go through. Calling it directly (Mojo
+    # doesn't enforce leading-underscore privacy, as test_dash.mojo
+    # already relies on) checks the wiring, which is what drifts if a
+    # change touches one call site and not the other. test_bidi.mojo
+    # covers the reordering algorithm itself.
+    var cache = FontCache()
+    var face = cache.resolve_face(
+        "Sans", FontSlant.NORMAL, FontWeight.NORMAL, 30.0
+    )
+    var out = _shape_line(face[], "שלום 12", True, True)
     # Digits stay in reading order; test_bidi.mojo checks the same
-    # against bidi.visual_order directly.
+    # against bidi.visual_order directly. Neither digit is substituted,
+    # so each shaped glyph still carries its own codepoint.
     var one_idx = -1
     var two_idx = -1
     for i in range(len(out)):
-        if out[i] == 0x31:
+        if out[i].codepoint == 0x31:
             one_idx = i
-        if out[i] == 0x32:
+        if out[i].codepoint == 0x32:
             two_idx = i
     assert_true(one_idx >= 0 and two_idx >= 0)
     assert_true(one_idx < two_idx)
@@ -778,6 +788,122 @@ def test_kerning_leaves_the_glyph_mask_cache_alone() raises:
     draw_text(second, 20, 90, text, FG, 64.0, cache=cache)
     assert_equal(cache.glyph_mask_count(), after_first)
     _assert_same_pixels(first, second, "kerned redraw through a warm cache")
+
+
+def _face_at(size: Float64, mut cache: FontCache) raises -> ArcPointer[TTFFace]:
+    return cache.resolve_face("Sans", FontSlant.NORMAL, FontWeight.NORMAL, size)
+
+
+def test_kerning_is_looked_up_between_logical_neighbours() raises:
+    # A `GPOS` pair adjustment is stated for the pair as *written*, so
+    # it has to be looked up as (logical i, logical i + 1) whichever way
+    # the run draws. Where it lands then differs, and _apply_run_kerning
+    # is the whole of that decision.
+    #
+    # "Ay" is the pair that makes a reversed lookup visible: DejaVu Sans
+    # states -139 units for (A, y) and nothing at all for (y, A), so a
+    # run that reversed its glyphs before looking the pair up would drop
+    # the adjustment rather than merely move it. ("AV" would not show
+    # it -- this font's class matrix answers -131 both ways round.)
+    #
+    # -139 units at 64 px is -139/32 = -4.34375 px exactly, since 2048
+    # units per em puts a design unit at 1/32 px.
+    var cache = FontCache()
+    var face = _face_at(64.0, cache)
+    var a = face[].glyph_index_for_codepoint(0x41)
+    var y = face[].glyph_index_for_codepoint(0x79)
+    assert_equal(face[].kern_adjustment(a, y), -139)
+    assert_equal(face[].kern_adjustment(y, a), 0)
+
+    # Left to right, logical order is drawing order: the adjustment
+    # sits on the second of the two, the glyph a pass reaches second.
+    var ltr: List[_ShapedGlyph] = [
+        _ShapedGlyph(a, 0x41),
+        _ShapedGlyph(y, 0x79),
+    ]
+    _apply_run_kerning(face[], ltr, False)
+    assert_equal(ltr[0].kern_before, 0.0)
+    assert_equal(ltr[1].kern_before, -4.34375)
+
+    # Right to left, the same logical pair: reversing the run puts
+    # logical 0 to the right of logical 1, so logical 0 is now the one a
+    # pass reaches second and carries the adjustment. Same lookup, same
+    # value, other glyph.
+    var rtl: List[_ShapedGlyph] = [
+        _ShapedGlyph(a, 0x41),
+        _ShapedGlyph(y, 0x79),
+    ]
+    _apply_run_kerning(face[], rtl, True)
+    assert_equal(rtl[0].kern_before, -4.34375)
+    assert_equal(rtl[1].kern_before, 0.0)
+
+    # Either way the run takes the same width, since the adjustment
+    # moves the pen between the same two glyphs.
+    assert_equal(
+        ltr[0].kern_before + ltr[1].kern_before,
+        rtl[0].kern_before + rtl[1].kern_before,
+    )
+
+
+def test_a_right_to_left_run_carries_its_kerning_reversed() raises:
+    # The same rule through _shape_line, on a run that really is
+    # right-to-left. DejaVu Sans states no pair adjustment between any
+    # two of the 568 glyphs its Hebrew and Arabic blocks reach, so this
+    # pins the wiring rather than a number: the glyphs come back
+    # reversed, none of them invents an adjustment, and the advance is
+    # the plain sum.
+    var cache = FontCache()
+    var face = _face_at(64.0, cache)
+    var shaped = _shape_line(face[], "שלום", True, True)
+    assert_equal(len(shaped), 4)
+
+    # Reversed: the last character typed is drawn first.
+    assert_equal(shaped[0].codepoint, 0x05DD)
+    assert_equal(shaped[3].codepoint, 0x05E9)
+
+    var total = 0.0
+    for glyph in shaped:
+        assert_equal(glyph.kern_before, 0.0)
+        assert_equal(face[].kern_adjustment(glyph.glyph, shaped[0].glyph), 0)
+        total += Float64(face[].advance_width(glyph.glyph)) / 32.0
+    assert_equal(measure_text("שלום", 64.0, cache=cache).advance, total)
+
+
+def test_kerning_off_leaves_every_glyph_unkerned() raises:
+    # The `kerning` switch reaches the shaping step now, so it has to
+    # zero `kern_before` rather than be re-read by each pass.
+    var cache = FontCache()
+    var face = _face_at(64.0, cache)
+    var on = _shape_line(face[], "AVATAR", True, True)
+    var off = _shape_line(face[], "AVATAR", True, False)
+    assert_equal(len(on), len(off))
+    var kerned_any = False
+    for i in range(len(on)):
+        assert_equal(on[i].glyph, off[i].glyph)
+        assert_equal(off[i].kern_before, 0.0)
+        if on[i].kern_before != 0.0:
+            kerned_any = True
+    assert_true(kerned_any)
+
+
+def test_kerning_does_not_cross_a_bidi_run_boundary() raises:
+    # A pair adjustment between two scripts' glyphs is not something a
+    # font states, and the runs are shaped separately, so the first
+    # glyph of each run starts unkerned. "AV שלום" is a Latin run then
+    # a Hebrew one; the Latin part keeps its own kerning.
+    var cache = FontCache()
+    var face = _face_at(64.0, cache)
+    var mixed = _shape_line(face[], "AV שלום", True, True)
+    var latin = _shape_line(face[], "AV ", True, True)
+    assert_equal(len(mixed), 7)
+    for i in range(3):
+        assert_equal(mixed[i].glyph, latin[i].glyph)
+        assert_equal(mixed[i].kern_before, latin[i].kern_before)
+    # A 0, V -131 units = -4.09375 px, space 0, then the Hebrew run.
+    assert_equal(mixed[0].kern_before, 0.0)
+    assert_equal(mixed[1].kern_before, -4.09375)
+    assert_equal(mixed[2].kern_before, 0.0)
+    assert_equal(mixed[3].kern_before, 0.0)
 
 
 # Ligatures. Same font and size as the kerning tests above -- DejaVu

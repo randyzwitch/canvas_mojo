@@ -28,6 +28,9 @@ from canvas.text.ttf import (
     _ligature_subst_lookup,
     _pair_pos_lookup,
     _single_subst_lookup,
+    _FEATURE_CCMP,
+    _FEATURE_LIGA,
+    _in_ranges,
 )
 
 comptime BG = Color(255, 255, 255)
@@ -840,7 +843,7 @@ def _assert_synthetic_ligature_subst(data: List[UInt8], subtable: Int) raises:
 
 def test_synthetic_gsub_ligature_subst_decodes_through_the_lists() raises:
     var data = _synthetic_gsub(False)
-    var lookups = _gsub_subst_lookups(data, 6)
+    var lookups = _gsub_subst_lookups(data, 6, "latn")
     assert_equal(len(lookups.subtables), 1)
     assert_equal(lookups.subtables[0], 6 + 0x38)
     assert_equal(lookups.types[0], 4)
@@ -848,7 +851,24 @@ def test_synthetic_gsub_ligature_subst_decodes_through_the_lists() raises:
     assert_equal(len(lookups.bounds), 2)
     assert_equal(lookups.bounds[0], 0)
     assert_equal(lookups.bounds[1], 1)
+    # The table lists no `latn` script, so the walk falls back to DFLT
+    # and finds the lookup under `liga` -- the tag the lookup then
+    # carries, and its index 0 in the LookupList.
+    assert_equal(lookups.features[0], _FEATURE_LIGA)
+    assert_equal(lookups.lookup_ids[0], 0)
     _assert_synthetic_ligature_subst(data, lookups.subtables[0])
+
+
+def test_a_script_the_font_does_not_list_falls_back_to_dflt() raises:
+    # The synthetic table lists DFLT only, so a script tag it has never
+    # heard of still reaches the same lookup. `arab` additionally asks
+    # for six features the table does not carry, which changes nothing.
+    var data = _synthetic_gsub(False)
+    var latn = _gsub_subst_lookups(data, 6, "latn")
+    var arab = _gsub_subst_lookups(data, 6, "arab")
+    assert_equal(len(arab.subtables), len(latn.subtables))
+    assert_equal(arab.subtables[0], latn.subtables[0])
+    assert_equal(arab.features[0], _FEATURE_LIGA)
 
 
 def test_synthetic_gsub_extension_lookup_reaches_the_ligature_subst() raises:
@@ -857,7 +877,7 @@ def test_synthetic_gsub_extension_lookup_reaches_the_ligature_subst() raises:
     # the Lookup -- the same subtable as above, 8 bytes further out.
     # The type recorded is the wrapped 4, not the wrapper's 7.
     var data = _synthetic_gsub(True)
-    var lookups = _gsub_subst_lookups(data, 6)
+    var lookups = _gsub_subst_lookups(data, 6, "latn")
     assert_equal(len(lookups.subtables), 1)
     assert_equal(lookups.subtables[0], 6 + 0x40)
     assert_equal(lookups.types[0], 4)
@@ -920,3 +940,55 @@ def test_ligature_substitution_in_a_second_real_font() raises:
     assert_equal(len(ff.glyphs), 1)
     assert_equal(ff.clusters[0], 2)
     assert_true(ff.glyphs[0] != ffi.glyphs[0])
+
+
+def test_a_feature_mask_gates_which_lookups_reach_a_glyph() raises:
+    # The masked overload runs a lookup at a position only where the
+    # lookup's features and the glyph's overlap, which is what lets
+    # `fina` reach one letter of a word and `init` another. Checked on
+    # the Latin `liga` lookup, whose result is already pinned above: a
+    # mask without the `liga` bit leaves "f", "f", "i" alone, and one
+    # with it ligates them.
+    var face = _sans_face()
+    var f = face.glyph_index_for_codepoint(0x66)
+    var i = face.glyph_index_for_codepoint(0x69)
+    var ffi = face.glyph_index_for_codepoint(0xFB03)
+
+    var off = face.substitute_glyphs(
+        [f, f, i], [_FEATURE_CCMP, _FEATURE_CCMP, _FEATURE_CCMP], "latn"
+    )
+    assert_equal(len(off.glyphs), 3)
+    assert_true(not off.changed)
+
+    var on = face.substitute_glyphs(
+        [f, f, i], [_FEATURE_LIGA, _FEATURE_LIGA, _FEATURE_LIGA], "latn"
+    )
+    assert_equal(len(on.glyphs), 1)
+    assert_equal(on.glyphs[0], ffi)
+
+    # The mask is read at the position a match starts, not across the
+    # components: clearing it on the first "f" stops the three-component
+    # "ffi", and the sweep then matches "fi" at the second.
+    var fi = face.glyph_index_for_codepoint(0xFB01)
+    var first_off = face.substitute_glyphs(
+        [f, f, i], [_FEATURE_CCMP, _FEATURE_LIGA, _FEATURE_LIGA], "latn"
+    )
+    assert_equal(len(first_off.glyphs), 2)
+    assert_equal(first_off.glyphs[0], f)
+    assert_equal(first_off.glyphs[1], fi)
+
+
+def test_selecting_a_script_leaves_the_other_scripts_lookups_out() raises:
+    # DejaVu Sans lists the space glyph as the first component of an
+    # Arabic ligature, under the `arab` script's `liga`. Collecting
+    # lookups per script is what keeps that lookup off a Latin line,
+    # where every space used to walk its LigatureSet before failing.
+    var face = _sans_face()
+    var space = face.glyph_index_for_codepoint(0x20)
+    assert_true(space != 0)
+    assert_true(_in_ranges(face._gsub_arabic.first_glyphs, space))
+    assert_true(not _in_ranges(face._gsub.first_glyphs, space))
+
+    # The joining features only exist on the Arabic table, so its
+    # lookup count is the larger one.
+    assert_true(len(face._gsub_arabic.lookup_ids) > len(face._gsub.lookup_ids))
