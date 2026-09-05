@@ -23,6 +23,7 @@ from canvas.gradient import (
     LinearGradient,
     RadialGradient,
 )
+from canvas.pattern import Extend, Hatch, PatternSource, hatch_tile
 from canvas.fill_rule import FillRule
 from canvas.shapes.lines import (
     LineCap,
@@ -39,6 +40,7 @@ from canvas.shapes.rects import (
     draw_rect,
     fill_rect,
     fill_rect_gradient,
+    fill_rect_pattern,
     fill_rect_radial_gradient,
 )
 from canvas.shapes.circles import (
@@ -78,6 +80,8 @@ from canvas.path import (
     fill_path_conic_gradient_aa,
     fill_path_gradient,
     fill_path_gradient_aa,
+    fill_path_pattern,
+    fill_path_pattern_aa,
     fill_path_radial_gradient,
     fill_path_radial_gradient_aa,
     stroke_path,
