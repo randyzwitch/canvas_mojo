@@ -22,9 +22,12 @@ from canvas.text.ttf import (
     TTFFace,
     outline_to_path,
     _gpos_kern_lookups,
+    _gsub_subst_lookups,
     _kern_format0_lookup,
     _kern_format0_subtables,
+    _ligature_subst_lookup,
     _pair_pos_lookup,
+    _single_subst_lookup,
 )
 
 comptime BG = Color(255, 255, 255)
@@ -636,3 +639,284 @@ def test_kern_adjustment_is_memoized_without_changing_answers() raises:
     for _ in range(3):
         assert_equal(face.kern_adjustment(a, v), -131)
         assert_equal(face.kern_adjustment(o, o), 0)
+
+
+def test_synthetic_gsub_single_subst_formats_map_their_coverage() raises:
+    # SingleSubst format 1 adds a signed delta to the glyph id modulo
+    # 65536; format 2 lists a replacement per covered glyph. Both are
+    # built here on the same coverage so the two decodes are compared
+    # against the same input.
+    #
+    # Format 1 layout, offsets from the subtable's start: a 6 byte
+    # header, Coverage at +6. The covered glyphs are 10, 11 and 65533,
+    # and the delta is +5, so 65533 wraps to (65533 + 5) mod 65536 = 2
+    # -- the one value a decoder adding without masking gets wrong.
+    var one = List[UInt8]()
+    _pad_to(one, 2)
+    _push_u16(one, 1)  # substFormat
+    _push_u16(one, 6)  # coverageOffset
+    _push_i16(one, 5)  # deltaGlyphID
+    _push_u16(one, 1)  # Coverage format 1
+    _push_u16(one, 3)
+    _push_u16(one, 10)
+    _push_u16(one, 11)
+    _push_u16(one, 65533)
+
+    assert_equal(_single_subst_lookup(one, 2, 10), 15)
+    assert_equal(_single_subst_lookup(one, 2, 11), 16)
+    assert_equal(_single_subst_lookup(one, 2, 65533), 2)
+    # An uncovered glyph is left alone, which -1 says and 0 could not:
+    # 0 is a real glyph id (".notdef").
+    assert_equal(_single_subst_lookup(one, 2, 12), -1)
+
+    # Format 2 layout: a 6 byte header, the substituteGlyphIDs array at
+    # +6, Coverage at +10. The replacements are deliberately not the
+    # delta's, so a decoder reading the wrong format says so.
+    var two = List[UInt8]()
+    _pad_to(two, 2)
+    _push_u16(two, 2)  # substFormat
+    _push_u16(two, 10)  # coverageOffset
+    _push_u16(two, 2)  # glyphCount
+    _push_u16(two, 30)
+    _push_u16(two, 31)
+    _push_u16(two, 1)  # Coverage format 1
+    _push_u16(two, 2)
+    _push_u16(two, 10)
+    _push_u16(two, 11)
+
+    assert_equal(_single_subst_lookup(two, 2, 10), 30)
+    assert_equal(_single_subst_lookup(two, 2, 11), 31)
+    assert_equal(_single_subst_lookup(two, 2, 12), -1)
+
+
+def _synthetic_gsub(extension: Bool) raises -> List[UInt8]:
+    """A `GSUB` table whose one script (DFLT), through its default
+    language system, selects a `liga` feature holding one lookup with
+    one LigatureSubst subtable -- reached directly when `extension` is
+    False, and through an ExtensionSubst (lookup type 7, not GPOS's 9)
+    wrapper when it is True.
+
+    Six filler bytes precede the table, and the header and list layout
+    match `_synthetic_gpos`'s, which is the point: the two tables share
+    them.
+
+    Coverage holds glyphs 10 and 20, one LigatureSet each. Glyph 10's
+    set is ordered longest-first the way a font writes it:
+
+        10 11 12 -> 100    10 11 -> 101    10 13 -> 102
+
+    so the three-component record is tried before the two-component
+    record that is its own prefix.
+    """
+    var data = List[UInt8]()
+    _pad_to(data, 6)
+
+    _push_u32(data, 0x00010000)  # version 1.0
+    _push_u16(data, 0x0A)  # scriptListOffset
+    _push_u16(data, 0x1E)  # featureListOffset
+    _push_u16(data, 0x2C)  # lookupListOffset
+
+    # ScriptList at 0x0A: one DFLT script whose table sits 8 bytes on.
+    _push_u16(data, 1)
+    _push_tag(data, "DFLT")
+    _push_u16(data, 8)
+    # Script at 0x12: a default LangSys 4 bytes on, no named ones.
+    _push_u16(data, 4)
+    _push_u16(data, 0)
+    # LangSys at 0x16: no required feature, one optional feature, #0.
+    _push_u16(data, 0)
+    _push_u16(data, 0xFFFF)
+    _push_u16(data, 1)
+    _push_u16(data, 0)
+    # FeatureList at 0x1E: feature #0 is 'liga', 8 bytes on.
+    _push_u16(data, 1)
+    _push_tag(data, "liga")
+    _push_u16(data, 8)
+    # Feature at 0x26: no params, one lookup, #0.
+    _push_u16(data, 0)
+    _push_u16(data, 1)
+    _push_u16(data, 0)
+    # LookupList at 0x2C: one lookup, 4 bytes on.
+    _push_u16(data, 1)
+    _push_u16(data, 4)
+    # Lookup at 0x30.
+    _push_u16(data, 7 if extension else 4)
+    _push_u16(data, 0)  # lookupFlag
+    _push_u16(data, 1)  # subTableCount
+    _push_u16(data, 8)  # subtable offset, from the Lookup's own start
+    if extension:
+        # ExtensionSubst at 0x38: format 1, wrapping a type 4 lookup 8
+        # bytes past this record's start, so the LigatureSubst lands
+        # at 0x40.
+        _push_u16(data, 1)
+        _push_u16(data, 4)
+        _push_u32(data, 8)
+
+    # LigatureSubst format 1: a 10 byte header, Coverage at +10,
+    # glyph 10's LigatureSet at +18 and glyph 20's at +46.
+    _push_u16(data, 1)  # substFormat
+    _push_u16(data, 10)  # coverageOffset
+    _push_u16(data, 2)  # ligatureSetCount
+    _push_u16(data, 18)
+    _push_u16(data, 46)
+    # Coverage format 1 at +10: the ligatures' first components.
+    _push_u16(data, 1)
+    _push_u16(data, 2)
+    _push_u16(data, 10)
+    _push_u16(data, 20)
+    # LigatureSet at +18: three ligatures, at +8, +16 and +22 from
+    # this set's own start.
+    _push_u16(data, 3)
+    _push_u16(data, 8)
+    _push_u16(data, 16)
+    _push_u16(data, 22)
+    # componentCount counts the first component, which Coverage
+    # already matched, so only the rest are stored.
+    _push_u16(data, 100)  # ligatureGlyph
+    _push_u16(data, 3)  # componentCount
+    _push_u16(data, 11)
+    _push_u16(data, 12)
+    _push_u16(data, 101)
+    _push_u16(data, 2)
+    _push_u16(data, 11)
+    _push_u16(data, 102)
+    _push_u16(data, 2)
+    _push_u16(data, 13)
+    # LigatureSet at +46: one ligature, 4 bytes on.
+    _push_u16(data, 1)
+    _push_u16(data, 4)
+    _push_u16(data, 200)
+    _push_u16(data, 2)
+    _push_u16(data, 21)
+
+    return data^
+
+
+def _assert_synthetic_ligature_subst(data: List[UInt8], subtable: Int) raises:
+    # Longest-first: 10 11 12 takes the three-component record, not the
+    # two-component 10 11 that also matches at this position.
+    var longest = _ligature_subst_lookup(data, subtable, [10, 11, 12], 0)
+    assert_equal(longest[0], 100)
+    assert_equal(longest[1], 3)
+
+    # A partial match falls through to the next record rather than
+    # failing: 10 11 99 matches the first record's first component and
+    # diverges at its last.
+    var partial = _ligature_subst_lookup(data, subtable, [10, 11, 99], 0)
+    assert_equal(partial[0], 101)
+    assert_equal(partial[1], 2)
+
+    # So does a record whose components run past the end of the
+    # sequence.
+    var truncated = _ligature_subst_lookup(data, subtable, [10, 11], 0)
+    assert_equal(truncated[0], 101)
+    assert_equal(truncated[1], 2)
+
+    # The third record, which shares neither of the others' second
+    # component.
+    var third = _ligature_subst_lookup(data, subtable, [10, 13], 0)
+    assert_equal(third[0], 102)
+    assert_equal(third[1], 2)
+
+    # Matching starts at `start`, not at the front of the sequence.
+    var offset = _ligature_subst_lookup(data, subtable, [5, 10, 11, 12], 1)
+    assert_equal(offset[0], 100)
+    assert_equal(offset[1], 3)
+
+    # The second LigatureSet, selected by its own coverage entry.
+    var second_set = _ligature_subst_lookup(data, subtable, [20, 21], 0)
+    assert_equal(second_set[0], 200)
+    assert_equal(second_set[1], 2)
+
+    # A covered first glyph whose set holds no matching record, and a
+    # first glyph outside Coverage: both leave the sequence alone.
+    var no_record = _ligature_subst_lookup(data, subtable, [10, 99], 0)
+    assert_equal(no_record[0], -1)
+    assert_equal(no_record[1], 0)
+    var uncovered = _ligature_subst_lookup(data, subtable, [11, 12], 0)
+    assert_equal(uncovered[0], -1)
+    assert_equal(uncovered[1], 0)
+
+
+def test_synthetic_gsub_ligature_subst_decodes_through_the_lists() raises:
+    var data = _synthetic_gsub(False)
+    var lookups = _gsub_subst_lookups(data, 6)
+    assert_equal(len(lookups.subtables), 1)
+    assert_equal(lookups.subtables[0], 6 + 0x38)
+    assert_equal(lookups.types[0], 4)
+    # One lookup, so one group spanning the single subtable.
+    assert_equal(len(lookups.bounds), 2)
+    assert_equal(lookups.bounds[0], 0)
+    assert_equal(lookups.bounds[1], 1)
+    _assert_synthetic_ligature_subst(data, lookups.subtables[0])
+
+
+def test_synthetic_gsub_extension_lookup_reaches_the_ligature_subst() raises:
+    # GSUB's extension wrapper is lookup type 7 where GPOS's is 9, and
+    # its 32 bit offset is measured from the wrapper rather than from
+    # the Lookup -- the same subtable as above, 8 bytes further out.
+    # The type recorded is the wrapped 4, not the wrapper's 7.
+    var data = _synthetic_gsub(True)
+    var lookups = _gsub_subst_lookups(data, 6)
+    assert_equal(len(lookups.subtables), 1)
+    assert_equal(lookups.subtables[0], 6 + 0x40)
+    assert_equal(lookups.types[0], 4)
+    _assert_synthetic_ligature_subst(data, lookups.subtables[0])
+
+
+def test_ligature_substitution_in_a_real_font() raises:
+    # DejaVu Sans's 'liga' feature reaches one LigatureSet, on "f",
+    # ordered ffl, ffi, fl, fi, ff. Each ligature glyph is checked
+    # against an independent route to the same glyph: the font also
+    # maps the precomposed Alphabetic Presentation Forms (U+FB00 "ff"
+    # through U+FB04 "ffl") in `cmap`, and GSUB substitutes to those
+    # same glyphs.
+    var face = _sans_face()
+    assert_true(face.has_substitutions())
+    var f = face.glyph_index_for_codepoint(0x66)
+    var i = face.glyph_index_for_codepoint(0x69)
+    var l = face.glyph_index_for_codepoint(0x6C)
+
+    var ffi = face.substitute_glyphs([f, f, i])
+    assert_equal(len(ffi.glyphs), 1)
+    assert_equal(ffi.glyphs[0], face.glyph_index_for_codepoint(0xFB03))
+    assert_equal(ffi.clusters[0], 3)
+
+    # "fl" then "i": both three-component records diverge, so the
+    # two-component "fl" applies and the "i" passes through. The
+    # clusters sum to the three glyphs that went in.
+    var fli = face.substitute_glyphs([f, l, i])
+    assert_equal(len(fli.glyphs), 2)
+    assert_equal(fli.glyphs[0], face.glyph_index_for_codepoint(0xFB02))
+    assert_equal(fli.glyphs[1], i)
+    assert_equal(fli.clusters[0], 2)
+    assert_equal(fli.clusters[1], 1)
+
+    # A sequence with no ligature in it comes back unchanged.
+    var plain = face.substitute_glyphs([i, l, f])
+    assert_equal(len(plain.glyphs), 3)
+    assert_equal(plain.glyphs[0], i)
+    assert_equal(plain.glyphs[1], l)
+    assert_equal(plain.glyphs[2], f)
+
+
+def test_ligature_substitution_in_a_second_real_font() raises:
+    # Ubuntu writes the same set in a different order -- ffi, ffl, ff,
+    # fi, fl -- and has no precomposed U+FB03 to check against, so this
+    # asserts the shape rather than the glyph ids, which differ between
+    # the Linux and macOS CI images: three glyphs become one, and that
+    # one is neither a component nor the shorter "ff" ligature.
+    var face = _ubuntu_face()
+    assert_true(face.has_substitutions())
+    var f = face.glyph_index_for_codepoint(0x66)
+    var i = face.glyph_index_for_codepoint(0x69)
+
+    var ffi = face.substitute_glyphs([f, f, i])
+    assert_equal(len(ffi.glyphs), 1)
+    assert_equal(ffi.clusters[0], 3)
+    assert_true(ffi.glyphs[0] != f and ffi.glyphs[0] != i)
+
+    var ff = face.substitute_glyphs([f, f])
+    assert_equal(len(ff.glyphs), 1)
+    assert_equal(ff.clusters[0], 2)
+    assert_true(ff.glyphs[0] != ffi.glyphs[0])

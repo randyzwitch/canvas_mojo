@@ -18,8 +18,8 @@ this module is responsible for:
   - two identical calls produce identical output, so no state leaks
     between them
 
-`test_measure_text_matches_known_glyph_extents` and the kerning tests
-are the ones asserting exact values, which depend on `ttf.mojo`'s
+`test_measure_text_matches_known_glyph_extents` and the kerning and
+ligature tests are the ones asserting exact values, which depend on `ttf.mojo`'s
 unhinted metrics: a hinting rasterizer rounds thin stems like "I"'s
 single stroke to whole pixels, and `ttf.mojo` never hints.
 
@@ -768,6 +768,146 @@ def test_kerning_leaves_the_glyph_mask_cache_alone() raises:
     draw_text(second, 20, 90, text, FG, 64.0, cache=cache)
     assert_equal(cache.glyph_mask_count(), after_first)
     _assert_same_pixels(first, second, "kerned redraw through a warm cache")
+
+
+# Ligatures. Same font and size as the kerning tests above -- DejaVu
+# Sans at 64 px, one design unit to 1/32 px -- so every value below is
+# an exact binary fraction. The font's own numbers, read by the Python
+# oracle test_ttf.mojo's tests use:
+#
+#     hmtx advance   f 721   i 569   l 569   A 1401   V 1401
+#     liga glyphs    ff 1411   fi 1290   fl 1290   ffi 1980
+#     GPOS pairs     Af -73   AV -131   ff 0   fi 0   Vf 0
+#
+# "ff" and "ffi" are the ligatures that narrow a string: each is 31
+# units short of its components' advances added up. "fi" and "fl" are
+# drawn as one glyph too, but their advance is exactly the sum, so
+# they are the case where substitution shows in the pixels and not in
+# the measurement.
+
+
+def test_ligature_narrows_a_measured_string() raises:
+    # f 721 + f 721 = 1442 units = 45.0625 px of plain advance against
+    # the "ff" glyph's 1411 units = 44.09375, and f + f + i = 2011 =
+    # 62.84375 against "ffi"'s 1980 = 61.875. measure_text substitutes
+    # by default.
+    assert_equal(measure_text("f", 64.0).advance, 22.53125)
+    assert_equal(measure_text("i", 64.0).advance, 17.78125)
+    assert_equal(measure_text("ff", 64.0, ligatures=False).advance, 45.0625)
+    assert_equal(measure_text("ff", 64.0).advance, 44.09375)
+    assert_equal(measure_text("ffi", 64.0, ligatures=False).advance, 62.84375)
+    assert_equal(measure_text("ffi", 64.0).advance, 61.875)
+
+    # The property the step turns on: a ligated string measures
+    # narrower than its characters measured apart.
+    var apart = (
+        measure_text("f", 64.0).advance * 2.0 + measure_text("i", 64.0).advance
+    )
+    assert_equal(apart, 62.84375)
+    assert_true(measure_text("ffi", 64.0).advance < apart)
+
+    # "fi" ligates -- test_ttf.mojo pins the substitution itself -- and
+    # measures the same either way, since this font gives the ligature
+    # exactly its components' advance.
+    assert_equal(measure_text("fi", 64.0).advance, 40.3125)
+    assert_equal(measure_text("fi", 64.0, ligatures=False).advance, 40.3125)
+
+
+def test_kerning_applies_between_the_substituted_glyphs() raises:
+    # Substitution runs first, so a pair adjustment is looked up
+    # between the glyphs that end up on the line. "Aff" unligated kerns
+    # A against f by -73 units: 1401 + 721 + 721 - 73 = 2770 =
+    # 86.5625 px. Ligated, A's right-hand neighbour is the "ff" glyph,
+    # which this font kerns against nothing, so the -73 does not apply
+    # and the string measures 1401 + 1411 = 2812 = 87.875 -- wider,
+    # not narrower.
+    var cache = FontCache()
+    assert_equal(
+        measure_text("Aff", 64.0, ligatures=False, cache=cache).advance,
+        86.5625,
+    )
+    assert_equal(measure_text("Aff", 64.0, cache=cache).advance, 87.875)
+
+    # A pair away from the ligature still kerns: "AVff" is A + V + the
+    # "ff" glyph, 1401 + 1401 + 1411 = 4213 = 131.65625 unkerned, and
+    # the AV pair's -131 leaves 4082 = 127.5625.
+    assert_equal(
+        measure_text("AVff", 64.0, kerning=False, cache=cache).advance,
+        131.65625,
+    )
+    assert_equal(measure_text("AVff", 64.0, cache=cache).advance, 127.5625)
+
+    # Neither switch on: the plain sum of four advances, 4244 units.
+    assert_equal(
+        measure_text(
+            "AVff", 64.0, kerning=False, ligatures=False, cache=cache
+        ).advance,
+        132.625,
+    )
+
+
+def test_measure_and_draw_agree_on_a_ligated_string() raises:
+    # One shaping step feeds both passes, so a measured width and a
+    # rendered one cannot drift. Rendered against measure_text_block's
+    # prediction, ligated and not, within the pixel or two of
+    # floor-rounding and AA fringe that
+    # test_measure_text_block_matches_rendered_ink_unrotated allows.
+    var cache = FontCache()
+    var text = String("ffi")
+    var anchor_x = 20
+
+    var ligated = Canvas(300, 120, BG)
+    draw_text(ligated, anchor_x, 90, text, FG, 64.0, cache=cache)
+    var ligated_ink = _ink_bbox(ligated, BG)
+    assert_true(ligated_ink.found_any)
+    var ligated_box = measure_text_block(text, 64.0, cache=cache)
+    var ligated_right = Float64(anchor_x) + ligated_box.x + ligated_box.width
+    assert_true(
+        ligated_right > Float64(ligated_ink.max_x) - 2.0
+        and ligated_right < Float64(ligated_ink.max_x) + 2.0
+    )
+
+    var plain = Canvas(300, 120, BG)
+    draw_text(plain, anchor_x, 90, text, FG, 64.0, ligatures=False, cache=cache)
+    var plain_ink = _ink_bbox(plain, BG)
+    assert_true(plain_ink.found_any)
+    var plain_box = measure_text_block(text, 64.0, ligatures=False, cache=cache)
+    var plain_right = Float64(anchor_x) + plain_box.x + plain_box.width
+    assert_true(
+        plain_right > Float64(plain_ink.max_x) - 2.0
+        and plain_right < Float64(plain_ink.max_x) + 2.0
+    )
+
+    # Both renders start at the same place and the ligated one ends
+    # earlier: the string tightens rather than shifting.
+    assert_equal(ligated_ink.min_x, plain_ink.min_x)
+    assert_true(ligated_ink.max_x < plain_ink.max_x)
+
+
+def test_a_ligature_gets_its_own_glyph_mask() raises:
+    # The mask cache keys a substituted glyph by its glyph index and
+    # everything else by codepoint, so "ffi" drawn as one glyph caches
+    # one mask where the same string drawn as three characters caches
+    # three -- the two "f"s land on different sub-pixel offsets, which
+    # are part of the key by design, so neither shares with the other.
+    var ligated_cache = FontCache()
+    var ligated = Canvas(300, 120, BG)
+    draw_text(ligated, 20, 90, "ffi", FG, 64.0, cache=ligated_cache)
+    assert_equal(ligated_cache.glyph_mask_count(), 1)
+
+    var plain_cache = FontCache()
+    var plain = Canvas(300, 120, BG)
+    draw_text(
+        plain, 20, 90, "ffi", FG, 64.0, ligatures=False, cache=plain_cache
+    )
+    assert_equal(plain_cache.glyph_mask_count(), 3)
+
+    # And the ligature's key is stable: the same string drawn again
+    # through a warm cache adds nothing and paints the same pixels.
+    var again = Canvas(300, 120, BG)
+    draw_text(again, 20, 90, "ffi", FG, 64.0, cache=ligated_cache)
+    assert_equal(ligated_cache.glyph_mask_count(), 1)
+    _assert_same_pixels(ligated, again, "ligated redraw through a warm cache")
 
 
 def main() raises:

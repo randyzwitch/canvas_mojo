@@ -2,7 +2,10 @@
 `font_discovery.mojo`, which resolves a family/slant/weight to a file,
 and `ttf.mojo`, which parses that file's binary tables. Exposes the
 `LineMetrics`/`GlyphMetrics`/`face_line_metrics`/`has_glyph`/
-`glyph_metrics`/`glyph_path` surface `render.mojo` calls.
+`glyph_metrics`/`glyph_path` surface `render.mojo` calls, each of the
+last two paired with a `glyph_index_*` form addressing a glyph
+directly, which is what a `GSUB` ligature -- a glyph no single
+codepoint names -- is laid out through.
 
 Outlines are unhinted (`ttf.mojo` runs no hinting bytecode), so glyph
 metrics differ slightly from a hinting rasterizer's such as FreeType's;
@@ -129,8 +132,25 @@ def glyph_metrics(mut face: TTFFace, codepoint: Int) raises -> GlyphMetrics:
     Returns:
         The glyph's advance/bearing/width/height at that size.
     """
+    return glyph_index_metrics(face, face.glyph_index_for_codepoint(codepoint))
+
+
+def glyph_index_metrics(
+    mut face: TTFFace, glyph_index: Int
+) raises -> GlyphMetrics:
+    """One glyph's advance/bearing/size, in pixels, addressed by glyph
+    index rather than codepoint -- what a glyph `GSUB` substitution
+    produced has, since a ligature stands for several characters and
+    none of their codepoints names it.
+
+    Args:
+        face: Face to measure against, with a pixel size already set.
+        glyph_index: Glyph to measure.
+
+    Returns:
+        The glyph's advance/bearing/width/height at that size.
+    """
     var scale = face.scale()
-    var glyph_index = face.glyph_index_for_codepoint(codepoint)
     var advance = Float64(face.advance_width(glyph_index)) * scale
 
     var outline = face.glyph_outline_shared(glyph_index)
@@ -177,7 +197,27 @@ def glyph_path(
     Returns:
         The glyph's outline as a Path, positioned at (pen_x, pen_y).
     """
+    return glyph_index_path(
+        face, face.glyph_index_for_codepoint(codepoint), pen_x, pen_y
+    )
+
+
+def glyph_index_path(
+    mut face: TTFFace, glyph_index: Int, pen_x: Float64, pen_y: Float64
+) raises -> Path:
+    """`glyph_path` addressed by glyph index rather than codepoint, the
+    form a `GSUB` substitution's output needs.
+
+    Args:
+        face: Face to read the glyph from, with a pixel size already
+            set.
+        glyph_index: Glyph to render.
+        pen_x: Glyph origin x, in pixel space.
+        pen_y: Glyph origin y, in pixel space.
+
+    Returns:
+        The glyph's outline as a Path, positioned at (pen_x, pen_y).
+    """
     var scale = face.scale()
-    var glyph_index = face.glyph_index_for_codepoint(codepoint)
     var outline = face.glyph_outline_shared(glyph_index)
     return outline_to_path(outline[], pen_x, pen_y, scale)
