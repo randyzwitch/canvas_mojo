@@ -113,6 +113,7 @@ from canvas.text.joining import (
 )
 from canvas.buffer import Canvas
 from canvas.color import Color
+from canvas.compose import Filter, draw_canvas
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.text.font_cache import _cache_key, _GlyphMask, FontCache
@@ -1289,6 +1290,22 @@ def _draw_block_direct(
         var pen_x = line.x
         for shaped in line.glyphs:
             pen_x += shaped.kern_before
+            if _try_color_glyph(
+                canvas,
+                face[],
+                family,
+                slant,
+                weight,
+                size,
+                shaped,
+                Matrix2D.translation(pen_x, line.y).then(placement),
+                color,
+                cache,
+            ):
+                pen_x += _resolve_glyph_metrics(
+                    face[], family, slant, weight, size, shaped, cache
+                ).advance
+                continue
             var g = _resolve_glyph(
                 face[],
                 family,
@@ -1489,6 +1506,70 @@ def _rasterize_glyph(
     )
 
 
+def _draw_color_glyph(
+    mut canvas: Canvas,
+    mut face: TTFFace,
+    glyph_index: Int,
+    placement: Matrix2D,
+    opacity: Float64,
+) raises -> Bool:
+    """Draw `glyph_index`'s color bitmap, if the face has one for it,
+    through `placement` (glyph origin space to device space), scaled
+    from the strike's pixels to the face's size and composited with
+    bilinear sampling. Returns whether anything was drawn; a glyph
+    without a bitmap is left to the outline path.
+    """
+    if not face.has_color_bitmaps():
+        return False
+    var bm = face.color_bitmap_metrics(glyph_index)
+    if not bm.found:
+        return False
+    var s = face.scale() * Float64(face.units_per_em) / Float64(bm.ppem)
+    var bitmap = face.color_bitmap(glyph_index)
+    var m = (
+        Matrix2D.scaling(s, s)
+        .then(
+            Matrix2D.translation(
+                Float64(bm.bearing_x) * s, -Float64(bm.bearing_y) * s
+            )
+        )
+        .then(placement)
+    )
+    draw_canvas(canvas, bitmap[], m, opacity, Filter.BILINEAR)
+    return True
+
+
+def _try_color_glyph(
+    mut canvas: Canvas,
+    mut primary: TTFFace,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    size: Float64,
+    shaped: _ShapedGlyph,
+    placement: Matrix2D,
+    color: Color,
+    mut cache: FontCache,
+) raises -> Bool:
+    """`_draw_color_glyph` for a shaped glyph, on the primary face or
+    the fallback face that owns its codepoint. The text color's alpha
+    is the bitmap's opacity; its RGB does not apply, the bitmap having
+    colors of its own.
+    """
+    var opacity = Float64(color.a) / 255.0
+    if shaped.glyph != 0:
+        return _draw_color_glyph(
+            canvas, primary, shaped.glyph, placement, opacity
+        )
+    var fallback = cache.resolve_face_for_char(
+        family, slant, weight, shaped.codepoint, size
+    )
+    if not fallback[].has_color_bitmaps():
+        return False
+    var gid = fallback[].glyph_index_for_codepoint(shaped.codepoint)
+    return _draw_color_glyph(canvas, fallback[], gid, placement, opacity)
+
+
 def _draw_cached_glyph(
     mut canvas: Canvas,
     mut primary: TTFFace,
@@ -1522,6 +1603,22 @@ def _draw_cached_glyph(
     primary face, distinguishable from each other and every unshaped
     glyph's key what it was.
     """
+    # A color bitmap glyph is an image, not a coverage mask.
+    if _try_color_glyph(
+        canvas,
+        primary,
+        family,
+        slant,
+        weight,
+        size,
+        shaped,
+        linear.then(Matrix2D.translation(origin_x, origin_y)),
+        color,
+        cache,
+    ):
+        return _resolve_glyph_metrics(
+            primary, family, slant, weight, size, shaped, cache
+        ).advance
     var ix = Int(floor(origin_x))
     var iy = Int(floor(origin_y))
     var step_x = Int(floor((origin_x - Float64(ix)) * _SUBPIXEL_STEPS + 0.5))
