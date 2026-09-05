@@ -317,6 +317,10 @@ struct SvgCanvas(DrawTarget, Movable):
     var _blend: BlendMode
     # What `save` pushes: everything above that `restore` puts back.
     var _saved: List[_SvgState]
+    # The document title and description `set_title` stored, emitted
+    # by `to_string` on the root element; empty until set.
+    var _title: String
+    var _description: String
 
     def __init__(out self, width: Int, height: Int):
         """An empty `width x height` SVG document.
@@ -328,6 +332,8 @@ struct SvgCanvas(DrawTarget, Movable):
         self.width = width
         self.height = height
         self._body = ""
+        self._title = ""
+        self._description = ""
         self._gradient_count = 0
         self._text_path_count = 0
         self._open_group = False
@@ -1281,8 +1287,33 @@ struct SvgCanvas(DrawTarget, Movable):
         _write_svg_float(self._body, offset)
         self._body.write('">', _escape_xml_text(text), "</textPath></text>\n")
 
-    def to_string(self) -> String:
-        return (
+    def set_title(mut self, title: String, description: String = ""):
+        """Give the document an accessible title: the root `<svg>` gains
+        `role="img"` and `aria-label`, and `<title>` (and `<desc>` when
+        `description` is non-empty) become its first children, which is
+        what screen readers that walk an SVG's accessible tree look
+        for. The document-level counterpart of `begin_annotated_group`.
+
+        Both strings are escaped here; pass them raw. Calling again
+        replaces the previous title. An empty `title` removes it.
+
+        This helps where the SVG's accessible tree is walked: inline
+        markup, a standalone file, or an `<object>`/`<iframe>` embed.
+        A plain `<img src="chart.svg">` treats the SVG as an opaque
+        image and reads the `<img>`'s `alt` text instead.
+
+        Args:
+            title: Short accessible name for the whole document.
+            description: Longer description, optional.
+        """
+        self._title = title
+        self._description = description
+
+    def _root_open(self) -> String:
+        """The opening `<svg>` tag plus the title children `set_title`
+        asked for, if any.
+        """
+        var out = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="'
             + String(self.width)
             + '" height="'
@@ -1291,7 +1322,24 @@ struct SvgCanvas(DrawTarget, Movable):
             + String(self.width)
             + " "
             + String(self.height)
-            + '">\n'
+            + '"'
+        )
+        if self._title.byte_length() == 0:
+            return out + ">\n"
+        out += (
+            ' role="img" aria-label="'
+            + _escape_xml_attr(self._title)
+            + '">\n<title>'
+            + _escape_xml_text(self._title)
+            + "</title>\n"
+        )
+        if self._description.byte_length() > 0:
+            out += "<desc>" + _escape_xml_text(self._description) + "</desc>\n"
+        return out
+
+    def to_string(self) -> String:
+        return (
+            self._root_open()
             + self._body
             # A group the caller never closed: closed here rather than
             # emitted unbalanced, so `to_string` and `write_svg` always

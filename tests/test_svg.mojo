@@ -767,6 +767,50 @@ def test_to_string_wraps_body_in_svg_root_with_correct_dimensions() raises:
     assert_true(s.strip().endswith("</svg>"), "document is properly closed")
 
 
+def test_set_title_puts_role_label_title_and_desc_on_the_root() raises:
+    var svg = SvgCanvas(10, 5)
+    svg.set_title("Sales <Q1> & Q2", 'Bars per "quarter"')
+    svg.fill_rect(0, 0, 1, 1, Color(0, 0, 0))
+    var out = svg.to_string()
+    assert_true(
+        out.startswith(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5"'
+            ' viewBox="0 0 10 5" role="img"'
+            ' aria-label="Sales &lt;Q1> &amp; Q2">\n'
+            "<title>Sales &lt;Q1&gt; &amp; Q2</title>\n"
+            '<desc>Bars per "quarter"</desc>\n'
+            "<rect "
+        ),
+        "the root tag, then title, then desc, then the first element: " + out,
+    )
+
+
+def test_set_title_without_a_description_emits_no_desc() raises:
+    var svg = SvgCanvas(10, 5)
+    svg.set_title("Plain")
+    var out = svg.to_string()
+    assert_true('aria-label="Plain">\n<title>Plain</title>\n</svg>' in out)
+    assert_true("<desc>" not in out)
+
+
+def test_set_title_can_be_replaced_or_cleared() raises:
+    var svg = SvgCanvas(10, 5)
+    svg.set_title("First")
+    svg.set_title("Second")
+    assert_true("First" not in svg.to_string())
+    assert_true("<title>Second</title>" in svg.to_string())
+    svg.set_title("")
+    var out = svg.to_string()
+    assert_true(not ("<title>" in out), "cleared title: " + out)
+    assert_true(not ("role=" in out), "cleared role: " + out)
+    assert_true(
+        out.startswith(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5"'
+            ' viewBox="0 0 10 5">\n'
+        )
+    )
+
+
 def test_annotated_group_wraps_elements_with_an_escaped_title() raises:
     # `<title>` as the first child of a `<g>` is what a browser shows
     # as a hover tooltip for everything in that group, which is the
