@@ -1281,6 +1281,13 @@ def _composite_glyph_mask(
     """
     var masked = canvas.has_clip_mask()
     var total = Float64(mask.total_samples)
+    # An opaque colour over an exact-area mask, which is every glyph a
+    # NONZERO fill rasterizes: the count is in 255ths, so it is the
+    # alpha, and the general form below rounds back to it for every
+    # count. Skipping the divide there is most of the compositing cost
+    # of a small label.
+    var direct = color.a == 255 and mask.total_samples == 255
+    var cp = mask.counts.unsafe_ptr()
     var left = offset_x + mask.origin_x
     for row in range(mask.height):
         var py = offset_y + mask.origin_y + row
@@ -1290,13 +1297,23 @@ def _composite_glyph_mask(
         var lo = region[0] - left
         var hi = lo + region[2]
         var base = row * mask.width
+        if direct and not masked:
+            # The counts are the alphas: hand the row to the buffer.
+            canvas.composite_alpha_row(
+                left + lo, py, mask.counts, base + lo, hi - lo, color
+            )
+            continue
         for mx in range(lo, hi):
-            var covered = Int(mask.counts[base + mx])
+            var covered = Int(cp[unsafe_offset=base + mx])
             if covered == 0:
                 continue
-            var alpha = UInt8(
-                Int(Float64(covered) / total * Float64(color.a) + 0.5)
-            )
+            var alpha: UInt8
+            if direct:
+                alpha = UInt8(covered)
+            else:
+                alpha = UInt8(
+                    Int(Float64(covered) / total * Float64(color.a) + 0.5)
+                )
             if masked:
                 canvas.set_pixel(left + mx, py, color.with_alpha(alpha))
             else:
