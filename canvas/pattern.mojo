@@ -192,42 +192,43 @@ struct Hatch(Copyable, ImplicitlyCopyable, Movable):
 def _draw_wrapped_diagonal(
     mut tile: Canvas, spacing: Int, width: Float64, color: Color, flip: Bool
 ):
-    """A 45-degree line through the tile (bottom-left to top-right if
-    `flip`, top-left to bottom-right otherwise), extended a full tile
-    past each end along its own direction before it's drawn.
+    """A 45-degree stripe through the tile (bottom-left to top-right if
+    `flip`, top-left to bottom-right otherwise), drawn so the tile
+    repeats without a seam: the stripe itself, extended a full tile
+    past each end, and the two neighbouring stripes of the repeated
+    pattern, one tile to either side.
 
-    A corner-to-corner segment alone already reproduces the right
-    infinite family of parallel lines once the tile is repeated --
-    consecutive tiles along the diagonal connect exactly at that
-    shared corner pixel. What it gets wrong is the line's own flat end
-    sitting exactly on that corner pixel: a `LineCap.BUTT` cap covers
-    only about half of an endpoint pixel, tapering off right where the
-    next tile needs full-width ink to continue the stripe. Extending
-    the line a full tile beyond each corner moves both caps well
-    outside this canvas, so every pixel actually drawn here -- corners
-    included -- sits deep in the line's body, at full width.
+    Three lines rather than one because a tile shows more than its own
+    stripe. Repeated, the pattern is the family of parallel lines one
+    tile apart, and the tile's two off-diagonal corners lie within a
+    line width of the neighbouring stripes -- at spacing 8 and width 2
+    the corner pixel is 0.7 px from the next stripe's centre -- so
+    their coverage has to be painted here for the corners of adjacent
+    tiles to meet in ink. The stripes are a full diagonal apart, so no
+    pixel is covered by two of them and nothing blends twice.
+
+    Extending each line a full tile past its ends keeps every
+    `LineCap.BUTT` end outside the canvas: a cap on the corner pixel
+    would cover about half of it, where a continuous stripe needs full
+    width.
     """
     var s = Float64(spacing)
-    var x0 = 0.0
-    var x1 = s - 1.0
-    var y0 = 0.0
-    var y1 = s - 1.0
-    var y_step = s
-    if flip:
-        y0 = s - 1.0
-        y1 = 0.0
-        y_step = -s
-
-    draw_line_aa(
-        tile,
-        x0 - s,
-        y0 - y_step,
-        x1 + s,
-        y1 + y_step,
-        color,
-        width=width,
-        cap=LineCap.BUTT,
-    )
+    var last = s - 1.0
+    var y0 = last if flip else 0.0
+    var y1 = 0.0 if flip else last
+    var y_step = -s if flip else s
+    for k in range(-1, 2):
+        var dx = Float64(k) * s
+        draw_line_aa(
+            tile,
+            dx - s,
+            y0 - y_step,
+            dx + last + s,
+            y1 + y_step,
+            color,
+            width=width,
+            cap=LineCap.BUTT,
+        )
 
 
 def hatch_tile(

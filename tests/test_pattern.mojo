@@ -17,6 +17,7 @@ from canvas.path import (
     fill_path_pattern,
     fill_path_pattern_aa,
 )
+from canvas.shapes.lines import LineCap, draw_line_aa
 from canvas.shapes.rects import fill_rect_pattern
 
 
@@ -226,31 +227,90 @@ def test_hatch_dots_ink_at_center_background_at_corner() raises:
     assert_equal(tile.get_pixel(0, 0).r, 255)
 
 
+def _reference_hatch(
+    spacing: Int, width: Float64, cross: Bool
+) raises -> Canvas:
+    """The repeated pattern drawn directly onto a 3x3-tile canvas: the
+    family of parallel stripes one tile apart, every one a single
+    continuous line with its ends far outside the canvas. Its centre
+    tile is what a seamless hatch tile has to equal.
+    """
+    var s = Float64(spacing)
+    var ink = Color(0, 0, 0)
+    var reference = Canvas(spacing * 3, spacing * 3, Color(255, 255, 255))
+    for k in range(-4, 5):
+        var off = Float64(k) * s
+        draw_line_aa(
+            reference,
+            -s + off,
+            -s,
+            4.0 * s + off,
+            4.0 * s,
+            ink,
+            width=width,
+            cap=LineCap.BUTT,
+        )
+        if cross:
+            # The tile's anti-diagonal runs through (0, s - 1) and
+            # (s - 1, 0), so its family has intercept s - 1 + k * s in
+            # tile space, 3s - 1 + k * s here.
+            draw_line_aa(
+                reference,
+                -s + off,
+                4.0 * s - 1.0,
+                4.0 * s + off,
+                -s - 1.0,
+                ink,
+                width=width,
+                cap=LineCap.BUTT,
+            )
+    return reference^
+
+
 def test_diagonal_hatch_tiles_without_a_seam() raises:
-    # A plain corner-to-corner segment ends with a flat cap exactly on
-    # the tile's own corner pixel, which cuts that pixel's coverage to
-    # about half rather than the fully solid ink a continuous line
-    # needs there. hatch_tile also draws the same line shifted a full
-    # tile forward and backward, so the corner sits mid-line rather
-    # than at an end and comes out fully covered -- which is what lets
-    # two tiles meet there without a seam.
-    var spacing = 20
+    # Repeated, a diagonal hatch is the family of parallel stripes one
+    # tile apart, and the tile's pixels near its off-diagonal corners
+    # are covered by the neighbouring stripes, not its own: at spacing
+    # 8 and width 3, the corner pixel (7, 0) is 0.7 px from the next
+    # stripe's centre. A tile that only draws its own stripe leaves
+    # those corners background and shows a notch at every tile
+    # boundary. The tile must equal the centre tile of the pattern
+    # drawn directly, pixel for pixel, for DIAGONAL and CROSS.
+    var spacing = 8
+    var width = 3.0
     var ink = Color(0, 0, 0)
     var bg = Color(255, 255, 255)
-    var tile = hatch_tile(spacing, 3.0, ink, bg, Hatch.DIAGONAL)
+    var tile = hatch_tile(spacing, width, ink, bg, Hatch.DIAGONAL)
+    assert_true(
+        tile.get_pixel(spacing - 1, 0).r < 255,
+        "the corner under the neighbouring stripe carries ink",
+    )
+    assert_true(tile.get_pixel(0, spacing - 1).r < 255, "and the other")
 
-    assert_equal(tile.get_pixel(0, 0).r, 0)
-    assert_equal(tile.get_pixel(spacing - 1, spacing - 1).r, 0)
+    var reference = _reference_hatch(spacing, width, False)
+    for y in range(spacing):
+        for x in range(spacing):
+            assert_equal(
+                tile.get_pixel(x, y).r,
+                reference.get_pixel(spacing + x, spacing + y).r,
+                "diagonal tile pixel (" + String(x) + ", " + String(y) + ")",
+            )
+    var cross = hatch_tile(spacing, width, ink, bg, Hatch.CROSS)
+    var cross_ref = _reference_hatch(spacing, width, True)
+    for y in range(spacing):
+        for x in range(spacing):
+            assert_equal(
+                cross.get_pixel(x, y).r,
+                cross_ref.get_pixel(spacing + x, spacing + y).r,
+                "cross tile pixel (" + String(x) + ", " + String(y) + ")",
+            )
 
-    # Tile it 2x2 through PatternSource/fill_rect_pattern and check the
-    # two pixels straddling the corner where all four copies meet: the
-    # tile's own bottom-right corner and the next tile's top-left
-    # corner, diagonally adjacent, both fully ink -- a continuous
-    # stripe across the seam rather than a faded notch on either side.
+    # And tiled through PatternSource, the stripe runs across the seam
+    # where four copies meet: the tile's bottom-right corner and the
+    # next tile's top-left are both solid ink.
     var pattern = PatternSource(tile, Extend.REPEAT)
     var big = Canvas(spacing * 2, spacing * 2, bg)
     fill_rect_pattern(big, 0, 0, spacing * 2, spacing * 2, pattern)
-
     assert_equal(big.get_pixel(spacing - 1, spacing - 1).r, 0)
     assert_equal(big.get_pixel(spacing, spacing).r, 0)
 
