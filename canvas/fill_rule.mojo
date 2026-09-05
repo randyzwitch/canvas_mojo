@@ -15,7 +15,7 @@ rather than two, so a translucent fill does not double-blend there.
 """
 
 
-struct FillRule(Copyable, ImplicitlyCopyable, Movable):
+struct FillRule(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     var _value: Int
 
     comptime EVEN_ODD = Self(0)
@@ -32,6 +32,19 @@ struct FillRule(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.EVEN_ODD._value:
+            writer.write("EVEN_ODD")
+        elif self._value == Self.NONZERO._value:
+            writer.write("NONZERO")
+        else:
+            writer.write("FillRule(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
 
 def _is_inside(winding: Int, fill_rule: FillRule) -> Bool:

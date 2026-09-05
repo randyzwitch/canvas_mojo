@@ -252,12 +252,12 @@ def test_weight_and_slant_pick_faces_within_the_family() raises:
 
 
 def test_font_slant_equality() raises:
-    assert_true(FontSlant.NORMAL == FontSlant.NORMAL)
+    assert_equal(FontSlant.NORMAL, FontSlant.NORMAL)
     assert_true(not (FontSlant.ITALIC == FontSlant.OBLIQUE))
 
 
 def test_font_weight_equality() raises:
-    assert_true(FontWeight.NORMAL == FontWeight.NORMAL)
+    assert_equal(FontWeight.NORMAL, FontWeight.NORMAL)
     assert_true(not (FontWeight.NORMAL == FontWeight.BOLD))
 
 

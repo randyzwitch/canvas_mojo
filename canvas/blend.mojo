@@ -117,7 +117,7 @@ from std.math import sqrt
 from canvas.color import Color, _div255
 
 
-struct BlendMode(Copyable, ImplicitlyCopyable, Movable):
+struct BlendMode(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """How a drawn colour combines with the pixel underneath.
 
     SOURCE_OVER, the default, is ordinary alpha compositing: the source
@@ -182,6 +182,71 @@ struct BlendMode(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.SOURCE_OVER._value:
+            writer.write("SOURCE_OVER")
+        elif self._value == Self.SOURCE._value:
+            writer.write("SOURCE")
+        elif self._value == Self.DESTINATION_IN._value:
+            writer.write("DESTINATION_IN")
+        elif self._value == Self.DESTINATION_OUT._value:
+            writer.write("DESTINATION_OUT")
+        elif self._value == Self.XOR._value:
+            writer.write("XOR")
+        elif self._value == Self.CLEAR._value:
+            writer.write("CLEAR")
+        elif self._value == Self.DESTINATION._value:
+            writer.write("DESTINATION")
+        elif self._value == Self.DESTINATION_OVER._value:
+            writer.write("DESTINATION_OVER")
+        elif self._value == Self.SOURCE_IN._value:
+            writer.write("SOURCE_IN")
+        elif self._value == Self.SOURCE_OUT._value:
+            writer.write("SOURCE_OUT")
+        elif self._value == Self.SOURCE_ATOP._value:
+            writer.write("SOURCE_ATOP")
+        elif self._value == Self.DESTINATION_ATOP._value:
+            writer.write("DESTINATION_ATOP")
+        elif self._value == Self.ADD._value:
+            writer.write("ADD")
+        elif self._value == Self.MULTIPLY._value:
+            writer.write("MULTIPLY")
+        elif self._value == Self.SCREEN._value:
+            writer.write("SCREEN")
+        elif self._value == Self.OVERLAY._value:
+            writer.write("OVERLAY")
+        elif self._value == Self.DARKEN._value:
+            writer.write("DARKEN")
+        elif self._value == Self.LIGHTEN._value:
+            writer.write("LIGHTEN")
+        elif self._value == Self.DIFFERENCE._value:
+            writer.write("DIFFERENCE")
+        elif self._value == Self.EXCLUSION._value:
+            writer.write("EXCLUSION")
+        elif self._value == Self.COLOR_DODGE._value:
+            writer.write("COLOR_DODGE")
+        elif self._value == Self.COLOR_BURN._value:
+            writer.write("COLOR_BURN")
+        elif self._value == Self.HARD_LIGHT._value:
+            writer.write("HARD_LIGHT")
+        elif self._value == Self.SOFT_LIGHT._value:
+            writer.write("SOFT_LIGHT")
+        elif self._value == Self.HUE._value:
+            writer.write("HUE")
+        elif self._value == Self.SATURATION._value:
+            writer.write("SATURATION")
+        elif self._value == Self.COLOR._value:
+            writer.write("COLOR")
+        elif self._value == Self.LUMINOSITY._value:
+            writer.write("LUMINOSITY")
+        else:
+            writer.write("BlendMode(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
     def __ne__(self, other: Self) -> Bool:
         return self._value != other._value
