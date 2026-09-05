@@ -8,7 +8,7 @@ the same `fill_path_aa` every other shape uses, so translucent text
 composites through `set_pixel` like any other fill.
 
 Unrotated text goes through a glyph mask cache on the `FontCache`:
-each (face, size, codepoint, sub-pixel offset) is rasterized once, as
+each (face, size, glyph, sub-pixel offset) is rasterized once, as
 the sub-sample counts `fill_path_aa`'s sweep computes, and every later
 occurrence composites the cached counts through the sweep's own alpha
 arithmetic (`_composite_glyph_mask`), so the pixels are the ones a
@@ -30,27 +30,35 @@ position and outline are rotated around `(x, y)` and translated in one
 pass (`_place_glyph_path`). At rotation=0.0 with one line, cos=1/sin=0
 leaves every point unchanged.
 
-Each line's codepoints pass through `bidi.visual_order` first
+One shaping step (`_shape_line`) turns each line's text into the glyph
+sequence every pass then walks, which is what keeps `measure_text` and
+`draw_text` from disagreeing. It runs `bidi.visual_order` first
 (`_visual_codepoints`), so mixed Hebrew/Arabic/Latin/digit text lays out
-in reading order without draw_text or _measure_line handling direction.
+in reading order without any pass handling direction; maps each
+character through `cmap`; and applies the font's `liga`/`ccmp`
+substitutions (`ttf.mojo`), so "f" and "i" become the one "fi" glyph a
+font that has it draws. `ligatures=False` skips the substitution and
+lays out one glyph per character.
 
-Adjacent glyphs kern against each other (`_kern_offset`), through the
-font's `GPOS` pair adjustment or `kern` table (`ttf.mojo`). The
-adjustment moves the pen between two glyphs and nothing else: it is
-applied in the one loop each pass runs over a line's visual-order
-codepoints, so `measure_text` and `draw_text` accumulate the same
-positions, and the glyph mask cache -- which holds a glyph's coverage,
-not its place on the line -- is keyed and filled exactly as before.
-`kerning=False` on either restores the plain sum of `hmtx` advances.
+Adjacent glyphs then kern against each other (`_kern_offset`), through
+the font's `GPOS` pair adjustment or `kern` table. Kerning is between
+the *substituted* glyphs, the order a shaper applies the two tables in:
+a pair adjustment written for "f" does not apply across an "fi"
+ligature, because the ligature is what sits on the line. The adjustment
+moves the pen between two glyphs and nothing else, so the glyph mask
+cache -- which holds a glyph's coverage, not its place on the line --
+is untouched by it. `kerning=False` restores the plain sum of `hmtx`
+advances.
 
-Every glyph also goes through font fallback (`_resolve_glyph`). If the
-requested family has no real glyph for a codepoint (`has_glyph`
-distinguishes one from ".notdef", index 0), that character resolves
-through `resolve_font_file_for_char`. This package bundles no fonts, so
-a CJK/Cyrillic/symbol character requested under a Latin-only family
-renders through whatever installed font has it; one missing everywhere
-degrades to the unconstrained best match. Fallback faces cache alongside
-the primary face.
+Shaping only substitutes among characters the primary face has glyphs
+for, since a ligature is defined over glyphs of one font. Everything
+else goes through font fallback (`_resolve_glyph`): a codepoint the
+requested family has no real glyph for (glyph index 0, ".notdef")
+resolves through `resolve_font_file_for_char`. This package bundles no
+fonts, so a CJK/Cyrillic/symbol character requested under a Latin-only
+family renders through whatever installed font has it; one missing
+everywhere degrades to the unconstrained best match. Fallback faces
+cache alongside the primary face.
 
 FontSlant/FontWeight come from font_discovery.mojo and TextAlign from
 text_align.mojo, both re-exported here.
@@ -67,9 +75,10 @@ from canvas.text.font_cache import _cache_key, _GlyphMask, FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.glyph_outline import (
     face_line_metrics,
+    glyph_index_metrics,
+    glyph_index_path,
     glyph_metrics,
     glyph_path,
-    has_glyph,
     GlyphMetrics,
 )
 from canvas.text.ttf import TTFFace
@@ -119,12 +128,14 @@ struct TextMetrics(ImplicitlyCopyable, Movable):
         self.advance = advance
 
 
-struct _LineLayout(ImplicitlyCopyable, Movable):
+struct _LineLayout(Movable):
     """One line's layout, computed in draw_text's first pass and reused
-    in its second.
+    in its second, including the shaped glyphs both passes place: the
+    measuring pass is what shapes them, so the render pass neither
+    repeats that work nor can disagree with it.
     """
 
-    var text: String
+    var glyphs: List[_ShapedGlyph]
     var x: Float64  # local (unrotated, anchor-relative) pen start X
     var y: Float64  # local (unrotated, anchor-relative) baseline Y
     var x_bearing: Float64
@@ -134,7 +145,7 @@ struct _LineLayout(ImplicitlyCopyable, Movable):
 
     def __init__(
         out self,
-        text: String,
+        var glyphs: List[_ShapedGlyph],
         x: Float64,
         y: Float64,
         x_bearing: Float64,
@@ -142,7 +153,7 @@ struct _LineLayout(ImplicitlyCopyable, Movable):
         width: Float64,
         height: Float64,
     ):
-        self.text = text
+        self.glyphs = glyphs^
         self.x = x
         self.y = y
         self.x_bearing = x_bearing
@@ -232,6 +243,70 @@ def _visual_codepoints(line_text: String) -> List[Int]:
     return visual_order(codepoints, base_level)
 
 
+struct _ShapedGlyph(ImplicitlyCopyable, Movable):
+    """One layout unit: the glyph the passes place, plus the character
+    it came from.
+
+    `glyph` is an index into the primary face, or 0 when the primary
+    face has no glyph for `codepoint` and the character resolves
+    through font fallback instead. `codepoint` is -1 when a `GSUB`
+    substitution produced `glyph`, since a ligature stands for several
+    characters and a substituted single glyph is no longer the one its
+    character maps to -- either way the codepoint has stopped naming
+    the glyph.
+    """
+
+    var glyph: Int
+    var codepoint: Int
+
+    def __init__(out self, glyph: Int, codepoint: Int):
+        self.glyph = glyph
+        self.codepoint = codepoint
+
+
+def _shape_line(
+    mut face: TTFFace, line_text: String, ligatures: Bool
+) raises -> List[_ShapedGlyph]:
+    """One line's characters as the glyph sequence every pass lays out:
+    bidi visual order, mapped through `cmap`, with the font's `liga`
+    and `ccmp` substitutions applied.
+
+    Only glyphs of the primary face substitute, since a ligature is
+    defined over glyphs of one font. A character that falls back to
+    another font maps to glyph 0 here, which `substitute_glyphs` leaves
+    alone and no ligature absorbs, and it keeps its own codepoint so
+    the fallback lookup still finds it.
+    """
+    var codepoints = _visual_codepoints(line_text)
+    var count = len(codepoints)
+    var glyphs = List[Int](capacity=count)
+    for i in range(count):
+        glyphs.append(face.glyph_index_for_codepoint(codepoints[i]))
+
+    var out = List[_ShapedGlyph](capacity=count)
+    if not (ligatures and face.has_substitutions()):
+        for i in range(count):
+            out.append(_ShapedGlyph(glyphs[i], codepoints[i]))
+        return out^
+
+    var shaped = face.substitute_glyphs(glyphs)
+    if not shaped.changed:
+        for i in range(count):
+            out.append(_ShapedGlyph(glyphs[i], codepoints[i]))
+        return out^
+
+    var source = 0
+    for i in range(len(shaped.glyphs)):
+        # An untouched glyph keeps its codepoint; anything the lookups
+        # rewrote or merged no longer has one.
+        if shaped.clusters[i] == 1 and shaped.glyphs[i] == glyphs[source]:
+            out.append(_ShapedGlyph(shaped.glyphs[i], codepoints[source]))
+        else:
+            out.append(_ShapedGlyph(shaped.glyphs[i], -1))
+        source += shaped.clusters[i]
+    return out^
+
+
 struct _PositionedGlyph(Movable):
     """One glyph's metrics plus its outline, positioned at the
     (pen_x, pen_y) it was resolved for.
@@ -251,31 +326,31 @@ def _resolve_glyph(
     slant: FontSlant,
     weight: FontWeight,
     size: Float64,
-    codepoint: Int,
+    shaped: _ShapedGlyph,
     pen_x: Float64,
     pen_y: Float64,
     mut cache: FontCache,
 ) raises -> _PositionedGlyph:
-    """This character's metrics and outline, from `primary` if it has a
-    glyph for `codepoint`, otherwise from a fallback font resolved
-    through `resolve_font_file_for_char` (codepoint-constrained
-    matching -- e.g. CJK text requested under a Latin-only family).
-    Both the fallback path and the parsed fallback face are cached by
-    `cache`, so several fallback glyphs for the same codepoint cost one
-    lookup and one parse.
+    """This layout unit's metrics and outline, from `primary` when
+    shaping found it a glyph there, otherwise from a fallback font
+    resolved through `resolve_font_file_for_char` (codepoint-
+    constrained matching -- e.g. CJK text requested under a Latin-only
+    family). Both the fallback path and the parsed fallback face are
+    cached by `cache`, so several fallback glyphs for the same
+    codepoint cost one lookup and one parse.
     """
-    if has_glyph(primary, codepoint):
+    if shaped.glyph != 0:
         return _PositionedGlyph(
-            glyph_metrics(primary, codepoint),
-            glyph_path(primary, codepoint, pen_x, pen_y),
+            glyph_index_metrics(primary, shaped.glyph),
+            glyph_index_path(primary, shaped.glyph, pen_x, pen_y),
         )
 
     var fallback = cache.resolve_face_for_char(
-        family, slant, weight, codepoint, size
+        family, slant, weight, shaped.codepoint, size
     )
     return _PositionedGlyph(
-        glyph_metrics(fallback[], codepoint),
-        glyph_path(fallback[], codepoint, pen_x, pen_y),
+        glyph_metrics(fallback[], shaped.codepoint),
+        glyph_path(fallback[], shaped.codepoint, pen_x, pen_y),
     )
 
 
@@ -285,7 +360,7 @@ def _resolve_glyph_metrics(
     slant: FontSlant,
     weight: FontWeight,
     size: Float64,
-    codepoint: Int,
+    shaped: _ShapedGlyph,
     mut cache: FontCache,
 ) raises -> GlyphMetrics:
     """`_resolve_glyph` without the outline: the same primary-or-
@@ -293,33 +368,29 @@ def _resolve_glyph_metrics(
     pass needs nothing else, so it skips building a Path per glyph that
     the render pass would build again anyway.
     """
-    if has_glyph(primary, codepoint):
-        return glyph_metrics(primary, codepoint)
+    if shaped.glyph != 0:
+        return glyph_index_metrics(primary, shaped.glyph)
     var fallback = cache.resolve_face_for_char(
-        family, slant, weight, codepoint, size
+        family, slant, weight, shaped.codepoint, size
     )
-    return glyph_metrics(fallback[], codepoint)
+    return glyph_metrics(fallback[], shaped.codepoint)
 
 
-def _kern_offset(
-    mut face: TTFFace, left_codepoint: Int, right_codepoint: Int
-) raises -> Float64:
-    """The pair kerning between two adjacent codepoints, in pixels at
-    `face`'s active size.
+def _kern_offset(mut face: TTFFace, left: Int, right: Int) raises -> Float64:
+    """The pair kerning between two adjacent glyphs of `face`, in
+    pixels at its active size.
 
-    Zero unless both codepoints have a glyph in `face`: a pair
-    adjustment is defined between two glyphs of one font, so a
-    character that fell back to another face kerns against neither of
-    its neighbours. `glyph_index_for_codepoint` returning 0
-    (".notdef") is exactly that test, and is already memoized.
+    The arguments are glyph indices, not codepoints, so a pair kerns as
+    the glyphs shaping produced rather than as the characters typed:
+    once "f" and "i" become one ligature glyph, an "f" pair adjustment
+    no longer applies across it. Glyph 0 (".notdef") is the sentinel
+    for "no glyph here", which covers both the start of a line and a
+    character that fell back to another face -- a pair adjustment is
+    defined between two glyphs of one font.
     """
+    if left == 0 or right == 0:
+        return 0.0
     if not face.has_kerning():
-        return 0.0
-    var left = face.glyph_index_for_codepoint(left_codepoint)
-    if left == 0:
-        return 0.0
-    var right = face.glyph_index_for_codepoint(right_codepoint)
-    if right == 0:
         return 0.0
     var units = face.kern_adjustment(left, right)
     if units == 0:
@@ -329,7 +400,7 @@ def _kern_offset(
 
 def _measure_line(
     mut face: TTFFace,
-    line_text: String,
+    glyphs: List[_ShapedGlyph],
     family: String,
     slant: FontSlant,
     weight: FontWeight,
@@ -338,9 +409,9 @@ def _measure_line(
     mut cache: FontCache,
 ) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
-    all zero for a blank/whitespace-only line) and total advance.
-    Walks every codepoint in bidi visual order, accumulating advances
-    and pair kerning and combining inked glyphs into one tight bbox.
+    all zero for a blank/whitespace-only line) and total advance, from
+    the glyphs `_shape_line` produced for it. Accumulates advances and
+    pair kerning and combines inked glyphs into one tight bbox.
     `family`/`slant`/`weight`/`size`/`cache` serve only
     _resolve_glyph's fallback lookup; `face` determines the rest.
     """
@@ -350,14 +421,13 @@ def _measure_line(
     var min_y = 1.0e18
     var max_y = -1.0e18
     var any_ink = False
-    var previous = -1
-    for cp in _visual_codepoints(line_text):
-        var codepoint = Int(cp)
-        if kerning and previous >= 0:
-            pen_x += _kern_offset(face, previous, codepoint)
-        previous = codepoint
+    var previous = 0
+    for shaped in glyphs:
+        if kerning:
+            pen_x += _kern_offset(face, previous, shaped.glyph)
+        previous = shaped.glyph
         var gm = _resolve_glyph_metrics(
-            face, family, slant, weight, size, codepoint, cache
+            face, family, slant, weight, size, shaped, cache
         )
         if gm.width > 0.0 and gm.height > 0.0:
             var left = pen_x + gm.bearing_x
@@ -393,6 +463,7 @@ def _layout_block(
     rotation: Float64,
     align: TextAlign,
     kerning: Bool,
+    ligatures: Bool,
     mut cache: FontCache,
 ) raises -> _BlockLayout:
     """The two-pass layout math: measure every "\\n"-separated line,
@@ -409,9 +480,9 @@ def _layout_block(
     var lines = List[_LineLayout](capacity=len(raw_lines))
     var any_ink = False
     for i in range(len(raw_lines)):
-        var line_text = String(raw_lines[i])
+        var glyphs = _shape_line(face[], String(raw_lines[i]), ligatures)
         var measured = _measure_line(
-            face[], line_text, family, slant, weight, size, kerning, cache
+            face[], glyphs, family, slant, weight, size, kerning, cache
         )
         var baseline_y = Float64(i) * line_height
         var x_offset = 0.0
@@ -420,7 +491,7 @@ def _layout_block(
         elif align == TextAlign.RIGHT:
             x_offset = -measured.advance
         var layout = _LineLayout(
-            line_text,
+            glyphs^,
             x_offset,
             baseline_y,
             measured.x_bearing,
@@ -430,7 +501,7 @@ def _layout_block(
         )
         if layout.has_ink():
             any_ink = True
-        lines.append(layout)
+        lines.append(layout^)
 
     var c = cos(rotation)
     var s = sin(rotation)
@@ -438,7 +509,8 @@ def _layout_block(
     var rot_max_x = -1.0e18
     var rot_min_y = 1.0e18
     var rot_max_y = -1.0e18
-    for line in lines:
+    for i in range(len(lines)):
+        ref line = lines[i]
         if not line.has_ink():
             continue
         var bx = line.x + line.x_bearing
@@ -481,6 +553,7 @@ def measure_text(
     slant: FontSlant = FontSlant.NORMAL,
     weight: FontWeight = FontWeight.NORMAL,
     kerning: Bool = True,
+    ligatures: Bool = True,
 ) raises -> TextMetrics:
     """Measure `text` at `size` points in `family` without drawing it.
 
@@ -501,12 +574,15 @@ def measure_text(
         slant: Requested upright/italic/oblique style.
         weight: Requested normal/bold weight.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
 
     Returns:
         `text`'s width/height/advance at that size.
     """
     var cache = FontCache()
-    return measure_text(text, size, family, slant, weight, kerning, cache=cache)
+    return measure_text(
+        text, size, family, slant, weight, kerning, ligatures, cache=cache
+    )
 
 
 def measure_text(
@@ -516,6 +592,7 @@ def measure_text(
     slant: FontSlant = FontSlant.NORMAL,
     weight: FontWeight = FontWeight.NORMAL,
     kerning: Bool = True,
+    ligatures: Bool = True,
     *,
     mut cache: FontCache,
 ) raises -> TextMetrics:
@@ -529,14 +606,16 @@ def measure_text(
         slant: Requested upright/italic/oblique style.
         weight: Requested normal/bold weight.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
         cache: Shared cache for font resolution and parsed faces.
 
     Returns:
         `text`'s width/height/advance at that size.
     """
     var face = cache.resolve_face(family, slant, weight, size)
+    var glyphs = _shape_line(face[], text, ligatures)
     var measured = _measure_line(
-        face[], text, family, slant, weight, size, kerning, cache
+        face[], glyphs, family, slant, weight, size, kerning, cache
     )
     return TextMetrics(measured.width, measured.height, measured.advance)
 
@@ -588,6 +667,7 @@ def measure_text_block(
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
     kerning: Bool = True,
+    ligatures: Bool = True,
 ) raises -> TextBlockBounds:
     """The bounding box draw_text(canvas, x, y, text, ..., rotation=
     rotation, align=align) would render into, anchor-relative and
@@ -609,6 +689,7 @@ def measure_text_block(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
 
     Returns:
         The block's anchor-relative bounding box.
@@ -623,6 +704,7 @@ def measure_text_block(
         rotation,
         align,
         kerning,
+        ligatures,
         cache=cache,
     )
 
@@ -636,6 +718,7 @@ def measure_text_block(
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
     kerning: Bool = True,
+    ligatures: Bool = True,
     *,
     mut cache: FontCache,
 ) raises -> TextBlockBounds:
@@ -651,6 +734,7 @@ def measure_text_block(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
         cache: Shared cache for font resolution and parsed faces.
 
     Returns:
@@ -659,7 +743,16 @@ def measure_text_block(
     if text == "":
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
     var block = _layout_block(
-        text, size, family, slant, weight, rotation, align, kerning, cache
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        ligatures,
+        cache,
     )
     if not block.any_ink:
         return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
@@ -742,6 +835,7 @@ def draw_text(
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
     kerning: Bool = True,
+    ligatures: Bool = True,
 ) raises:
     """Render `text` (one or more "\\n"-separated lines) anchored at
     `(x, y)` in `family` at `size` points, compositing onto `canvas` in
@@ -773,6 +867,7 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
     """
     var cache = FontCache()
     draw_text(
@@ -788,6 +883,7 @@ def draw_text(
         rotation,
         align,
         kerning,
+        ligatures,
         cache=cache,
     )
 
@@ -805,6 +901,7 @@ def draw_text(
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
     kerning: Bool = True,
+    ligatures: Bool = True,
     *,
     mut cache: FontCache,
 ) raises:
@@ -825,6 +922,7 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
         cache: Shared cache for font resolution and parsed faces.
     """
     draw_text(
@@ -840,6 +938,7 @@ def draw_text(
         rotation,
         align,
         kerning,
+        ligatures,
         cache=cache,
     )
 
@@ -857,6 +956,7 @@ def draw_text(
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
     kerning: Bool = True,
+    ligatures: Bool = True,
 ) raises:
     """`draw_text` anchored at a sub-pixel position, resolving fonts
     fresh. See the sub-pixel cached overload below for what the anchor
@@ -876,6 +976,7 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
     """
     var cache = FontCache()
     draw_text(
@@ -891,6 +992,7 @@ def draw_text(
         rotation,
         align,
         kerning,
+        ligatures,
         cache=cache,
     )
 
@@ -909,6 +1011,7 @@ def _draw_text_transformed(
     rotation: Float64,
     align: TextAlign,
     kerning: Bool,
+    ligatures: Bool,
     mut cache: FontCache,
 ) raises:
     """`draw_text` under a canvas transform that is more than a
@@ -920,7 +1023,16 @@ def _draw_text_transformed(
     orientation, so it is not used here.
     """
     var block = _layout_block(
-        text, size, family, slant, weight, rotation, align, kerning, cache
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        ligatures,
+        cache,
     )
     if not block.any_ink:
         return
@@ -932,22 +1044,21 @@ def _draw_text_transformed(
     )
     var saved = canvas._take_transform()
     try:
-        for line in block.lines:
-            if line.text == "":
-                continue
+        for i in range(len(block.lines)):
+            ref line = block.lines[i]
             var pen_x = line.x
-            var previous = -1
-            for codepoint in _visual_codepoints(line.text):
-                if kerning and previous >= 0:
-                    pen_x += _kern_offset(face[], previous, codepoint)
-                previous = codepoint
+            var previous = 0
+            for shaped in line.glyphs:
+                if kerning:
+                    pen_x += _kern_offset(face[], previous, shaped.glyph)
+                previous = shaped.glyph
                 var g = _resolve_glyph(
                     face[],
                     family,
                     slant,
                     weight,
                     size,
-                    codepoint,
+                    shaped,
                     pen_x,
                     line.y,
                     cache,
@@ -1011,7 +1122,7 @@ def _rasterize_glyph(
     slant: FontSlant,
     weight: FontWeight,
     size: Float64,
-    codepoint: Int,
+    shaped: _ShapedGlyph,
     frac_x: Float64,
     frac_y: Float64,
     mut cache: FontCache,
@@ -1022,7 +1133,7 @@ def _rasterize_glyph(
     curve flattening `fill_path_aa` applies to it, kept as counts.
     """
     var g = _resolve_glyph(
-        primary, family, slant, weight, size, codepoint, frac_x, frac_y, cache
+        primary, family, slant, weight, size, shaped, frac_x, frac_y, cache
     )
     if not (g.metrics.width > 0.0 and g.metrics.height > 0.0):
         return _GlyphMask(
@@ -1041,7 +1152,7 @@ def _draw_cached_glyph(
     slant: FontSlant,
     weight: FontWeight,
     size: Float64,
-    codepoint: Int,
+    shaped: _ShapedGlyph,
     origin_x: Float64,
     origin_y: Float64,
     key_prefix: String,
@@ -1050,10 +1161,20 @@ def _draw_cached_glyph(
 ) raises -> Float64:
     """Composite one glyph with its origin at (origin_x, origin_y)
     through the cache, rasterizing it on a miss, and return its
-    advance. The key is the face, size and codepoint plus the origin's
-    sub-pixel part in 1/`_SUBPIXEL_STEPS` px; the whole-pixel part
-    becomes the composite offset. A whole-pixel origin rasterizes at
-    step 0, exactly where the direct fill would.
+    advance. The key is the face and size (`key_prefix`), then the
+    glyph's identity, then the origin's sub-pixel part in
+    1/`_SUBPIXEL_STEPS` px; the whole-pixel part becomes the composite
+    offset. A whole-pixel origin rasterizes at step 0, exactly where
+    the direct fill would.
+
+    A glyph's identity is its codepoint where it still has one, and
+    "g" plus a primary-face glyph index where a `GSUB` substitution
+    took it away -- two disjoint spellings, since a codepoint is
+    written as decimal digits alone. Keying the substituted glyphs by
+    index gives a ligature its own mask; keying everything else by
+    codepoint keeps the fallback glyphs, which have no index in the
+    primary face, distinguishable from each other and every unshaped
+    glyph's key what it was.
     """
     var ix = Int(floor(origin_x))
     var iy = Int(floor(origin_y))
@@ -1068,13 +1189,11 @@ def _draw_cached_glyph(
         step_y = 0
     var frac_x = Float64(step_x) / _SUBPIXEL_STEPS
     var frac_y = Float64(step_y) / _SUBPIXEL_STEPS
+    var identity = String(
+        shaped.codepoint
+    ) if shaped.codepoint >= 0 else "g" + String(shaped.glyph)
     var key = (
-        key_prefix
-        + String(codepoint)
-        + "|"
-        + String(step_x)
-        + "|"
-        + String(step_y)
+        key_prefix + identity + "|" + String(step_x) + "|" + String(step_y)
     )
     if key not in cache._glyph_masks:
         cache._store_glyph_mask(
@@ -1085,7 +1204,7 @@ def _draw_cached_glyph(
                 slant,
                 weight,
                 size,
-                codepoint,
+                shaped,
                 frac_x,
                 frac_y,
                 cache,
@@ -1110,6 +1229,7 @@ def draw_text(
     rotation: Float64 = 0.0,
     align: TextAlign = TextAlign.LEFT,
     kerning: Bool = True,
+    ligatures: Bool = True,
     *,
     mut cache: FontCache,
 ) raises:
@@ -1139,6 +1259,7 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `liga`/`ccmp` substitutions.
         cache: Shared cache for font resolution and parsed faces.
     """
     if canvas.has_transform():
@@ -1158,6 +1279,7 @@ def draw_text(
                 rotation,
                 align,
                 kerning,
+                ligatures,
                 cache,
             )
             return
@@ -1178,6 +1300,7 @@ def draw_text(
                 rotation,
                 align,
                 kerning,
+                ligatures,
                 cache=cache,
             )
         except e:
@@ -1192,7 +1315,16 @@ def draw_text(
     # unchanged inside _layout_block, reducing to that line's
     # unrotated ink box.
     var block = _layout_block(
-        text, size, family, slant, weight, rotation, align, kerning, cache
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        ligatures,
+        cache,
     )
     if not block.any_ink:
         # Every line whitespace-only/empty -- nothing to draw.
@@ -1209,15 +1341,14 @@ def draw_text(
             + String(Int(ceil(size)))
             + "|"
         )
-        for line in block.lines:
-            if line.text == "":
-                continue
+        for i in range(len(block.lines)):
+            ref line = block.lines[i]
             var pen_x = line.x
-            var previous = -1
-            for codepoint in _visual_codepoints(line.text):
-                if kerning and previous >= 0:
-                    pen_x += _kern_offset(face[], previous, codepoint)
-                previous = codepoint
+            var previous = 0
+            for shaped in line.glyphs:
+                if kerning:
+                    pen_x += _kern_offset(face[], previous, shaped.glyph)
+                previous = shaped.glyph
                 pen_x += _draw_cached_glyph(
                     canvas,
                     face[],
@@ -1225,7 +1356,7 @@ def draw_text(
                     slant,
                     weight,
                     size,
-                    codepoint,
+                    shaped,
                     x + pen_x,
                     y + line.y,
                     key_prefix,
@@ -1239,22 +1370,21 @@ def draw_text(
     var anchor_x = x
     var anchor_y = y
 
-    for line in block.lines:
-        if line.text == "":
-            continue
+    for i in range(len(block.lines)):
+        ref line = block.lines[i]
         var pen_x = line.x
-        var previous = -1
-        for codepoint in _visual_codepoints(line.text):
-            if kerning and previous >= 0:
-                pen_x += _kern_offset(face[], previous, codepoint)
-            previous = codepoint
+        var previous = 0
+        for shaped in line.glyphs:
+            if kerning:
+                pen_x += _kern_offset(face[], previous, shaped.glyph)
+            previous = shaped.glyph
             var g = _resolve_glyph(
                 face[],
                 family,
                 slant,
                 weight,
                 size,
-                codepoint,
+                shaped,
                 pen_x,
                 line.y,
                 cache,

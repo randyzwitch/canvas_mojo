@@ -1,9 +1,10 @@
 """Native TrueType (`sfnt`/`glyf`) font file parser: reads a font file's
 binary tables directly (table directory, `head`, `maxp`, `hhea`,
-`hmtx`, `cmap`, `glyf`, `loca`, `kern`, `GPOS`) rather than linking a
-font library. Field offsets and decode algorithms follow Microsoft's
-OpenType 1.9.1 specification (learn.microsoft.com/typography/opentype/
-spec/{otff,head,maxp,hhea,hmtx,cmap,loca,glyf,kern,gpos,chapter2}).
+`hmtx`, `cmap`, `glyf`, `loca`, `kern`, `GPOS`, `GSUB`) rather than
+linking a font library. Field offsets and decode algorithms follow
+Microsoft's OpenType 1.9.1 specification (learn.microsoft.com/
+typography/opentype/spec/{otff,head,maxp,hhea,hmtx,cmap,loca,glyf,kern,
+gpos,gsub,chapter2}).
 
 Scope:
 
@@ -11,13 +12,21 @@ Scope:
   `OTTO` (CFF outlines) raises rather than being misread; CFF is a
   different Type 2 charstring bytecode, natively cubic where TrueType is
   quadratic-with-implied-midpoints.
-- **Pair kerning only**, through `kern_adjustment`: `GPOS` lookup type 2
+- **Pair kerning**, through `kern_adjustment`: `GPOS` lookup type 2
   (PairPos formats 1 and 2, including behind an extension lookup type
   9) under the `kern` feature, and the `kern` table's format 0
-  horizontal subtables. No `GSUB` (ligatures, contextual substitution),
-  no mark attachment, no contextual positioning, and lookup flags such
-  as IgnoreMarks are not honored -- an intervening mark glyph breaks a
-  pair here where a full shaper would kern through it.
+  horizontal subtables. No mark attachment, no contextual positioning,
+  and lookup flags such as IgnoreMarks are not honored -- an
+  intervening mark glyph breaks a pair here where a full shaper would
+  kern through it.
+- **Single and ligature substitution**, through `substitute_glyphs`:
+  `GSUB` lookup types 1 and 4 (including behind an extension lookup
+  type 7) under the `liga` and `ccmp` features -- enough for the Latin
+  "fi"/"fl"/"ffi" ligatures. The multiple, alternate, contextual and
+  chained-context substitutions the same features also use are
+  skipped, as are the joining features (`init`/`medi`/`fina`) an Arabic
+  script needs. Substitution runs on the glyphs in visual order, so a
+  right-to-left script substitutes against reversed neighbours.
 - **No hinting.** Every glyph goes through `fill_path_aa`'s supersampled
   coverage AA instead, which keeps unhinted outlines correct at the sizes
   a chart uses.
@@ -97,6 +106,13 @@ comptime _KERN_OVERRIDE = 0x0008
 comptime _GPOS_LOOKUP_PAIR = 2
 comptime _GPOS_LOOKUP_EXTENSION = 9
 
+# GSUB lookup types read here: one-for-one substitution, many-for-one
+# substitution (the ligatures), and GSUB's own extension wrapper, which
+# is type 7 rather than GPOS's 9.
+comptime _GSUB_LOOKUP_SINGLE = 1
+comptime _GSUB_LOOKUP_LIGATURE = 4
+comptime _GSUB_LOOKUP_EXTENSION = 7
+
 # ValueRecord field bits. Only XAdvance is read; XPlacement and
 # YPlacement precede it in the record when set, so their bits decide
 # where it sits.
@@ -115,6 +131,13 @@ def _append_unique(mut values: List[Int], value: Int):
 def _contains(values: List[Int], value: Int) -> Bool:
     for i in range(len(values)):
         if values[i] == value:
+            return True
+    return False
+
+
+def _contains_tag(tags: List[String], tag: String) -> Bool:
+    for i in range(len(tags)):
+        if tags[i] == tag:
             return True
     return False
 
@@ -312,24 +335,25 @@ struct _PairPosLookups(Movable):
         self.bounds.append(0)
 
 
-def _gpos_kern_lookups(
-    data: List[UInt8], gpos_offset: Int
-) raises -> _PairPosLookups:
-    """Walk `GPOS`'s script -> feature -> lookup lists and collect the
-    PairPos subtables the `kern` feature selects.
+def _feature_lookup_indices(
+    data: List[UInt8], table_offset: Int, tags: List[String]
+) raises -> List[Int]:
+    """Walk a `GPOS`/`GSUB` table's script -> feature lists and collect
+    the lookup indices the features named by `tags` select, each listed
+    once. Both tables put their script, feature and lookup list offsets
+    at the same three header positions, so one walk serves `kern` in
+    `GPOS` and `liga`/`ccmp` in `GSUB`.
 
     Every script's default language system contributes its feature
     indices; the language-specific LangSys records are not read, so a
-    font whose kerning hangs off one of those alone kerns as if it had
-    none. Lookups are visited in LookupList order, which is the order
-    the spec applies them in.
+    font hanging a feature off one of those alone behaves as if the
+    feature were absent.
     """
-    var out = _PairPosLookups()
-    if gpos_offset < 0:
+    var out = List[Int]()
+    if table_offset < 0:
         return out^
-    var script_list = gpos_offset + _u16(data, gpos_offset + 4)
-    var feature_list = gpos_offset + _u16(data, gpos_offset + 6)
-    var lookup_list = gpos_offset + _u16(data, gpos_offset + 8)
+    var script_list = table_offset + _u16(data, table_offset + 4)
+    var feature_list = table_offset + _u16(data, table_offset + 6)
 
     var feature_indices = List[Int]()
     var script_count = _u16(data, script_list)
@@ -343,15 +367,30 @@ def _gpos_kern_lookups(
         for k in range(count):
             _append_unique(feature_indices, _u16(data, lang_sys + 6 + k * 2))
 
-    var lookup_indices = List[Int]()
     for i in range(len(feature_indices)):
         var record = feature_list + 2 + feature_indices[i] * 6
-        if _tag_at(data, record) != "kern":
+        if not _contains_tag(tags, _tag_at(data, record)):
             continue
         var feature = feature_list + _u16(data, record + 4)
         var count = _u16(data, feature + 2)
         for k in range(count):
-            _append_unique(lookup_indices, _u16(data, feature + 4 + k * 2))
+            _append_unique(out, _u16(data, feature + 4 + k * 2))
+    return out^
+
+
+def _gpos_kern_lookups(
+    data: List[UInt8], gpos_offset: Int
+) raises -> _PairPosLookups:
+    """Collect the PairPos subtables the `GPOS` `kern` feature selects.
+    Lookups are visited in LookupList order, which is the order the
+    spec applies them in.
+    """
+    var out = _PairPosLookups()
+    if gpos_offset < 0:
+        return out^
+    var lookup_list = gpos_offset + _u16(data, gpos_offset + 8)
+    var tags: List[String] = ["kern"]
+    var lookup_indices = _feature_lookup_indices(data, gpos_offset, tags)
 
     var lookup_count = _u16(data, lookup_list)
     for index in range(lookup_count):
@@ -448,6 +487,316 @@ def _kern_format0_lookup(
         else:
             hi = mid - 1
     return (False, 0)
+
+
+def _coverage_ranges(
+    data: List[UInt8], coverage: Int, mut out: List[Int]
+) raises:
+    """Append a Coverage table's glyphs to `out` as [first, last] pairs,
+    runs of consecutive ids collapsed into one pair. Format 2 already
+    stores ranges; format 1 stores single ids in ascending order, which
+    is what makes collapsing them a single pass.
+    """
+    var format = _u16(data, coverage)
+    if format == 1:
+        var count = _u16(data, coverage + 2)
+        var i = 0
+        while i < count:
+            var first = _u16(data, coverage + 4 + i * 2)
+            var last = first
+            var k = i + 1
+            while k < count and _u16(data, coverage + 4 + k * 2) == last + 1:
+                last += 1
+                k += 1
+            out.append(first)
+            out.append(last)
+            i = k
+    elif format == 2:
+        var count = _u16(data, coverage + 2)
+        for i in range(count):
+            var record = coverage + 4 + i * 6
+            out.append(_u16(data, record))
+            out.append(_u16(data, record + 2))
+
+
+def _sorted_merged_ranges(var ranges: List[Int]) -> List[Int]:
+    """Sort [first, last] pairs by their first glyph and merge the ones
+    that overlap or touch, so membership is one bisection over the
+    result. Insertion sort, because the pairs come from a handful of
+    Coverage tables already in ascending order and the list is nearly
+    sorted to begin with.
+    """
+    var count = len(ranges) // 2
+    for i in range(1, count):
+        var first = ranges[i * 2]
+        var last = ranges[i * 2 + 1]
+        var k = i - 1
+        while k >= 0 and ranges[k * 2] > first:
+            ranges[(k + 1) * 2] = ranges[k * 2]
+            ranges[(k + 1) * 2 + 1] = ranges[k * 2 + 1]
+            k -= 1
+        ranges[(k + 1) * 2] = first
+        ranges[(k + 1) * 2 + 1] = last
+
+    var out = List[Int]()
+    for i in range(count):
+        var first = ranges[i * 2]
+        var last = ranges[i * 2 + 1]
+        if len(out) > 0 and first <= out[len(out) - 1] + 1:
+            if last > out[len(out) - 1]:
+                out[len(out) - 1] = last
+        else:
+            out.append(first)
+            out.append(last)
+    return out^
+
+
+def _in_ranges(ranges: List[Int], glyph: Int) -> Bool:
+    """Whether `glyph` falls in one of the sorted, disjoint [first,
+    last] pairs `_sorted_merged_ranges` produced.
+    """
+    return _in_range_span(ranges, 0, len(ranges), glyph)
+
+
+def _in_range_span(
+    ranges: List[Int], first: Int, last: Int, glyph: Int
+) -> Bool:
+    """`_in_ranges` over `ranges[first:last]`, so several lookups' pair
+    lists can share one flat list.
+    """
+    var lo = first // 2
+    var hi = last // 2 - 1
+    while lo <= hi:
+        var mid = (lo + hi) // 2
+        if glyph < ranges[mid * 2]:
+            hi = mid - 1
+        elif glyph > ranges[mid * 2 + 1]:
+            lo = mid + 1
+        else:
+            return True
+    return False
+
+
+def _single_subst_lookup(
+    data: List[UInt8], subtable: Int, glyph: Int
+) raises -> Int:
+    """The glyph a SingleSubst subtable maps `glyph` to, or -1 when the
+    subtable does not cover it.
+
+    Format 1 adds a signed delta to the glyph id, modulo 65536, which
+    is how a font expresses a whole contiguous block of substitutions
+    (every lowercase letter to its small-cap) in four bytes. Format 2
+    lists a replacement per covered glyph.
+    """
+    var format = _u16(data, subtable)
+    var coverage_offset = _u16(data, subtable + 2)
+    if coverage_offset == 0:
+        return -1
+    var index = _coverage_index(data, subtable + coverage_offset, glyph)
+    if index < 0:
+        return -1
+    if format == 1:
+        return (glyph + _i16(data, subtable + 4)) & 0xFFFF
+    if format == 2:
+        if index >= _u16(data, subtable + 4):
+            return -1
+        return _u16(data, subtable + 6 + index * 2)
+    return -1
+
+
+def _ligature_subst_lookup(
+    data: List[UInt8], subtable: Int, glyphs: List[Int], start: Int
+) raises -> Tuple[Int, Int]:
+    """The ligature a LigatureSubst subtable forms at `glyphs[start]`,
+    as (ligature glyph, components consumed), or (-1, 0) when none
+    matches.
+
+    Coverage holds each ligature's first component and selects that
+    component's LigatureSet, whose Ligature records carry the remaining
+    components in full. Records are tried in the order the font lists
+    them and the first whose components all match wins: fonts order a
+    set longest-first so "ffi" is reached before the "ff" that is its
+    own prefix, and this preserves that order rather than imposing one.
+    A record whose components run past the end of `glyphs`, or diverge
+    partway, falls through to the next.
+    """
+    if _u16(data, subtable) != 1:
+        return (-1, 0)
+    var coverage_offset = _u16(data, subtable + 2)
+    if coverage_offset == 0:
+        return (-1, 0)
+    var index = _coverage_index(data, subtable + coverage_offset, glyphs[start])
+    if index < 0 or index >= _u16(data, subtable + 4):
+        return (-1, 0)
+    var set_offset = _u16(data, subtable + 6 + index * 2)
+    if set_offset == 0:
+        return (-1, 0)
+    var ligature_set = subtable + set_offset
+    var count = _u16(data, ligature_set)
+    for i in range(count):
+        var ligature = ligature_set + _u16(data, ligature_set + 2 + i * 2)
+        # componentCount counts the first component, which Coverage
+        # already matched, so only componentCount - 1 ids are stored.
+        var components = _u16(data, ligature + 2)
+        if components < 1 or start + components > len(glyphs):
+            continue
+        var matched = True
+        for k in range(1, components):
+            # Glyph 0 (".notdef") stands for a character this face has
+            # no glyph for, which another font will draw, so no
+            # component ever matches it.
+            if (
+                glyphs[start + k] == 0
+                or _u16(data, ligature + 2 + k * 2) != glyphs[start + k]
+            ):
+                matched = False
+                break
+        if matched:
+            return (_u16(data, ligature), components)
+    return (-1, 0)
+
+
+struct _SubstLookups(Movable):
+    """Every SingleSubst and LigatureSubst subtable the `ccmp` and
+    `liga` features reach, grouped by the lookup holding it:
+    `subtables[bounds[i]]` through `subtables[bounds[i + 1]]` are
+    lookup `i`'s, in the order the font lists them. `types[k]` is
+    `subtables[k]`'s lookup type with any extension wrapper unwrapped,
+    since the two types decode differently.
+
+    The grouping carries the application rule: one lookup sweeps the
+    whole glyph sequence before the next one starts, so a lookup
+    substitutes into what a later lookup then matches.
+    """
+
+    var subtables: List[Int]
+    var types: List[Int]
+    var bounds: List[Int]
+
+    var lookup_glyphs: List[Int]
+    var lookup_bounds: List[Int]
+    """Every glyph lookup `i` could start a substitution at, as sorted
+    disjoint [first, last] pairs in
+    `lookup_glyphs[lookup_bounds[i]]` through
+    `lookup_glyphs[lookup_bounds[i + 1]]` -- its subtables' Coverage
+    tables, merged. A lookup no glyph on a line falls inside changes
+    nothing there and is skipped whole, which is what keeps the three
+    lookups a Latin line does not touch off its cost.
+    """
+
+    var first_glyphs: List[Int]
+    """The same pairs merged across every lookup: the glyphs any
+    substitution could start at. A glyph outside this survives them
+    all, so one bisection here stands in for a Coverage search per
+    subtable.
+    """
+
+    def __init__(out self):
+        self.subtables = List[Int]()
+        self.types = List[Int]()
+        self.bounds = List[Int]()
+        self.bounds.append(0)
+        self.lookup_glyphs = List[Int]()
+        self.lookup_bounds = List[Int]()
+        self.lookup_bounds.append(0)
+        self.first_glyphs = List[Int]()
+
+
+def _gsub_subst_lookups(
+    data: List[UInt8], gsub_offset: Int
+) raises -> _SubstLookups:
+    """Collect the SingleSubst and LigatureSubst subtables the `GSUB`
+    `liga` and `ccmp` features select, in LookupList order.
+
+    `ccmp` joins `liga` because the two are read the same way and a
+    font's `ccmp` composition ("i" plus a combining acute to a
+    precomposed glyph) is meant to run for every script the way `liga`
+    does for Latin. Lookups of a type not read here -- the multiple and
+    contextual substitutions both features also use -- are skipped, so
+    such a font substitutes less than a full shaper would rather than
+    differently.
+    """
+    var out = _SubstLookups()
+    if gsub_offset < 0:
+        return out^
+    var lookup_list = gsub_offset + _u16(data, gsub_offset + 8)
+    var tags: List[String] = ["liga", "ccmp"]
+    var lookup_indices = _feature_lookup_indices(data, gsub_offset, tags)
+
+    var lookup_count = _u16(data, lookup_list)
+    for index in range(lookup_count):
+        if not _contains(lookup_indices, index):
+            continue
+        var lookup = lookup_list + _u16(data, lookup_list + 2 + index * 2)
+        var lookup_type = _u16(data, lookup)
+        if (
+            lookup_type != _GSUB_LOOKUP_SINGLE
+            and lookup_type != _GSUB_LOOKUP_LIGATURE
+            and lookup_type != _GSUB_LOOKUP_EXTENSION
+        ):
+            continue
+        var sub_count = _u16(data, lookup + 4)
+        var added = False
+        for k in range(sub_count):
+            var subtable = lookup + _u16(data, lookup + 6 + k * 2)
+            var actual = lookup_type
+            if lookup_type == _GSUB_LOOKUP_EXTENSION:
+                # ExtensionSubst format 1: the wrapped lookup's type
+                # plus a 32-bit offset from the wrapper's own start.
+                if _u16(data, subtable) != 1:
+                    continue
+                actual = _u16(data, subtable + 2)
+                if (
+                    actual != _GSUB_LOOKUP_SINGLE
+                    and actual != _GSUB_LOOKUP_LIGATURE
+                ):
+                    continue
+                subtable += _u32(data, subtable + 4)
+            var format = _u16(data, subtable)
+            if actual == _GSUB_LOOKUP_SINGLE:
+                if format != 1 and format != 2:
+                    continue
+            elif format != 1:
+                continue
+            out.subtables.append(subtable)
+            out.types.append(actual)
+            added = True
+        if added:
+            out.bounds.append(len(out.subtables))
+            var ranges = List[Int]()
+            for k in range(out.bounds[len(out.bounds) - 2], len(out.subtables)):
+                var coverage_offset = _u16(data, out.subtables[k] + 2)
+                if coverage_offset != 0:
+                    _coverage_ranges(
+                        data, out.subtables[k] + coverage_offset, ranges
+                    )
+            out.lookup_glyphs.extend(_sorted_merged_ranges(ranges^))
+            out.lookup_bounds.append(len(out.lookup_glyphs))
+
+    out.first_glyphs = _sorted_merged_ranges(out.lookup_glyphs.copy())
+    return out^
+
+
+struct ShapedRun(Movable):
+    """A glyph sequence after `GSUB` substitution. `clusters[i]` is how
+    many of the input glyphs `glyphs[i]` stands for -- 1 for a glyph
+    left alone or substituted one for one, 3 for an "ffi" ligature --
+    so a caller can walk back to the characters each output glyph came
+    from. The two lists are the same length, and the clusters sum to
+    the input length. `changed` is False when no lookup fired, which
+    lets a caller skip that walk entirely.
+    """
+
+    var glyphs: List[Int]
+    var clusters: List[Int]
+    var changed: Bool
+
+    def __init__(
+        out self, var glyphs: List[Int], var clusters: List[Int], changed: Bool
+    ):
+        self.glyphs = glyphs^
+        self.clusters = clusters^
+        self.changed = changed
 
 
 struct RawGlyphOutline(Movable):
@@ -558,6 +907,12 @@ struct TTFFace(Movable):
     units, memoizing `kern_adjustment`'s table walk.
     """
 
+    var _gsub: _SubstLookups
+    """SingleSubst and LigatureSubst subtables the `GSUB` `liga` and
+    `ccmp` features reach, grouped by lookup. Empty when the font has
+    neither feature.
+    """
+
     var _pixel_size: Int
     """-1 until `set_pixel_size` is called, so an unset size is not a
     valid one. Every read goes through `scale()`, which raises rather
@@ -613,6 +968,7 @@ struct TTFFace(Movable):
         var hmtx_off = -1
         var kern_off = -1
         var gpos_off = -1
+        var gsub_off = -1
 
         var pos = 12
         for _ in range(num_tables):
@@ -636,6 +992,8 @@ struct TTFFace(Movable):
                 kern_off = offset
             elif tag == "GPOS":
                 gpos_off = offset
+            elif tag == "GSUB":
+                gsub_off = offset
             pos += 16
 
         if (
@@ -668,12 +1026,14 @@ struct TTFFace(Movable):
         self._hmtx_offset = hmtx_off
         self._glyph_cache = Dict[Int, ArcPointer[RawGlyphOutline]]()
         self._cmap_cache = Dict[Int, Int]()
-        # Collecting the kerning subtable offsets walks a few hundred
-        # bytes of list headers, not the pair data itself, so it runs
-        # here rather than lazily on the first pair queried.
+        # Collecting the kerning and substitution subtable offsets
+        # walks a few hundred bytes of list headers, not the pair or
+        # ligature data itself, so it runs here rather than lazily on
+        # the first query.
         self._gpos_kern = _gpos_kern_lookups(data, gpos_off)
         self._kern_subtables = _kern_format0_subtables(data, kern_off)
         self._kern_cache = Dict[Int, Int]()
+        self._gsub = _gsub_subst_lookups(data, gsub_off)
         self._pixel_size = -1
         self.data = data^
 
@@ -793,6 +1153,153 @@ struct TTFFace(Movable):
             else:
                 total += found[1]
         return total
+
+    def has_substitutions(self) -> Bool:
+        """Whether this font carries glyph substitutions this module
+        reads -- a `GSUB` `liga` or `ccmp` feature with single or
+        ligature lookups.
+
+        Returns:
+            True if `substitute_glyphs` can change a glyph sequence.
+        """
+        return len(self._gsub.subtables) > 0
+
+    def substitute_glyphs(self, glyphs: List[Int]) raises -> ShapedRun:
+        """Apply the `liga` and `ccmp` lookups to a glyph sequence:
+        "f", "f", "i" comes back as the one "ffi" glyph where the font
+        has it.
+
+        Each lookup sweeps the whole sequence before the next one
+        starts, left to right. At each position the lookup's subtables
+        are tried in order and the first substitution found applies,
+        consuming its components; a position no subtable matches passes
+        through unchanged.
+
+        Glyph 0 (".notdef") neither substitutes nor joins a ligature,
+        so a character the face has no glyph for -- one another font
+        will draw -- separates the runs on either side of it.
+
+        Args:
+            glyphs: Glyph indices to substitute over, in the order they
+                are laid out.
+
+        Returns:
+            The substituted glyphs, with each one's span over `glyphs`.
+        """
+        var out = glyphs.copy()
+        var clusters = List[Int](capacity=len(glyphs))
+        # Whether any lookup could start at this position, decided once
+        # per glyph rather than once per glyph per lookup, which is
+        # what `first_glyphs` being the union across the lookups is
+        # for. Only a position a substitution rewrote is decided again.
+        # `positions` lists the same positions, short enough to be the
+        # cheap way to ask whether one lookup has anything to do.
+        var candidate = List[Bool](capacity=len(glyphs))
+        var positions = List[Int]()
+        for i in range(len(glyphs)):
+            clusters.append(1)
+            var covered = glyphs[i] != 0 and _in_ranges(
+                self._gsub.first_glyphs, glyphs[i]
+            )
+            candidate.append(covered)
+            if covered:
+                positions.append(i)
+        var changed = False
+
+        for i in range(len(self._gsub.bounds) - 1):
+            if len(positions) == 0:
+                break
+            # Nothing this lookup covers is on the line, so it cannot
+            # change anything and its sweep is skipped whole. Most
+            # lookups fail this on most lines.
+            var range_first = self._gsub.lookup_bounds[i]
+            var range_last = self._gsub.lookup_bounds[i + 1]
+            var reachable = False
+            for p in range(len(positions)):
+                if _in_range_span(
+                    self._gsub.lookup_glyphs,
+                    range_first,
+                    range_last,
+                    out[positions[p]],
+                ):
+                    reachable = True
+                    break
+            if not reachable:
+                continue
+
+            var first = self._gsub.bounds[i]
+            var last = self._gsub.bounds[i + 1]
+            # A substitution never lengthens the sequence, so the sweep
+            # compacts in place: `write` trails `pos`, and each step
+            # matches before it writes, so a write never lands on a
+            # glyph still to be read.
+            var write = 0
+            var pos = 0
+            var fired = False
+            while pos < len(out):
+                var glyph = -1
+                var consumed = 0
+                if candidate[pos]:
+                    for k in range(first, last):
+                        var subtable = self._gsub.subtables[k]
+                        if self._gsub.types[k] == _GSUB_LOOKUP_SINGLE:
+                            glyph = _single_subst_lookup(
+                                self.data, subtable, out[pos]
+                            )
+                            if glyph >= 0:
+                                consumed = 1
+                                break
+                        else:
+                            var found = _ligature_subst_lookup(
+                                self.data, subtable, out, pos
+                            )
+                            if found[0] >= 0:
+                                glyph = found[0]
+                                consumed = found[1]
+                                break
+                    if consumed == 1 and glyph == out[pos]:
+                        consumed = 0
+                if consumed == 0:
+                    # Until this sweep substitutes something, `write`
+                    # and `pos` are the same index and every entry is
+                    # already where it belongs, so the sweep reads and
+                    # writes nothing. Most lookups never fire on most
+                    # lines, and this is what keeps them near free.
+                    if not fired:
+                        pos += 1
+                        write += 1
+                        continue
+                    out[write] = out[pos]
+                    clusters[write] = clusters[pos]
+                    candidate[write] = candidate[pos]
+                    write += 1
+                    pos += 1
+                    continue
+                fired = True
+                changed = True
+                var span = 0
+                for c in range(pos, pos + consumed):
+                    span += clusters[c]
+                out[write] = glyph
+                clusters[write] = span
+                candidate[write] = glyph != 0 and _in_ranges(
+                    self._gsub.first_glyphs, glyph
+                )
+                write += 1
+                pos += consumed
+            if write < len(out):
+                out.resize(write, 0)
+                clusters.resize(write, 0)
+                candidate.resize(write, False)
+            if fired:
+                # The sweep moved glyphs, so the positions the next
+                # lookup skips on have to be recollected.
+                positions.clear()
+                for p in range(len(out)):
+                    if candidate[p]:
+                        positions.append(p)
+
+        return ShapedRun(out^, clusters^, changed)
 
     def glyph_index_for_codepoint(mut self, codepoint: Int) raises -> Int:
         """Look up `codepoint` in the `cmap` table, preferring a
