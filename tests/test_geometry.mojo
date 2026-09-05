@@ -18,6 +18,9 @@ def test_round_to_int_rounds_half_away_from_zero() raises:
     assert_equal(round_to_int(-2.5), -3)
     assert_equal(round_to_int(0.0), 0)
     assert_equal(round_to_int(-0.49), 0)
+    # Not the stdlib's half-to-even: 2.5 and 3.5 round one apart, not
+    # two.
+    assert_equal(round_to_int(3.5) - round_to_int(2.5), 1)
 
 
 def test_transform2d_identity_rounds_fractional_input() raises:

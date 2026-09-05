@@ -60,6 +60,12 @@ def round_to_int(value: Float64) -> Int:
     opposite offset from positive ones to round correctly (e.g. -2.5
     must become -3, not -2).
 
+    Not the stdlib's `round`, which is round-half-to-even (2.5 -> 2,
+    3.5 -> 4): that rule puts evenly spaced half-pixel coordinates on
+    unevenly spaced pixels, so a shape drawn at x = 2.5 and its
+    neighbour at 3.5 would sit two pixels apart instead of one.
+    Replacing this with `Int(round(x))` changes where things land.
+
     Public because a caller laying out in `Float64` and drawing
     through the `Int`-taking primitives (`fill_rect`, `fill_circle_aa`)
     needs the same rounding the package uses, so the two agree on
