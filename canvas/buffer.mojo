@@ -15,7 +15,7 @@ comptime BYTES_PER_PIXEL = 4
 
 from std.sys import size_of
 
-from canvas.blend import BlendMode, _blend_pixel
+from canvas.blend import BlendMode, _blend_pixel, _blend_span
 from canvas.color import Color, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
@@ -944,8 +944,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # through set_pixel or write_pixel.
         if not self._blend.is_source_over():
             for y in range(ry, ry + rh):
-                for x in range(rx, rx + rw):
-                    self._write_pixel_blended(x, y, color)
+                _blend_span(
+                    self._blend, self.pixels, y * self.width + rx, rw, color
+                )
             return
 
         var p = self.pixels.unsafe_ptr()
