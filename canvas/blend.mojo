@@ -667,6 +667,33 @@ def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
     return _blend_pixel[0](src, dst)
 
 
+@always_inline
+def _blend_lanes[
+    MODE: Int
+](cb: SIMD[DType.uint32, 16], cs: SIMD[DType.uint32, 16]) -> SIMD[
+    DType.uint32, 16
+]:
+    """`_blend_channel` for the six modes whose `B` is plain integer
+    arithmetic, over sixteen channel lanes at once. The lanes hold four
+    RGBA pixels; the alpha lanes compute garbage the caller masks off.
+    """
+    var m = (cb * cs * 32897) >> 23
+
+    @parameter
+    if MODE == 13:
+        return m
+    elif MODE == 14:
+        return cb + cs - m
+    elif MODE == 16:
+        return min(cb, cs)
+    elif MODE == 17:
+        return max(cb, cs)
+    elif MODE == 18:
+        return max(cb, cs) - min(cb, cs)
+    else:
+        return cb + cs - 2 * m
+
+
 def _blend_span_impl[
     MODE: Int
 ](mut pixels: List[UInt8], start: Int, count: Int, src: Color):
@@ -675,24 +702,114 @@ def _blend_span_impl[
     mode's branches fold away and the loop is the arithmetic and the
     loads and stores. One instantiation per mode, reached through
     `_blend_span`.
+
+    A separable mode over an opaque pixel is the common case and the
+    cheap one: with `ab = 255` the general form collapses to
+    `out = _div255(sa * B(cb, cs) + (255 - sa) * cb)` per channel and
+    an opaque result, which is what those pixels take. For the six
+    modes whose `B` is plain integer arithmetic, four opaque pixels at
+    a time go through one sixteen-lane vector. Every other pixel takes
+    `_blend_pixel`, so the bytes are the same either way.
     """
     var p = pixels.unsafe_ptr()
     var idx = start * 4
-    for _ in range(count):
-        var out = _blend_pixel[MODE](
-            src,
-            Color(
-                p[unsafe_offset=idx],
-                p[unsafe_offset=idx + 1],
-                p[unsafe_offset=idx + 2],
-                p[unsafe_offset=idx + 3],
-            ),
-        )
-        p[unsafe_offset=idx] = out.r
-        p[unsafe_offset=idx + 1] = out.g
-        p[unsafe_offset=idx + 2] = out.b
-        p[unsafe_offset=idx + 3] = out.a
+    var end = idx + count * 4
+
+    @parameter
+    if MODE >= 13 and MODE <= 23:
+        var sa = Int(src.a)
+        var inv = 255 - sa
+        var sr = Int(src.r)
+        var sg = Int(src.g)
+        var sb = Int(src.b)
+
+        @parameter
+        if (
+            MODE == 13
+            or MODE == 14
+            or MODE == 16
+            or MODE == 17
+            or MODE == 18
+            or MODE == 19
+        ):
+            comptime W = 16
+            var cs = SIMD[DType.uint32, W]()
+            var keep = SIMD[DType.uint32, W]()
+            var alpha = SIMD[DType.uint32, W]()
+            for k in range(W):
+                var ch = k % 4
+                if ch == 0:
+                    cs[k] = UInt32(sr)
+                elif ch == 1:
+                    cs[k] = UInt32(sg)
+                elif ch == 2:
+                    cs[k] = UInt32(sb)
+                keep[k] = UInt32(0) if ch == 3 else UInt32(0xFFFFFFFF)
+                alpha[k] = UInt32(255) if ch == 3 else UInt32(0)
+            var sa_v = SIMD[DType.uint32, W](UInt32(sa))
+            var inv_v = SIMD[DType.uint32, W](UInt32(inv))
+            while idx + W <= end:
+                if (
+                    p[unsafe_offset=idx + 3] == 255
+                    and p[unsafe_offset=idx + 7] == 255
+                    and p[unsafe_offset=idx + 11] == 255
+                    and p[unsafe_offset=idx + 15] == 255
+                ):
+                    var cb = (
+                        p.unsafe_offset(idx)
+                        .unsafe_load[width=W]()
+                        .cast[DType.uint32]()
+                    )
+                    var b = _blend_lanes[MODE](cb, cs)
+                    var out = ((sa_v * b + inv_v * cb) * 32897) >> 23
+                    out = (out & keep) | alpha
+                    p.unsafe_offset(idx).unsafe_store(out.cast[DType.uint8]())
+                    idx += W
+                    continue
+                _blend_one[MODE](pixels, idx, src)
+                idx += 4
+
+        while idx < end:
+            if p[unsafe_offset=idx + 3] == 255:
+                var r = Int(p[unsafe_offset=idx])
+                var g = Int(p[unsafe_offset=idx + 1])
+                var b = Int(p[unsafe_offset=idx + 2])
+                p[unsafe_offset=idx] = UInt8(
+                    _div255(sa * _blend_channel[MODE](r, sr) + inv * r)
+                )
+                p[unsafe_offset=idx + 1] = UInt8(
+                    _div255(sa * _blend_channel[MODE](g, sg) + inv * g)
+                )
+                p[unsafe_offset=idx + 2] = UInt8(
+                    _div255(sa * _blend_channel[MODE](b, sb) + inv * b)
+                )
+            else:
+                _blend_one[MODE](pixels, idx, src)
+            idx += 4
+        return
+
+    while idx < end:
+        _blend_one[MODE](pixels, idx, src)
         idx += 4
+
+
+@always_inline
+def _blend_one[MODE: Int](mut pixels: List[UInt8], idx: Int, src: Color):
+    """One pixel at byte index `idx` through `_blend_pixel`."""
+    var p = pixels.unsafe_ptr()
+    var out = _blend_pixel[MODE](
+        src,
+        Color(
+            p[unsafe_offset=idx],
+            p[unsafe_offset=idx + 1],
+            p[unsafe_offset=idx + 2],
+            p[unsafe_offset=idx + 3],
+        ),
+    )
+    p[unsafe_offset=idx] = out.r
+    p[unsafe_offset=idx + 1] = out.g
+    p[unsafe_offset=idx + 2] = out.b
+    p[unsafe_offset=idx + 3] = out.a
 
 
 def _blend_span(

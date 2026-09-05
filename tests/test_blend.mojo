@@ -709,6 +709,55 @@ def test_add_sums_and_clamps() raises:
     )
 
 
+def test_span_fast_paths_match_the_pixel_blend() raises:
+    # A filled region blends whole rows at a time, with fast paths for
+    # separable modes over opaque pixels: a scalar one for all eleven,
+    # and a four-pixel vector one for the six whose B is plain integer
+    # arithmetic. A row with an opaque stretch, a translucent hole and
+    # a ragged end runs every branch in one span; each pixel must be
+    # what _blend_pixel gives.
+    var modes: List[BlendMode] = [
+        BlendMode.MULTIPLY,
+        BlendMode.SCREEN,
+        BlendMode.OVERLAY,
+        BlendMode.DARKEN,
+        BlendMode.LIGHTEN,
+        BlendMode.DIFFERENCE,
+        BlendMode.EXCLUSION,
+        BlendMode.COLOR_DODGE,
+        BlendMode.COLOR_BURN,
+        BlendMode.HARD_LIGHT,
+        BlendMode.SOFT_LIGHT,
+        BlendMode.HUE,
+        BlendMode.SOURCE_ATOP,
+    ]
+    var sources: List[Color] = [SRC, SRC.with_alpha(128), SRC.with_alpha(3)]
+    for m in modes:
+        for src in sources:
+            var c = Canvas(23, 2, BG)
+            # Pixels 5..7 translucent, pixel 12 transparent: the vector
+            # path has to skip the groups holding them.
+            for x in range(5, 8):
+                c.set_pixel(x, 0, Color(0, 0, 0, 0))
+                c.set_pixel(x, 0, Color(90, 140, 210, 100))
+            c.set_pixel(12, 0, Color(0, 0, 0, 0))
+            var before = List[Color]()
+            for x in range(23):
+                before.append(c.get_pixel(x, 0))
+            c.set_blend_mode(m)
+            fill_rect(c, 0, 0, 23, 1, src)
+            for x in range(23):
+                var want = _blend_pixel(m, src, before[x])
+                var got = c.get_pixel(x, 0)
+                var at = String(m) + " a=" + String(src.a) + " x=" + String(x)
+                assert_equal(Int(got.r), Int(want.r), at + " r")
+                assert_equal(Int(got.g), Int(want.g), at + " g")
+                assert_equal(Int(got.b), Int(want.b), at + " b")
+                assert_equal(Int(got.a), Int(want.a), at + " a")
+            # The row below was never touched.
+            _assert_rgba(c.get_pixel(3, 1), 200, 100, 50, 255, "untouched row")
+
+
 def test_every_mode_is_classified_once() raises:
     # The three families partition the table, and the classification
     # is what routes a pixel through _blend_pixel.
