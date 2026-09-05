@@ -290,14 +290,14 @@ def test_draw_ellipse_aa_width_widens_the_ring() raises:
             thin_ink += Int(thin.get_pixel(x, y).r)
             thick_ink += Int(thick.get_pixel(x, y).r)
     assert_true(thick_ink > thin_ink, "a wider ring is more ink")
-    # The axis extremes sit on the stroke's centre line.
+    # The axis extremes sit on the stroke's center line.
     assert_equal(thick.get_pixel(50, 30).r, 255)
     assert_equal(thick.get_pixel(30, 42).r, 255)
     assert_equal(thick.get_pixel(30, 30).r, 0, "the hole is untouched")
 
 
 def test_draw_ellipse_aa_wider_than_the_short_axis_fills_the_hole() raises:
-    # width 30 on ry=12 leaves no inner ellipse: the centre is inked.
+    # width 30 on ry=12 leaves no inner ellipse: the center is inked.
     var c = Canvas(60, 60, Color(0, 0, 0))
     draw_ellipse_aa(c, 30, 30, 20, 12, Color(255, 255, 255), width=30.0)
     assert_equal(c.get_pixel(30, 30).r, 255)
@@ -313,7 +313,7 @@ def test_draw_ellipse_aa_sub_pixel_center_moves_the_ring() raises:
         for x in range(60):
             if a.get_pixel(x, y).r != b.get_pixel(x, y).r:
                 differing += 1
-    assert_true(differing > 20, "half a pixel of centre shifts the ring")
+    assert_true(differing > 20, "half a pixel of center shifts the ring")
 
 
 def main() raises:

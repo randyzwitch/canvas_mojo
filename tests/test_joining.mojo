@@ -191,7 +191,7 @@ def test_a_right_joiner_ends_a_word_and_never_starts_one() raises:
     assert_equal(forward[0], _FORM_INITIAL)
     assert_equal(forward[1], _FORM_FINAL)
 
-    # R then D: the R cannot join forwards, so neither has a neighbour
+    # R then D: the R cannot join forwards, so neither has a neighbor
     # to join and both stay isolated. This is why "الا" (alef, lam,
     # alef) breaks after the first alef.
     var backward = joining_forms([ALEF, BEH])
@@ -209,7 +209,7 @@ def test_a_right_joiner_ends_a_word_and_never_starts_one() raises:
 
 def test_a_transparent_mark_does_not_break_a_join() raises:
     # A fatha between two letters is skipped when each looks for its
-    # neighbour, so the pair joins exactly as if the mark were absent.
+    # neighbor, so the pair joins exactly as if the mark were absent.
     var marked = joining_forms([BEH, FATHA, SEEN])
     assert_equal(marked[0], _FORM_INITIAL)
     assert_equal(marked[1], _FORM_NONE)
@@ -220,7 +220,7 @@ def test_a_transparent_mark_does_not_break_a_join() raises:
     assert_equal(marked[2], unmarked[1])
 
     # Several marks in a row are skipped the same way, and a mark at
-    # either end leaves the letter beside it with no neighbour at all.
+    # either end leaves the letter beside it with no neighbor at all.
     var ends = joining_forms([FATHA, BEH, FATHA, FATHA, SEEN, FATHA])
     assert_equal(ends[0], _FORM_NONE)
     assert_equal(ends[1], _FORM_INITIAL)

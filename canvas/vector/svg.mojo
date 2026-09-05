@@ -580,7 +580,7 @@ struct SvgCanvas(DrawTarget, Movable):
         """The `<stop>` children of a gradient def. The ramp is kept
         sorted by offset on insert, which is what SVG needs: `<stop>`
         clamps each offset to be no less than the previous sibling's,
-        so descending offsets would flatten the gradient to one colour
+        so descending offsets would flatten the gradient to one color
         in every viewer.
         """
         for stop in stops:
@@ -618,7 +618,7 @@ struct SvgCanvas(DrawTarget, Movable):
     def _write_radial_def(mut self, gradient: RadialGradient) -> Int:
         """A fresh `<defs><radialGradient id="gradN">` for `gradient`,
         `gradientUnits="userSpaceOnUse"`, with `fx`/`fy`/`fr` only when
-        the focal circle differs from the centre point. Returns N.
+        the focal circle differs from the center point. Returns N.
         """
         self._gradient_count += 1
         self._body.write(
@@ -877,7 +877,7 @@ struct SvgCanvas(DrawTarget, Movable):
     def fill_circle_aa(
         mut self, cx: Float64, cy: Float64, radius: Float64, color: Color
     ):
-        """A `<circle>` at a sub-pixel centre and radius.
+        """A `<circle>` at a sub-pixel center and radius.
 
         Args:
             cx: Center x.
@@ -971,7 +971,7 @@ struct SvgCanvas(DrawTarget, Movable):
         ry: Float64,
         color: Color,
     ):
-        """An `<ellipse>` at a sub-pixel centre and radii.
+        """An `<ellipse>` at a sub-pixel center and radii.
 
         Args:
             cx: Center x.
@@ -1367,7 +1367,7 @@ struct SvgCanvas(DrawTarget, Movable):
         self._clip_depth -= 1
 
     def begin_annotated_group(mut self, title: String):
-        """Open `<g><title>title</title>`, labelling every element
+        """Open `<g><title>title</title>`, labeling every element
         emitted until `end_annotated_group`. Browsers show a `<title>`
         inside a `<g>` as a hover tooltip over anything in the group,
         which is what gives a chart per-datum tooltips without any
@@ -1595,7 +1595,7 @@ struct SvgCanvas(DrawTarget, Movable):
         counterpart of raster `draw_text_on_path`.
 
         Each call mints a fresh id (`tpN`), so two calls never collide
-        and a path drawn as well as labelled is written twice rather
+        and a path drawn as well as labeled is written twice rather
         than shared -- the visible path carries its own paint.
 
         `offset` becomes `startOffset`, a distance along the path, for
@@ -1604,7 +1604,7 @@ struct SvgCanvas(DrawTarget, Movable):
         exactly what the raster side's `align` does.
 
         A renderer drops the glyphs that do not fit on the path, the
-        rule the raster side applies to a glyph whose centre falls past
+        rule the raster side applies to a glyph whose center falls past
         an end.
 
         Args:

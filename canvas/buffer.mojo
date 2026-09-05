@@ -7,8 +7,8 @@
 # lets `write_png` emit a PNG with real transparency and `read_png`
 # keep the alpha of a file that has one.
 #
-# Straight rather than premultiplied, so `get_pixel` returns the colour
-# a caller would recognise: premultiplying is the better representation
+# Straight rather than premultiplied, so `get_pixel` returns the color
+# a caller would recognize: premultiplying is the better representation
 # for repeated compositing, but it makes every read lossy at low alpha
 # and would change what every existing caller of `get_pixel` sees.
 comptime BYTES_PER_PIXEL = 4
@@ -205,7 +205,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self.width = width
         self.height = height
 
-        # One 32-bit store per pixel of the packed colour (see
+        # One 32-bit store per pixel of the packed color (see
         # _pack_rgba and _store_packed). The buffer's base is
         # allocator-aligned and every pixel sits at a multiple of four
         # bytes, so the 32-bit stores are aligned; the vector stores
@@ -697,7 +697,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         if coverage == 255:
             self.write_pixel(x, y, color)
             return
-        # Coverage scales the drawn colour's own alpha rather than
+        # Coverage scales the drawn color's own alpha rather than
         # replacing it, so clipping a translucent fill compounds the two.
         self.write_pixel(
             x, y, color.with_alpha(UInt8(_div255(Int(color.a) * Int(coverage))))
@@ -813,7 +813,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             alphas: Per-pixel alpha, 0-255, read from `base`.
             base: Index in `alphas` of the first pixel's alpha.
             count: Pixels to write.
-            color: Colour to write; its own alpha is replaced per pixel.
+            color: Color to write; its own alpha is replaced per pixel.
         """
         if not self._blend.is_source_over():
             for i in range(count):
@@ -986,7 +986,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         it is known drawable and no per-pixel check is needed.
 
         The translucent case blends per pixel but hoists what does not
-        vary: the source colour's premultiplied terms and the
+        vary: the source color's premultiplied terms and the
         complementary alpha are computed once for the whole rectangle,
         leaving one multiply-add and one `_div255` per channel where the
         destination is opaque. That branch is `blend_over_opaque`
@@ -1008,7 +1008,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
 
         # Both shortcuts below are source-over identities -- an opaque
-        # colour replaces the pixel, a fully transparent one leaves it
+        # color replaces the pixel, a fully transparent one leaves it
         # -- and neither holds for the other modes, so those take the
         # general blend per pixel. The coordinates are already known
         # drawable, so this goes straight to the blend rather than
@@ -1024,7 +1024,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var stride = self.width * BYTES_PER_PIXEL
 
         if color.a == 255:
-            # One 32-bit store per pixel of the packed colour, and no
+            # One 32-bit store per pixel of the packed color, and no
             # scratch span to allocate per call -- fill_circle_aa and
             # fill_ellipse_aa call this once per interior row.
             var packed = _pack_rgba(color)

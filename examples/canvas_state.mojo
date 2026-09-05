@@ -73,7 +73,7 @@ def main() raises:
     scene(c, cache, True)
     c.restore()
 
-    # Top right: rotated about the panel's centre. The clip is pushed
+    # Top right: rotated about the panel's center. The clip is pushed
     # under the rotation, so it is a rotated rectangle too.
     c.save()
     c.translate(670.0, 160.0)

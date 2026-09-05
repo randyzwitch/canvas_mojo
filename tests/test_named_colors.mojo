@@ -1,4 +1,4 @@
-"""Tests for named_colors.mojo: the CSS named-colour table resolves
+"""Tests for named_colors.mojo: the CSS named-color table resolves
 from the module and from the package root, holds the spec's values,
 and spells the gray pairs identically.
 """

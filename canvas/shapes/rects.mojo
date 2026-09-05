@@ -123,7 +123,7 @@ def fill_rect(
     color: Color,
 ):
     """`fill_rect` for a geometric rectangle: the box from (x, y)
-    spanning width x height, in the pixel-centre convention (pixel k
+    spanning width x height, in the pixel-center convention (pixel k
     spans k - 0.5 to k + 0.5), snapped to whole pixels. Each edge goes
     to the nearest pixel boundary, so `fill_rect(19.5, 4.5, 40.0,
     30.0)` is `fill_rect(20, 5, 40, 30)` exactly and an edge at 20.4
@@ -182,7 +182,7 @@ def _fill_rect_source[
     source: S,
     to_user: Matrix2D,
 ):
-    """`fill_rect`'s clamp-once-then-sweep, taking each pixel's colour
+    """`fill_rect`'s clamp-once-then-sweep, taking each pixel's color
     from `source` instead of one flat Color. Both gradient rect fills
     are this with a different source type. `to_user` takes each device
     pixel back to the space the source was defined in: the inverse of

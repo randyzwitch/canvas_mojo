@@ -143,7 +143,7 @@ def test_root_exports_pattern_fills() raises:
 
 def test_root_exports_masks() raises:
     # Mask and fill_mask resolve from the package root: a half mask
-    # paints an opaque colour at half alpha.
+    # paints an opaque color at half alpha.
     var c = Canvas(2, 2, Color(0, 0, 0, 0))
     fill_mask(c, Mask(2, 2, 128), Color(255, 0, 0))
     assert_equal(c.get_pixel(0, 0).a, 128)

@@ -13,11 +13,11 @@ inside a save/restore pair with a different mode set:
 - difference: the overlaps invert against what is under them
 - destination-out: the disks cut holes in a solid block rather than
   drawing anything, which is what carves a knockout
-- hard-light: the disk's own colour picks multiply or screen per
+- hard-light: the disk's own color picks multiply or screen per
   channel, so the disks read as lit from within
 - exclusion: difference with the contrast pulled down
 - luminosity: only the disks' lightness reaches the panel, so they
-  come out as greys over the panel's own colour
+  come out as grays over the panel's own color
 
 The destination-out panel writes transparent pixels, so the PNG shows
 the page through them and the BMP, having no alpha channel, shows
@@ -39,14 +39,14 @@ from canvas.text.render import draw_text
 
 comptime PAGE = Color(255, 255, 255)
 # A mid-tone panel rather than a near-white one: multiply and screen
-# move a colour in opposite directions, and neither shows against a
+# move a color in opposite directions, and neither shows against a
 # backdrop already at one end of the range.
 comptime PANEL = Color(176, 178, 184)
 comptime INK = Color(45, 45, 55)
 comptime BLOCK = Color(70, 90, 130)
 
 # Alpha 150 rather than opaque: the modes that differ only in how two
-# colours combine need something to combine with.
+# colors combine need something to combine with.
 comptime RED = Color(220, 70, 60, 150)
 comptime BLUE = Color(60, 120, 210, 150)
 comptime GREEN = Color(80, 180, 110, 150)
@@ -72,7 +72,7 @@ def _panel(
     label: String,
     mut cache: FontCache,
 ) raises:
-    """One labelled panel: the backdrop, then the disks under
+    """One labeled panel: the backdrop, then the disks under
     `mode`. The mode is set inside a save/restore pair, so the label
     below is drawn source-over whatever the panel used.
     """
@@ -87,7 +87,7 @@ def _panel(
 def _cutout_panel(
     mut c: Canvas, x: Int, y: Int, label: String, mut cache: FontCache
 ) raises:
-    """The destination-out panel. The disks carry no colour into the
+    """The destination-out panel. The disks carry no color into the
     result: an opaque source under destination-out drives the pixel's
     alpha to zero, so the block they are drawn over is left with three
     holes in it.

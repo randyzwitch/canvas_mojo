@@ -11,7 +11,7 @@ sampling rules rather than read back out: a shift by whole pixels has
 to reproduce the blit byte for byte, a 2x scale has to duplicate each
 source pixel, a quarter turn has to move a named pixel to a named
 place, and a half-pixel shift has to produce the mean of two known
-neighbours.
+neighbors.
 """
 
 from std.math import pi
@@ -59,7 +59,7 @@ def test_transparent_source_leaves_destination_untouched() raises:
 
 def test_translucent_source_blends() raises:
     # Half-alpha red over opaque white: the same value fill_rect would
-    # produce drawing that colour directly, which is the point -- a
+    # produce drawing that color directly, which is the point -- a
     # composited layer must match a directly drawn one.
     var dst = Canvas(4, 4, WHITE)
     var src = Canvas(4, 4, Color(255, 0, 0, 128))
@@ -242,8 +242,8 @@ def test_draw_canvas_clip_path_edge_is_antialiased() raises:
 
 
 def _varied_source(w: Int, h: Int, alpha: UInt8) raises -> Canvas:
-    """A source with a different colour in every pixel, so a blit and a
-    mapped draw are compared on real data rather than one flat colour.
+    """A source with a different color in every pixel, so a blit and a
+    mapped draw are compared on real data rather than one flat color.
     """
     var src = Canvas(w, h, CLEAR)
     for y in range(h):
@@ -365,15 +365,15 @@ def test_nearest_at_3x_across_bands_matches_the_source() raises:
 
 
 def test_rotation_about_the_centre_moves_a_known_pixel() raises:
-    # A quarter turn about the centre of a 4x4 source, which is the
+    # A quarter turn about the center of a 4x4 source, which is the
     # texel-space point (2, 2). Positive angles turn +x toward +y,
     # clockwise on a y-down canvas, so the top-right pixel ends up
     # bottom-right and the bottom-left pixel ends up top-left.
     #
-    # Pixel (3, 0) has its centre at (3.5, 0.5); relative to the centre
+    # Pixel (3, 0) has its center at (3.5, 0.5); relative to the center
     # that is (1.5, -1.5), which the quarter turn takes to (1.5, 1.5),
     # so it lands on (3.5, 3.5) -- destination pixel (3, 3). Pixel
-    # (0, 3), centre (0.5, 3.5), goes from (-1.5, 1.5) to (-1.5, -1.5)
+    # (0, 3), center (0.5, 3.5), goes from (-1.5, 1.5) to (-1.5, -1.5)
     # and lands on (0.5, 0.5) -- destination pixel (0, 0).
     var src = _varied_source(4, 4, 255)
     var m = (
@@ -392,10 +392,10 @@ def test_rotation_about_the_centre_moves_a_known_pixel() raises:
 
 def test_bilinear_at_a_half_pixel_offset_averages_two_neighbours() raises:
     # A shift of half a pixel to the right. Destination pixel px has
-    # its centre at px + 0.5 and samples u = px, whose two horizontal
-    # neighbours are the pixels centred at px - 0.5 and px + 0.5 --
+    # its center at px + 0.5 and samples u = px, whose two horizontal
+    # neighbors are the pixels centered at px - 0.5 and px + 0.5 --
     # source columns px - 1 and px, each weighted 0.5. Vertically the
-    # sample lands exactly on a pixel centre, so the row is untouched.
+    # sample lands exactly on a pixel center, so the row is untouched.
     var src = Canvas(4, 3, CLEAR)
     for y in range(3):
         src.set_pixel(0, y, Color(0, 0, 0))
@@ -410,7 +410,7 @@ def test_bilinear_at_a_half_pixel_offset_averages_two_neighbours() raises:
     assert_equal(dst.get_pixel(1, 1).r, 45, "columns 0 and 1 averaged")
     assert_equal(dst.get_pixel(2, 1).r, 135, "columns 1 and 2 averaged")
     # Destination pixel 0 samples u = 0, half a pixel outside the first
-    # pixel's centre: the missing neighbour is column 0 itself, so the
+    # pixel's center: the missing neighbor is column 0 itself, so the
     # edge column comes through undiluted.
     assert_equal(dst.get_pixel(0, 1).r, 0, "the edge pixel is clamped")
     # u = 4 is the source's right edge, which is outside it.
@@ -420,9 +420,9 @@ def test_bilinear_at_a_half_pixel_offset_averages_two_neighbours() raises:
 def test_bilinear_does_not_bleed_a_transparent_neighbour() raises:
     # Opaque red beside fully transparent green, sampled halfway
     # between them. Weighting premultiplied gives alpha
-    # 0.5 * 255 + 0.5 * 0 = 127.5, rounding to 128, and colour
+    # 0.5 * 255 + 0.5 * 0 = 127.5, rounding to 128, and color
     # (0.5 * 255 * 255) / 127.5 = 255 red with no green at all.
-    # Averaging straight colour instead would put 128 green in it.
+    # Averaging straight color instead would put 128 green in it.
     var src = Canvas(2, 1, CLEAR)
     src.set_pixel(0, 0, Color(255, 0, 0, 255))
     src.set_pixel(1, 0, Color(0, 255, 0, 0))
@@ -432,8 +432,8 @@ def test_bilinear_does_not_bleed_a_transparent_neighbour() raises:
 
     var p = dst.get_pixel(1, 0)
     assert_equal(p.a, 128, "alpha is the interpolated alpha")
-    assert_equal(p.r, 255, "the opaque neighbour's red survives whole")
-    assert_equal(p.g, 0, "the transparent neighbour contributes no colour")
+    assert_equal(p.r, 255, "the opaque neighbor's red survives whole")
+    assert_equal(p.g, 0, "the transparent neighbor contributes no color")
 
 
 def test_source_rectangle_crops() raises:
@@ -473,7 +473,7 @@ def test_source_rectangle_reaching_past_an_edge_draws_what_exists() raises:
 
 def test_matrix_opacity_scales_alpha() raises:
     # An opaque source at opacity 0.5 lands at alpha
-    # round(255 * 0.5) = 128, and keeps its colour.
+    # round(255 * 0.5) = 128, and keeps its color.
     var src = Canvas(2, 2, RED)
     var dst = Canvas(8, 8, CLEAR)
     draw_canvas(
@@ -481,7 +481,7 @@ def test_matrix_opacity_scales_alpha() raises:
     )
     var p = dst.get_pixel(1, 1)
     assert_equal(p.a, 128, "opacity scales the source's alpha")
-    assert_equal(p.r, 255, "over a transparent destination the colour stands")
+    assert_equal(p.r, 255, "over a transparent destination the color stands")
 
 
 def test_matrix_draw_respects_a_clip_rect() raises:

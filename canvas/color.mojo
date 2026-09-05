@@ -161,7 +161,7 @@ struct Color(ImplicitlyCopyable, Movable):
         var bg_eff = _div255(Int(bg.a) * inv)
         var out_a = sa + bg_eff
         if out_a == 0:
-            # Both fully transparent: no colour is defined, and
+            # Both fully transparent: no color is defined, and
             # dividing by out_a below would be undefined too.
             return Color(0, 0, 0, 0)
 

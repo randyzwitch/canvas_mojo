@@ -862,7 +862,7 @@ def test_path_ellipse_tracks_the_exact_primitive() raises:
         + String(ink_prim)
         + ")",
     )
-    assert_equal(via_path.get_pixel(40, 30).r, 255, "centre is filled")
+    assert_equal(via_path.get_pixel(40, 30).r, 255, "center is filled")
     assert_equal(via_path.get_pixel(2, 2).r, 0, "the corner is not")
 
 
@@ -1003,7 +1003,7 @@ def test_transformed_maps_curves_by_their_control_points() raises:
     # Deliberately not by comparing flattened points: flattening picks
     # its step count from curvature (see _auto_steps), so a scaled-up
     # curve is sampled more finely and the two point lists do not even
-    # have the same length. That is correct behaviour, and it is why
+    # have the same length. That is correct behavior, and it is why
     # the contract lives at the control points rather than the samples.
     var t = Transform2D(1.7, 2.3, -12.0, 30.0, rotation=-0.9)
     var p = Path()
@@ -1041,10 +1041,10 @@ def test_transformed_keeps_a_uniformly_scaled_arc_exact() raises:
 
     var moved = p.transformed(t)
     var pts = _flat_points(moved)
-    var centre = t.to_point(0.0, 0.0)
+    var center = t.to_point(0.0, 0.0)
     for i in range(len(pts)):
-        var dx = pts[i].x - centre.x
-        var dy = pts[i].y - centre.y
+        var dx = pts[i].x - center.x
+        var dy = pts[i].y - center.y
         assert_true(
             abs(sqrt(dx * dx + dy * dy) - 30.0) < 1.0e-9,
             "every point sits on the scaled circle of radius 30",
@@ -1073,7 +1073,7 @@ def test_transformed_flattens_an_arc_under_unequal_scales() raises:
 
 
 def test_flatten_arc_to_sweeps_backwards_when_end_is_below_start() raises:
-    # From angle 0 down to -pi/2: the quarter above the centre (y is
+    # From angle 0 down to -pi/2: the quarter above the center (y is
     # down), traversed from (10, 0) to (0, -10). Every sample stays on
     # the circle and in that quarter, in that order.
     var p = Path()
@@ -1392,7 +1392,7 @@ def test_stroke_bounds_of_a_line_follow_the_cap() raises:
         1e-9,
         "square",
     )
-    # A round cap is a polygonised disk, so its extent is the disk's to
+    # A round cap is a polygonized disk, so its extent is the disk's to
     # within the polygon's sag.
     _assert_box(
         p.stroke_bounds(4.0, cap=LineCap.ROUND),

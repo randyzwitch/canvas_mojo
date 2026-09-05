@@ -151,7 +151,7 @@ def write_png(canvas: Canvas, path: String) raises:
     var h = canvas.height
     var crc_table = _crc32_table()
 
-    # One pass to decide the colour type. `has_alpha` is false for the
+    # One pass to decide the color type. `has_alpha` is false for the
     # overwhelming majority of renders (anything drawn onto an opaque
     # background), and those take the 3-bytes-per-pixel path exactly as
     # before.
@@ -205,7 +205,7 @@ def write_png(canvas: Canvas, path: String) raises:
                 raw.append(px[unsafe_offset=i + 2])
 
     # Two candidate encodings, both compressed, the smaller kept. The
-    # unfiltered rows win wherever deflate's LZ77 finds flat colour
+    # unfiltered rows win wherever deflate's LZ77 finds flat color
     # and repeated rows, which is most of a chart; the Sub-filtered
     # rows win on a gradient, whose steady ramps become runs of one
     # small delta. Measured over this package's own examples: Sub

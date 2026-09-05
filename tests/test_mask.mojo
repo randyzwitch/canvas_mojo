@@ -96,16 +96,16 @@ def test_mask_from_path_honours_the_fill_rule() raises:
 
 
 def test_fill_mask_scales_the_alpha_by_the_coverage() raises:
-    # Coverage 128 on an opaque colour: alpha (255 * 128) // 255 = 128.
+    # Coverage 128 on an opaque color: alpha (255 * 128) // 255 = 128.
     var c = Canvas(4, 4, CLEAR)
     fill_mask(c, Mask(4, 4, 128), RED)
     _assert_rgba(c.get_pixel(1, 1), 255, 0, 0, 128, "half coverage")
-    # It compounds with the colour's own alpha: (128 * 128) // 255 = 64.
+    # It compounds with the color's own alpha: (128 * 128) // 255 = 64.
     var d = Canvas(4, 4, CLEAR)
     fill_mask(d, Mask(4, 4, 128), RED.with_alpha(128))
     _assert_rgba(d.get_pixel(1, 1), 255, 0, 0, 64, "half of half")
     # Zero coverage leaves the pixel alone; full coverage is the plain
-    # colour.
+    # color.
     var e = Canvas(4, 4, WHITE)
     fill_mask(e, Mask(4, 4, 0), RED)
     _assert_rgba(e.get_pixel(1, 1), 255, 255, 255, 255, "untouched")
@@ -149,7 +149,7 @@ def test_fill_mask_source_takes_the_colour_from_the_source() raises:
         assert_equal(got.a, 255)
     var half = Canvas(10, 1, CLEAR)
     fill_mask_source(half, Mask(10, 1, 128), g)
-    assert_equal(half.get_pixel(9, 0).r, 255, "colour kept")
+    assert_equal(half.get_pixel(9, 0).r, 255, "color kept")
     assert_equal(half.get_pixel(9, 0).a, 128, "alpha halved")
 
 
@@ -160,7 +160,7 @@ def test_fill_mask_respects_the_clip_and_the_blend_mode() raises:
     c.pop_clip()
     _assert_rgba(c.get_pixel(2, 2), 255, 0, 0, 255, "inside the clip")
     _assert_rgba(c.get_pixel(7, 7), 255, 255, 255, 255, "outside it")
-    # MULTIPLY over white is the source colour itself, since B(1, Cs)
+    # MULTIPLY over white is the source color itself, since B(1, Cs)
     # = Cs; over red the green and blue channels go to zero.
     c.set_blend_mode(BlendMode.MULTIPLY)
     fill_mask(c, Mask(10, 10, 255), Color(128, 255, 0))
@@ -173,10 +173,10 @@ def test_mask_from_alpha_and_from_luminance() raises:
     c.set_pixel(0, 0, Color(255, 255, 255, 255))  # opaque white
     c.set_pixel(1, 0, Color(0, 0, 0, 255))  # opaque black
     c.set_pixel(2, 0, Color(255, 255, 255, 0))  # transparent white
-    c.set_pixel(0, 1, Color(100, 100, 100, 255))  # mid grey
+    c.set_pixel(0, 1, Color(100, 100, 100, 255))  # mid gray
     c.set_pixel(1, 1, Color(255, 0, 0, 255))  # pure red
     # A half-transparent white: set_pixel blends it over the
-    # transparent backdrop, which keeps the colour and the alpha.
+    # transparent backdrop, which keeps the color and the alpha.
     c.set_pixel(2, 1, Color(255, 255, 255, 128))
 
     var alpha = Mask.from_alpha(c)
@@ -190,7 +190,7 @@ def test_mask_from_alpha_and_from_luminance() raises:
     assert_equal(luma.coverage_at(0, 0), 255, "white")
     assert_equal(luma.coverage_at(1, 0), 0, "black")
     assert_equal(luma.coverage_at(2, 0), 0, "transparent white")
-    assert_equal(luma.coverage_at(0, 1), 100, "grey 100")
+    assert_equal(luma.coverage_at(0, 1), 100, "gray 100")
     # 30 * 255 // 100 = 76.
     assert_equal(luma.coverage_at(1, 1), 76, "red")
     # (255 * 128) // 255 = 128.

@@ -6,7 +6,7 @@ transparent layer, then draw_shadowed composites a blurred, tinted,
 offset copy of that layer underneath the layer itself. The card's
 shadow is offset downward and tinted near-black, the way a raised UI
 panel is usually drawn; the glow uses no offset and the shape's own
-colour, so the blurred copy sits directly behind the shape rather than
+color, so the blurred copy sits directly behind the shape rather than
 below it.
 
 Writes examples/out_shadows.png.
@@ -62,8 +62,8 @@ def main() raises:
     draw_shadowed(sheet, card, 70, 90, Color(20, 25, 35, 110), 16.0, 0, 10)
     draw_text(sheet, 110.0, 300.0, "drop shadow", LABEL, size=13.0, cache=cache)
 
-    # The glow: no offset, and the shadow colour is the marker's own
-    # colour rather than black, so the blur reads as a halo around the
+    # The glow: no offset, and the shadow color is the marker's own
+    # color rather than black, so the blur reads as a halo around the
     # shape instead of a shadow cast by it.
     var marker = Canvas(90, 90, Color(0, 0, 0, 0))
     fill_circle_aa(marker, 45.0, 45.0, 32.0, GLOW)
