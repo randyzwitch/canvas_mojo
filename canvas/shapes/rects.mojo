@@ -1,7 +1,8 @@
 """Rectangle drawing: stroked outline (draw_rect, via
 canvas.shapes.lines.draw_line), solid fill (fill_rect), and
 gradient-sourced fill (fill_rect_gradient/fill_rect_radial_gradient --
-see gradient.mojo).
+see gradient.mojo) and pattern-sourced fill (fill_rect_pattern -- see
+pattern.mojo).
 """
 
 from canvas.color import Color
@@ -13,9 +14,11 @@ from canvas.geometry import (
     _mapped_rect,
 )
 from canvas.gradient import ColorSource, LinearGradient, RadialGradient
+from canvas.pattern import PatternSource
 from canvas.path import (
     fill_path,
     fill_path_gradient,
+    fill_path_pattern,
     fill_path_radial_gradient,
     _rect_path,
 )
@@ -253,3 +256,44 @@ def fill_rect_radial_gradient(
     _fill_rect_source(
         canvas, x, y, width, height, gradient, Matrix2D.identity()
     )
+
+
+def fill_rect_pattern(
+    mut canvas: Canvas,
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    pattern: PatternSource,
+):
+    """Like fill_rect_gradient, but for a PatternSource (pattern.mojo):
+    each pixel's color comes from a sampled raster tile rather than a
+    gradient projection. Same once-up-front clamp as fill_rect.
+
+    Args:
+        canvas: Canvas to fill into.
+        x: Rectangle's left edge.
+        y: Rectangle's top edge.
+        width: Rectangle's width.
+        height: Rectangle's height.
+        pattern: Fill source, sampled across the rectangle.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if m.is_axis_aligned():
+            var r = _mapped_rect(m, x, y, width, height)
+            _fill_rect_source(
+                canvas,
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                pattern,
+                _inverse_or_identity(m),
+            )
+            return
+        if width <= 0 or height <= 0:
+            return
+        fill_path_pattern(canvas, _rect_path(x, y, width, height), pattern)
+        return
+    _fill_rect_source(canvas, x, y, width, height, pattern, Matrix2D.identity())

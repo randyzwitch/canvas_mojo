@@ -47,32 +47,46 @@ from canvas.text.font_discovery import FontWeight
 from canvas.text.text_align import TextAlign
 
 
-def _format_svg_float(value: Float64) -> String:
-    """Format `value` to exactly `_SVG_DECIMALS` decimal places. Plain
-    `String(Float64)` is not safe for SVG coordinates: the same
+# Decimal places every Float64 coordinate/width/size is formatted to.
+comptime _SVG_DECIMALS = 3
+
+
+def _write_svg_float(mut out: String, value: Float64):
+    """Append `value` to `out` at exactly `_SVG_DECIMALS` decimal places.
+    Plain `String(Float64)` is not safe for SVG coordinates: the same
     `cx + radius * cos(angle)` expression can land one ULP apart
     depending on compilation context, and shortest-round-trip
     formatting turns that into a different *string* even though both
     values are the same point on any display. Rounding to millipixels
     -- far finer than a display resolves -- collapses the two. See the
     wiki for the full case.
+
+    Written straight into `out`: an element's dozen numbers are the
+    bulk of its text, and a String per number was most of what an
+    element cost to emit (#193).
     """
-    # Decimal places every Float64 coordinate/width/size is formatted
-    # to.
-    comptime _SVG_DECIMALS = 3
+    # 1000, 100, 10: 10 ** _SVG_DECIMALS and the pad thresholds below it.
+    var scaled = _round_to_int(value * 1000.0)
+    var digits = scaled
+    if scaled < 0:
+        out.write("-")
+        digits = -scaled
+    var frac = digits % 1000
+    out.write(digits // 1000, ".")
+    if frac < 100:
+        out.write("0")
+    if frac < 10:
+        out.write("0")
+    out.write(frac)
 
-    var scale = 1000.0  # 10 ** _SVG_DECIMALS
-    var scaled = _round_to_int(value * scale)
-    var sign = "-" if scaled < 0 else ""
-    var digits = scaled if scaled >= 0 else -scaled
-    var int_part = digits // 1000
-    var frac_part = digits % 1000
 
-    var frac_str = String(frac_part)
-    while frac_str.byte_length() < _SVG_DECIMALS:
-        frac_str = "0" + frac_str
-
-    return sign + String(int_part) + "." + frac_str
+def _format_svg_float(value: Float64) -> String:
+    """`_write_svg_float` into a fresh String, for a caller that needs
+    the number on its own.
+    """
+    var out = String()
+    _write_svg_float(out, value)
+    return out
 
 
 def _escape_xml_text(text: String) -> String:
@@ -107,26 +121,22 @@ def _to_hex(color: Color) -> String:
     return color.to_hex()
 
 
-def _opacity_attr(name: String, color: Color) -> String:
-    """A ` fill-opacity="..."` / ` stroke-opacity="..."` attribute for
-    `color`'s alpha, or `""` when it is fully opaque.
+def _write_opacity(mut out: String, name: StaticString, color: Color):
+    """Append a ` fill-opacity="..."` / ` stroke-opacity="..."`
+    attribute for `color`'s alpha, or nothing when it is fully opaque.
 
     SVG carries alpha in a separate attribute, since `#rrggbb` has
     nowhere to put it. Omitted entirely at `a == 255`, and written as a
-    0-1 fraction at `_format_svg_float`'s 3 decimals.
+    0-1 fraction at `_write_svg_float`'s 3 decimals.
     """
     if color.a == 255:
-        return ""
-    return (
-        " "
-        + name
-        + '-opacity="'
-        + _format_svg_float(Float64(color.a) / 255.0)
-        + '"'
-    )
+        return
+    out.write(" ", name, '-opacity="')
+    _write_svg_float(out, Float64(color.a) / 255.0)
+    out.write('"')
 
 
-def _cap_name(cap: LineCap) -> String:
+def _cap_name(cap: LineCap) -> StaticString:
     if cap == LineCap.BUTT:
         return "butt"
     if cap == LineCap.SQUARE:
@@ -134,7 +144,7 @@ def _cap_name(cap: LineCap) -> String:
     return "round"
 
 
-def _join_name(join: LineJoin) -> String:
+def _join_name(join: LineJoin) -> StaticString:
     if join == LineJoin.BEVEL:
         return "bevel"
     if join == LineJoin.MITER:
@@ -142,7 +152,8 @@ def _join_name(join: LineJoin) -> String:
     return "round"
 
 
-def _stroke_attrs(
+def _write_stroke_attrs(
+    mut out: String,
     width: Float64,
     dashes: List[Float64],
     dash_offset: Float64,
@@ -150,39 +161,38 @@ def _stroke_attrs(
     join: LineJoin,
     miter_limit: Float64,
     has_corners: Bool,
-) -> String:
-    """The stroke-style attributes of a stroked element: width and
-    cap always; join and, for a MITER join at a non-default limit,
+):
+    """Append the stroke-style attributes of a stroked element: width
+    and cap always; join and, for a MITER join at a non-default limit,
     miter-limit when the element has corners; dash array and, when
     non-zero, dash offset when there are dashes. SVG's own defaults
     for the omitted attributes are the same as the trait's, so a
     default call emits exactly what it did before the style existed.
     """
-    var out = (
-        ' stroke-width="'
-        + _format_svg_float(width)
-        + '" stroke-linecap="'
-        + _cap_name(cap)
-        + '"'
-    )
+    out.write(' stroke-width="')
+    _write_svg_float(out, width)
+    out.write('" stroke-linecap="', _cap_name(cap), '"')
     if has_corners:
-        out += ' stroke-linejoin="' + _join_name(join) + '"'
+        out.write(' stroke-linejoin="', _join_name(join), '"')
         if join == LineJoin.MITER and miter_limit != 4.0:
-            out += ' stroke-miterlimit="' + _format_svg_float(miter_limit) + '"'
+            out.write(' stroke-miterlimit="')
+            _write_svg_float(out, miter_limit)
+            out.write('"')
     if len(dashes) > 0:
-        var array = String("")
+        out.write(' stroke-dasharray="')
         for i in range(len(dashes)):
             if i > 0:
-                array += " "
-            array += _format_svg_float(dashes[i])
-        out += ' stroke-dasharray="' + array + '"'
+                out.write(" ")
+            _write_svg_float(out, dashes[i])
+        out.write('"')
         if dash_offset != 0.0:
-            out += ' stroke-dashoffset="' + _format_svg_float(dash_offset) + '"'
-    return out
+            out.write(' stroke-dashoffset="')
+            _write_svg_float(out, dash_offset)
+            out.write('"')
 
 
-def _path_d(path: Path) -> String:
-    """Path.commands -> an SVG `d` attribute string, one-to-one
+def _write_path_d(mut out: String, path: Path):
+    """Append Path.commands as an SVG `d` attribute value, one-to-one
     (M/L/Q/C/A/Z): Path's six command kinds are already SVG path's
     move/line/quadratic/cubic/elliptical-arc/close, absolute both ways,
     so nothing is translated. arc_to's sweep flag follows the sign of
@@ -190,52 +200,43 @@ def _path_d(path: Path) -> String:
     canvas's, so increasing angle is clockwise (`sweep_flag=1`) in both
     and a decreasing angle is `sweep_flag=0`.
     """
-    var d = String("")
     var is_first = True
     for cmd in path.commands:
         if not is_first:
-            d += " "
+            out += " "
         is_first = False
         if cmd.kind == _MOVE_TO:
-            d += (
-                "M"
-                + _format_svg_float(cmd.p1.x)
-                + ","
-                + _format_svg_float(cmd.p1.y)
-            )
+            out.write("M")
+            _write_svg_float(out, cmd.p1.x)
+            out.write(",")
+            _write_svg_float(out, cmd.p1.y)
         elif cmd.kind == _LINE_TO:
-            d += (
-                "L"
-                + _format_svg_float(cmd.p1.x)
-                + ","
-                + _format_svg_float(cmd.p1.y)
-            )
+            out.write("L")
+            _write_svg_float(out, cmd.p1.x)
+            out.write(",")
+            _write_svg_float(out, cmd.p1.y)
         elif cmd.kind == _QUAD_TO:
-            d += (
-                "Q"
-                + _format_svg_float(cmd.p1.x)
-                + ","
-                + _format_svg_float(cmd.p1.y)
-                + " "
-                + _format_svg_float(cmd.p2.x)
-                + ","
-                + _format_svg_float(cmd.p2.y)
-            )
+            out.write("Q")
+            _write_svg_float(out, cmd.p1.x)
+            out.write(",")
+            _write_svg_float(out, cmd.p1.y)
+            out.write(" ")
+            _write_svg_float(out, cmd.p2.x)
+            out.write(",")
+            _write_svg_float(out, cmd.p2.y)
         elif cmd.kind == _CUBIC_TO:
-            d += (
-                "C"
-                + _format_svg_float(cmd.p1.x)
-                + ","
-                + _format_svg_float(cmd.p1.y)
-                + " "
-                + _format_svg_float(cmd.p2.x)
-                + ","
-                + _format_svg_float(cmd.p2.y)
-                + " "
-                + _format_svg_float(cmd.p3.x)
-                + ","
-                + _format_svg_float(cmd.p3.y)
-            )
+            out.write("C")
+            _write_svg_float(out, cmd.p1.x)
+            out.write(",")
+            _write_svg_float(out, cmd.p1.y)
+            out.write(" ")
+            _write_svg_float(out, cmd.p2.x)
+            out.write(",")
+            _write_svg_float(out, cmd.p2.y)
+            out.write(" ")
+            _write_svg_float(out, cmd.p3.x)
+            out.write(",")
+            _write_svg_float(out, cmd.p3.y)
         elif cmd.kind == _ARC_TO:
             # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
             # cmd.p3.x = end_angle (see _PathCommand in path.mojo). No
@@ -253,23 +254,16 @@ def _path_d(path: Path) -> String:
             var sweep = end_angle - cmd.p2.y
             var large_arc_flag = 1 if abs(sweep) > pi else 0
             var sweep_flag = 1 if sweep >= 0.0 else 0
-            d += (
-                "A"
-                + _format_svg_float(radius)
-                + ","
-                + _format_svg_float(radius)
-                + " 0 "
-                + String(large_arc_flag)
-                + ","
-                + String(sweep_flag)
-                + " "
-                + _format_svg_float(x1)
-                + ","
-                + _format_svg_float(y1)
-            )
+            out.write("A")
+            _write_svg_float(out, radius)
+            out.write(",")
+            _write_svg_float(out, radius)
+            out.write(" 0 ", large_arc_flag, ",", sweep_flag, " ")
+            _write_svg_float(out, x1)
+            out.write(",")
+            _write_svg_float(out, y1)
         else:  # _CLOSE
-            d += "Z"
-    return d
+            out += "Z"
 
 
 struct _SvgState(ImplicitlyCopyable, Movable):
@@ -328,42 +322,42 @@ struct SvgCanvas(DrawTarget, Movable):
         self._blend = BlendMode.SOURCE_OVER
         self._saved = List[_SvgState]()
 
-    def _transform_attr(self) -> String:
-        """The `transform` attribute for an element drawn now: empty at
-        the identity, otherwise the current matrix.
+    def _write_transform(mut self):
+        """Append the `transform` attribute for an element drawn now:
+        nothing at the identity, otherwise the current matrix.
         """
         if not self._transformed:
-            return ""
-        return ' transform="' + self._matrix_value() + '"'
+            return
+        self._body.write(' transform="')
+        self._write_matrix()
+        self._body.write('"')
 
-    def _blend_attr(self) -> String:
-        """The `style` attribute carrying `mix-blend-mode` for an
-        element drawn now: empty under SOURCE_OVER, and empty under a
-        Porter-Duff mode, which CSS cannot express.
+    def _write_blend(mut self):
+        """Append the `style` attribute carrying `mix-blend-mode` for
+        an element drawn now: nothing under SOURCE_OVER, and nothing
+        under a Porter-Duff mode, which CSS cannot express.
         """
         var name = _css_blend_name(self._blend)
         if name == "":
-            return ""
-        return ' style="mix-blend-mode:' + name + '"'
+            return
+        self._body.write(' style="mix-blend-mode:', name, '"')
 
-    def _matrix_value(self) -> String:
-        """`matrix(a b c d e f)` for the current transform."""
+    def _write_matrix(mut self):
+        """`matrix(a b c d e f)` for the current transform, appended."""
         var m = self._transform
-        return (
-            "matrix("
-            + _format_svg_float(m.a)
-            + " "
-            + _format_svg_float(m.b)
-            + " "
-            + _format_svg_float(m.c)
-            + " "
-            + _format_svg_float(m.d)
-            + " "
-            + _format_svg_float(m.e)
-            + " "
-            + _format_svg_float(m.f)
-            + ")"
-        )
+        self._body.write("matrix(")
+        _write_svg_float(self._body, m.a)
+        self._body.write(" ")
+        _write_svg_float(self._body, m.b)
+        self._body.write(" ")
+        _write_svg_float(self._body, m.c)
+        self._body.write(" ")
+        _write_svg_float(self._body, m.d)
+        self._body.write(" ")
+        _write_svg_float(self._body, m.e)
+        self._body.write(" ")
+        _write_svg_float(self._body, m.f)
+        self._body.write(")")
 
     def save(mut self):
         """Push the current transform and blend mode for `restore` to
@@ -491,23 +485,23 @@ struct SvgCanvas(DrawTarget, Movable):
             height: Rectangle's height.
             color: Fill color.
         """
-        self._body += (
-            '<rect x="'
-            + String(x)
-            + '" y="'
-            + String(y)
-            + '" width="'
-            + String(width)
-            + '" height="'
-            + String(height)
-            + '" fill="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("fill", color)
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
+        self._body.write(
+            '<rect x="',
+            x,
+            '" y="',
+            y,
+            '" width="',
+            width,
+            '" height="',
+            height,
+            '" fill="',
+            _to_hex(color),
+            '"',
         )
+        _write_opacity(self._body, "fill", color)
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def fill_rect_gradient(
         mut self,
@@ -535,52 +529,48 @@ struct SvgCanvas(DrawTarget, Movable):
             gradient: Fill source, projected across the rectangle.
         """
         self._gradient_count += 1
-        var gid = "grad" + String(self._gradient_count)
-        var defs = (
-            '<defs><linearGradient id="'
-            + gid
-            + '" gradientUnits="userSpaceOnUse" x1="'
-            + _format_svg_float(gradient.x0)
-            + '" y1="'
-            + _format_svg_float(gradient.y0)
-            + '" x2="'
-            + _format_svg_float(gradient.x1)
-            + '" y2="'
-            + _format_svg_float(gradient.y1)
-            + '">'
+        self._body.write(
+            '<defs><linearGradient id="grad',
+            self._gradient_count,
+            '" gradientUnits="userSpaceOnUse" x1="',
         )
+        _write_svg_float(self._body, gradient.x0)
+        self._body.write('" y1="')
+        _write_svg_float(self._body, gradient.y0)
+        self._body.write('" x2="')
+        _write_svg_float(self._body, gradient.x1)
+        self._body.write('" y2="')
+        _write_svg_float(self._body, gradient.y1)
+        self._body.write('">')
         # `LinearGradient.stops` is kept sorted by offset on insert,
         # which is what SVG needs: `<stop>` clamps each offset to be no
         # less than the previous sibling's, so descending offsets would
         # flatten the gradient to one colour in every viewer.
         for stop in gradient.stops:
-            defs += (
-                '<stop offset="'
-                + _format_svg_float(stop.offset)
-                + '" stop-color="'
-                + _to_hex(stop.color)
-                + '" stop-opacity="'
-                + _format_svg_float(Float64(stop.color.a) / 255.0)
-                + '"/>'
+            self._body.write('<stop offset="')
+            _write_svg_float(self._body, stop.offset)
+            self._body.write(
+                '" stop-color="', _to_hex(stop.color), '" stop-opacity="'
             )
-        defs += "</linearGradient></defs>\n"
-        self._body += defs
-        self._body += (
-            '<rect x="'
-            + String(x)
-            + '" y="'
-            + String(y)
-            + '" width="'
-            + String(width)
-            + '" height="'
-            + String(height)
-            + '" fill="url(#'
-            + gid
-            + ')"'
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
+            _write_svg_float(self._body, Float64(stop.color.a) / 255.0)
+            self._body.write('"/>')
+        self._body.write("</linearGradient></defs>\n")
+        self._body.write(
+            '<rect x="',
+            x,
+            '" y="',
+            y,
+            '" width="',
+            width,
+            '" height="',
+            height,
+            '" fill="url(#grad',
+            self._gradient_count,
+            ')"',
         )
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def draw_line_aa(
         mut self,
@@ -613,26 +603,33 @@ struct SvgCanvas(DrawTarget, Movable):
             join: Unused for a single segment, which has no corners.
             miter_limit: Unused for a single segment.
         """
-        self._body += (
-            '<line x1="'
-            + String(x0)
-            + '" y1="'
-            + String(y0)
-            + '" x2="'
-            + String(x1)
-            + '" y2="'
-            + String(y1)
-            + '" stroke="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("stroke", color)
-            + _stroke_attrs(
-                width, dashes, dash_offset, cap, join, miter_limit, False
-            )
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
+        self._body.write(
+            '<line x1="',
+            x0,
+            '" y1="',
+            y0,
+            '" x2="',
+            x1,
+            '" y2="',
+            y1,
+            '" stroke="',
+            _to_hex(color),
+            '"',
         )
+        _write_opacity(self._body, "stroke", color)
+        _write_stroke_attrs(
+            self._body,
+            width,
+            dashes,
+            dash_offset,
+            cap,
+            join,
+            miter_limit,
+            False,
+        )
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """Emit a `<circle>` element.
@@ -643,21 +640,21 @@ struct SvgCanvas(DrawTarget, Movable):
             radius: Circle radius in pixels.
             color: Fill color.
         """
-        self._body += (
-            '<circle cx="'
-            + String(cx)
-            + '" cy="'
-            + String(cy)
-            + '" r="'
-            + String(radius)
-            + '" fill="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("fill", color)
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
+        self._body.write(
+            '<circle cx="',
+            cx,
+            '" cy="',
+            cy,
+            '" r="',
+            radius,
+            '" fill="',
+            _to_hex(color),
+            '"',
         )
+        _write_opacity(self._body, "fill", color)
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
@@ -671,23 +668,23 @@ struct SvgCanvas(DrawTarget, Movable):
             ry: Vertical radius in pixels.
             color: Fill color.
         """
-        self._body += (
-            '<ellipse cx="'
-            + String(cx)
-            + '" cy="'
-            + String(cy)
-            + '" rx="'
-            + String(rx)
-            + '" ry="'
-            + String(ry)
-            + '" fill="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("fill", color)
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
+        self._body.write(
+            '<ellipse cx="',
+            cx,
+            '" cy="',
+            cy,
+            '" rx="',
+            rx,
+            '" ry="',
+            ry,
+            '" fill="',
+            _to_hex(color),
+            '"',
         )
+        _write_opacity(self._body, "fill", color)
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def draw_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
@@ -703,24 +700,24 @@ struct SvgCanvas(DrawTarget, Movable):
         """
         # stroke-width 1 to match the raster primitive, which draws a
         # fixed ~1px outline and takes no width (see DrawTarget).
-        self._body += (
-            '<ellipse cx="'
-            + String(cx)
-            + '" cy="'
-            + String(cy)
-            + '" rx="'
-            + String(rx)
-            + '" ry="'
-            + String(ry)
-            + '" fill="none" stroke="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("stroke", color)
-            + ' stroke-width="1"'
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
+        self._body.write(
+            '<ellipse cx="',
+            cx,
+            '" cy="',
+            cy,
+            '" rx="',
+            rx,
+            '" ry="',
+            ry,
+            '" fill="none" stroke="',
+            _to_hex(color),
+            '"',
         )
+        _write_opacity(self._body, "stroke", color)
+        self._body.write(' stroke-width="1"')
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def fill_arc_aa(
         mut self,
@@ -748,33 +745,27 @@ struct SvgCanvas(DrawTarget, Movable):
         var x1 = cx + radius * cos(end_angle)
         var y1 = cy + radius * sin(end_angle)
         var large_arc_flag = 1 if (end_angle - start_angle) > pi else 0
-        self._body += (
-            '<path d="M'
-            + _format_svg_float(cx)
-            + ","
-            + _format_svg_float(cy)
-            + " L"
-            + _format_svg_float(x0)
-            + ","
-            + _format_svg_float(y0)
-            + " A"
-            + _format_svg_float(radius)
-            + ","
-            + _format_svg_float(radius)
-            + " 0 "
-            + String(large_arc_flag)
-            + ",1 "
-            + _format_svg_float(x1)
-            + ","
-            + _format_svg_float(y1)
-            + ' Z" fill="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("fill", color)
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
-        )
+        self._body.write('<path d="M')
+        _write_svg_float(self._body, cx)
+        self._body.write(",")
+        _write_svg_float(self._body, cy)
+        self._body.write(" L")
+        _write_svg_float(self._body, x0)
+        self._body.write(",")
+        _write_svg_float(self._body, y0)
+        self._body.write(" A")
+        _write_svg_float(self._body, radius)
+        self._body.write(",")
+        _write_svg_float(self._body, radius)
+        self._body.write(" 0 ", large_arc_flag, ",1 ")
+        _write_svg_float(self._body, x1)
+        self._body.write(",")
+        _write_svg_float(self._body, y1)
+        self._body.write(' Z" fill="', _to_hex(color), '"')
+        _write_opacity(self._body, "fill", color)
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def fill_ring_sector_aa(
         mut self,
@@ -810,43 +801,35 @@ struct SvgCanvas(DrawTarget, Movable):
         var inner_x0 = cx + inner_radius * cos(start_angle)
         var inner_y0 = cy + inner_radius * sin(start_angle)
         var large_arc_flag = 1 if (end_angle - start_angle) > pi else 0
-        self._body += (
-            '<path d="M'
-            + _format_svg_float(outer_x0)
-            + ","
-            + _format_svg_float(outer_y0)
-            + " A"
-            + _format_svg_float(outer_radius)
-            + ","
-            + _format_svg_float(outer_radius)
-            + " 0 "
-            + String(large_arc_flag)
-            + ",1 "
-            + _format_svg_float(outer_x1)
-            + ","
-            + _format_svg_float(outer_y1)
-            + " L"
-            + _format_svg_float(inner_x1)
-            + ","
-            + _format_svg_float(inner_y1)
-            + " A"
-            + _format_svg_float(inner_radius)
-            + ","
-            + _format_svg_float(inner_radius)
-            + " 0 "
-            + String(large_arc_flag)
-            + ",0 "
-            + _format_svg_float(inner_x0)
-            + ","
-            + _format_svg_float(inner_y0)
-            + ' Z" fill="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("fill", color)
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
-        )
+        self._body.write('<path d="M')
+        _write_svg_float(self._body, outer_x0)
+        self._body.write(",")
+        _write_svg_float(self._body, outer_y0)
+        self._body.write(" A")
+        _write_svg_float(self._body, outer_radius)
+        self._body.write(",")
+        _write_svg_float(self._body, outer_radius)
+        self._body.write(" 0 ", large_arc_flag, ",1 ")
+        _write_svg_float(self._body, outer_x1)
+        self._body.write(",")
+        _write_svg_float(self._body, outer_y1)
+        self._body.write(" L")
+        _write_svg_float(self._body, inner_x1)
+        self._body.write(",")
+        _write_svg_float(self._body, inner_y1)
+        self._body.write(" A")
+        _write_svg_float(self._body, inner_radius)
+        self._body.write(",")
+        _write_svg_float(self._body, inner_radius)
+        self._body.write(" 0 ", large_arc_flag, ",0 ")
+        _write_svg_float(self._body, inner_x0)
+        self._body.write(",")
+        _write_svg_float(self._body, inner_y0)
+        self._body.write(' Z" fill="', _to_hex(color), '"')
+        _write_opacity(self._body, "fill", color)
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def stroke_path_aa(
         mut self,
@@ -875,20 +858,16 @@ struct SvgCanvas(DrawTarget, Movable):
             miter_limit: Ratio past which a MITER join falls back to
                 BEVEL, as a multiple of half the stroke width.
         """
-        self._body += (
-            '<path d="'
-            + _path_d(path)
-            + '" fill="none" stroke="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("stroke", color)
-            + _stroke_attrs(
-                width, dashes, dash_offset, cap, join, miter_limit, True
-            )
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
+        self._body.write('<path d="')
+        _write_path_d(self._body, path)
+        self._body.write('" fill="none" stroke="', _to_hex(color), '"')
+        _write_opacity(self._body, "stroke", color)
+        _write_stroke_attrs(
+            self._body, width, dashes, dash_offset, cap, join, miter_limit, True
         )
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def fill_path_aa(
         mut self,
@@ -910,18 +889,13 @@ struct SvgCanvas(DrawTarget, Movable):
         var rule = ""
         if fill_rule == FillRule.EVEN_ODD:
             rule = ' fill-rule="evenodd"'
-        self._body += (
-            '<path d="'
-            + _path_d(path)
-            + '" fill="'
-            + _to_hex(color)
-            + '"'
-            + rule
-            + _opacity_attr("fill", color)
-            + self._transform_attr()
-            + self._blend_attr()
-            + "/>\n"
-        )
+        self._body.write('<path d="')
+        _write_path_d(self._body, path)
+        self._body.write('" fill="', _to_hex(color), '"', rule)
+        _write_opacity(self._body, "fill", color)
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
 
     def begin_annotated_group(mut self, title: String):
         """Open `<g><title>title</title>`, labelling every element
@@ -942,7 +916,7 @@ struct SvgCanvas(DrawTarget, Movable):
         """
         if self._open_group:
             self._body += "</g>\n"
-        self._body += "<g>\n<title>" + _escape_xml_text(title) + "</title>\n"
+        self._body.write("<g>\n<title>", _escape_xml_text(title), "</title>\n")
         self._open_group = True
 
     def end_annotated_group(mut self):
@@ -1015,55 +989,38 @@ struct SvgCanvas(DrawTarget, Movable):
             anchor = "middle"
         elif align == TextAlign.RIGHT:
             anchor = "end"
-        # A transform list applies right to left, so the canvas
-        # transform goes first and the label's own rotation about its
-        # anchor happens before it, as on Canvas.
-        var ops = ""
-        if self._transformed:
-            ops = self._matrix_value()
-        if rotation != 0.0:
-            var degrees = rotation * (180.0 / pi)
-            if ops != "":
-                ops += " "
-            ops += (
-                "rotate("
-                + _format_svg_float(degrees)
-                + " "
-                + String(x)
-                + " "
-                + String(y)
-                + ")"
-            )
-        var transform = ""
-        if ops != "":
-            transform = ' transform="' + ops + '"'
         var font_weight = ""
         if weight == FontWeight.BOLD:
             font_weight = ' font-weight="bold"'
-        self._body += (
-            '<text x="'
-            + String(x)
-            + '" y="'
-            + String(y)
-            + '" font-size="'
-            + _format_svg_float(size)
-            + '" font-family="'
-            + escaped_family
-            + '"'
-            + font_weight
-            + ' fill="'
-            + _to_hex(color)
-            + '"'
-            + _opacity_attr("fill", color)
-            + ' text-anchor="'
-            + anchor
-            + '"'
-            + transform
-            + self._blend_attr()
-            + ">"
-            + _escape_xml_text(text)
-            + "</text>\n"
+        self._body.write('<text x="', x, '" y="', y, '" font-size="')
+        _write_svg_float(self._body, size)
+        self._body.write(
+            '" font-family="',
+            escaped_family,
+            '"',
+            font_weight,
+            ' fill="',
+            _to_hex(color),
+            '"',
         )
+        _write_opacity(self._body, "fill", color)
+        self._body.write(' text-anchor="', anchor, '"')
+        # A transform list applies right to left, so the canvas
+        # transform goes first and the label's own rotation about its
+        # anchor happens before it, as on Canvas.
+        if self._transformed or rotation != 0.0:
+            self._body.write(' transform="')
+            if self._transformed:
+                self._write_matrix()
+            if rotation != 0.0:
+                if self._transformed:
+                    self._body.write(" ")
+                self._body.write("rotate(")
+                _write_svg_float(self._body, rotation * (180.0 / pi))
+                self._body.write(" ", x, " ", y, ")")
+            self._body.write('"')
+        self._write_blend()
+        self._body.write(">", _escape_xml_text(text), "</text>\n")
 
     def to_string(self) -> String:
         return (
