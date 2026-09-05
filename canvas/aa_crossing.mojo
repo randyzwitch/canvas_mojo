@@ -215,6 +215,31 @@ struct _EdgeTable(Movable):
                 max_y = hi
         return (min_x, min_y, max_x, max_y)
 
+    def winding_at(self, x: Float64, y: Float64) -> Int:
+        """The signed winding number at (x, y): every edge that spans
+        the point's y (half-open, `y_lo <= y < y_hi`) and crosses to
+        its right contributes its direction. A point on a left edge
+        is therefore inside and one on a right edge outside, the
+        half-open convention the fills share.
+        """
+        var n = len(self.y_lo)
+        var x0 = self.x0.unsafe_ptr()
+        var y0 = self.y0.unsafe_ptr()
+        var dx = self.dx.unsafe_ptr()
+        var dy = self.dy.unsafe_ptr()
+        var y_lo = self.y_lo.unsafe_ptr()
+        var y_hi = self.y_hi.unsafe_ptr()
+        var direction = self.direction.unsafe_ptr()
+        var winding = 0
+        for i in range(n):
+            if y < y_lo[unsafe_offset=i] or y >= y_hi[unsafe_offset=i]:
+                continue
+            var t = (y - y0[unsafe_offset=i]) / dy[unsafe_offset=i]
+            var cx = x0[unsafe_offset=i] + t * dx[unsafe_offset=i]
+            if cx > x:
+                winding += direction[unsafe_offset=i]
+        return winding
+
     def add_edge(mut self, ax: Float64, ay: Float64, bx: Float64, by: Float64):
         """Record one edge, mapped first if `set_map` gave a
         transform. Horizontal edges are dropped: they never cross a

@@ -712,6 +712,99 @@ struct Path(Movable):
                 max_y = max(max_y, hi_y)
         return (min_x, min_y, max_x, max_y)
 
+    def in_fill(
+        self,
+        x: Float64,
+        y: Float64,
+        fill_rule: FillRule = FillRule.EVEN_ODD,
+        curve_steps: Int = 0,
+    ) -> Bool:
+        """Whether (x, y) lies inside the region `fill_path_aa` paints
+        under `fill_rule`: the point's winding number over every
+        sub-path, each treated as closed, on the same flattening the
+        fills use.
+
+        The boundary is half-open, as the fills are: a point on a
+        sub-path's left or top edge is inside, one on its right or
+        bottom edge is not.
+
+        Args:
+            x: Point x, in the path's coordinates.
+            y: Point y.
+            fill_rule: EVEN_ODD (the default) or NONZERO, as for the
+                fills.
+            curve_steps: Straight-line segments per quad/cubic Bezier;
+                0 (the default) chooses per segment, as the fills do.
+
+        Returns:
+            True when the point is inside.
+        """
+        return _point_in_subpaths(_flatten(self, curve_steps), x, y, fill_rule)
+
+    def in_stroke(
+        self,
+        x: Float64,
+        y: Float64,
+        width: Float64 = 1.0,
+        curve_steps: Int = 0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
+    ) -> Bool:
+        """Whether (x, y) lies inside the stroke `stroke_path_aa` paints
+        with the same arguments: the nonzero winding number of the
+        point over the stroke's outline, caps, joins and dashes
+        included, built the way the stroke draws it. A single-point
+        sub-path is the one pixel the stroke sets there.
+
+        Args:
+            x: Point x, in the path's coordinates.
+            y: Point y.
+            width: Stroke width in pixels.
+            curve_steps: Straight-line segments per quad/cubic Bezier;
+                0 (the default) chooses per segment, as the strokes do.
+            dashes: On/off segment lengths in pixels, cycled along the
+                stroke. Empty (default) tests a solid stroke.
+            dash_offset: Distance into the dash pattern the stroke
+                starts at.
+            cap: How an open sub-path's two ends are finished -- see
+                LineCap.
+            join: How corners are turned -- see LineJoin.
+            miter_limit: Ratio past which a MITER join falls back to
+                BEVEL, as a multiple of half the stroke width.
+
+        Returns:
+            True when the point is inside the stroke.
+        """
+        var subpaths = _flatten(self, curve_steps)
+        for sp_idx in range(len(subpaths)):
+            ref sp = subpaths[sp_idx]
+            var count = len(sp.points)
+            if count == 0:
+                continue
+            if count == 1:
+                if _round_to_int(x) == _round_to_int(
+                    sp.points[0].x
+                ) and _round_to_int(y) == _round_to_int(sp.points[0].y):
+                    return True
+                continue
+            var shape = _stroke_edges(
+                sp.points,
+                sp.closed,
+                width / 2.0,
+                cap,
+                dashes,
+                dash_offset,
+                join,
+                miter_limit,
+                Matrix2D.identity(),
+            )
+            if shape.edges.winding_at(x, y) != 0:
+                return True
+        return False
+
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's move_to and
         mark it closed. stroke_path/stroke_path_aa then draw it as a
