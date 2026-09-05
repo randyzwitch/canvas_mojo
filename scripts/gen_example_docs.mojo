@@ -46,6 +46,7 @@ def _titles() -> Dict[String, String]:
     d["canvas_state"] = "Canvas Transform State"
     d["clipping"] = "Clipping"
     d["layers"] = "Layers & Compositing"
+    d["draw_image"] = "Drawing a Canvas Scaled & Rotated"
     d["clip_path"] = "Clipping to a Path"
     d["joins"] = "Caps & Joins"
     d["png_output"] = "PNG I/O"
@@ -105,7 +106,8 @@ def _categories() -> List[Category]:
             (
                 "Dash patterns, the Transform2D coordinate pipeline, the"
                 " canvas's own save/restore transform state, clip regions,"
-                " and composing separate layers into one image."
+                " composing separate layers into one image, and drawing one"
+                " canvas into another under a matrix."
             ),
             [
                 "dashes",
@@ -116,6 +118,7 @@ def _categories() -> List[Category]:
                 "clipping",
                 "clip_path",
                 "layers",
+                "draw_image",
             ],
         )
     )
