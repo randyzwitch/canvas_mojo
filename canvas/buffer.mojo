@@ -1106,6 +1106,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         fill_rect(self, x, y, width, height, color)
 
+    def fill_rect(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        color: Color,
+    ):
+        fill_rect(self, x, y, width, height, color)
+
     def fill_rect_gradient(
         mut self,
         x: Int,
@@ -1126,12 +1136,69 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         fill_rect_gradient(self, x, y, width, height, gradient)
 
+    def fill_rect_gradient(
+        mut self,
+        x: Float64,
+        y: Float64,
+        width: Float64,
+        height: Float64,
+        gradient: LinearGradient,
+    ):
+        fill_rect_gradient(self, x, y, width, height, gradient)
+
     def draw_line_aa(
         mut self,
         x0: Int,
         y0: Int,
         x1: Int,
         y1: Int,
+        color: Color,
+        width: Float64 = 1.0,
+        dashes: List[Float64] = List[Float64](),
+        dash_offset: Float64 = 0.0,
+        cap: LineCap = LineCap.ROUND,
+        join: LineJoin = LineJoin.ROUND,
+        miter_limit: Float64 = 4.0,
+    ):
+        """Same as `canvas.shapes.lines.draw_line_aa`, callable as
+        a method.
+
+        Args:
+            x0: Start point's x.
+            y0: Start point's y.
+            x1: End point's x.
+            y1: End point's y.
+            color: Stroke color.
+            width: Stroke width in pixels.
+            dashes: On/off segment lengths in user-space pixels, cycled
+                along the line. Empty (default) draws a solid line.
+            dash_offset: Distance into the dash pattern the line starts
+                at.
+            cap: How the two ends are finished -- see LineCap.
+            join: Unused for a single segment, which has no corners.
+            miter_limit: Unused for a single segment.
+        """
+        draw_line_aa(
+            self,
+            x0,
+            y0,
+            x1,
+            y1,
+            color,
+            width=width,
+            dashes=dashes,
+            dash_offset=dash_offset,
+            cap=cap,
+            join=join,
+            miter_limit=miter_limit,
+        )
+
+    def draw_line_aa(
+        mut self,
+        x0: Float64,
+        y0: Float64,
+        x1: Float64,
+        y1: Float64,
         color: Color,
         width: Float64 = 1.0,
         dashes: List[Float64] = List[Float64](),
@@ -1185,6 +1252,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         fill_circle_aa(self, cx, cy, radius, color)
 
+    def fill_circle_aa(
+        mut self, cx: Float64, cy: Float64, radius: Float64, color: Color
+    ):
+        fill_circle_aa(self, cx, cy, radius, color)
+
     def draw_circle_aa(
         mut self,
         cx: Float64,
@@ -1219,6 +1291,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
             ry: Vertical radius in pixels.
             color: Fill color.
         """
+        fill_ellipse_aa(self, cx, cy, rx, ry, color)
+
+    def fill_ellipse_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+    ):
         fill_ellipse_aa(self, cx, cy, rx, ry, color)
 
     def draw_ellipse_aa(

@@ -282,9 +282,58 @@ def test_flip_gives_a_y_up_frame() raises:
     c.translate(0.0, Float64(H))
     c.scale(1.0, -1.0)
     fill_rect(c, 10, 10, 20, 15, INK)
+    # Rows 10 through 24 reflect to rows H - 10 through H - 24: the
+    # pixels' edges at 9.5 and 24.5 map, not their indices, so the
+    # reflection is exact rather than one row off.
     var want = Canvas(W, H, BG)
-    fill_rect(want, 10, H - 25, 20, 15, INK)
+    fill_rect(want, 10, H - 24, 20, 15, INK)
     _assert_same(want, c, "a y-up rect")
+
+
+def test_int_rect_is_exact_under_the_supersampling_recipe() raises:
+    # translate((f - 1) / 2) then scale(f): an Int rect's edges at
+    # x - 0.5 land on device pixel boundaries, so the scaled rect is
+    # exactly f times the pixels, at every factor -- and shrinking it
+    # back gives the scale-1 rect byte for byte.
+    for f in [2, 3, 4]:
+        var big = Canvas(f * W, f * H, BG)
+        big.translate(Float64(f - 1) / 2.0, Float64(f - 1) / 2.0)
+        big.scale(Float64(f), Float64(f))
+        fill_rect(big, 5, 7, 10, 6, INK)
+        var want = Canvas(f * W, f * H, BG)
+        fill_rect(want, 5 * f, 7 * f, 10 * f, 6 * f, INK)
+        _assert_same(want, big, "factor " + String(f))
+        var plain = Canvas(W, H, BG)
+        fill_rect(plain, 5, 7, 10, 6, INK)
+        _assert_same(plain, downsample(big, f), "shrunk back at " + String(f))
+
+
+def test_float_rect_snaps_to_pixel_boundaries() raises:
+    # Edges at half-integers are pixel boundaries: (19.5, 4.5) with
+    # width 40 is exactly the Int rect from pixel 20.
+    var a = Canvas(W, H, BG)
+    fill_rect(a, 19.5, 4.5, 40.0, 30.0, INK)
+    var b = Canvas(W, H, BG)
+    fill_rect(b, 20, 5, 40, 30, INK)
+    _assert_same(b, a, "half-integer edges are the Int rect")
+    # An edge at 20.4 is nearer the boundary at 20.5, so pixel 20 is
+    # out and the rect starts at 21; its far edge at 60.4 keeps pixel
+    # 60 in.
+    var c = Canvas(W, H, BG)
+    fill_rect(c, 20.4, 5.0, 40.0, 30.0, INK)
+    assert_true(c.get_pixel(20, 10).r == BG.r, "pixel 20 is out")
+    assert_true(c.get_pixel(21, 10).r == INK.r, "pixel 21 is in")
+    assert_true(c.get_pixel(60, 10).r == INK.r, "pixel 60 is in")
+    assert_true(c.get_pixel(61, 10).r == BG.r, "pixel 61 is out")
+    # Under scale(2) the float rect maps then snaps in device space:
+    # the edge at 19.5 lands on device 39.0, a pixel centre, and the
+    # tie goes to the higher boundary, 39.5, so the rect starts at 40.
+    var d = Canvas(W, H, BG)
+    d.scale(2.0, 2.0)
+    fill_rect(d, 19.5, 4.5, 20.0, 10.0, INK)
+    var e = Canvas(W, H, BG)
+    fill_rect(e, 40, 10, 40, 20, INK)
+    _assert_same(e, d, "mapped then snapped")
 
 
 def test_rotation_routes_a_rect_through_the_path_fill() raises:
@@ -293,8 +342,9 @@ def test_rotation_routes_a_rect_through_the_path_fill() raises:
     c.rotate(pi / 4.0)
     fill_rect(c, -20, -10, 40, 20, INK)
     var m = Matrix2D.rotation(pi / 4.0).then(Matrix2D.translation(60.0, 45.0))
+    # The Int rect's pixels span -20.5 to 19.5: those edges rotate.
     var p = Path()
-    p.rect(-20.0, -10.0, 40.0, 20.0)
+    p.rect(-20.5, -10.5, 40.0, 20.0)
     var want = Canvas(W, H, BG)
     fill_path(want, p.transformed(m), INK)
     _assert_same(want, c, "a rotated rect")
