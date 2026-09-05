@@ -10,7 +10,7 @@ from std.math import ceil, floor, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import _round_to_int
+from canvas.geometry import round_to_int
 from canvas.fill_rule import FillRule
 from canvas.path import (
     fill_path,
@@ -79,10 +79,10 @@ def draw_ellipse(
             var p = m.apply(Float64(cx), Float64(cy))
             _draw_ellipse_device(
                 canvas,
-                _round_to_int(p.x),
-                _round_to_int(p.y),
-                _round_to_int(Float64(rx) * abs(m.a)),
-                _round_to_int(Float64(ry) * abs(m.d)),
+                round_to_int(p.x),
+                round_to_int(p.y),
+                round_to_int(Float64(rx) * abs(m.a)),
+                round_to_int(Float64(ry) * abs(m.d)),
                 color,
             )
             return
@@ -170,10 +170,10 @@ def fill_ellipse(
             var p = m.apply(Float64(cx), Float64(cy))
             _fill_ellipse_device(
                 canvas,
-                _round_to_int(p.x),
-                _round_to_int(p.y),
-                _round_to_int(Float64(rx) * abs(m.a)),
-                _round_to_int(Float64(ry) * abs(m.d)),
+                round_to_int(p.x),
+                round_to_int(p.y),
+                round_to_int(Float64(rx) * abs(m.a)),
+                round_to_int(Float64(ry) * abs(m.d)),
                 color,
             )
             return
@@ -358,7 +358,7 @@ def _fill_ellipse_aa_device(
     back into the public function.
     """
     if rx <= 0.0 or ry <= 0.0:
-        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
+        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
 
     var rx_f = rx
@@ -643,7 +643,7 @@ def _draw_ellipse_aa_device(
     back into the public function.
     """
     if rx <= 0.0 or ry <= 0.0:
-        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
+        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
 
     var half = width / 2.0

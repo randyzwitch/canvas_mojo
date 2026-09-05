@@ -17,7 +17,7 @@ from std.runtime.asyncrt import TaskGroup, parallelism_level
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import Point, FPoint, _round_to_int
+from canvas.geometry import Point, FPoint, round_to_int
 from canvas.aa_crossing import _CoverageAlpha
 from canvas.shapes.lines import (
     LineCap,
@@ -178,7 +178,7 @@ def _arc_points(
     var points = List[Point](capacity=len(fpoints))
     for i in range(len(fpoints)):
         points.append(
-            Point(_round_to_int(fpoints[i].x), _round_to_int(fpoints[i].y))
+            Point(round_to_int(fpoints[i].x), round_to_int(fpoints[i].y))
         )
     return points^
 
@@ -346,7 +346,7 @@ def draw_arc(
         color: Outline color.
     """
     if radius <= 0.0:
-        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
+        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
     var points = _arc_points(cx, cy, radius, start_angle, end_angle)
     draw_polyline(canvas, points, color)
@@ -399,7 +399,7 @@ def draw_arc_aa(
             BEVEL, as a multiple of half the stroke width.
     """
     if radius <= 0.0:
-        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
+        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
     var points = _arc_fpoints(cx, cy, radius, start_angle, end_angle)
     draw_polyline_aa(
@@ -441,7 +441,7 @@ def fill_arc(
     if radius <= 0.0:
         return
     var points = _arc_points(cx, cy, radius, start_angle, end_angle)
-    points.append(Point(_round_to_int(cx), _round_to_int(cy)))
+    points.append(Point(round_to_int(cx), round_to_int(cy)))
     fill_polygon(canvas, points, color)
 
 
@@ -525,10 +525,10 @@ def _fill_arc_aa_device(
     var step = 1.0 / Float64(n)
 
     var bounds = _arc_bounds(cx, cy, radius, start_angle, end_angle, True)
-    var min_px = _round_to_int(bounds[0]) - 1
-    var max_px = _round_to_int(bounds[2]) + 1
-    var min_py = _round_to_int(bounds[1]) - 1
-    var max_py = _round_to_int(bounds[3]) + 1
+    var min_px = round_to_int(bounds[0]) - 1
+    var max_px = round_to_int(bounds[2]) + 1
+    var min_py = round_to_int(bounds[1]) - 1
+    var max_py = round_to_int(bounds[3]) + 1
 
     # One rotation's worth of trigonometry per wedge, replacing an
     # `atan2` per sub-sample -- see `_AngleSpan`.
@@ -861,10 +861,10 @@ def _fill_ring_sector_aa_device(
         cx, cy, inner_radius, start_angle, end_angle, False
     )
     var bounds = _union_bounds(outer_bounds, inner_bounds)
-    var min_px = _round_to_int(bounds[0]) - 1
-    var max_px = _round_to_int(bounds[2]) + 1
-    var min_py = _round_to_int(bounds[1]) - 1
-    var max_py = _round_to_int(bounds[3]) + 1
+    var min_px = round_to_int(bounds[0]) - 1
+    var max_px = round_to_int(bounds[2]) + 1
+    var min_py = round_to_int(bounds[1]) - 1
+    var max_py = round_to_int(bounds[3]) + 1
 
     # One rotation's worth of trigonometry per wedge, replacing an
     # `atan2` per sub-sample -- see `_AngleSpan`.
