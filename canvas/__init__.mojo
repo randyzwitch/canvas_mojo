@@ -83,6 +83,8 @@ from canvas.text.render import (
 )
 from canvas.path import (
     Path,
+    PathCommand,
+    PathOp,
     FPoint,
     fill_path,
     fill_path_aa,

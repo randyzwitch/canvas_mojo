@@ -144,11 +144,7 @@ from canvas.path import (
     _CoverageMask,
     _path_coverage_counts,
     _through,
-    _CLOSE,
-    _CUBIC_TO,
-    _LINE_TO,
-    _MOVE_TO,
-    _QUAD_TO,
+    PathOp,
 )
 from canvas.shapes.lines import LineJoin
 from canvas.text.text_align import TextAlign
@@ -979,24 +975,24 @@ def _place_glyph_path(
     """
     var out = Path()
     for cmd in local_path.commands:
-        if cmd.kind == _MOVE_TO:
+        if cmd.op == PathOp.MOVE_TO:
             out.move_to(
                 _rotate_translate_x(cmd.p1.x, cmd.p1.y, c, s, anchor_x),
                 _rotate_translate_y(cmd.p1.x, cmd.p1.y, c, s, anchor_y),
             )
-        elif cmd.kind == _LINE_TO:
+        elif cmd.op == PathOp.LINE_TO:
             out.line_to(
                 _rotate_translate_x(cmd.p1.x, cmd.p1.y, c, s, anchor_x),
                 _rotate_translate_y(cmd.p1.x, cmd.p1.y, c, s, anchor_y),
             )
-        elif cmd.kind == _QUAD_TO:
+        elif cmd.op == PathOp.QUAD_TO:
             out.quad_curve_to(
                 _rotate_translate_x(cmd.p1.x, cmd.p1.y, c, s, anchor_x),
                 _rotate_translate_y(cmd.p1.x, cmd.p1.y, c, s, anchor_y),
                 _rotate_translate_x(cmd.p2.x, cmd.p2.y, c, s, anchor_x),
                 _rotate_translate_y(cmd.p2.x, cmd.p2.y, c, s, anchor_y),
             )
-        elif cmd.kind == _CUBIC_TO:
+        elif cmd.op == PathOp.CUBIC_TO:
             out.cubic_curve_to(
                 _rotate_translate_x(cmd.p1.x, cmd.p1.y, c, s, anchor_x),
                 _rotate_translate_y(cmd.p1.x, cmd.p1.y, c, s, anchor_y),
@@ -1005,7 +1001,7 @@ def _place_glyph_path(
                 _rotate_translate_x(cmd.p3.x, cmd.p3.y, c, s, anchor_x),
                 _rotate_translate_y(cmd.p3.x, cmd.p3.y, c, s, anchor_y),
             )
-        else:  # _CLOSE
+        else:  # PathOp.CLOSE
             out.close()
     return out^
 

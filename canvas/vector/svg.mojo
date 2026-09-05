@@ -35,12 +35,7 @@ from canvas.vector.draw_target import DrawTarget
 from canvas.geometry import _round_to_int
 from canvas.path import (
     Path,
-    _ARC_TO,
-    _CLOSE,
-    _CUBIC_TO,
-    _LINE_TO,
-    _MOVE_TO,
-    _QUAD_TO,
+    PathOp,
 )
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_discovery import FontWeight
@@ -214,17 +209,17 @@ def _write_path_d(mut out: String, path: Path):
         if not is_first:
             out += " "
         is_first = False
-        if cmd.kind == _MOVE_TO:
+        if cmd.op == PathOp.MOVE_TO:
             out.write("M")
             _write_svg_float(out, cmd.p1.x)
             out.write(",")
             _write_svg_float(out, cmd.p1.y)
-        elif cmd.kind == _LINE_TO:
+        elif cmd.op == PathOp.LINE_TO:
             out.write("L")
             _write_svg_float(out, cmd.p1.x)
             out.write(",")
             _write_svg_float(out, cmd.p1.y)
-        elif cmd.kind == _QUAD_TO:
+        elif cmd.op == PathOp.QUAD_TO:
             out.write("Q")
             _write_svg_float(out, cmd.p1.x)
             out.write(",")
@@ -233,7 +228,7 @@ def _write_path_d(mut out: String, path: Path):
             _write_svg_float(out, cmd.p2.x)
             out.write(",")
             _write_svg_float(out, cmd.p2.y)
-        elif cmd.kind == _CUBIC_TO:
+        elif cmd.op == PathOp.CUBIC_TO:
             out.write("C")
             _write_svg_float(out, cmd.p1.x)
             out.write(",")
@@ -246,9 +241,9 @@ def _write_path_d(mut out: String, path: Path):
             _write_svg_float(out, cmd.p3.x)
             out.write(",")
             _write_svg_float(out, cmd.p3.y)
-        elif cmd.kind == _ARC_TO:
+        elif cmd.op == PathOp.ARC_TO:
             # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
-            # cmd.p3.x = end_angle (see _PathCommand in path.mojo). No
+            # cmd.p3.x = end_angle (see PathCommand in path.mojo). No
             # leading `L` to the arc's start the way fill_arc_aa's
             # standalone wedge needs: arc_to is always one segment
             # inside a larger path, continuing from the current point
@@ -271,7 +266,7 @@ def _write_path_d(mut out: String, path: Path):
             _write_svg_float(out, x1)
             out.write(",")
             _write_svg_float(out, y1)
-        else:  # _CLOSE
+        else:  # PathOp.CLOSE
             out += "Z"
 
 

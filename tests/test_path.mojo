@@ -34,9 +34,7 @@ from canvas.path import (
     _quad_point,
     _cubic_point,
     _point_in_subpaths,
-    _CUBIC_TO,
-    _LINE_TO,
-    _MOVE_TO,
+    PathOp,
 )
 
 comptime BG = Color(0, 0, 0)
@@ -1178,6 +1176,36 @@ def _three_points() -> List[FPoint]:
     return [FPoint(0.0, 0.0), FPoint(10.0, 10.0), FPoint(20.0, 0.0)]
 
 
+def test_commands_read_back_every_op_and_its_points() raises:
+    # One of each builder call, then the recorded sequence, which is
+    # what a caller inspecting or replaying a path sees.
+    var p = Path()
+    p.move_to(1.0, 2.0)
+    p.line_to(3.0, 4.0)
+    p.quad_curve_to(5.0, 6.0, 7.0, 8.0)
+    p.cubic_curve_to(9.0, 10.0, 11.0, 12.0, 13.0, 14.0)
+    p.arc_to(20.0, 20.0, 5.0, 0.0, 1.5)
+    p.close()
+    assert_equal(len(p.commands), 6)
+    assert_true(p.commands[0].op == PathOp.MOVE_TO)
+    _assert_fpoint(p.commands[0].p1, 1.0, 2.0, "move_to endpoint")
+    assert_true(p.commands[1].op == PathOp.LINE_TO)
+    _assert_fpoint(p.commands[1].p1, 3.0, 4.0, "line_to endpoint")
+    assert_true(p.commands[2].op == PathOp.QUAD_TO)
+    _assert_fpoint(p.commands[2].p1, 5.0, 6.0, "quad control")
+    _assert_fpoint(p.commands[2].p2, 7.0, 8.0, "quad endpoint")
+    assert_true(p.commands[3].op == PathOp.CUBIC_TO)
+    _assert_fpoint(p.commands[3].p1, 9.0, 10.0, "cubic control 1")
+    _assert_fpoint(p.commands[3].p2, 11.0, 12.0, "cubic control 2")
+    _assert_fpoint(p.commands[3].p3, 13.0, 14.0, "cubic endpoint")
+    assert_true(p.commands[4].op == PathOp.ARC_TO)
+    _assert_fpoint(p.commands[4].p1, 20.0, 20.0, "arc center")
+    _assert_fpoint(p.commands[4].p2, 5.0, 0.0, "arc radius and start")
+    assert_true(abs(p.commands[4].p3.x - 1.5) < 1e-12, "arc end angle")
+    assert_true(p.commands[5].op == PathOp.CLOSE)
+    assert_true(PathOp.CLOSE != PathOp.MOVE_TO)
+
+
 def test_curve_through_at_zero_tension_is_the_polyline() raises:
     # Command for command what move_to + line_to builds, not a
     # flattened straight cubic.
@@ -1189,14 +1217,14 @@ def test_curve_through_at_zero_tension_is_the_polyline() raises:
     straight.line_to(20.0, 0.0)
     assert_equal(len(smooth.commands), len(straight.commands))
     for i in range(len(straight.commands)):
-        assert_equal(smooth.commands[i].kind, straight.commands[i].kind)
+        assert_true(smooth.commands[i].op == straight.commands[i].op)
         _assert_fpoint(
             smooth.commands[i].p1,
             straight.commands[i].p1.x,
             straight.commands[i].p1.y,
             "command " + String(i),
         )
-    assert_equal(smooth.commands[1].kind, _LINE_TO)
+    assert_true(smooth.commands[1].op == PathOp.LINE_TO)
 
 
 def test_curve_through_passes_through_every_point_with_catmull_rom_tangents() raises:
@@ -1208,9 +1236,9 @@ def test_curve_through_passes_through_every_point_with_catmull_rom_tangents() ra
     var p = Path()
     p.curve_through(_three_points())
     assert_equal(len(p.commands), 3)
-    assert_equal(p.commands[0].kind, _MOVE_TO)
-    assert_equal(p.commands[1].kind, _CUBIC_TO)
-    assert_equal(p.commands[2].kind, _CUBIC_TO)
+    assert_true(p.commands[0].op == PathOp.MOVE_TO)
+    assert_true(p.commands[1].op == PathOp.CUBIC_TO)
+    assert_true(p.commands[2].op == PathOp.CUBIC_TO)
     _assert_fpoint(p.commands[1].p1, 10.0 / 6.0, 10.0 / 6.0, "c1 of seg 0")
     _assert_fpoint(p.commands[1].p2, 10.0 - 20.0 / 6.0, 10.0, "c2 of seg 0")
     _assert_fpoint(p.commands[1].p3, 10.0, 10.0, "seg 0 ends on p1")
@@ -1255,7 +1283,7 @@ def test_curve_through_degenerate_inputs() raises:
     var one = Path()
     one.curve_through([FPoint(3.0, 4.0)])
     assert_equal(len(one.commands), 1, "a lone move_to")
-    assert_equal(one.commands[0].kind, _MOVE_TO)
+    assert_true(one.commands[0].op == PathOp.MOVE_TO)
     # Two points: one segment, both tangents one-sided along the chord,
     # so the curve is the chord.
     var two = Path()

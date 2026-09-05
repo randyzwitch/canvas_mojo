@@ -73,30 +73,55 @@ from canvas.shapes.arcs import _arc_fpoints
 # below one supersample step.
 comptime _KAPPA = 0.5522847498307936
 
-comptime _MOVE_TO = 0
-comptime _LINE_TO = 1
-comptime _QUAD_TO = 2
-comptime _CUBIC_TO = 3
-comptime _CLOSE = 4
-comptime _ARC_TO = 5
 
-
-struct _PathCommand(ImplicitlyCopyable, Movable):
-    """One path command. Which of p1/p2/p3 matter depends on `kind`:
-    move_to/line_to use p1 (endpoint); quad_to uses p1 (control) and p2
-    (endpoint); cubic_to uses all three (control1, control2, endpoint);
-    close uses none; arc_to packs five scalars across the three points
-    -- p1 = (cx, cy), p2 = (radius, start_angle), p3.x = end_angle,
-    p3.y unused. Unused fields are zeroed.
+struct PathOp(Copyable, ImplicitlyCopyable, Movable):
+    """Which builder call a `PathCommand` records: one of `MOVE_TO`,
+    `LINE_TO`, `QUAD_TO`, `CUBIC_TO`, `CLOSE`, `ARC_TO`.
     """
 
-    var kind: Int
+    var _value: Int
+
+    comptime MOVE_TO = Self(0)
+    comptime LINE_TO = Self(1)
+    comptime QUAD_TO = Self(2)
+    comptime CUBIC_TO = Self(3)
+    comptime CLOSE = Self(4)
+    comptime ARC_TO = Self(5)
+
+    def __init__(out self, value: Int):
+        """Prefer the comptime constants over constructing one
+        directly.
+
+        Args:
+            value: 0 MOVE_TO, 1 LINE_TO, 2 QUAD_TO, 3 CUBIC_TO, 4 CLOSE,
+                5 ARC_TO.
+        """
+        self._value = value
+
+    def __eq__(self, other: Self) -> Bool:
+        return self._value == other._value
+
+    def __ne__(self, other: Self) -> Bool:
+        return self._value != other._value
+
+
+struct PathCommand(ImplicitlyCopyable, Movable):
+    """One path command, as `Path.commands` records it. Which of
+    p1/p2/p3 matter depends on `op`: MOVE_TO/LINE_TO use p1
+    (endpoint); QUAD_TO uses p1 (control) and p2 (endpoint); CUBIC_TO
+    uses all three (control1, control2, endpoint); CLOSE uses none;
+    ARC_TO packs five scalars across the three points -- p1 = (cx, cy),
+    p2 = (radius, start_angle), p3.x = end_angle, p3.y unused. Unused
+    fields are zeroed.
+    """
+
+    var op: PathOp
     var p1: FPoint
     var p2: FPoint
     var p3: FPoint
 
-    def __init__(out self, kind: Int, p1: FPoint, p2: FPoint, p3: FPoint):
-        self.kind = kind
+    def __init__(out self, op: PathOp, p1: FPoint, p2: FPoint, p3: FPoint):
+        self.op = op
         self.p1 = p1
         self.p2 = p2
         self.p3 = p3
@@ -110,9 +135,15 @@ struct Path(Movable):
 
     All coordinates are absolute. There are no relative-to-current-
     point variants (SVG/Cairo's rel_line_to and friends).
+
+    `commands` is the recorded sequence, one `PathCommand` per builder
+    call, readable by anything that wants to inspect or replay a path.
+    Treat it as read-only: the builder methods keep the current point
+    and sub-path start in step with it, and an appended command would
+    not.
     """
 
-    var commands: List[_PathCommand]
+    var commands: List[PathCommand]
     var _current_x: Float64
     var _current_y: Float64
     var _subpath_start_x: Float64
@@ -120,7 +151,7 @@ struct Path(Movable):
     var _has_current_point: Bool
 
     def __init__(out self):
-        self.commands = List[_PathCommand]()
+        self.commands = List[PathCommand]()
         self._current_x = 0.0
         self._current_y = 0.0
         self._subpath_start_x = 0.0
@@ -137,8 +168,8 @@ struct Path(Movable):
             y: New sub-path's starting point y.
         """
         self.commands.append(
-            _PathCommand(
-                _MOVE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+            PathCommand(
+                PathOp.MOVE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
             )
         )
         self._current_x = x
@@ -163,8 +194,8 @@ struct Path(Movable):
                 " starting point first"
             )
         self.commands.append(
-            _PathCommand(
-                _LINE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+            PathCommand(
+                PathOp.LINE_TO, FPoint(x, y), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
             )
         )
         self._current_x = x
@@ -191,8 +222,8 @@ struct Path(Movable):
                 " needs a starting point first"
             )
         self.commands.append(
-            _PathCommand(
-                _QUAD_TO, FPoint(cx, cy), FPoint(x, y), FPoint(0.0, 0.0)
+            PathCommand(
+                PathOp.QUAD_TO, FPoint(cx, cy), FPoint(x, y), FPoint(0.0, 0.0)
             )
         )
         self._current_x = x
@@ -227,8 +258,11 @@ struct Path(Movable):
                 " needs a starting point first"
             )
         self.commands.append(
-            _PathCommand(
-                _CUBIC_TO, FPoint(c1x, c1y), FPoint(c2x, c2y), FPoint(x, y)
+            PathCommand(
+                PathOp.CUBIC_TO,
+                FPoint(c1x, c1y),
+                FPoint(c2x, c2y),
+                FPoint(x, y),
             )
         )
         self._current_x = x
@@ -272,8 +306,8 @@ struct Path(Movable):
                 " starting point first"
             )
         self.commands.append(
-            _PathCommand(
-                _ARC_TO,
+            PathCommand(
+                PathOp.ARC_TO,
                 FPoint(cx, cy),
                 FPoint(radius, start_angle),
                 FPoint(end_angle, 0.0),
@@ -497,24 +531,24 @@ struct Path(Movable):
         var uniform = sx == sy
 
         for cmd in self.commands:
-            if cmd.kind == _MOVE_TO:
+            if cmd.op == PathOp.MOVE_TO:
                 var p = transform.to_point(cmd.p1.x, cmd.p1.y)
                 out.move_to(p.x, p.y)
-            elif cmd.kind == _LINE_TO:
+            elif cmd.op == PathOp.LINE_TO:
                 var p = transform.to_point(cmd.p1.x, cmd.p1.y)
                 out.line_to(p.x, p.y)
-            elif cmd.kind == _QUAD_TO:
+            elif cmd.op == PathOp.QUAD_TO:
                 var c = transform.to_point(cmd.p1.x, cmd.p1.y)
                 var e = transform.to_point(cmd.p2.x, cmd.p2.y)
                 out.quad_curve_to(c.x, c.y, e.x, e.y)
-            elif cmd.kind == _CUBIC_TO:
+            elif cmd.op == PathOp.CUBIC_TO:
                 var c1 = transform.to_point(cmd.p1.x, cmd.p1.y)
                 var c2 = transform.to_point(cmd.p2.x, cmd.p2.y)
                 var e = transform.to_point(cmd.p3.x, cmd.p3.y)
                 out.cubic_curve_to(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
-            elif cmd.kind == _ARC_TO:
+            elif cmd.op == PathOp.ARC_TO:
                 # p1 = (cx, cy), p2 = (radius, start_angle),
-                # p3.x = end_angle -- see _PathCommand.
+                # p3.x = end_angle -- see PathCommand.
                 if uniform:
                     var centre = transform.to_point(cmd.p1.x, cmd.p1.y)
                     var start = cmd.p2.y
@@ -545,7 +579,7 @@ struct Path(Movable):
                     for i in range(1, len(arc)):
                         var p = transform.to_point(arc[i].x, arc[i].y)
                         out.line_to(p.x, p.y)
-            else:  # _CLOSE
+            else:  # PathOp.CLOSE
                 out.close()
         return out^
 
@@ -582,24 +616,24 @@ struct Path(Movable):
         var mirrored = matrix.determinant() < 0.0
 
         for cmd in self.commands:
-            if cmd.kind == _MOVE_TO:
+            if cmd.op == PathOp.MOVE_TO:
                 var p = matrix.apply(cmd.p1.x, cmd.p1.y)
                 out.move_to(p.x, p.y)
-            elif cmd.kind == _LINE_TO:
+            elif cmd.op == PathOp.LINE_TO:
                 var p = matrix.apply(cmd.p1.x, cmd.p1.y)
                 out.line_to(p.x, p.y)
-            elif cmd.kind == _QUAD_TO:
+            elif cmd.op == PathOp.QUAD_TO:
                 var c = matrix.apply(cmd.p1.x, cmd.p1.y)
                 var e = matrix.apply(cmd.p2.x, cmd.p2.y)
                 out.quad_curve_to(c.x, c.y, e.x, e.y)
-            elif cmd.kind == _CUBIC_TO:
+            elif cmd.op == PathOp.CUBIC_TO:
                 var c1 = matrix.apply(cmd.p1.x, cmd.p1.y)
                 var c2 = matrix.apply(cmd.p2.x, cmd.p2.y)
                 var e = matrix.apply(cmd.p3.x, cmd.p3.y)
                 out.cubic_curve_to(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
-            elif cmd.kind == _ARC_TO:
+            elif cmd.op == PathOp.ARC_TO:
                 # p1 = (cx, cy), p2 = (radius, start_angle),
-                # p3.x = end_angle -- see _PathCommand.
+                # p3.x = end_angle -- see PathCommand.
                 if circular:
                     var centre = matrix.apply(cmd.p1.x, cmd.p1.y)
                     var start_pt = matrix.apply(
@@ -629,7 +663,7 @@ struct Path(Movable):
                     for i in range(1, len(arc)):
                         var q = matrix.apply(arc[i].x, arc[i].y)
                         out.line_to(q.x, q.y)
-            else:  # _CLOSE
+            else:  # PathOp.CLOSE
                 out.close()
         return out^
 
@@ -867,8 +901,11 @@ struct Path(Movable):
                 " starting point first"
             )
         self.commands.append(
-            _PathCommand(
-                _CLOSE, FPoint(0.0, 0.0), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+            PathCommand(
+                PathOp.CLOSE,
+                FPoint(0.0, 0.0),
+                FPoint(0.0, 0.0),
+                FPoint(0.0, 0.0),
             )
         )
         self._current_x = self._subpath_start_x
@@ -1012,7 +1049,7 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
     var start_y = 0.0
 
     for cmd in path.commands:
-        if cmd.kind == _MOVE_TO:
+        if cmd.op == PathOp.MOVE_TO:
             if len(current) > 0:
                 subpaths.append(_Subpath(current^, current_closed))
                 current = List[FPoint]()
@@ -1022,11 +1059,11 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
             start_x = cur_x
             start_y = cur_y
             current.append(FPoint(cur_x, cur_y))
-        elif cmd.kind == _LINE_TO:
+        elif cmd.op == PathOp.LINE_TO:
             cur_x = cmd.p1.x
             cur_y = cmd.p1.y
             current.append(FPoint(cur_x, cur_y))
-        elif cmd.kind == _QUAD_TO:
+        elif cmd.op == PathOp.QUAD_TO:
             var p0 = FPoint(cur_x, cur_y)
             var steps = curve_steps if curve_steps > 0 else _quad_steps(
                 p0, cmd.p1, cmd.p2
@@ -1037,7 +1074,7 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
                 current.append(p)
             cur_x = cmd.p2.x
             cur_y = cmd.p2.y
-        elif cmd.kind == _CUBIC_TO:
+        elif cmd.op == PathOp.CUBIC_TO:
             var p0 = FPoint(cur_x, cur_y)
             var steps = curve_steps if curve_steps > 0 else _cubic_steps(
                 p0, cmd.p1, cmd.p2, cmd.p3
@@ -1048,9 +1085,9 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
                 current.append(p)
             cur_x = cmd.p3.x
             cur_y = cmd.p3.y
-        elif cmd.kind == _ARC_TO:
+        elif cmd.op == PathOp.ARC_TO:
             # cmd.p1 = (cx, cy), cmd.p2 = (radius, start_angle),
-            # cmd.p3.x = end_angle (see _PathCommand). _arc_fpoints
+            # cmd.p3.x = end_angle (see PathCommand). _arc_fpoints
             # includes the arc's start point at index 0, which arc_to's
             # contract puts at (cur_x, cur_y) already, so it's skipped
             # the way the quad/cubic branches skip t=0.
@@ -1061,7 +1098,7 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
                 current.append(arc_points[i])
             cur_x = cmd.p1.x + cmd.p2.x * cos(cmd.p3.x)
             cur_y = cmd.p1.y + cmd.p2.x * sin(cmd.p3.x)
-        else:  # _CLOSE
+        else:  # PathOp.CLOSE
             cur_x = start_x
             cur_y = start_y
             current_closed = True
