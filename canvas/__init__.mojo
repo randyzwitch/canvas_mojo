@@ -1,4 +1,5 @@
 from canvas.blend import BlendMode
+from canvas.blur import blur, draw_shadowed
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.compose import Filter, draw_canvas

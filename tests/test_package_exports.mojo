@@ -23,8 +23,10 @@ from canvas import (
     PatternSource,
     SvgCanvas,
     TextAlign,
+    blur,
     downsample,
     draw_canvas,
+    draw_shadowed,
     fill_path_aa,
     fill_path_pattern,
     fill_path_pattern_aa,
@@ -66,6 +68,13 @@ def test_root_exports_draw_and_round_trip() raises:
 
     var small = downsample(canvas, 2)
     assert_equal(small.width, 2)
+
+    blur(small, 2.0)
+    assert_equal(small.width, 2, "blur() leaves the canvas's size alone")
+
+    var shadow_shape = Canvas(3, 3, Color(0, 0, 0, 0))
+    shadow_shape.set_pixel(1, 1, Color(255, 0, 0))
+    draw_shadowed(canvas, shadow_shape, 0, 0, Color(0, 0, 0, 180), 2.0, 1, 1)
 
     var path = Path()
     path.rect(0.0, 0.0, 2.0, 2.0)
