@@ -46,8 +46,7 @@ This module imports nothing from `canvas.text`, which is why
 Mojo resolves a struct's method surface, and whatever it imports,
 eagerly. It is also why `_face_covers_codepoint` walks a `cmap` here --
 it answers "is this codepoint mapped" from a byte range read off disk,
-where `TTFFace` needs the whole parsed, `glyf`-bearing file it refuses
-to build for a CFF font.
+where `TTFFace` needs the whole parsed file.
 
 This module resolves a font *file* and nothing more: no outline parsing,
 measuring, hinting or rasterizing.
@@ -284,9 +283,9 @@ struct FontFace(Copyable, Movable):
     """`post`'s isFixedPitch, or PANOSE bProportion == 9."""
 
     var renderable: Bool
-    """Whether `ttf.mojo` can actually parse this file: `glyf` outlines,
-    and not a collection container it reads no face index from. False
-    for a CFF/OpenType-CFF (`OTTO`) font and for every face in a `.ttc`.
+    """Whether `ttf.mojo` can actually parse this file: `glyf` or `CFF `
+    outlines, and not a collection container it reads no face index
+    from. False for every face in a `.ttc`.
     Ranked below every real matching term -- an exact family match wins
     even when the answer is a font this library will then refuse, which
     is a clear error rather than a silently different font.
@@ -553,6 +552,7 @@ def _parse_face(
     var cmap_offset = -1
     var cmap_length = 0
     var has_glyf = False
+    var has_cff = False
 
     for i in range(num_tables):
         var record = i * 16
@@ -573,6 +573,8 @@ def _parse_face(
             cmap_length = length
         elif tag == "glyf":
             has_glyf = True
+        elif tag == "CFF ":
+            has_cff = True
 
     if name_offset < 0 or name_length < 6:
         raise Error("font_discovery: face has no usable name table")
@@ -640,7 +642,7 @@ def _parse_face(
         slant,
         width,
         monospace,
-        has_glyf and not in_collection,
+        (has_glyf or has_cff) and not in_collection,
         cmap_offset,
         cmap_length,
     )
