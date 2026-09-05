@@ -224,14 +224,25 @@ struct RadialGradient(ColorSource, Movable):
     Add stops with add_stop(), then pass to fill_rect_radial_gradient/
     fill_path_radial_gradient (or query color_at() directly).
 
-    The single-circle form (center + radius) only, not the two-circle
-    form SVG/Cairo/HTML5 Canvas offer with an off-center focal point.
+    The two-circle form of SVG, Cairo and the HTML5 canvas is the
+    keyword constructor: offset 0.0 is then the focal circle at
+    (fx, fy) with radius `fr`, offset 1.0 the outer circle, and the
+    stops in between lie on the circles interpolated from one to the
+    other. The focal circle has to lie inside the outer one; the
+    constructor raises otherwise. The plain constructor is the
+    special case fx = cx, fy = cy, fr = 0.
     """
 
     var cx: Float64
     var cy: Float64
     var radius: Float64
+    var fx: Float64
+    var fy: Float64
+    var fr: Float64
     var stops: List[_GradientStop]
+    # Whether the focal circle differs from the center point, which
+    # is what decides between the distance formula and the quadratic.
+    var _focal: Bool
 
     def __init__(out self, cx: Float64, cy: Float64, radius: Float64):
         """A gradient with no stops yet -- add at least one with
@@ -245,7 +256,67 @@ struct RadialGradient(ColorSource, Movable):
         self.cx = cx
         self.cy = cy
         self.radius = radius
+        self.fx = cx
+        self.fy = cy
+        self.fr = 0.0
         self.stops = List[_GradientStop]()
+        self._focal = False
+
+    def __init__(
+        out self,
+        cx: Float64,
+        cy: Float64,
+        radius: Float64,
+        *,
+        fx: Float64,
+        fy: Float64,
+        fr: Float64 = 0.0,
+    ) raises:
+        """The two-circle form: offset 0.0 is the focal circle, offset
+        1.0 the outer circle at (cx, cy, radius).
+
+        Args:
+            cx: Outer circle's center x.
+            cy: Outer circle's center y.
+            radius: Outer circle's radius, where offset reaches 1.0.
+            fx: Focal circle's center x, where offset is 0.0.
+            fy: Focal circle's center y.
+            fr: Focal circle's radius, 0 (the default) for a focal
+                point.
+
+        Raises:
+            If `fr` is negative, or the focal circle reaches outside
+            the outer circle: the extended-cone form those describe
+            is not supported.
+        """
+        if fr < 0.0:
+            raise Error("RadialGradient: fr must be >= 0, got " + String(fr))
+        var dx = fx - cx
+        var dy = fy - cy
+        if sqrt(dx * dx + dy * dy) + fr > radius:
+            raise Error(
+                "RadialGradient: the focal circle ("
+                + String(fx)
+                + ", "
+                + String(fy)
+                + ", r="
+                + String(fr)
+                + ") reaches outside the outer circle ("
+                + String(cx)
+                + ", "
+                + String(cy)
+                + ", r="
+                + String(radius)
+                + ")"
+            )
+        self.cx = cx
+        self.cy = cy
+        self.radius = radius
+        self.fx = fx
+        self.fy = fy
+        self.fr = fr
+        self.stops = List[_GradientStop]()
+        self._focal = fx != cx or fy != cy or fr != 0.0
 
     def add_stop(mut self, offset: Float64, color: Color):
         """Add a color stop at `offset` (0.0 at the center, 1.0 at
@@ -269,6 +340,12 @@ struct RadialGradient(ColorSource, Movable):
         resolves to t=1.0, a solid fill of the highest-offset stop's
         color, rather than dividing by zero.
 
+        With a focal circle, t is the largest offset whose
+        interpolated circle passes through (x, y): with the center
+        c(t) = f + t*(c - f) and radius r(t) = fr + t*(radius - fr),
+        the larger root of |p - c(t)| = r(t). A point inside the focal
+        circle has both roots negative and pads to 0.
+
         Args:
             x: Point x.
             y: Point y.
@@ -277,6 +354,8 @@ struct RadialGradient(ColorSource, Movable):
             The interpolated color, transparent black if no stops have
             been added yet.
         """
+        if self._focal:
+            return _color_at_t(self.stops, self._focal_t(x, y))
         var dx = x - self.cx
         var dy = y - self.cy
         var dist = sqrt(dx * dx + dy * dy)
@@ -284,6 +363,45 @@ struct RadialGradient(ColorSource, Movable):
         if self.radius != 0.0:
             t = dist / self.radius
         return _color_at_t(self.stops, t)
+
+    def _focal_t(self, x: Float64, y: Float64) -> Float64:
+        """The two-circle offset at (x, y), before the pad clamp.
+
+        Writing everything relative to the focal center, with
+        cd = c - f, dr = radius - fr and pd = p - f, the circle
+        condition |pd - t*cd|^2 = (fr + t*dr)^2 is the quadratic
+
+            a*t^2 - 2*b*t + k = 0
+            a = cd.cd - dr^2,  b = pd.cd + fr*dr,  k = pd.pd - fr^2
+
+        The focal circle lies inside the outer one, so dr > |cd| and
+        a < 0: the roots are real for every point and the larger one
+        is (b - sqrt(b^2 - a*k)) / a. a == 0 only when the focal
+        circle touches the outer one from inside, where the equation
+        is linear.
+        """
+        var cdx = self.cx - self.fx
+        var cdy = self.cy - self.fy
+        var dr = self.radius - self.fr
+        var pdx = x - self.fx
+        var pdy = y - self.fy
+        var a = cdx * cdx + cdy * cdy - dr * dr
+        var b = pdx * cdx + pdy * cdy + self.fr * dr
+        var k = pdx * pdx + pdy * pdy - self.fr * self.fr
+        if a == 0.0:
+            # b == 0 is the focal point itself (k == 0, offset 0) or
+            # the tangent line through it, which no circle reaches;
+            # the half-plane behind that line pads to 0, so it does.
+            if b == 0.0:
+                return 0.0
+            return k / (2.0 * b)
+        var disc = b * b - a * k
+        if disc < 0.0:
+            return 1.0
+        var root = sqrt(disc)
+        var t1 = (b + root) / a
+        var t2 = (b - root) / a
+        return max(t1, t2)
 
 
 struct ConicGradient(ColorSource, Movable):

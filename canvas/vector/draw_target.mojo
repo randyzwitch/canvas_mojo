@@ -49,7 +49,7 @@ scales.
 
 The blend mode is on the trait as well: `set_blend_mode` and
 `blend_mode`, carried by `save`/`restore`, with the formulas in
-canvas/blend.mojo. `SvgCanvas` emits the six separable modes as
+canvas/blend.mojo. `SvgCanvas` emits the blend modes as
 `mix-blend-mode` and draws the Porter-Duff operators source-over,
 since CSS has no keyword for them.
 

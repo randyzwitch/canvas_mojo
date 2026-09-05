@@ -312,6 +312,451 @@ def test_xor_keeps_what_each_side_does_not_cover() raises:
     )
 
 
+def test_exclusion_at_full_and_partial_alpha() raises:
+    # B = Cb + Cs - 2*(Cb*Cs // 255).
+    #   r: 200 + 128 - 2*100 = 128
+    #   g: 100 + 255 - 2*100 = 155
+    #   b: 50  + 0   - 0     = 50
+    _assert_rgba(
+        _drawn(BlendMode.EXCLUSION, SRC, BG), 128, 155, 50, 255, "exclusion"
+    )
+    #   r: (128*128 + 127*200) // 255 = (16384 + 25400) // 255 = 163
+    #   g: (128*155 + 127*100) // 255 = (19840 + 12700) // 255 = 127
+    #   b: (128*50  + 127*50)  // 255 = (6400 + 6350) // 255 = 50
+    _assert_rgba(
+        _drawn(BlendMode.EXCLUSION, SRC.with_alpha(128), BG),
+        163,
+        127,
+        50,
+        255,
+        "exclusion at half alpha",
+    )
+
+
+def test_color_dodge_brightens_and_saturates_at_one() raises:
+    # B = min(1, Cb / (1 - Cs)), with Cs = 1 pinned to 1 and Cb = 0 to 0.
+    #   r: Cs = 128: min(255, 200*255 // 127) = min(255, 401) = 255
+    #   g: Cs = 255: 255 outright
+    #   b: Cs = 0:   50*255 // 255 = 50, the backdrop unchanged
+    _assert_rgba(
+        _drawn(BlendMode.COLOR_DODGE, SRC, BG), 255, 255, 50, 255, "dodge"
+    )
+    #   r: (128*255 + 127*200) // 255 = (32640 + 25400) // 255 = 227
+    #   g: (128*255 + 127*100) // 255 = (32640 + 12700) // 255 = 177
+    #   b: (128*50  + 127*50)  // 255 = 50
+    _assert_rgba(
+        _drawn(BlendMode.COLOR_DODGE, SRC.with_alpha(128), BG),
+        227,
+        177,
+        50,
+        255,
+        "dodge at half alpha",
+    )
+    # A black backdrop channel stays black whatever the source does.
+    _assert_rgba(
+        _drawn(BlendMode.COLOR_DODGE, Color(255, 128, 0), Color(0, 0, 0)),
+        0,
+        0,
+        0,
+        255,
+        "dodge over black",
+    )
+
+
+def test_color_burn_darkens_and_saturates_at_zero() raises:
+    # B = 1 - min(1, (1 - Cb) / Cs), with Cs = 0 pinned to 0 and
+    # Cb = 1 to 1.
+    #   r: Cs = 128: 255 - min(255, 55*255 // 128) = 255 - 109 = 146
+    #   g: Cs = 255: 255 - min(255, 155*255 // 255) = 255 - 155 = 100
+    #   b: Cs = 0:   0 outright
+    _assert_rgba(
+        _drawn(BlendMode.COLOR_BURN, SRC, BG), 146, 100, 0, 255, "burn"
+    )
+    #   r: (128*146 + 127*200) // 255 = (18688 + 25400) // 255 = 172
+    #   g: (128*100 + 127*100) // 255 = 100
+    #   b: (128*0   + 127*50)  // 255 = 6350 // 255 = 24
+    _assert_rgba(
+        _drawn(BlendMode.COLOR_BURN, SRC.with_alpha(128), BG),
+        172,
+        100,
+        24,
+        255,
+        "burn at half alpha",
+    )
+    # A white backdrop channel stays white whatever the source does.
+    _assert_rgba(
+        _drawn(BlendMode.COLOR_BURN, Color(0, 128, 255), Color(255, 255, 255)),
+        255,
+        255,
+        255,
+        255,
+        "burn over white",
+    )
+
+
+def test_hard_light_takes_each_channel_to_the_side_its_source_is_on() raises:
+    # Overlay with the operands swapped: the source channel picks the
+    # half.
+    #   r: 2*128 = 256 > 255, so screen(Cb, 2*Cs - 255) with t = 1:
+    #      200 + 1 - (200*1 // 255) = 201
+    #   g: 2*255 = 510, t = 255: 100 + 255 - (100*255 // 255) = 255
+    #   b: 2*0 = 0 <= 255, so multiply(Cb, 0) = 0
+    _assert_rgba(
+        _drawn(BlendMode.HARD_LIGHT, SRC, BG), 201, 255, 0, 255, "hard light"
+    )
+    #   r: (128*201 + 127*200) // 255 = (25728 + 25400) // 255 = 200
+    #   g: (128*255 + 127*100) // 255 = (32640 + 12700) // 255 = 177
+    #   b: (128*0   + 127*50)  // 255 = 24
+    _assert_rgba(
+        _drawn(BlendMode.HARD_LIGHT, SRC.with_alpha(128), BG),
+        200,
+        177,
+        24,
+        255,
+        "hard light at half alpha",
+    )
+    # And the swap is exact: hard-light(Cb, Cs) == overlay(Cs, Cb).
+    var hl = _blend_pixel(BlendMode.HARD_LIGHT, SRC, BG)
+    var ov = _blend_pixel(BlendMode.OVERLAY, BG, SRC)
+    _assert_rgba(
+        hl,
+        Int(ov.r),
+        Int(ov.g),
+        Int(ov.b),
+        255,
+        "hard-light is overlay swapped",
+    )
+
+
+def test_soft_light_in_floating_point() raises:
+    # Computed in 0-1 floats and rounded to the nearest channel.
+    #   r: Cb = 0.7843, Cs = 0.5020 > 0.5, so D = sqrt(Cb) = 0.8856 and
+    #      B = Cb + (2*Cs - 1)*(D - Cb) = 0.7843 + 0.0039*0.1013 = 0.7847
+    #      -> 200.1 -> 200
+    #   g: Cb = 0.3922, Cs = 1: B = D = sqrt(0.3922) = 0.6262
+    #      -> 159.7 -> 160
+    #   b: Cb = 0.1961, Cs = 0 <= 0.5: B = Cb - Cb*(1 - Cb)
+    #      = 0.1961 - 0.1576 = 0.0384 -> 9.8 -> 10
+    _assert_rgba(
+        _drawn(BlendMode.SOFT_LIGHT, SRC, BG), 200, 160, 10, 255, "soft light"
+    )
+    #   r: (128*200 + 127*200) // 255 = 51000 // 255 = 200
+    #   g: (128*160 + 127*100) // 255 = (20480 + 12700) // 255 = 130
+    #   b: (128*10  + 127*50)  // 255 = (1280 + 6350) // 255 = 29
+    _assert_rgba(
+        _drawn(BlendMode.SOFT_LIGHT, SRC.with_alpha(128), BG),
+        200,
+        130,
+        29,
+        255,
+        "soft light at half alpha",
+    )
+    # The cubic branch: Cb <= 0.25 with a source past 0.5.
+    #   Cb = 0.2, D = ((16*0.2 - 12)*0.2 + 4)*0.2 = (-1.76 + 4)*0.2 = 0.448
+    #   Cs = 1: B = 0.2 + 1*(0.448 - 0.2) = 0.448 -> 114.2 -> 114
+    _assert_rgba(
+        _drawn(BlendMode.SOFT_LIGHT, Color(255, 255, 255), Color(51, 51, 51)),
+        114,
+        114,
+        114,
+        255,
+        "soft light on the cubic branch",
+    )
+
+
+def test_hue_takes_the_source_hue_at_the_backdrop_lum_and_sat() raises:
+    # In 0-1 floats: Cb = (0.7843, 0.3922, 0.1961), Lum(Cb) = 0.4882,
+    # Sat(Cb) = 0.5882. Cs = (0.5020, 1, 0), Sat(Cs) = 1.
+    # SetSat(Cs, 0.5882): max g -> 0.5882, min b -> 0, mid
+    #   r -> 0.5020*0.5882 = 0.2953. Lum of that is 0.4356.
+    # SetLum(.., 0.4882) adds 0.0526 to each channel, nothing to clip:
+    #   (0.3479, 0.6408, 0.0526) -> (89, 163, 13)
+    _assert_rgba(_drawn(BlendMode.HUE, SRC, BG), 89, 163, 13, 255, "hue")
+    #   r: (128*89  + 127*200) // 255 = (11392 + 25400) // 255 = 144
+    #   g: (128*163 + 127*100) // 255 = (20864 + 12700) // 255 = 131
+    #   b: (128*13  + 127*50)  // 255 = (1664 + 6350) // 255 = 31
+    _assert_rgba(
+        _drawn(BlendMode.HUE, SRC.with_alpha(128), BG),
+        144,
+        131,
+        31,
+        255,
+        "hue at half alpha",
+    )
+
+
+def test_saturation_takes_the_source_sat_and_clips_below_zero() raises:
+    # SetSat(Cb, Sat(Cs) = 1): max r -> 1, min b -> 0, mid
+    #   g -> (0.3922 - 0.1961) / 0.5882 = 0.3333. Lum of that is 0.4967.
+    # SetLum(.., 0.4882) subtracts 0.0085: (0.9915, 0.3248, -0.0085),
+    # and the negative blue is what ClipColor pulls back, scaling the
+    # distance from grey 0.4882 by 0.4882 / 0.4967 = 0.9829:
+    #   (0.9830, 0.3277, 0) -> (251, 84, 0)
+    _assert_rgba(
+        _drawn(BlendMode.SATURATION, SRC, BG), 251, 84, 0, 255, "saturation"
+    )
+    #   r: (128*251 + 127*200) // 255 = (32128 + 25400) // 255 = 225
+    #   g: (128*84  + 127*100) // 255 = (10752 + 12700) // 255 = 91
+    #   b: (128*0   + 127*50)  // 255 = 24
+    _assert_rgba(
+        _drawn(BlendMode.SATURATION, SRC.with_alpha(128), BG),
+        225,
+        91,
+        24,
+        255,
+        "saturation at half alpha",
+    )
+
+
+def test_color_keeps_the_backdrop_lum_under_the_source_colour() raises:
+    # SetLum(Cs, Lum(Cb)): Lum(Cs) = 0.7406, so subtract 0.2524 from Cs:
+    # (0.2496, 0.7476, -0.2524). ClipColor scales by
+    # 0.4882 / (0.4882 + 0.2524) = 0.6592 about grey 0.4882:
+    #   (0.3309, 0.6592, 0) -> (84, 168, 0)
+    _assert_rgba(_drawn(BlendMode.COLOR, SRC, BG), 84, 168, 0, 255, "color")
+    #   r: (128*84  + 127*200) // 255 = (10752 + 25400) // 255 = 141
+    #   g: (128*168 + 127*100) // 255 = (21504 + 12700) // 255 = 134
+    #   b: (128*0   + 127*50)  // 255 = 24
+    _assert_rgba(
+        _drawn(BlendMode.COLOR, SRC.with_alpha(128), BG),
+        141,
+        134,
+        24,
+        255,
+        "color at half alpha",
+    )
+
+
+def test_luminosity_keeps_the_backdrop_colour_and_clips_above_one() raises:
+    # SetLum(Cb, Lum(Cs)): add 0.2524 to Cb: (1.0367, 0.6446, 0.4485).
+    # Red is past 1, so ClipColor scales by
+    # (1 - 0.7406) / (1.0367 - 0.7406) = 0.8760 about grey 0.7406:
+    #   (1.0, 0.6565, 0.4847) -> (255, 167, 124)
+    _assert_rgba(
+        _drawn(BlendMode.LUMINOSITY, SRC, BG), 255, 167, 124, 255, "luminosity"
+    )
+    #   r: (128*255 + 127*200) // 255 = (32640 + 25400) // 255 = 227
+    #   g: (128*167 + 127*100) // 255 = (21376 + 12700) // 255 = 133
+    #   b: (128*124 + 127*50)  // 255 = (15872 + 6350) // 255 = 87
+    _assert_rgba(
+        _drawn(BlendMode.LUMINOSITY, SRC.with_alpha(128), BG),
+        227,
+        133,
+        87,
+        255,
+        "luminosity at half alpha",
+    )
+
+
+def test_a_non_separable_mode_over_a_transparent_pixel_is_the_source() raises:
+    # ab = 0 leaves Cs' = Cs, so the triple blend has no effect until
+    # something is underneath, like the separable modes.
+    _assert_rgba(
+        _drawn(BlendMode.HUE, SRC, Color(0, 0, 0, 0)),
+        128,
+        255,
+        0,
+        255,
+        "hue over nothing draws the source",
+    )
+
+
+def test_clear_and_destination_are_the_two_ends() raises:
+    # CLEAR: Fa = Fb = 0, nothing survives.
+    _assert_rgba(
+        _drawn(BlendMode.CLEAR, SRC.with_alpha(128), BG.with_alpha(200)),
+        0,
+        0,
+        0,
+        0,
+        "clear",
+    )
+    # DESTINATION: Fa = 0, Fb = 1, the backdrop is untouched.
+    _assert_rgba(
+        _drawn(BlendMode.DESTINATION, SRC.with_alpha(128), BG.with_alpha(200)),
+        200,
+        100,
+        50,
+        200,
+        "destination",
+    )
+
+
+def test_destination_over_paints_the_source_behind() raises:
+    # Fa = 1 - ab = 55, Fb = 1.
+    #   wa = (128*55) // 255 = 7040 // 255 = 27, wb = 200, ao = 227.
+    #   r: (27*128 + 200*200) // 227 = (3456 + 40000) // 227 = 191
+    #   g: (27*255 + 200*100) // 227 = (6885 + 20000) // 227 = 118
+    #   b: (27*0   + 200*50)  // 227 = 10000 // 227 = 44
+    _assert_rgba(
+        _drawn(
+            BlendMode.DESTINATION_OVER, SRC.with_alpha(128), BG.with_alpha(200)
+        ),
+        191,
+        118,
+        44,
+        227,
+        "destination-over",
+    )
+    # Over an opaque backdrop the source is entirely hidden.
+    _assert_rgba(
+        _drawn(BlendMode.DESTINATION_OVER, SRC, BG),
+        200,
+        100,
+        50,
+        255,
+        "destination-over under an opaque pixel",
+    )
+
+
+def test_source_in_and_out_keep_the_source_colour() raises:
+    # Both have Fb = 0, so Co = (wa*Cs) // wa = Cs; only the alpha
+    # moves. source-in: Fa = ab, so ao = (128 * 200) // 255 = 100.
+    _assert_rgba(
+        _drawn(BlendMode.SOURCE_IN, SRC.with_alpha(128), BG.with_alpha(200)),
+        128,
+        255,
+        0,
+        100,
+        "source-in scales the source alpha by the backdrop's",
+    )
+    # source-out: Fa = 1 - ab, so ao = (128 * 55) // 255 = 27.
+    _assert_rgba(
+        _drawn(BlendMode.SOURCE_OUT, SRC.with_alpha(128), BG.with_alpha(200)),
+        128,
+        255,
+        0,
+        27,
+        "source-out keeps the source where the backdrop is not",
+    )
+    # source-in over a transparent pixel draws nothing at all.
+    _assert_rgba(
+        _drawn(BlendMode.SOURCE_IN, SRC, Color(0, 0, 0, 0)),
+        0,
+        0,
+        0,
+        0,
+        "source-in over nothing",
+    )
+
+
+def test_atop_composites_inside_the_other_side() raises:
+    # source-atop: Fa = ab = 200, Fb = 1 - as = 127.
+    #   wa = (128*200) // 255 = 100, wb = (200*127) // 255 = 99, ao = 199.
+    #   r: (100*128 + 99*200) // 199 = (12800 + 19800) // 199 = 163
+    #   g: (100*255 + 99*100) // 199 = (25500 + 9900) // 199 = 177
+    #   b: (100*0   + 99*50)  // 199 = 4950 // 199 = 24
+    _assert_rgba(
+        _drawn(BlendMode.SOURCE_ATOP, SRC.with_alpha(128), BG.with_alpha(200)),
+        163,
+        177,
+        24,
+        199,
+        "source-atop",
+    )
+    # The alpha is the backdrop's own: the source never adds coverage.
+    _assert_rgba(
+        _drawn(BlendMode.SOURCE_ATOP, SRC, Color(0, 0, 0, 0)),
+        0,
+        0,
+        0,
+        0,
+        "source-atop over nothing draws nothing",
+    )
+    # destination-atop: Fa = 1 - ab = 55, Fb = as = 128.
+    #   wa = 27, wb = (200*128) // 255 = 100, ao = 127.
+    #   r: (27*128 + 100*200) // 127 = (3456 + 20000) // 127 = 184
+    #   g: (27*255 + 100*100) // 127 = (6885 + 10000) // 127 = 132
+    #   b: (27*0   + 100*50)  // 127 = 5000 // 127 = 39
+    _assert_rgba(
+        _drawn(
+            BlendMode.DESTINATION_ATOP, SRC.with_alpha(128), BG.with_alpha(200)
+        ),
+        184,
+        132,
+        39,
+        127,
+        "destination-atop",
+    )
+
+
+def test_add_sums_and_clamps() raises:
+    # Fa = Fb = 1: wa = 128, wb = 200, ao = min(255, 328) = 255.
+    #   r: (128*128 + 200*200) // 255 = (16384 + 40000) // 255 = 221
+    #   g: (128*255 + 200*100) // 255 = (32640 + 20000) // 255 = 206
+    #   b: (128*0   + 200*50)  // 255 = 10000 // 255 = 39
+    _assert_rgba(
+        _drawn(BlendMode.ADD, SRC.with_alpha(128), BG.with_alpha(200)),
+        221,
+        206,
+        39,
+        255,
+        "add of two translucent pixels",
+    )
+    # Two opaque pixels: each channel is the plain sum, clamped.
+    #   r: 128 + 200 = 328 -> 255, g: 255 + 100 -> 255, b: 0 + 50 = 50
+    _assert_rgba(
+        _drawn(BlendMode.ADD, SRC, BG), 255, 255, 50, 255, "add clamps"
+    )
+    # Over nothing, add is the source.
+    _assert_rgba(
+        _drawn(BlendMode.ADD, SRC.with_alpha(128), Color(0, 0, 0, 0)),
+        128,
+        255,
+        0,
+        128,
+        "add over nothing",
+    )
+
+
+def test_every_mode_is_classified_once() raises:
+    # The three families partition the table, and the classification
+    # is what routes a pixel through _blend_pixel.
+    var porter_duff: List[BlendMode] = [
+        BlendMode.SOURCE_OVER,
+        BlendMode.SOURCE,
+        BlendMode.DESTINATION_IN,
+        BlendMode.DESTINATION_OUT,
+        BlendMode.XOR,
+        BlendMode.CLEAR,
+        BlendMode.DESTINATION,
+        BlendMode.DESTINATION_OVER,
+        BlendMode.SOURCE_IN,
+        BlendMode.SOURCE_OUT,
+        BlendMode.SOURCE_ATOP,
+        BlendMode.DESTINATION_ATOP,
+        BlendMode.ADD,
+    ]
+    for m in porter_duff:
+        assert_false(m.is_separable())
+        assert_false(m.is_non_separable())
+    var separable: List[BlendMode] = [
+        BlendMode.MULTIPLY,
+        BlendMode.SCREEN,
+        BlendMode.OVERLAY,
+        BlendMode.DARKEN,
+        BlendMode.LIGHTEN,
+        BlendMode.DIFFERENCE,
+        BlendMode.EXCLUSION,
+        BlendMode.COLOR_DODGE,
+        BlendMode.COLOR_BURN,
+        BlendMode.HARD_LIGHT,
+        BlendMode.SOFT_LIGHT,
+    ]
+    for m in separable:
+        assert_true(m.is_separable())
+        assert_false(m.is_non_separable())
+    var non_separable: List[BlendMode] = [
+        BlendMode.HUE,
+        BlendMode.SATURATION,
+        BlendMode.COLOR,
+        BlendMode.LUMINOSITY,
+    ]
+    for m in non_separable:
+        assert_false(m.is_separable())
+        assert_true(m.is_non_separable())
+
+
 def test_a_blend_mode_over_a_transparent_pixel_is_the_source() raises:
     # ab = 0 leaves Cs' = Cs and Fb = 0 leaves nothing of the backdrop,
     # so a blend mode is invisible until something is underneath.
@@ -499,12 +944,39 @@ def test_svg_emits_mix_blend_mode_for_the_separable_modes() raises:
     each.fill_circle_aa(40, 10, 5, Color(0, 0, 0))
     each.set_blend_mode(BlendMode.DIFFERENCE)
     each.fill_circle_aa(50, 10, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.EXCLUSION)
+    each.fill_circle_aa(60, 10, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.COLOR_DODGE)
+    each.fill_circle_aa(70, 10, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.COLOR_BURN)
+    each.fill_circle_aa(80, 10, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.HARD_LIGHT)
+    each.fill_circle_aa(90, 10, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.SOFT_LIGHT)
+    each.fill_circle_aa(10, 20, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.HUE)
+    each.fill_circle_aa(20, 20, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.SATURATION)
+    each.fill_circle_aa(30, 20, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.COLOR)
+    each.fill_circle_aa(40, 20, 5, Color(0, 0, 0))
+    each.set_blend_mode(BlendMode.LUMINOSITY)
+    each.fill_circle_aa(50, 20, 5, Color(0, 0, 0))
     var out = each.to_string()
     assert_true('style="mix-blend-mode:screen"' in out)
     assert_true('style="mix-blend-mode:overlay"' in out)
     assert_true('style="mix-blend-mode:darken"' in out)
     assert_true('style="mix-blend-mode:lighten"' in out)
     assert_true('style="mix-blend-mode:difference"' in out)
+    assert_true('style="mix-blend-mode:exclusion"' in out)
+    assert_true('style="mix-blend-mode:color-dodge"' in out)
+    assert_true('style="mix-blend-mode:color-burn"' in out)
+    assert_true('style="mix-blend-mode:hard-light"' in out)
+    assert_true('style="mix-blend-mode:soft-light"' in out)
+    assert_true('style="mix-blend-mode:hue"' in out)
+    assert_true('style="mix-blend-mode:saturation"' in out)
+    assert_true('style="mix-blend-mode:color"' in out)
+    assert_true('style="mix-blend-mode:luminosity"' in out)
 
 
 def test_svg_emits_nothing_for_source_over_or_a_porter_duff_mode() raises:
@@ -518,6 +990,12 @@ def test_svg_emits_nothing_for_source_over_or_a_porter_duff_mode() raises:
     svg.fill_rect(30, 0, 10, 10, Color(0, 0, 0))
     svg.set_blend_mode(BlendMode.SOURCE)
     svg.fill_rect(40, 0, 10, 10, Color(0, 0, 0))
+    svg.set_blend_mode(BlendMode.CLEAR)
+    svg.fill_rect(50, 0, 10, 10, Color(0, 0, 0))
+    svg.set_blend_mode(BlendMode.SOURCE_ATOP)
+    svg.fill_rect(60, 0, 10, 10, Color(0, 0, 0))
+    svg.set_blend_mode(BlendMode.ADD)
+    svg.fill_rect(70, 0, 10, 10, Color(0, 0, 0))
     assert_true(
         "mix-blend-mode" not in svg.to_string(),
         "CSS has no keyword for the Porter-Duff operators",

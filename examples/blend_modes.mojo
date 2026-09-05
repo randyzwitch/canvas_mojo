@@ -1,7 +1,7 @@
 """Demo: blend and composite modes -- what a fill does to the pixels
 already there, beyond the default source-over.
 
-Six panels of the same three overlapping translucent disks, each drawn
+Nine panels of the same three overlapping translucent disks, each drawn
 inside a save/restore pair with a different mode set:
 
 - source-over: the default, each disk laid over the last
@@ -13,9 +13,15 @@ inside a save/restore pair with a different mode set:
 - difference: the overlaps invert against what is under them
 - destination-out: the disks cut holes in a solid block rather than
   drawing anything, which is what carves a knockout
+- hard-light: the disk's own colour picks multiply or screen per
+  channel, so the disks read as lit from within
+- exclusion: difference with the contrast pulled down
+- luminosity: only the disks' lightness reaches the panel, so they
+  come out as greys over the panel's own colour
 
-The last panel writes transparent pixels, so the PNG shows the page
-through them and the BMP, having no alpha channel, shows white.
+The destination-out panel writes transparent pixels, so the PNG shows
+the page through them and the BMP, having no alpha channel, shows
+white.
 
 Run with:
     pixi run example
@@ -98,7 +104,7 @@ def _cutout_panel(
 
 
 def main() raises:
-    var c = Canvas(3 * PANEL_W + 60, 2 * PANEL_H + 120, PAGE)
+    var c = Canvas(3 * PANEL_W + 60, 3 * PANEL_H + 160, PAGE)
     var cache = FontCache()
 
     draw_text(c, 15, 28, "Blend and composite modes", INK, 18.0, cache=cache)
@@ -121,6 +127,23 @@ def main() raises:
         cache,
     )
     _cutout_panel(c, left + 2 * step_x, top + step_y, "destination-out", cache)
+    _panel(c, left, top + 2 * step_y, BlendMode.HARD_LIGHT, "hard-light", cache)
+    _panel(
+        c,
+        left + step_x,
+        top + 2 * step_y,
+        BlendMode.EXCLUSION,
+        "exclusion",
+        cache,
+    )
+    _panel(
+        c,
+        left + 2 * step_x,
+        top + 2 * step_y,
+        BlendMode.LUMINOSITY,
+        "luminosity",
+        cache,
+    )
 
     write_bmp(c, "examples/out_blend_modes.bmp")
     write_png(c, "examples/out_blend_modes.png")
