@@ -5,7 +5,8 @@ image viewer, PDF exporter) does all of that at whatever resolution it
 displays at, so content drawn through this carries no fixed pixel size.
 
 The surface implements every `DrawTarget` method. It is not a
-general-purpose SVG builder: no gradients beyond `fill_rect_gradient`'s,
+general-purpose SVG builder: linear and radial gradients on rects and
+paths only (a conic gradient has no SVG element and stays raster-only),
 no clipping, and no groups beyond `begin_annotated_group`.
 
 The transform state (`save`/`restore`, `translate`/`rotate`/`scale`)
@@ -30,7 +31,7 @@ from canvas.blend import BlendMode, _css_blend_name
 from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
-from canvas.gradient import LinearGradient
+from canvas.gradient import GradientStops, LinearGradient, RadialGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.geometry import round_to_int
 from canvas.path import (
@@ -518,6 +519,73 @@ struct SvgCanvas(DrawTarget, Movable):
         self._write_blend()
         self._body.write("/>\n")
 
+    def _write_stops(mut self, stops: GradientStops):
+        """The `<stop>` children of a gradient def. The ramp is kept
+        sorted by offset on insert, which is what SVG needs: `<stop>`
+        clamps each offset to be no less than the previous sibling's,
+        so descending offsets would flatten the gradient to one colour
+        in every viewer.
+        """
+        for stop in stops:
+            self._body.write('<stop offset="')
+            _write_svg_float(self._body, stop.offset)
+            self._body.write(
+                '" stop-color="', _to_hex(stop.color), '" stop-opacity="'
+            )
+            _write_svg_float(self._body, Float64(stop.color.a) / 255.0)
+            self._body.write('"/>')
+
+    def _write_linear_def(mut self, gradient: LinearGradient) -> Int:
+        """A fresh `<defs><linearGradient id="gradN">` for `gradient`,
+        `gradientUnits="userSpaceOnUse"` so its axis is the document's
+        own pixel space. Returns N.
+        """
+        self._gradient_count += 1
+        self._body.write(
+            '<defs><linearGradient id="grad',
+            self._gradient_count,
+            '" gradientUnits="userSpaceOnUse" x1="',
+        )
+        _write_svg_float(self._body, gradient.x0)
+        self._body.write('" y1="')
+        _write_svg_float(self._body, gradient.y0)
+        self._body.write('" x2="')
+        _write_svg_float(self._body, gradient.x1)
+        self._body.write('" y2="')
+        _write_svg_float(self._body, gradient.y1)
+        self._body.write('">')
+        self._write_stops(gradient.stops)
+        self._body.write("</linearGradient></defs>\n")
+        return self._gradient_count
+
+    def _write_radial_def(mut self, gradient: RadialGradient) -> Int:
+        """A fresh `<defs><radialGradient id="gradN">` for `gradient`,
+        `gradientUnits="userSpaceOnUse"`, with `fx`/`fy`/`fr` only when
+        the focal circle differs from the centre point. Returns N.
+        """
+        self._gradient_count += 1
+        self._body.write(
+            '<defs><radialGradient id="grad',
+            self._gradient_count,
+            '" gradientUnits="userSpaceOnUse" cx="',
+        )
+        _write_svg_float(self._body, gradient.cx)
+        self._body.write('" cy="')
+        _write_svg_float(self._body, gradient.cy)
+        self._body.write('" r="')
+        _write_svg_float(self._body, gradient.radius)
+        if gradient._focal:
+            self._body.write('" fx="')
+            _write_svg_float(self._body, gradient.fx)
+            self._body.write('" fy="')
+            _write_svg_float(self._body, gradient.fy)
+            self._body.write('" fr="')
+            _write_svg_float(self._body, gradient.fr)
+        self._body.write('">')
+        self._write_stops(gradient.stops)
+        self._body.write("</radialGradient></defs>\n")
+        return self._gradient_count
+
     def fill_rect_gradient(
         mut self,
         x: Int,
@@ -543,33 +611,35 @@ struct SvgCanvas(DrawTarget, Movable):
             height: Rectangle's height.
             gradient: Fill source, projected across the rectangle.
         """
-        self._gradient_count += 1
-        self._body.write(
-            '<defs><linearGradient id="grad',
-            self._gradient_count,
-            '" gradientUnits="userSpaceOnUse" x1="',
-        )
-        _write_svg_float(self._body, gradient.x0)
-        self._body.write('" y1="')
-        _write_svg_float(self._body, gradient.y0)
-        self._body.write('" x2="')
-        _write_svg_float(self._body, gradient.x1)
-        self._body.write('" y2="')
-        _write_svg_float(self._body, gradient.y1)
-        self._body.write('">')
-        # `LinearGradient.stops` is kept sorted by offset on insert,
-        # which is what SVG needs: `<stop>` clamps each offset to be no
-        # less than the previous sibling's, so descending offsets would
-        # flatten the gradient to one colour in every viewer.
-        for stop in gradient.stops:
-            self._body.write('<stop offset="')
-            _write_svg_float(self._body, stop.offset)
-            self._body.write(
-                '" stop-color="', _to_hex(stop.color), '" stop-opacity="'
-            )
-            _write_svg_float(self._body, Float64(stop.color.a) / 255.0)
-            self._body.write('"/>')
-        self._body.write("</linearGradient></defs>\n")
+        var n = self._write_linear_def(gradient)
+        self._write_gradient_rect(x, y, width, height, n)
+
+    def fill_rect_radial_gradient(
+        mut self,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        gradient: RadialGradient,
+    ):
+        """`fill_rect_gradient` for a `RadialGradient`: a fresh
+        `<defs><radialGradient id="gradN">` in the document's pixel
+        space, with the focal circle when the gradient has one, and a
+        `<rect>` filled from it.
+
+        Args:
+            x: Rectangle's left edge.
+            y: Rectangle's top edge.
+            width: Rectangle's width.
+            height: Rectangle's height.
+            gradient: Fill source, in the document's pixel space.
+        """
+        var n = self._write_radial_def(gradient)
+        self._write_gradient_rect(x, y, width, height, n)
+
+    def _write_gradient_rect(
+        mut self, x: Int, y: Int, width: Int, height: Int, n: Int
+    ):
         self._body.write(
             '<rect x="',
             x,
@@ -580,9 +650,55 @@ struct SvgCanvas(DrawTarget, Movable):
             '" height="',
             height,
             '" fill="url(#grad',
-            self._gradient_count,
+            n,
             ')"',
         )
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
+
+    def fill_path_gradient_aa(
+        mut self,
+        path: Path,
+        gradient: LinearGradient,
+        fill_rule: FillRule = FillRule.EVEN_ODD,
+    ):
+        """`fill_path_aa` filled from a `LinearGradient`: a fresh
+        `<defs><linearGradient>` in the document's pixel space and a
+        `<path>` referencing it, with the fill rule written out as
+        `fill_path_aa` writes it.
+
+        Args:
+            path: Path to fill.
+            gradient: Fill source, in the document's pixel space.
+            fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        """
+        var n = self._write_linear_def(gradient)
+        self._write_gradient_path(path, n, fill_rule)
+
+    def fill_path_radial_gradient_aa(
+        mut self,
+        path: Path,
+        gradient: RadialGradient,
+        fill_rule: FillRule = FillRule.EVEN_ODD,
+    ):
+        """`fill_path_gradient_aa` for a `RadialGradient`.
+
+        Args:
+            path: Path to fill.
+            gradient: Fill source, in the document's pixel space.
+            fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        """
+        var n = self._write_radial_def(gradient)
+        self._write_gradient_path(path, n, fill_rule)
+
+    def _write_gradient_path(mut self, path: Path, n: Int, fill_rule: FillRule):
+        var rule = ""
+        if fill_rule == FillRule.EVEN_ODD:
+            rule = ' fill-rule="evenodd"'
+        self._body.write('<path d="')
+        _write_path_d(self._body, path)
+        self._body.write('" fill="url(#grad', n, ')"', rule)
         self._write_transform()
         self._write_blend()
         self._body.write("/>\n")
