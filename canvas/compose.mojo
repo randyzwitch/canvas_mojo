@@ -44,7 +44,7 @@ from canvas.geometry import Matrix2D, round_to_int
 from canvas.mask import Mask, apply_mask
 
 
-struct Filter(Copyable, ImplicitlyCopyable, Movable):
+struct Filter(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """How a transformed `draw_canvas` reads the source between its
     pixels: `NEAREST` takes the one the sample point lands in, giving
     hard pixel edges and no colour the source did not already hold, and
@@ -68,6 +68,19 @@ struct Filter(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.NEAREST._value:
+            writer.write("NEAREST")
+        elif self._value == Self.BILINEAR._value:
+            writer.write("BILINEAR")
+        else:
+            writer.write("Filter(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
 
 def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int):

@@ -26,7 +26,7 @@ from canvas.shapes.circles import fill_circle_aa
 from canvas.shapes.lines import LineCap, draw_line_aa
 
 
-struct Extend(Copyable, ImplicitlyCopyable, Movable):
+struct Extend(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """How `PatternSource.color_at` samples outside the tile's own
     [0, width) x [0, height) bounds.
 
@@ -56,6 +56,23 @@ struct Extend(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.REPEAT._value:
+            writer.write("REPEAT")
+        elif self._value == Self.REFLECT._value:
+            writer.write("REFLECT")
+        elif self._value == Self.PAD._value:
+            writer.write("PAD")
+        elif self._value == Self.NONE._value:
+            writer.write("NONE")
+        else:
+            writer.write("Extend(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
 
 def _wrap_index(i: Int, n: Int, extend: Extend) -> Int:
@@ -157,7 +174,7 @@ struct PatternSource(ColorSource, Movable):
         )
 
 
-struct Hatch(Copyable, ImplicitlyCopyable, Movable):
+struct Hatch(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """Which pattern `hatch_tile` renders.
 
     DIAGONAL is one family of parallel lines at 45 degrees, top-left to
@@ -187,6 +204,25 @@ struct Hatch(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.DIAGONAL._value:
+            writer.write("DIAGONAL")
+        elif self._value == Self.CROSS._value:
+            writer.write("CROSS")
+        elif self._value == Self.DOTS._value:
+            writer.write("DOTS")
+        elif self._value == Self.HORIZONTAL._value:
+            writer.write("HORIZONTAL")
+        elif self._value == Self.VERTICAL._value:
+            writer.write("VERTICAL")
+        else:
+            writer.write("Hatch(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
 
 def _draw_wrapped_diagonal(
