@@ -35,6 +35,11 @@ test = "bash scripts/run_parallel.sh tests/test_text.mojo tests/test_text_path.m
 # for what the numbers do and don't mean.
 bench = "mojo run -I . benchmarks/bench_canvas.mojo"
 
+# One primitive at a time, in rounds, interleaved: the gate for a
+# change to a single primitive. See the file's docstring for how to
+# read it and when its numbers are trustworthy.
+micro = "mojo run -I . benchmarks/micro_canvas.mojo"
+
 # `mojo format`'s default 80 columns rather than a custom `-l`, so a
 # bare `mojo format` (or format-on-save) is always correct here.
 # format.yml also runs this on every PR and commits the result back.
