@@ -5,7 +5,7 @@ gradient as their fill source.
 """
 
 from std.math import pi
-from std.testing import assert_equal, assert_true, TestSuite
+from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas.buffer import Canvas
 from canvas.color import Color
@@ -195,6 +195,110 @@ def test_radial_zero_radius_is_a_solid_fill_of_the_last_stop() raises:
     assert_equal(at_center.b, 0)
     assert_equal(far_away.r, 255)
     assert_equal(far_away.b, 0)
+
+
+def test_radial_focal_at_the_center_matches_the_single_circle_form() raises:
+    # fx = cx, fy = cy, fr = 0 is the plain constructor's geometry, so
+    # the two must agree everywhere.
+    var plain = RadialGradient(50.0, 50.0, 50.0)
+    plain.add_stop(0.0, Color(0, 0, 0))
+    plain.add_stop(0.4, Color(200, 40, 10))
+    plain.add_stop(1.0, Color(255, 255, 255))
+    var focal = RadialGradient(50.0, 50.0, 50.0, fx=50.0, fy=50.0)
+    focal.add_stop(0.0, Color(0, 0, 0))
+    focal.add_stop(0.4, Color(200, 40, 10))
+    focal.add_stop(1.0, Color(255, 255, 255))
+    for i in range(0, 120, 7):
+        for j in range(0, 120, 11):
+            var a = plain.color_at(Float64(i), Float64(j))
+            var b = focal.color_at(Float64(i), Float64(j))
+            assert_equal(a.r, b.r, "r at " + String(i) + "," + String(j))
+            assert_equal(a.g, b.g, "g at " + String(i) + "," + String(j))
+            assert_equal(a.b, b.b, "b at " + String(i) + "," + String(j))
+
+
+def test_radial_focal_point_is_offset_zero_and_the_rim_is_one() raises:
+    # Outer circle (50,50) r=50, focal point at (20,50).
+    var g = RadialGradient(50.0, 50.0, 50.0, fx=20.0, fy=50.0)
+    g.add_stop(0.0, Color(255, 0, 0))
+    g.add_stop(1.0, Color(0, 0, 255))
+
+    var f = g.color_at(20.0, 50.0)
+    assert_equal(f.r, 255, "the focal point is stop 0")
+    assert_equal(f.b, 0)
+    # Three points on the outer circle, in different directions from
+    # the focal point, all resolve to stop 1.
+    for p in [(100.0, 50.0), (0.0, 50.0), (50.0, 0.0)]:
+        var rim = g.color_at(p[0], p[1])
+        assert_equal(rim.r, 0, "rim at " + String(p[0]) + "," + String(p[1]))
+        assert_equal(rim.b, 255)
+
+
+def test_radial_focal_compresses_the_near_side() raises:
+    # Same gradient. cd = (30, 0), dr = 50, so a = 900 - 2500 = -1600.
+    # Ten pixels toward the near rim, p = (10, 50): pd = (-10, 0),
+    # b = -300, k = 100, disc = 90000 + 160000 = 250000, root = 500,
+    # t = (-300 - 500) / -1600 = 0.5. Check: c(0.5) = (35, 50),
+    # r(0.5) = 25, and (10, 50) is 25 from (35, 50).
+    # Ten pixels the other way, p = (30, 50): pd = (10, 0), b = 300,
+    # t = (300 - 500) / -1600 = 0.125.
+    var g = RadialGradient(50.0, 50.0, 50.0, fx=20.0, fy=50.0)
+    g.add_stop(0.0, Color(0, 0, 0))
+    g.add_stop(1.0, Color(255, 255, 255))
+    # 0.5 -> 128 (the rounding test_radial_color_at_half_radius shows),
+    # 0.125 -> 0.125 * 255 = 31.875 -> 32.
+    var near = g.color_at(10.0, 50.0)
+    var far = g.color_at(30.0, 50.0)
+    assert_equal(near.r, 128, "near side at t=0.5")
+    assert_equal(far.r, 32, "far side at t=0.125")
+    # Forty pixels toward the far rim, p = (60, 50): pd = (40, 0),
+    # b = 1200, k = 1600, disc = 1440000 + 2560000 = 4000000,
+    # root = 2000, t = (1200 - 2000) / -1600 = 0.5 -- the same circle
+    # as (10, 50), which is 25 on the other side of (35, 50).
+    var far_half = g.color_at(60.0, 50.0)
+    assert_equal(far_half.r, 128, "the t=0.5 circle reaches (60, 50)")
+
+
+def test_radial_focal_circle_pads_its_interior_to_offset_zero() raises:
+    # Concentric, fr = 25, r = 50: t = (dist - 25) / 25, and any point
+    # inside the focal circle has both roots negative. At dist = 10:
+    # a = -625, b = 625, k = 100 - 625 = -525, disc = 390625 - 328125
+    # = 62500, root = 250, roots (625 +- 250) / -625 = -0.6 and -1.4,
+    # padded to 0. At dist = 37.5 the larger root is 0.5.
+    var g = RadialGradient(50.0, 50.0, 50.0, fx=50.0, fy=50.0, fr=25.0)
+    g.add_stop(0.0, Color(0, 0, 0))
+    g.add_stop(1.0, Color(255, 255, 255))
+    assert_equal(g.color_at(60.0, 50.0).r, 0, "inside the focal circle")
+    assert_equal(g.color_at(50.0, 75.0).r, 0, "on the focal circle")
+    assert_equal(g.color_at(87.5, 50.0).r, 128, "halfway to the rim")
+    assert_equal(g.color_at(50.0, 100.0).r, 255, "on the rim")
+    assert_equal(g.color_at(50.0, 400.0).r, 255, "well past it pads to 1")
+
+
+def test_radial_focal_circle_outside_the_outer_circle_raises() raises:
+    # (90, 50) is 40 from the center; a focal radius of 20 reaches to
+    # 60, past the outer 50.
+    with assert_raises(contains="reaches outside"):
+        _ = RadialGradient(50.0, 50.0, 50.0, fx=90.0, fy=50.0, fr=20.0)
+    with assert_raises(contains="reaches outside"):
+        _ = RadialGradient(50.0, 50.0, 50.0, fx=120.0, fy=50.0)
+    with assert_raises(contains="fr must be"):
+        _ = RadialGradient(50.0, 50.0, 50.0, fx=50.0, fy=50.0, fr=-1.0)
+    # Touching from inside is allowed.
+    _ = RadialGradient(50.0, 50.0, 50.0, fx=80.0, fy=50.0, fr=20.0)
+
+
+def test_radial_focal_touching_the_rim_is_the_linear_case() raises:
+    # Focal point on the rim itself: cd = (50, 0), dr = 50, a = 0, so
+    # t = k / (2b) with b = pd.cd = 50*pdx and k = pd.pd. Along the
+    # diameter, p = (0 + d, 50): t = d^2 / (100 d) = d / 100, so the
+    # center (d = 50) is t = 0.5 and the far rim (d = 100) is t = 1.
+    var g = RadialGradient(50.0, 50.0, 50.0, fx=0.0, fy=50.0)
+    g.add_stop(0.0, Color(0, 0, 0))
+    g.add_stop(1.0, Color(255, 255, 255))
+    assert_equal(g.color_at(0.0, 50.0).r, 0)
+    assert_equal(g.color_at(50.0, 50.0).r, 128)
+    assert_equal(g.color_at(100.0, 50.0).r, 255)
 
 
 def test_radial_color_at_single_stop_is_constant() raises:
