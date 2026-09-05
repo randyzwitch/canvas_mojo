@@ -48,6 +48,21 @@ def test_resolve_matches_an_uncached_lookup() raises:
     assert_equal(cached_path, direct_path)
 
 
+def test_construction_scans_nothing_and_the_first_lookup_scans_once() raises:
+    # A cache costs nothing to construct: the font scan waits for the
+    # first lookup that needs it. A cache shared across code that may
+    # or may not draw text therefore pays the scan only if some of it
+    # does.
+    var cache = FontCache()
+    assert_equal(cache.has_scanned(), False)
+    var first = cache.resolve("sans-serif", FontSlant.NORMAL, FontWeight.NORMAL)
+    assert_equal(cache.has_scanned(), True)
+    # Every later lookup, hit or miss, resolves against that one scan.
+    var again = cache.resolve("sans-serif", FontSlant.NORMAL, FontWeight.NORMAL)
+    assert_equal(again, first)
+    assert_equal(cache.has_scanned(), True)
+
+
 def test_resolve_is_stable_across_repeated_calls_on_the_same_cache() raises:
     # The point of the cache: a second call for the same (family,
     # slant, weight) must return exactly what a fresh resolution
