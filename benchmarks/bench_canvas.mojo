@@ -9,7 +9,10 @@ pass, then `iters` timed passes, and reports nanoseconds per iteration.
 There is no distribution, no outlier rejection, and no significance
 test; treat a change under about 10% as noise unless it repeats. Its use
 is running it before and after a change and seeing which way a number
-moved.
+moved. For a change to one primitive, micro_canvas.mojo (`pixi run
+micro`) times that primitive in interleaved rounds and reports a median
+with its spread; quote that in the pull request rather than a row from
+here.
 
 Every case ends by reading a pixel back out of the canvas it drew into
 and folding that into a checksum the suite prints. That is a sink rather

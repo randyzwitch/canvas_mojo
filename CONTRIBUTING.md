@@ -329,9 +329,16 @@ comptime _MIN_SPAN_RADIUS = 8.0
 That marker is the whole convention, and it cuts both ways: **a
 threshold, ordering or inlining choice carrying no such note has not
 been measured, and is fair game to change on judgement alone.** Don't
-add the note without running `pixi run bench` first, and don't argue in
-a comment for a faster approach nobody benchmarked — either measure it
-or leave the observation out.
+add the note without measuring first, and don't argue in a comment for
+a faster approach nobody benchmarked — either measure it or leave the
+observation out.
+
+Which harness to measure with: `pixi run bench` is the survey, one
+pass per primitive, and its rows vary by 10–20% between runs. For a
+change to one primitive use `pixi run micro` (`benchmarks/
+micro_canvas.mojo`), which times a case in interleaved rounds and
+reports a median with its spread; add a case for the primitive if
+there isn't one, and quote its median and ratio in the pull request.
 
 Docstrings are rendered into the docs site by `mojo doc` + modo, so
 public ones are user-facing documentation, not just internal notes.
