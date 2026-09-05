@@ -345,6 +345,25 @@ def test_nearest_at_2x_duplicates_each_pixel() raises:
     _assert_rgb(dst, 0, 6, WHITE, "one row past it")
 
 
+def test_nearest_at_3x_across_bands_matches_the_source() raises:
+    # A 100x100 source at 3x covers 90,000 destination pixels, above
+    # the threshold at which the rows are split into bands drawn
+    # concurrently, so this is the parallel path the small sources
+    # above never reach. Every destination pixel still reads the source
+    # pixel it maps to, band boundaries included.
+    var src = _varied_source(100, 100, 255)
+    var dst = Canvas(300, 300, WHITE)
+    draw_canvas(dst, src, Matrix2D.scaling(3.0, 3.0), filter=Filter.NEAREST)
+    var mismatches = 0
+    for py in range(300):
+        for px in range(300):
+            var want = src.get_pixel(px // 3, py // 3)
+            var got = dst.get_pixel(px, py)
+            if got.r != want.r or got.g != want.g or got.b != want.b:
+                mismatches += 1
+    assert_equal(mismatches, 0, "pixels that differ from their source pixel")
+
+
 def test_rotation_about_the_centre_moves_a_known_pixel() raises:
     # A quarter turn about the centre of a 4x4 source, which is the
     # texel-space point (2, 2). Positive angles turn +x toward +y,
