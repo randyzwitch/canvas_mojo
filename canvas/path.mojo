@@ -37,7 +37,7 @@ from canvas.geometry import (
     FPoint,
     Transform2D,
     _inverse_or_identity,
-    _round_to_int,
+    round_to_int,
     _rounded_fpoints,
     _scaled_lengths,
 )
@@ -785,9 +785,9 @@ struct Path(Movable):
             if count == 0:
                 continue
             if count == 1:
-                if _round_to_int(x) == _round_to_int(
+                if round_to_int(x) == round_to_int(
                     sp.points[0].x
-                ) and _round_to_int(y) == _round_to_int(sp.points[0].y):
+                ) and round_to_int(y) == round_to_int(sp.points[0].y):
                     return True
                 continue
             var shape = _stroke_edges(
@@ -930,7 +930,7 @@ struct _Subpath(Movable):
 
 def _round_point(p: FPoint) -> Point:
     """One sub-pixel point snapped to the pixel grid."""
-    return Point(_round_to_int(p.x), _round_to_int(p.y))
+    return Point(round_to_int(p.x), round_to_int(p.y))
 
 
 def _rounded_points(sp: _Subpath) -> List[Point]:
@@ -1348,12 +1348,12 @@ def _rounded_y_range(subpaths: List[_Subpath]) -> Tuple[Int, Int]:
     `_row_crossings` does -- the row range a hard-edged scanline fill
     walks.
     """
-    var min_y = _round_to_int(subpaths[0].points[0].y)
+    var min_y = round_to_int(subpaths[0].points[0].y)
     var max_y = min_y
     for sp_idx in range(len(subpaths)):
         ref sp = subpaths[sp_idx]
         for p in sp.points:
-            var py = _round_to_int(p.y)
+            var py = round_to_int(p.y)
             if py < min_y:
                 min_y = py
             if py > max_y:

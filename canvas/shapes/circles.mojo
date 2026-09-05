@@ -9,7 +9,7 @@ from std.math import ceil, floor, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import _round_to_int
+from canvas.geometry import round_to_int
 from canvas.fill_rule import FillRule
 from canvas.path import (
     fill_path,
@@ -45,9 +45,9 @@ def draw_circle(
             var p = m.apply(Float64(cx), Float64(cy))
             _draw_circle_device(
                 canvas,
-                _round_to_int(p.x),
-                _round_to_int(p.y),
-                _round_to_int(Float64(radius) * m.scale_factor()),
+                round_to_int(p.x),
+                round_to_int(p.y),
+                round_to_int(Float64(radius) * m.scale_factor()),
                 color,
             )
             return
@@ -128,9 +128,9 @@ def fill_circle(
             var p = m.apply(Float64(cx), Float64(cy))
             _fill_circle_device(
                 canvas,
-                _round_to_int(p.x),
-                _round_to_int(p.y),
-                _round_to_int(Float64(radius) * m.scale_factor()),
+                round_to_int(p.x),
+                round_to_int(p.y),
+                round_to_int(Float64(radius) * m.scale_factor()),
                 color,
             )
             return
@@ -313,7 +313,7 @@ def _fill_circle_aa_device(
     back into the public function.
     """
     if radius <= 0.0:
-        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
+        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
 
     var r2 = radius * radius
@@ -573,7 +573,7 @@ def _draw_circle_aa_device(
     back into the public function.
     """
     if radius <= 0.0:
-        canvas.set_pixel(_round_to_int(cx), _round_to_int(cy), color)
+        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
 
     var half = width / 2.0

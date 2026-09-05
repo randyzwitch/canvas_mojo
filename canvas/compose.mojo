@@ -40,7 +40,7 @@ from std.runtime.asyncrt import TaskGroup, parallelism_level
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, _div255
-from canvas.geometry import Matrix2D, _round_to_int
+from canvas.geometry import Matrix2D, round_to_int
 from canvas.mask import Mask, apply_mask
 
 
@@ -112,7 +112,7 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8):
         var m = dst.current_transform()
         var p = m.apply(Float64(x), Float64(y))
         _draw_canvas_device(
-            dst, src, _round_to_int(p.x), _round_to_int(p.y), opacity
+            dst, src, round_to_int(p.x), round_to_int(p.y), opacity
         )
         return
     _draw_canvas_device(dst, src, x, y, opacity)
@@ -462,8 +462,8 @@ def _draw_canvas_mapped(
 
     var whole = cx == 0 and cy == 0 and cw == src.width and ch == src.height
     if whole and m.is_translation():
-        var tx = _round_to_int(m.e)
-        var ty = _round_to_int(m.f)
+        var tx = round_to_int(m.e)
+        var ty = round_to_int(m.f)
         if Float64(tx) == m.e and Float64(ty) == m.f:
             # A shift by whole pixels puts each source pixel on exactly
             # one destination pixel, which is what both filters sample
