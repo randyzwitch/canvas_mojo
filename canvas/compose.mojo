@@ -41,6 +41,7 @@ from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, _div255
 from canvas.geometry import Matrix2D, _round_to_int
+from canvas.mask import Mask, apply_mask
 
 
 struct Filter(Copyable, ImplicitlyCopyable, Movable):
@@ -115,6 +116,23 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8):
         )
         return
     _draw_canvas_device(dst, src, x, y, opacity)
+
+
+def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, mask: Mask):
+    """`draw_canvas` through a mask: each source pixel's alpha is
+    scaled by the mask's coverage at the same position in the source
+    before it is composited, so a layer fades where the mask does.
+    The mask is aligned with the source's top-left corner, not the
+    destination's; source pixels the mask does not reach draw nothing.
+
+    Args:
+        dst: Canvas composited onto.
+        src: Canvas to draw. Unchanged.
+        x: Destination column for `src`'s left edge.
+        y: Destination row for `src`'s top edge.
+        mask: Coverage over `src`, see `canvas.mask`.
+    """
+    draw_canvas(dst, apply_mask(src, mask), x, y, 255)
 
 
 def _draw_canvas_device(

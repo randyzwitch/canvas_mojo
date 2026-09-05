@@ -19,6 +19,7 @@ from canvas import (
     FontWeight,
     Hatch,
     LinearGradient,
+    Mask,
     Path,
     PatternSource,
     SvgCanvas,
@@ -27,6 +28,7 @@ from canvas import (
     downsample,
     draw_canvas,
     draw_shadowed,
+    fill_mask,
     fill_path_aa,
     fill_path_pattern,
     fill_path_pattern_aa,
@@ -134,6 +136,14 @@ def test_root_exports_pattern_fills() raises:
     var aa_canvas = Canvas(8, 8, Color(255, 255, 255))
     fill_path_pattern_aa(aa_canvas, path, pattern)
     assert_equal(aa_canvas.get_pixel(4, 4).r, 0)
+
+
+def test_root_exports_masks() raises:
+    # Mask and fill_mask resolve from the package root: a half mask
+    # paints an opaque colour at half alpha.
+    var c = Canvas(2, 2, Color(0, 0, 0, 0))
+    fill_mask(c, Mask(2, 2, 128), Color(255, 0, 0))
+    assert_equal(c.get_pixel(0, 0).a, 128)
 
 
 def main() raises:

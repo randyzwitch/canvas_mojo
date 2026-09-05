@@ -50,6 +50,7 @@ def _titles() -> Dict[String, String]:
     d["draw_image"] = "Drawing a Canvas Scaled & Rotated"
     d["shadows"] = "Shadows & Blur"
     d["clip_path"] = "Clipping to a Path"
+    d["masks"] = "Alpha Masks"
     d["joins"] = "Caps & Joins"
     d["png_output"] = "PNG I/O"
     d["transparency"] = "Transparency"
@@ -120,6 +121,7 @@ def _categories() -> List[Category]:
                 "canvas_state",
                 "clipping",
                 "clip_path",
+                "masks",
                 "layers",
                 "draw_image",
                 "shadows",
