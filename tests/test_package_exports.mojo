@@ -62,7 +62,7 @@ def test_root_exports_draw_and_round_trip() raises:
     assert_equal(canvas.get_pixel(0, 0).r, 255)
     assert_equal(canvas.get_pixel(3, 3).r, 0)
 
-    assert_true(canvas.blend_mode() == BlendMode.SOURCE_OVER)
+    assert_equal(canvas.blend_mode(), BlendMode.SOURCE_OVER)
 
     var layer = Canvas(2, 2, Color(0, 255, 0))
     draw_canvas(canvas, layer, 2, 2)
@@ -101,9 +101,9 @@ def test_root_exports_text_types() raises:
     # Enum-like types and the gradient type resolve and compare; the
     # font database and cache are constructible. Nothing here needs a
     # particular font to be installed.
-    assert_true(FontSlant.ITALIC == FontSlant.ITALIC)
+    assert_equal(FontSlant.ITALIC, FontSlant.ITALIC)
     assert_true(not (FontWeight.BOLD == FontWeight.NORMAL))
-    assert_true(TextAlign.CENTER == TextAlign.CENTER)
+    assert_equal(TextAlign.CENTER, TextAlign.CENTER)
     var gradient = LinearGradient(0.0, 0.0, 1.0, 0.0)
     gradient.add_stop(0.0, Color(0, 0, 0))
     assert_equal(gradient.color_at(0.0, 0.0).a, 255)
@@ -144,6 +144,18 @@ def test_root_exports_masks() raises:
     var c = Canvas(2, 2, Color(0, 0, 0, 0))
     fill_mask(c, Mask(2, 2, 128), Color(255, 0, 0))
     assert_equal(c.get_pixel(0, 0).a, 128)
+
+
+def test_enum_likes_print_as_their_names() raises:
+    # Every enum-like is Writable, so assert_equal on one reports the
+    # constant it found rather than failing to compile.
+    assert_equal(String(BlendMode.SOFT_LIGHT), "SOFT_LIGHT")
+    assert_equal(String(FontSlant.OBLIQUE), "OBLIQUE")
+    assert_equal(String(FontWeight.BOLD), "BOLD")
+    assert_equal(String(TextAlign.RIGHT), "RIGHT")
+    assert_equal(String(Extend.REFLECT), "REFLECT")
+    assert_equal(String(Hatch.DOTS), "DOTS")
+    assert_equal(String(BlendMode(99)), "BlendMode(99)", "an unknown value")
 
 
 def main() raises:

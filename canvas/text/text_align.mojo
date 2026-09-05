@@ -7,7 +7,7 @@ re-exports this same type.
 """
 
 
-struct TextAlign(Copyable, ImplicitlyCopyable, Movable):
+struct TextAlign(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """Horizontal alignment of each line relative to draw_text's
     (x, y) anchor.
 
@@ -34,3 +34,18 @@ struct TextAlign(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.LEFT._value:
+            writer.write("LEFT")
+        elif self._value == Self.CENTER._value:
+            writer.write("CENTER")
+        elif self._value == Self.RIGHT._value:
+            writer.write("RIGHT")
+        else:
+            writer.write("TextAlign(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out

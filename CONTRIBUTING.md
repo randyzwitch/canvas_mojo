@@ -174,10 +174,12 @@ append loop.
 ### `comptime` for constants and enum-like types
 
 Mojo has no `enum`. The package uses a consistent stand-in: a struct
-wrapping a private `Int`, with `comptime` constants and `__eq__`.
+wrapping a private `Int`, with `comptime` constants, `__eq__`, and a
+`write_to` that prints the constant's name -- the last so that
+`assert_equal(x, FillRule.NONZERO)` compiles and says what it found.
 
 ```mojo
-struct FillRule(Copyable, ImplicitlyCopyable, Movable):
+struct FillRule(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     var _value: Int
 
     comptime EVEN_ODD = Self(0)
@@ -188,10 +190,24 @@ struct FillRule(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.EVEN_ODD._value:
+            writer.write("EVEN_ODD")
+        elif self._value == Self.NONZERO._value:
+            writer.write("NONZERO")
+        else:
+            writer.write("FillRule(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 ```
 
-`FillRule`, `TextAlign`, `FontSlant`, and `FontWeight` all follow this
-exactly. New enum-like types should too.
+`FillRule`, `TextAlign`, `FontSlant`, `FontWeight`, `LineCap`,
+`LineJoin`, `BlendMode`, `Extend`, `Hatch`, `Filter` and `PathOp` all
+follow this exactly. New enum-like types should too.
 
 `comptime` also carries file-scope constants (`_SVG_DECIMALS`,
 `_FC_WEIGHT_BOLD`, `_MIN_MATCH`). One limitation to know:

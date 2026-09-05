@@ -66,7 +66,7 @@ don't cover a machine.
 """
 
 
-struct FontSlant(Copyable, ImplicitlyCopyable, Movable):
+struct FontSlant(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """A font's upright/italic/oblique style. Defined here to keep this
     module independent of `canvas.text`; `render.mojo` re-exports
     it.
@@ -90,8 +90,23 @@ struct FontSlant(Copyable, ImplicitlyCopyable, Movable):
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
 
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.NORMAL._value:
+            writer.write("NORMAL")
+        elif self._value == Self.ITALIC._value:
+            writer.write("ITALIC")
+        elif self._value == Self.OBLIQUE._value:
+            writer.write("OBLIQUE")
+        else:
+            writer.write("FontSlant(", self._value, ")")
 
-struct FontWeight(Copyable, ImplicitlyCopyable, Movable):
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
+
+
+struct FontWeight(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """A font's normal/bold weight, defined here for the same reason
     FontSlant is.
     """
@@ -112,6 +127,19 @@ struct FontWeight(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.NORMAL._value:
+            writer.write("NORMAL")
+        elif self._value == Self.BOLD._value:
+            writer.write("BOLD")
+        else:
+            writer.write("FontWeight(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
 
 # The two axes a request and a face are compared on, both on the scales

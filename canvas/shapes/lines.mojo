@@ -35,7 +35,7 @@ from canvas.shapes.dash import _DashPattern
 comptime _SQRT2 = 1.4142135623730951
 
 
-struct LineCap(Copyable, ImplicitlyCopyable, Movable):
+struct LineCap(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """How an open stroke ends.
 
     ROUND, the default, caps with a half-disk of the stroke's radius, so
@@ -64,6 +64,21 @@ struct LineCap(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.ROUND._value:
+            writer.write("ROUND")
+        elif self._value == Self.BUTT._value:
+            writer.write("BUTT")
+        elif self._value == Self.SQUARE._value:
+            writer.write("SQUARE")
+        else:
+            writer.write("LineCap(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
     def __ne__(self, other: Self) -> Bool:
         return self._value != other._value
@@ -577,7 +592,7 @@ def _stroke_transformed(
     _rasterize_stroke(canvas, shape, color, supersample)
 
 
-struct LineJoin(Copyable, ImplicitlyCopyable, Movable):
+struct LineJoin(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """How a stroke turns a corner.
 
     ROUND, the default, fills the corner with a disk of the stroke's
@@ -610,6 +625,21 @@ struct LineJoin(Copyable, ImplicitlyCopyable, Movable):
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.ROUND._value:
+            writer.write("ROUND")
+        elif self._value == Self.BEVEL._value:
+            writer.write("BEVEL")
+        elif self._value == Self.MITER._value:
+            writer.write("MITER")
+        else:
+            writer.write("LineJoin(", self._value, ")")
+
+    def __str__(self) -> String:
+        var out = String()
+        out.write(self)
+        return out
 
     def __ne__(self, other: Self) -> Bool:
         return self._value != other._value

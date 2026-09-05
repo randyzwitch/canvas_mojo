@@ -792,16 +792,16 @@ def test_save_and_restore_carry_the_blend_mode() raises:
     var c = Canvas(4, 4, BG)
     c.save()
     c.set_blend_mode(BlendMode.MULTIPLY)
-    assert_true(c.blend_mode() == BlendMode.MULTIPLY)
+    assert_equal(c.blend_mode(), BlendMode.MULTIPLY)
     # Nested, to pin that each restore pops one level rather than
     # resetting to the default.
     c.save()
     c.set_blend_mode(BlendMode.XOR)
-    assert_true(c.blend_mode() == BlendMode.XOR)
+    assert_equal(c.blend_mode(), BlendMode.XOR)
     c.restore()
-    assert_true(c.blend_mode() == BlendMode.MULTIPLY, "inner restore")
+    assert_equal(c.blend_mode(), BlendMode.MULTIPLY, "inner restore")
     c.restore()
-    assert_true(c.blend_mode() == BlendMode.SOURCE_OVER, "outer restore")
+    assert_equal(c.blend_mode(), BlendMode.SOURCE_OVER, "outer restore")
 
     # And the mode a restore puts back is the one later fills use.
     fill_rect(c, 0, 0, 4, 4, SRC)
