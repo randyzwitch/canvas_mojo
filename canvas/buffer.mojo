@@ -555,9 +555,27 @@ struct Canvas(Copyable, DrawTarget, Movable):
         curve_steps: Int,
     ):
         """`push_clip_path` for a path already in device space."""
-        var mask = _path_coverage_mask(
-            path, self.width, self.height, fill_rule, supersample, curve_steps
+        self.push_clip_coverage(
+            _path_coverage_mask(
+                path,
+                self.width,
+                self.height,
+                fill_rule,
+                supersample,
+                curve_steps,
+            )
         )
+
+    def push_clip_coverage(mut self, var mask: List[UInt8]):
+        """Restrict subsequent drawing to a coverage already computed:
+        one 0-255 byte per canvas pixel, row-major, in device space.
+        What `push_clip_path` pushes once it has rasterized its path,
+        and what `canvas.mask.push_clip_mask` pushes for a `Mask`.
+        Nests and pops exactly as a clip path does.
+
+        Args:
+            mask: `width * height` coverage bytes, taken by value.
+        """
         if self._clip_mask_count > 0:
             # Intersect with the parent by multiplying coverages: a
             # pixel half-covered by an outer clip and half by an inner

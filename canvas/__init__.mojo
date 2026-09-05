@@ -25,6 +25,13 @@ from canvas.gradient import (
     RadialGradient,
 )
 from canvas.pattern import Extend, Hatch, PatternSource, hatch_tile
+from canvas.mask import (
+    Mask,
+    apply_mask,
+    fill_mask,
+    fill_mask_source,
+    push_clip_mask,
+)
 from canvas.fill_rule import FillRule
 from canvas.shapes.lines import (
     LineCap,
