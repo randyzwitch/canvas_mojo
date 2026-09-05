@@ -7,12 +7,15 @@ The path half saves a rescan of the font directories per
 call resolves its font twice, measuring then rendering, unless a
 FontCache threads through both passes.
 
-Behind both halves sits one `FontDatabase`, built in `__init__`, which is
-where the directory walk and per-file table reads are paid. That cost
-scales with how many fonts are installed, not with what is being drawn:
-on a machine with a few hundred font files it is tens of milliseconds,
-against tens of *micro*seconds for a cached label. Construct one per run
-of many labels, never one per label.
+Behind both halves sits one `FontDatabase`, built on the first lookup
+that misses the path dictionaries, which is where the directory walk
+and per-file table reads are paid. That cost scales with how many
+fonts are installed, not with what is being drawn: on a machine with a
+few hundred font files it is tens of milliseconds, against tens of
+*micro*seconds for a cached label. Construct one per run of many
+labels, never one per label. Constructing it costs nothing, so a cache
+shared across code that may or may not draw text pays the scan only if
+some of it does (#199).
 
 The overloads that take no `cache=` build one of these per call, so they
 carry that whole scan every time. See `canvas.text.render`, whose
@@ -48,6 +51,7 @@ from std.memory import ArcPointer
 
 from canvas.text.font_discovery import (
     FontDatabase,
+    FontFace,
     FontSlant,
     FontWeight,
 )
@@ -99,25 +103,51 @@ def _cache_key(family: String, slant: FontSlant, weight: FontWeight) -> String:
 struct FontCache(Movable):
     """Construct one, then pass it by `cache=` into
     draw_text/measure_text/measure_text_block for every call reusing
-    the same fonts. No cleanup; setup is the one font scan `__init__`
-    does, which is the work every later lookup then skips.
+    the same fonts. No cleanup, and no setup: the one font scan happens
+    on the first lookup, and every later lookup skips it.
     """
 
     var _database: FontDatabase
+    # Whether `_database` is the installed fonts yet. Until the first
+    # lookup that misses the path dictionaries it is empty, and
+    # `_scan_if_needed` replaces it with a scan once.
+    var _scanned: Bool
     var _paths: Dict[String, String]
     var _paths_for_char: Dict[String, String]
     var _faces: Dict[String, ArcPointer[TTFFace]]
     var _glyph_masks: Dict[String, _GlyphMask]
 
     def __init__(out self):
-        """Scans the installed fonts once -- see this module's
-        docstring for why that happens here rather than per lookup.
+        """Scans nothing. The installed fonts are read on the first
+        lookup that misses the path dictionaries -- see this module's
+        docstring for why once, and why then.
         """
-        self._database = FontDatabase()
+        self._database = FontDatabase(List[FontFace]())
+        self._scanned = False
         self._paths = Dict[String, String]()
         self._paths_for_char = Dict[String, String]()
         self._faces = Dict[String, ArcPointer[TTFFace]]()
         self._glyph_masks = Dict[String, _GlyphMask]()
+
+    def has_scanned(self) -> Bool:
+        """Whether the installed fonts have been scanned yet: False
+        after construction, True from the first lookup that needed
+        them.
+
+        Returns:
+            True once the scan has happened.
+        """
+        return self._scanned
+
+    def _scan_if_needed(mut self):
+        """Build the `FontDatabase` on the first call, and do nothing
+        after. Called only on a path-dictionary miss, so a hit never
+        reaches it.
+        """
+        if self._scanned:
+            return
+        self._database = FontDatabase()
+        self._scanned = True
 
     def glyph_mask_count(self) -> Int:
         """How many rasterized glyph masks the cache holds.
@@ -180,6 +210,7 @@ struct FontCache(Movable):
         var key = _cache_key(family, slant, weight)
         if key in self._paths:
             return self._paths[key]
+        self._scan_if_needed()
         var path = self._database.resolve(family, slant, weight)
         self._paths[key] = path
         return path
@@ -211,6 +242,7 @@ struct FontCache(Movable):
         var key = _cache_key(family, slant, weight) + "|" + String(codepoint)
         if key in self._paths_for_char:
             return self._paths_for_char[key]
+        self._scan_if_needed()
         var path = self._database.resolve(family, slant, weight, codepoint)
         self._paths_for_char[key] = path
         return path
