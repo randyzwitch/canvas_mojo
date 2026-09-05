@@ -60,7 +60,7 @@ from canvas.color import Color
 # Accumulators at or above this many cells track the span each row's
 # deposits reached and zero only that; smaller ones are zeroed whole,
 # since the memset of a few kilobytes costs less than the per-deposit
-# bookkeeping. Set by benchmark (#252, which has the numbers): a
+# bookkeeping. Set by benchmark (#251, which has the numbers): a
 # glyph-sized fill is unchanged, a diagonal across a full canvas is
 # not zeroing and walking its whole box.
 comptime _TRACK_SPANS_FROM = 4096
