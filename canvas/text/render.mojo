@@ -32,23 +32,43 @@ leaves every point unchanged.
 
 One shaping step (`_shape_line`) turns each line's text into the glyph
 sequence every pass then walks, which is what keeps `measure_text` and
-`draw_text` from disagreeing. It runs `bidi.visual_order` first
-(`_visual_codepoints`), so mixed Hebrew/Arabic/Latin/digit text lays out
-in reading order without any pass handling direction; maps each
-character through `cmap`; and applies the font's `liga`/`ccmp`
-substitutions (`ttf.mojo`), so "f" and "i" become the one "fi" glyph a
-font that has it draws. `ligatures=False` skips the substitution and
-lays out one glyph per character.
+`draw_text` from disagreeing. It splits the line into bidi runs
+(`bidi.visual_runs`), shapes each run in *logical* order, and
+concatenates the runs left to right with a right-to-left run's glyphs
+reversed. Shaping per run in logical order is what the order has to
+be: joining and ligature formation are defined between the characters
+typed either side of a letter, which in a right-to-left run are not
+the ones drawn either side of it.
 
-Adjacent glyphs then kern against each other (`_kern_offset`), through
-the font's `GPOS` pair adjustment or `kern` table. Kerning is between
-the *substituted* glyphs, the order a shaper applies the two tables in:
-a pair adjustment written for "f" does not apply across an "fi"
-ligature, because the ligature is what sits on the line. The adjustment
+Shaping a run maps each character through `cmap` and applies the
+font's `GSUB` features for the run's script (`ttf.mojo`). A Latin run
+gets `ccmp` and `liga`, so "f" and "i" become the one "fi" glyph a
+font that has it draws. An Arabic run additionally classifies each
+letter's contextual form from its logical neighbours
+(`joining.mojo`) and enables that one of `isol`/`init`/`medi`/`fina`
+on that one glyph, then runs `rlig`, `liga` and `calt`; so "بسم"
+draws as initial beh, medial seen, final meem rather than three
+isolated letters. `ligatures=False` skips substitution entirely and
+lays out one glyph per character, which for Arabic is the isolated
+forms -- one flag rather than two, because joining and ligatures are
+the same machinery and an Arabic font's `rlig` is not optional once
+the letters are joined.
+
+Adjacent glyphs kern against each other in the same per-run pass,
+through the font's `GPOS` pair adjustment or `kern` table
+(`_apply_run_kerning`). Kerning is between the *substituted* glyphs,
+the order a shaper applies the two tables in: a pair adjustment
+written for "f" does not apply across an "fi" ligature, because the
+ligature is what sits on the line. The pair is looked up in logical
+order, since that is the order a font states an adjustment for, and
+the result rides on the glyph a pass reaches second
+(`_ShapedGlyph.kern_before`) -- for a right-to-left run that is the
+*first* of the two logically, because reversing the run swaps which
+one is drawn second. Kerning stops at a run boundary. The adjustment
 moves the pen between two glyphs and nothing else, so the glyph mask
 cache -- which holds a glyph's coverage, not its place on the line --
-is untouched by it. `kerning=False` restores the plain sum of `hmtx`
-advances.
+is untouched by it. `kerning=False` leaves every `kern_before` at zero,
+restoring the plain sum of `hmtx` advances.
 
 Shaping only substitutes among characters the primary face has glyphs
 for, since a ligature is defined over glyphs of one font. Everything
@@ -66,8 +86,8 @@ is a label that reads over a busy background. `draw_text_on_path` puts
 the baseline on a curve: the string is laid out straight, then each
 glyph is placed at its own arc length along the path
 (`_ArcLengthPath`) and turned to the tangent there. Neither is a
-different layout -- both go through `_shape_line` and `_kern_offset`,
-so text on a curve kerns and ligates exactly as straight text does.
+different layout -- both walk what `_shape_line` produced, so text on
+a curve kerns and ligates exactly as straight text does.
 
 FontSlant/FontWeight come from font_discovery.mojo and TextAlign from
 text_align.mojo, both re-exported here.
@@ -75,7 +95,19 @@ text_align.mojo, both re-exported here.
 
 from std.math import ceil, cos, floor, sin
 
-from canvas.text.bidi import detect_base_level, visual_order
+from canvas.text.bidi import (
+    detect_base_level,
+    visual_runs,
+    _mirror_codepoint,
+)
+from canvas.text.joining import (
+    is_arabic,
+    joining_forms,
+    _FORM_FINAL,
+    _FORM_INITIAL,
+    _FORM_ISOLATED,
+    _FORM_MEDIAL,
+)
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
@@ -90,7 +122,20 @@ from canvas.text.glyph_outline import (
     glyph_path,
     GlyphMetrics,
 )
-from canvas.text.ttf import TTFFace
+from canvas.text.ttf import (
+    ShapedRun,
+    TTFFace,
+    _FEATURE_CALT,
+    _FEATURE_CCMP,
+    _FEATURE_FINA,
+    _FEATURE_INIT,
+    _FEATURE_ISOL,
+    _FEATURE_LIGA,
+    _FEATURE_MEDI,
+    _FEATURE_RLIG,
+    _SCRIPT_ARABIC,
+    _SCRIPT_DEFAULT,
+)
 from canvas.path import (
     fill_path_aa,
     stroke_path_aa,
@@ -240,24 +285,9 @@ struct _LineMetrics(ImplicitlyCopyable, Movable):
         return self.width > 0.0 and self.height > 0.0
 
 
-def _visual_codepoints(line_text: String) -> List[Int]:
-    """`line_text`'s codepoints in left-to-right drawable order, via
-    `bidi.visual_order`. Both `_measure_line` and draw_text's render
-    pass walk this rather than `line_text.codepoints()`, so neither
-    needs direction-handling logic of its own. A pure left-to-right
-    line comes back unchanged: every codepoint sits at the same even
-    level, so nothing is reversed.
-    """
-    var codepoints = List[Int](capacity=line_text.byte_length())
-    for cp in line_text.codepoints():
-        codepoints.append(Int(cp))
-    var base_level = detect_base_level(codepoints)
-    return visual_order(codepoints, base_level)
-
-
 struct _ShapedGlyph(ImplicitlyCopyable, Movable):
-    """One layout unit: the glyph the passes place, plus the character
-    it came from.
+    """One layout unit: the glyph the passes place, the character it
+    came from, and the pair kerning that precedes it.
 
     `glyph` is an index into the primary face, or 0 when the primary
     face has no glyph for `codepoint` and the character resolves
@@ -266,22 +296,65 @@ struct _ShapedGlyph(ImplicitlyCopyable, Movable):
     characters and a substituted single glyph is no longer the one its
     character maps to -- either way the codepoint has stopped naming
     the glyph.
+
+    `kern_before` is in pixels at the face's active size, and a pass
+    adds it to the pen before placing this glyph. Carrying it here
+    rather than recomputing it per pass is what lets the pair be looked
+    up in logical order while the passes walk visual order.
     """
 
     var glyph: Int
     var codepoint: Int
+    var kern_before: Float64
 
     def __init__(out self, glyph: Int, codepoint: Int):
         self.glyph = glyph
         self.codepoint = codepoint
+        self.kern_before = 0.0
 
 
-def _shape_line(
-    mut face: TTFFace, line_text: String, ligatures: Bool
+def _script_tag(codepoints: List[Int]) -> String:
+    """The OpenType script tag to shape a run under: `arab` as soon as
+    one Arabic character is in it, otherwise the default (`latn`,
+    falling back to the font's `DFLT`). A run is one embedding level of
+    one line, so a mixed Latin/Arabic line asks this once per run and
+    gets a different answer for each.
+    """
+    for cp in codepoints:
+        if is_arabic(cp):
+            return _SCRIPT_ARABIC
+    return _SCRIPT_DEFAULT
+
+
+def _feature_mask(form: Int) -> Int:
+    """The `GSUB` features enabled on one Arabic glyph: the ones that
+    apply to every glyph of the run, plus the single joining feature
+    its contextual form selects.
+    """
+    var mask = _FEATURE_CCMP | _FEATURE_RLIG | _FEATURE_LIGA | _FEATURE_CALT
+    if form == _FORM_ISOLATED:
+        return mask | _FEATURE_ISOL
+    if form == _FORM_INITIAL:
+        return mask | _FEATURE_INIT
+    if form == _FORM_MEDIAL:
+        return mask | _FEATURE_MEDI
+    if form == _FORM_FINAL:
+        return mask | _FEATURE_FINA
+    return mask
+
+
+def _shape_run(
+    mut face: TTFFace, codepoints: List[Int], ligatures: Bool
 ) raises -> List[_ShapedGlyph]:
-    """One line's characters as the glyph sequence every pass lays out:
-    bidi visual order, mapped through `cmap`, with the font's `liga`
-    and `ccmp` substitutions applied.
+    """One bidi run's characters, in *logical* order, as glyphs: mapped
+    through `cmap`, then substituted under the run's script.
+
+    An Arabic run additionally classifies each character's joining form
+    (`joining.mojo`) and hands `substitute_glyphs` a per-glyph feature
+    mask, so `init`/`medi`/`fina` reach only the letters they belong
+    on. Logical order is what makes that work at all -- a letter's form
+    comes from the letters typed either side of it, which for a
+    right-to-left run are not the ones drawn either side of it.
 
     Only glyphs of the primary face substitute, since a ligature is
     defined over glyphs of one font. A character that falls back to
@@ -289,19 +362,28 @@ def _shape_line(
     alone and no ligature absorbs, and it keeps its own codepoint so
     the fallback lookup still finds it.
     """
-    var codepoints = _visual_codepoints(line_text)
     var count = len(codepoints)
     var glyphs = List[Int](capacity=count)
     for i in range(count):
         glyphs.append(face.glyph_index_for_codepoint(codepoints[i]))
 
+    var script = _script_tag(codepoints)
     var out = List[_ShapedGlyph](capacity=count)
-    if not (ligatures and face.has_substitutions()):
+    if not (ligatures and face.has_substitutions(script)):
         for i in range(count):
             out.append(_ShapedGlyph(glyphs[i], codepoints[i]))
         return out^
 
-    var shaped = face.substitute_glyphs(glyphs)
+    var shaped: ShapedRun
+    if script == _SCRIPT_ARABIC:
+        var forms = joining_forms(codepoints)
+        var masks = List[Int](capacity=count)
+        for i in range(count):
+            masks.append(_feature_mask(forms[i]))
+        shaped = face.substitute_glyphs(glyphs, masks, script)
+    else:
+        shaped = face.substitute_glyphs(glyphs)
+
     if not shaped.changed:
         for i in range(count):
             out.append(_ShapedGlyph(glyphs[i], codepoints[i]))
@@ -316,6 +398,94 @@ def _shape_line(
         else:
             out.append(_ShapedGlyph(shaped.glyphs[i], -1))
         source += shaped.clusters[i]
+    return out^
+
+
+def _apply_run_kerning(
+    mut face: TTFFace, mut glyphs: List[_ShapedGlyph], rtl: Bool
+) raises:
+    """Fill each glyph's `kern_before` for one run, whose glyphs are
+    still in logical order.
+
+    A `GPOS` pair adjustment is stated for the pair as *written*, so it
+    is looked up as (logical i, logical i + 1) whichever way the run
+    draws. Where it then lands differs: in a left-to-right run the
+    second of the two is drawn second, and in a right-to-left run the
+    first is, since reversing the run puts logical i to the right of
+    logical i + 1. Either way the adjustment sits on the glyph a pass
+    reaches second and moves the pen between the same two glyphs.
+
+    Looking the pair up in visual order instead would ask the font for
+    (V, A) where it states (A, V), which most fonts answer with no
+    adjustment at all.
+    """
+    for i in range(len(glyphs) - 1):
+        var adjustment = _kern_offset(
+            face, glyphs[i].glyph, glyphs[i + 1].glyph
+        )
+        if adjustment == 0.0:
+            continue
+        if rtl:
+            glyphs[i].kern_before = adjustment
+        else:
+            glyphs[i + 1].kern_before = adjustment
+
+
+def _shape_line(
+    mut face: TTFFace, line_text: String, ligatures: Bool, kerning: Bool
+) raises -> List[_ShapedGlyph]:
+    """One line's characters as the glyph sequence every pass lays out,
+    each glyph carrying the kerning that precedes it.
+
+    The line splits into bidi runs (`bidi.visual_runs`), each is shaped
+    and kerned in logical order, and the runs are concatenated left to
+    right with a right-to-left run's glyphs reversed. Shaping has to
+    come before the reordering: an Arabic word shaped after reversal
+    would join each letter to the wrong side, and a pair looked up
+    after reversal is the pair the font does not state.
+
+    Kerning stops at a run boundary, since a pair adjustment between
+    two scripts' glyphs is not something a font states either.
+
+    A pure left-to-right line is one run at level 0, so it comes out of
+    this exactly as `cmap` plus substitution over the whole line, with
+    each glyph's `kern_before` the adjustment against the glyph before
+    it.
+    """
+    var codepoints = List[Int](capacity=line_text.byte_length())
+    for cp in line_text.codepoints():
+        codepoints.append(Int(cp))
+    var base_level = detect_base_level(codepoints)
+
+    var runs = visual_runs(codepoints, base_level)
+    # The common case: one left-to-right run covering the line, which
+    # is every line of Latin/Cyrillic/CJK text and every line with no
+    # strongly right-to-left character in it. Shaping it in place skips
+    # copying the codepoints into a run buffer.
+    if len(runs) == 1 and not runs[0].is_rtl():
+        var only = _shape_run(face, codepoints, ligatures)
+        if kerning:
+            _apply_run_kerning(face, only, False)
+        return only^
+
+    var out = List[_ShapedGlyph](capacity=len(codepoints))
+    for run in runs:
+        var run_codepoints = List[Int](capacity=run.length)
+        for i in range(run.start, run.start + run.length):
+            # bidi rule L4: a paired character inside an RTL run draws
+            # its mirror image.
+            if run.is_rtl():
+                run_codepoints.append(_mirror_codepoint(codepoints[i]))
+            else:
+                run_codepoints.append(codepoints[i])
+        var shaped = _shape_run(face, run_codepoints, ligatures)
+        if kerning:
+            _apply_run_kerning(face, shaped, run.is_rtl())
+        if run.is_rtl():
+            for i in range(len(shaped) - 1, -1, -1):
+                out.append(shaped[i])
+        else:
+            out.extend(shaped^)
     return out^
 
 
@@ -417,14 +587,13 @@ def _measure_line(
     slant: FontSlant,
     weight: FontWeight,
     size: Float64,
-    kerning: Bool,
     mut cache: FontCache,
 ) raises -> _LineMetrics:
     """One line's ink bounding box (x_bearing/y_bearing/width/height,
     all zero for a blank/whitespace-only line) and total advance, from
-    the glyphs `_shape_line` produced for it. Accumulates advances and
-    pair kerning and combines inked glyphs into one tight bbox.
-    `family`/`slant`/`weight`/`size`/`cache` serve only
+    the glyphs `_shape_line` produced for it. Accumulates each glyph's
+    kerning and advance and combines the inked ones into one tight
+    bbox. `family`/`slant`/`weight`/`size`/`cache` serve only
     _resolve_glyph's fallback lookup; `face` determines the rest.
     """
     var pen_x = 0.0
@@ -433,11 +602,8 @@ def _measure_line(
     var min_y = 1.0e18
     var max_y = -1.0e18
     var any_ink = False
-    var previous = 0
     for shaped in glyphs:
-        if kerning:
-            pen_x += _kern_offset(face, previous, shaped.glyph)
-        previous = shaped.glyph
+        pen_x += shaped.kern_before
         var gm = _resolve_glyph_metrics(
             face, family, slant, weight, size, shaped, cache
         )
@@ -492,9 +658,11 @@ def _layout_block(
     var lines = List[_LineLayout](capacity=len(raw_lines))
     var any_ink = False
     for i in range(len(raw_lines)):
-        var glyphs = _shape_line(face[], String(raw_lines[i]), ligatures)
+        var glyphs = _shape_line(
+            face[], String(raw_lines[i]), ligatures, kerning
+        )
         var measured = _measure_line(
-            face[], glyphs, family, slant, weight, size, kerning, cache
+            face[], glyphs, family, slant, weight, size, cache
         )
         var baseline_y = Float64(i) * line_height
         var x_offset = 0.0
@@ -586,7 +754,9 @@ def measure_text(
         slant: Requested upright/italic/oblique style.
         weight: Requested normal/bold weight.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
 
     Returns:
         `text`'s width/height/advance at that size.
@@ -618,16 +788,18 @@ def measure_text(
         slant: Requested upright/italic/oblique style.
         weight: Requested normal/bold weight.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
         cache: Shared cache for font resolution and parsed faces.
 
     Returns:
         `text`'s width/height/advance at that size.
     """
     var face = cache.resolve_face(family, slant, weight, size)
-    var glyphs = _shape_line(face[], text, ligatures)
+    var glyphs = _shape_line(face[], text, ligatures, kerning)
     var measured = _measure_line(
-        face[], glyphs, family, slant, weight, size, kerning, cache
+        face[], glyphs, family, slant, weight, size, cache
     )
     return TextMetrics(measured.width, measured.height, measured.advance)
 
@@ -701,7 +873,9 @@ def measure_text_block(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
 
     Returns:
         The block's anchor-relative bounding box.
@@ -746,7 +920,9 @@ def measure_text_block(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
         cache: Shared cache for font resolution and parsed faces.
 
     Returns:
@@ -879,7 +1055,9 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
     """
     var cache = FontCache()
     draw_text(
@@ -934,7 +1112,9 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
         cache: Shared cache for font resolution and parsed faces.
     """
     draw_text(
@@ -988,7 +1168,9 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
     """
     var cache = FontCache()
     draw_text(
@@ -1059,11 +1241,8 @@ def _draw_text_transformed(
         for i in range(len(block.lines)):
             ref line = block.lines[i]
             var pen_x = line.x
-            var previous = 0
             for shaped in line.glyphs:
-                if kerning:
-                    pen_x += _kern_offset(face[], previous, shaped.glyph)
-                previous = shaped.glyph
+                pen_x += shaped.kern_before
                 var g = _resolve_glyph(
                     face[],
                     family,
@@ -1271,7 +1450,9 @@ def draw_text(
         rotation: Radians, rotating the whole block around the anchor.
         align: Horizontal alignment of each line.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
         cache: Shared cache for font resolution and parsed faces.
     """
     if canvas.has_transform():
@@ -1356,11 +1537,8 @@ def draw_text(
         for i in range(len(block.lines)):
             ref line = block.lines[i]
             var pen_x = line.x
-            var previous = 0
             for shaped in line.glyphs:
-                if kerning:
-                    pen_x += _kern_offset(face[], previous, shaped.glyph)
-                previous = shaped.glyph
+                pen_x += shaped.kern_before
                 pen_x += _draw_cached_glyph(
                     canvas,
                     face[],
@@ -1385,11 +1563,8 @@ def draw_text(
     for i in range(len(block.lines)):
         ref line = block.lines[i]
         var pen_x = line.x
-        var previous = 0
         for shaped in line.glyphs:
-            if kerning:
-                pen_x += _kern_offset(face[], previous, shaped.glyph)
-            previous = shaped.glyph
+            pen_x += shaped.kern_before
             var g = _resolve_glyph(
                 face[],
                 family,
@@ -1446,7 +1621,9 @@ def stroke_text(
         miter_limit: Ratio past which a MITER join falls back to
             BEVEL, as a multiple of half the stroke width.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
     """
     var cache = FontCache()
     stroke_text(
@@ -1533,7 +1710,9 @@ def stroke_text(
         miter_limit: Ratio past which a MITER join falls back to
             BEVEL, as a multiple of half the stroke width.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
         cache: Shared cache for font resolution and parsed faces.
     """
     if text == "":
@@ -1559,11 +1738,8 @@ def stroke_text(
     for i in range(len(block.lines)):
         ref line = block.lines[i]
         var pen_x = line.x
-        var previous = 0
         for shaped in line.glyphs:
-            if kerning:
-                pen_x += _kern_offset(face[], previous, shaped.glyph)
-            previous = shaped.glyph
+            pen_x += shaped.kern_before
             var g = _resolve_glyph(
                 face[],
                 family,
@@ -1631,7 +1807,7 @@ def _text_on_path_placements(
     draw_text_on_path that is layout rather than rasterization.
 
     The line is laid out straight first, through the same
-    `_shape_line`/`_kern_offset` pass every other text call uses, which
+    `_shape_line` pass every other text call uses, which
     gives each glyph a pen offset and an advance. A glyph is then
     placed by its *centre*: the point at arc length
     `start + pen + advance/2` along the path, rotated to the tangent
@@ -1657,7 +1833,7 @@ def _text_on_path_placements(
     pixel size.
     """
     var face = cache.resolve_face(family, slant, weight, size)
-    var glyphs = _shape_line(face[], text, ligatures)
+    var glyphs = _shape_line(face[], text, ligatures, kerning)
     var count = len(glyphs)
 
     # One metrics pass: the pen position each glyph starts at, its
@@ -1668,11 +1844,8 @@ def _text_on_path_placements(
     var advances = List[Float64](capacity=count)
     var inked = List[Bool](capacity=count)
     var pen = 0.0
-    var previous = 0
     for shaped in glyphs:
-        if kerning:
-            pen += _kern_offset(face[], previous, shaped.glyph)
-        previous = shaped.glyph
+        pen += shaped.kern_before
         var gm = _resolve_glyph_metrics(
             face[], family, slant, weight, size, shaped, cache
         )
@@ -1797,7 +1970,9 @@ def draw_text_on_path(
         align: Where `offset` sits in the string -- its start, middle
             or end.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
     """
     var cache = FontCache()
     draw_text_on_path(
@@ -1869,7 +2044,9 @@ def draw_text_on_path(
         align: Where `offset` sits in the string -- its start, middle
             or end.
         kerning: Apply the font's pair kerning between adjacent glyphs.
-        ligatures: Apply the font's `liga`/`ccmp` substitutions.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
         cache: Shared cache for font resolution and parsed faces.
     """
     if text == "":

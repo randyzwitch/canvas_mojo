@@ -21,12 +21,16 @@ Scope:
   kern through it.
 - **Single and ligature substitution**, through `substitute_glyphs`:
   `GSUB` lookup types 1 and 4 (including behind an extension lookup
-  type 7) under the `liga` and `ccmp` features -- enough for the Latin
-  "fi"/"fl"/"ffi" ligatures. The multiple, alternate, contextual and
+  type 7) -- enough for the Latin "fi"/"fl"/"ffi" ligatures and for
+  Arabic contextual forms. The multiple, alternate, contextual and
   chained-context substitutions the same features also use are
-  skipped, as are the joining features (`init`/`medi`/`fina`) an Arabic
-  script needs. Substitution runs on the glyphs in visual order, so a
-  right-to-left script substitutes against reversed neighbours.
+  skipped, and lookup flags (IgnoreMarks and the rest) are not
+  honored. Features are selected from one script's default language
+  system: `ccmp` and `liga` for `latn`, and for `arab` the OpenType
+  Arabic order `ccmp`, `isol`, `fina`, `medi`, `init`, `rlig`, `liga`,
+  `calt`. Each glyph carries a mask of the features enabled on it, so
+  one sweep of `fina` reaches only the letters a caller marked final.
+  Substitution runs in logical order, per bidi run.
 - **No hinting.** Every glyph goes through `fill_path_aa`'s supersampled
   coverage AA instead, which keeps unhinted outlines correct at the sizes
   a chart uses.
@@ -112,6 +116,29 @@ comptime _GPOS_LOOKUP_EXTENSION = 9
 comptime _GSUB_LOOKUP_SINGLE = 1
 comptime _GSUB_LOOKUP_LIGATURE = 4
 comptime _GSUB_LOOKUP_EXTENSION = 7
+
+# One bit per `GSUB` feature read here. A lookup carries the bits of
+# the features that selected it, a glyph carries the bits of the
+# features enabled on it, and a lookup runs at a position only where
+# the two overlap -- which is what lets `fina` apply to the last letter
+# of a word and `init` to the first while both sweep the same run.
+comptime _FEATURE_CCMP = 1 << 0
+comptime _FEATURE_ISOL = 1 << 1
+comptime _FEATURE_FINA = 1 << 2
+comptime _FEATURE_MEDI = 1 << 3
+comptime _FEATURE_INIT = 1 << 4
+comptime _FEATURE_RLIG = 1 << 5
+comptime _FEATURE_LIGA = 1 << 6
+comptime _FEATURE_CALT = 1 << 7
+
+# Every bit set, for a caller with no per-glyph distinction to make.
+comptime _FEATURE_ALL = -1
+
+# OpenType script tags this module selects lookups for. A run of Arabic
+# characters takes `arab`; everything else takes `latn`, and both fall
+# back to `DFLT` in a font that does not list the tag.
+comptime _SCRIPT_ARABIC = "arab"
+comptime _SCRIPT_DEFAULT = "latn"
 
 # ValueRecord field bits. Only XAdvance is read; XPlacement and
 # YPlacement precede it in the record when set, so their bits decide
@@ -336,18 +363,23 @@ struct _PairPosLookups(Movable):
 
 
 def _feature_lookup_indices(
-    data: List[UInt8], table_offset: Int, tags: List[String]
+    data: List[UInt8], table_offset: Int, tags: List[String], script_tag: String
 ) raises -> List[Int]:
     """Walk a `GPOS`/`GSUB` table's script -> feature lists and collect
     the lookup indices the features named by `tags` select, each listed
     once. Both tables put their script, feature and lookup list offsets
     at the same three header positions, so one walk serves `kern` in
-    `GPOS` and `liga`/`ccmp` in `GSUB`.
+    `GPOS` and the substitution features in `GSUB`.
 
-    Every script's default language system contributes its feature
-    indices; the language-specific LangSys records are not read, so a
-    font hanging a feature off one of those alone behaves as if the
-    feature were absent.
+    `script_tag` selects one script, falling back to `DFLT` when the
+    font does not list it; an empty tag selects *every* script, which
+    is what `kern` uses -- a pair adjustment is looked up from two
+    glyph indices with no run behind them to take a script from.
+
+    Only each script's default language system is read. The
+    language-specific LangSys records are not, so a font hanging a
+    feature off one of those alone behaves as if the feature were
+    absent.
     """
     var out = List[Int]()
     if table_offset < 0:
@@ -355,10 +387,30 @@ def _feature_lookup_indices(
     var script_list = table_offset + _u16(data, table_offset + 4)
     var feature_list = table_offset + _u16(data, table_offset + 6)
 
-    var feature_indices = List[Int]()
     var script_count = _u16(data, script_list)
-    for i in range(script_count):
-        var script = script_list + _u16(data, script_list + 2 + i * 6 + 4)
+    var scripts = List[Int]()
+    if script_tag == "":
+        for i in range(script_count):
+            scripts.append(
+                script_list + _u16(data, script_list + 2 + i * 6 + 4)
+            )
+    else:
+        var selected = -1
+        var fallback = -1
+        for i in range(script_count):
+            var record = script_list + 2 + i * 6
+            var tag = _tag_at(data, record)
+            if tag == script_tag:
+                selected = script_list + _u16(data, record + 4)
+            elif tag == "DFLT":
+                fallback = script_list + _u16(data, record + 4)
+        if selected >= 0:
+            scripts.append(selected)
+        elif fallback >= 0:
+            scripts.append(fallback)
+
+    var feature_indices = List[Int]()
+    for script in scripts:
         var default_lang_sys = _u16(data, script)
         if default_lang_sys == 0:
             continue
@@ -390,7 +442,7 @@ def _gpos_kern_lookups(
         return out^
     var lookup_list = gpos_offset + _u16(data, gpos_offset + 8)
     var tags: List[String] = ["kern"]
-    var lookup_indices = _feature_lookup_indices(data, gpos_offset, tags)
+    var lookup_indices = _feature_lookup_indices(data, gpos_offset, tags, "")
 
     var lookup_count = _u16(data, lookup_list)
     for index in range(lookup_count):
@@ -657,8 +709,8 @@ def _ligature_subst_lookup(
 
 
 struct _SubstLookups(Movable):
-    """Every SingleSubst and LigatureSubst subtable the `ccmp` and
-    `liga` features reach, grouped by the lookup holding it:
+    """Every SingleSubst and LigatureSubst subtable one script's
+    substitution features reach, grouped by the lookup holding it:
     `subtables[bounds[i]]` through `subtables[bounds[i + 1]]` are
     lookup `i`'s, in the order the font lists them. `types[k]` is
     `subtables[k]`'s lookup type with any extension wrapper unwrapped,
@@ -672,6 +724,18 @@ struct _SubstLookups(Movable):
     var subtables: List[Int]
     var types: List[Int]
     var bounds: List[Int]
+
+    var features: List[Int]
+    """Lookup `i`'s `_FEATURE_*` bits -- the features that selected it,
+    OR'd, since one lookup can serve several. It runs at a position
+    only where these overlap that glyph's enabled features.
+    """
+
+    var lookup_ids: List[Int]
+    """Lookup `i`'s index in the font's LookupList, so a lookup a second
+    feature also selects is found and given another bit rather than
+    collected twice.
+    """
 
     var lookup_glyphs: List[Int]
     var lookup_bounds: List[Int]
@@ -696,73 +760,163 @@ struct _SubstLookups(Movable):
         self.types = List[Int]()
         self.bounds = List[Int]()
         self.bounds.append(0)
+        self.features = List[Int]()
+        self.lookup_ids = List[Int]()
         self.lookup_glyphs = List[Int]()
         self.lookup_bounds = List[Int]()
         self.lookup_bounds.append(0)
         self.first_glyphs = List[Int]()
 
 
-def _gsub_subst_lookups(
-    data: List[UInt8], gsub_offset: Int
-) raises -> _SubstLookups:
-    """Collect the SingleSubst and LigatureSubst subtables the `GSUB`
-    `liga` and `ccmp` features select, in LookupList order.
+def _feature_bit(tag: String) -> Int:
+    """The `_FEATURE_*` bit for a feature tag, 0 for a tag not read
+    here.
+    """
+    if tag == "ccmp":
+        return _FEATURE_CCMP
+    if tag == "isol":
+        return _FEATURE_ISOL
+    if tag == "fina":
+        return _FEATURE_FINA
+    if tag == "medi":
+        return _FEATURE_MEDI
+    if tag == "init":
+        return _FEATURE_INIT
+    if tag == "rlig":
+        return _FEATURE_RLIG
+    if tag == "liga":
+        return _FEATURE_LIGA
+    if tag == "calt":
+        return _FEATURE_CALT
+    return 0
 
-    `ccmp` joins `liga` because the two are read the same way and a
-    font's `ccmp` composition ("i" plus a combining acute to a
-    precomposed glyph) is meant to run for every script the way `liga`
-    does for Latin. Lookups of a type not read here -- the multiple and
-    contextual substitutions both features also use -- are skipped, so
-    such a font substitutes less than a full shaper would rather than
+
+def _script_feature_tags(script_tag: String) -> List[String]:
+    """The features to apply for a script, in application order.
+
+    For `arab` this is the OpenType Arabic shaping order: `ccmp`
+    composes, the four joining features then pick each letter's
+    contextual form, and the ligature features run on what those
+    produced -- `rlig` (which Arabic requires, for lam-alef) before
+    `liga` and `calt`. Selecting a form before ligating is what makes a
+    lam-alef ligature match: the font keys it on the lam's *initial*
+    glyph, not the lam.
+
+    Every other script gets `ccmp` and `liga`, which is what a Latin
+    line has always been shaped with.
+    """
+    if script_tag == _SCRIPT_ARABIC:
+        return [
+            "ccmp",
+            "isol",
+            "fina",
+            "medi",
+            "init",
+            "rlig",
+            "liga",
+            "calt",
+        ]
+    return ["ccmp", "liga"]
+
+
+def _append_lookup_subtables(
+    data: List[UInt8], lookup: Int, lookup_type: Int, mut out: _SubstLookups
+) raises -> Bool:
+    """Append one Lookup's SingleSubst and LigatureSubst subtables to
+    `out.subtables`, with the type of each beside it in `out.types`.
+
+    An extension lookup is followed to the subtable it wraps -- type 7
+    here where `GPOS`'s is 9, with the same 32-bit offset measured from
+    the wrapper rather than from the Lookup. A subtable of another type
+    or an unread format is skipped.
+
+    Returns:
+        Whether any subtable was appended, so the caller knows whether
+        to open a group for this lookup.
+    """
+    var sub_count = _u16(data, lookup + 4)
+    var added = False
+    for k in range(sub_count):
+        var subtable = lookup + _u16(data, lookup + 6 + k * 2)
+        var actual = lookup_type
+        if lookup_type == _GSUB_LOOKUP_EXTENSION:
+            # ExtensionSubst format 1: the wrapped lookup's type plus a
+            # 32-bit offset from the wrapper's own start.
+            if _u16(data, subtable) != 1:
+                continue
+            actual = _u16(data, subtable + 2)
+            if (
+                actual != _GSUB_LOOKUP_SINGLE
+                and actual != _GSUB_LOOKUP_LIGATURE
+            ):
+                continue
+            subtable += _u32(data, subtable + 4)
+        var format = _u16(data, subtable)
+        if actual == _GSUB_LOOKUP_SINGLE:
+            if format != 1 and format != 2:
+                continue
+        elif format != 1:
+            continue
+        out.subtables.append(subtable)
+        out.types.append(actual)
+        added = True
+    return added
+
+
+def _gsub_subst_lookups(
+    data: List[UInt8], gsub_offset: Int, script_tag: String
+) raises -> _SubstLookups:
+    """Collect the SingleSubst and LigatureSubst subtables one script's
+    substitution features select, ordered by feature and, within a
+    feature, by LookupList index.
+
+    Features are selected from `script_tag`'s default language system,
+    falling back to `DFLT`'s. Restricting the walk to one script is
+    what keeps a font's Arabic lookups off a Latin line -- DejaVu Sans
+    lists the space glyph as an Arabic ligature's first component, so
+    every space used to walk that LigatureSet before failing.
+
+    Lookups of a type not read here -- the multiple and contextual
+    substitutions these features also use -- are skipped, so such a
+    font substitutes less than a full shaper would rather than
     differently.
     """
     var out = _SubstLookups()
     if gsub_offset < 0:
         return out^
     var lookup_list = gsub_offset + _u16(data, gsub_offset + 8)
-    var tags: List[String] = ["liga", "ccmp"]
-    var lookup_indices = _feature_lookup_indices(data, gsub_offset, tags)
-
     var lookup_count = _u16(data, lookup_list)
-    for index in range(lookup_count):
-        if not _contains(lookup_indices, index):
-            continue
-        var lookup = lookup_list + _u16(data, lookup_list + 2 + index * 2)
-        var lookup_type = _u16(data, lookup)
-        if (
-            lookup_type != _GSUB_LOOKUP_SINGLE
-            and lookup_type != _GSUB_LOOKUP_LIGATURE
-            and lookup_type != _GSUB_LOOKUP_EXTENSION
-        ):
-            continue
-        var sub_count = _u16(data, lookup + 4)
-        var added = False
-        for k in range(sub_count):
-            var subtable = lookup + _u16(data, lookup + 6 + k * 2)
-            var actual = lookup_type
-            if lookup_type == _GSUB_LOOKUP_EXTENSION:
-                # ExtensionSubst format 1: the wrapped lookup's type
-                # plus a 32-bit offset from the wrapper's own start.
-                if _u16(data, subtable) != 1:
-                    continue
-                actual = _u16(data, subtable + 2)
-                if (
-                    actual != _GSUB_LOOKUP_SINGLE
-                    and actual != _GSUB_LOOKUP_LIGATURE
-                ):
-                    continue
-                subtable += _u32(data, subtable + 4)
-            var format = _u16(data, subtable)
-            if actual == _GSUB_LOOKUP_SINGLE:
-                if format != 1 and format != 2:
-                    continue
-            elif format != 1:
+    var tags = _script_feature_tags(script_tag)
+
+    for t in range(len(tags)):
+        var bit = _feature_bit(tags[t])
+        var one_tag: List[String] = [tags[t]]
+        var lookup_indices = _feature_lookup_indices(
+            data, gsub_offset, one_tag, script_tag
+        )
+        for index in range(lookup_count):
+            if not _contains(lookup_indices, index):
                 continue
-            out.subtables.append(subtable)
-            out.types.append(actual)
-            added = True
-        if added:
+            # A lookup two features both select runs once, under the
+            # earlier feature, carrying both bits.
+            if _contains(out.lookup_ids, index):
+                for i in range(len(out.lookup_ids)):
+                    if out.lookup_ids[i] == index:
+                        out.features[i] |= bit
+                continue
+            var lookup = lookup_list + _u16(data, lookup_list + 2 + index * 2)
+            var lookup_type = _u16(data, lookup)
+            if (
+                lookup_type != _GSUB_LOOKUP_SINGLE
+                and lookup_type != _GSUB_LOOKUP_LIGATURE
+                and lookup_type != _GSUB_LOOKUP_EXTENSION
+            ):
+                continue
+            if not _append_lookup_subtables(data, lookup, lookup_type, out):
+                continue
             out.bounds.append(len(out.subtables))
+            out.features.append(bit)
+            out.lookup_ids.append(index)
             var ranges = List[Int]()
             for k in range(out.bounds[len(out.bounds) - 2], len(out.subtables)):
                 var coverage_offset = _u16(data, out.subtables[k] + 2)
@@ -909,8 +1063,16 @@ struct TTFFace(Movable):
 
     var _gsub: _SubstLookups
     """SingleSubst and LigatureSubst subtables the `GSUB` `liga` and
-    `ccmp` features reach, grouped by lookup. Empty when the font has
-    neither feature.
+    `ccmp` features reach under the `latn` script (falling back to
+    `DFLT`), grouped by lookup. Empty when the font has neither
+    feature.
+    """
+
+    var _gsub_arabic: _SubstLookups
+    """The same for the `arab` script, which adds the four joining
+    features and `rlig`/`calt`. Two tables rather than one selected per
+    line: the walk is a few hundred bytes of list headers, and a run
+    picks between them by script tag.
     """
 
     var _pixel_size: Int
@@ -1033,7 +1195,8 @@ struct TTFFace(Movable):
         self._gpos_kern = _gpos_kern_lookups(data, gpos_off)
         self._kern_subtables = _kern_format0_subtables(data, kern_off)
         self._kern_cache = Dict[Int, Int]()
-        self._gsub = _gsub_subst_lookups(data, gsub_off)
+        self._gsub = _gsub_subst_lookups(data, gsub_off, _SCRIPT_DEFAULT)
+        self._gsub_arabic = _gsub_subst_lookups(data, gsub_off, _SCRIPT_ARABIC)
         self._pixel_size = -1
         self.data = data^
 
@@ -1154,39 +1317,83 @@ struct TTFFace(Movable):
                 total += found[1]
         return total
 
-    def has_substitutions(self) -> Bool:
+    def has_substitutions(self, script_tag: String = _SCRIPT_DEFAULT) -> Bool:
         """Whether this font carries glyph substitutions this module
-        reads -- a `GSUB` `liga` or `ccmp` feature with single or
-        ligature lookups.
+        reads for a script -- a single or ligature lookup under one of
+        the features `_script_feature_tags` lists for it.
+
+        Args:
+            script_tag: OpenType script tag, `arab` or the default.
 
         Returns:
             True if `substitute_glyphs` can change a glyph sequence.
         """
+        if script_tag == _SCRIPT_ARABIC:
+            return len(self._gsub_arabic.subtables) > 0
         return len(self._gsub.subtables) > 0
 
     def substitute_glyphs(self, glyphs: List[Int]) raises -> ShapedRun:
-        """Apply the `liga` and `ccmp` lookups to a glyph sequence:
-        "f", "f", "i" comes back as the one "ffi" glyph where the font
-        has it.
-
-        Each lookup sweeps the whole sequence before the next one
-        starts, left to right. At each position the lookup's subtables
-        are tried in order and the first substitution found applies,
-        consuming its components; a position no subtable matches passes
-        through unchanged.
-
-        Glyph 0 (".notdef") neither substitutes nor joins a ligature,
-        so a character the face has no glyph for -- one another font
-        will draw -- separates the runs on either side of it.
+        """Apply the default script's `liga` and `ccmp` lookups to a
+        glyph sequence: "f", "f", "i" comes back as the one "ffi" glyph
+        where the font has it. Every lookup runs at every position.
 
         Args:
-            glyphs: Glyph indices to substitute over, in the order they
-                are laid out.
+            glyphs: Glyph indices to substitute over, in logical order.
 
         Returns:
             The substituted glyphs, with each one's span over `glyphs`.
         """
+        var masks = List[Int](capacity=len(glyphs))
+        for _ in range(len(glyphs)):
+            masks.append(_FEATURE_ALL)
+        return self._substitute(self._gsub, glyphs, masks)
+
+    def substitute_glyphs(
+        self, glyphs: List[Int], masks: List[Int], script_tag: String
+    ) raises -> ShapedRun:
+        """Apply `script_tag`'s substitution features to a glyph
+        sequence, each lookup running only where its features are
+        enabled.
+
+        `masks[i]` is glyph `i`'s enabled `_FEATURE_*` bits. That is
+        what makes the Arabic joining features work: `fina`, `medi` and
+        `init` each cover most of the alphabet, so a whole-run sweep
+        would give every letter the same form. A per-glyph mask lets one
+        sweep of `fina` reach only the letters `joining.mojo` decided
+        are final.
+
+        Args:
+            glyphs: Glyph indices to substitute over, in logical order.
+            masks: One enabled-feature bitmask per entry of `glyphs`.
+            script_tag: OpenType script tag, `arab` or the default.
+
+        Returns:
+            The substituted glyphs, with each one's span over `glyphs`.
+        """
+        if script_tag == _SCRIPT_ARABIC:
+            return self._substitute(self._gsub_arabic, glyphs, masks)
+        return self._substitute(self._gsub, glyphs, masks)
+
+    def _substitute(
+        self, gsub: _SubstLookups, glyphs: List[Int], masks: List[Int]
+    ) raises -> ShapedRun:
+        """One `_SubstLookups` table applied to a glyph sequence.
+
+        Each lookup sweeps the whole sequence before the next one
+        starts, left to right, which is the spec's rule and why the
+        lookups are grouped rather than flattened. At each position the
+        lookup's subtables are tried in order and the first substitution
+        found applies, consuming its components; a position the lookup's
+        features are not enabled on, or that no subtable matches, passes
+        through unchanged. A substituted glyph inherits the mask of the
+        first glyph it came from.
+
+        Glyph 0 (".notdef") neither substitutes nor joins a ligature,
+        so a character the face has no glyph for -- one another font
+        will draw -- separates the runs on either side of it.
+        """
         var out = glyphs.copy()
+        var glyph_masks = masks.copy()
         var clusters = List[Int](capacity=len(glyphs))
         # Whether any lookup could start at this position, decided once
         # per glyph rather than once per glyph per lookup, which is
@@ -1199,25 +1406,29 @@ struct TTFFace(Movable):
         for i in range(len(glyphs)):
             clusters.append(1)
             var covered = glyphs[i] != 0 and _in_ranges(
-                self._gsub.first_glyphs, glyphs[i]
+                gsub.first_glyphs, glyphs[i]
             )
             candidate.append(covered)
             if covered:
                 positions.append(i)
         var changed = False
 
-        for i in range(len(self._gsub.bounds) - 1):
+        for i in range(len(gsub.bounds) - 1):
             if len(positions) == 0:
                 break
-            # Nothing this lookup covers is on the line, so it cannot
-            # change anything and its sweep is skipped whole. Most
-            # lookups fail this on most lines.
-            var range_first = self._gsub.lookup_bounds[i]
-            var range_last = self._gsub.lookup_bounds[i + 1]
+            # Nothing this lookup covers is on the line, or nothing it
+            # covers has its features enabled, so it cannot change
+            # anything and its sweep is skipped whole. Most lookups fail
+            # this on most lines.
+            var lookup_features = gsub.features[i]
+            var range_first = gsub.lookup_bounds[i]
+            var range_last = gsub.lookup_bounds[i + 1]
             var reachable = False
             for p in range(len(positions)):
+                if (glyph_masks[positions[p]] & lookup_features) == 0:
+                    continue
                 if _in_range_span(
-                    self._gsub.lookup_glyphs,
+                    gsub.lookup_glyphs,
                     range_first,
                     range_last,
                     out[positions[p]],
@@ -1227,8 +1438,8 @@ struct TTFFace(Movable):
             if not reachable:
                 continue
 
-            var first = self._gsub.bounds[i]
-            var last = self._gsub.bounds[i + 1]
+            var first = gsub.bounds[i]
+            var last = gsub.bounds[i + 1]
             # A substitution never lengthens the sequence, so the sweep
             # compacts in place: `write` trails `pos`, and each step
             # matches before it writes, so a write never lands on a
@@ -1239,10 +1450,10 @@ struct TTFFace(Movable):
             while pos < len(out):
                 var glyph = -1
                 var consumed = 0
-                if candidate[pos]:
+                if candidate[pos] and (glyph_masks[pos] & lookup_features) != 0:
                     for k in range(first, last):
-                        var subtable = self._gsub.subtables[k]
-                        if self._gsub.types[k] == _GSUB_LOOKUP_SINGLE:
+                        var subtable = gsub.subtables[k]
+                        if gsub.types[k] == _GSUB_LOOKUP_SINGLE:
                             glyph = _single_subst_lookup(
                                 self.data, subtable, out[pos]
                             )
@@ -1272,6 +1483,7 @@ struct TTFFace(Movable):
                     out[write] = out[pos]
                     clusters[write] = clusters[pos]
                     candidate[write] = candidate[pos]
+                    glyph_masks[write] = glyph_masks[pos]
                     write += 1
                     pos += 1
                     continue
@@ -1283,14 +1495,16 @@ struct TTFFace(Movable):
                 out[write] = glyph
                 clusters[write] = span
                 candidate[write] = glyph != 0 and _in_ranges(
-                    self._gsub.first_glyphs, glyph
+                    gsub.first_glyphs, glyph
                 )
+                glyph_masks[write] = glyph_masks[pos]
                 write += 1
                 pos += consumed
             if write < len(out):
                 out.resize(write, 0)
                 clusters.resize(write, 0)
                 candidate.resize(write, False)
+                glyph_masks.resize(write, 0)
             if fired:
                 # The sweep moved glyphs, so the positions the next
                 # lookup skips on have to be recollected.
