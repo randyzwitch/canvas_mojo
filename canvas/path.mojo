@@ -47,6 +47,7 @@ from canvas.gradient import (
     LinearGradient,
     RadialGradient,
 )
+from canvas.pattern import PatternSource
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.aa_crossing import (
     _EdgeTable,
@@ -1655,6 +1656,41 @@ def fill_path_conic_gradient(
     )
 
 
+def fill_path_pattern(
+    mut canvas: Canvas,
+    path: Path,
+    pattern: PatternSource,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    curve_steps: Int = 0,
+):
+    """Like fill_path_gradient, but for a PatternSource (pattern.mojo):
+    each pixel's color comes from a sampled raster tile rather than a
+    gradient projection.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        pattern: Fill source, queried per pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source(
+            canvas,
+            _through(path, m),
+            pattern,
+            fill_rule,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
+    _fill_path_source(
+        canvas, path, pattern, fill_rule, curve_steps, Matrix2D.identity()
+    )
+
+
 def fill_path_gradient_aa(
     mut canvas: Canvas,
     path: Path,
@@ -1782,6 +1818,50 @@ def fill_path_conic_gradient_aa(
         canvas,
         path,
         gradient,
+        fill_rule,
+        supersample,
+        curve_steps,
+        Matrix2D.identity(),
+    )
+
+
+def fill_path_pattern_aa(
+    mut canvas: Canvas,
+    path: Path,
+    pattern: PatternSource,
+    fill_rule: FillRule = FillRule.EVEN_ODD,
+    supersample: Int = 4,
+    curve_steps: Int = 0,
+):
+    """Like fill_path_gradient_aa, but for a PatternSource.
+
+    Args:
+        canvas: Canvas to fill into.
+        path: Path to fill.
+        pattern: Fill source, queried per covered pixel.
+        fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
+        supersample: Sub-pixel grid side length per pixel (N -> N*N
+            samples) under EVEN_ODD. A NONZERO fill rasterizes by
+            exact area (`canvas.aa_area`) and ignores it.
+        curve_steps: Straight-line segments per quad/cubic Bezier;
+            0 (the default) chooses per segment.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        _fill_path_source_aa(
+            canvas,
+            _through(path, m),
+            pattern,
+            fill_rule,
+            supersample,
+            curve_steps,
+            _inverse_or_identity(m),
+        )
+        return
+    _fill_path_source_aa(
+        canvas,
+        path,
+        pattern,
         fill_rule,
         supersample,
         curve_steps,
