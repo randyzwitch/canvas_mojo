@@ -29,6 +29,19 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     averaged alongside r/g/b -- see the comment on `pixels` below for
     what that does and does not hold for.
 
+    Supersampling with it: pixel (px, py) is centred at (px, py), and
+    output pixel p averages source pixels `factor * p` through
+    `factor * p + factor - 1`, whose centre is `factor * p +
+    (factor - 1) / 2`. A drawing scaled by `factor` alone therefore
+    shows up `(factor - 1) / (2 * factor)` px early after the shrink --
+    3/8 px at 4 -- for every primitive. Translate by `(factor - 1) / 2`
+    before the scale and it lands where a scale-1 drawing does:
+
+        big.translate((f - 1) / 2, (f - 1) / 2)
+        big.scale(f, f)
+        ... draw ...
+        var out = downsample(big, f)
+
     Args:
         source: Canvas to shrink.
         factor: Integer shrink factor; must evenly divide both
