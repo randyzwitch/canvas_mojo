@@ -10,7 +10,13 @@ from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
-from canvas.gradient import ConicGradient, LinearGradient, RadialGradient
+from canvas.gradient import (
+    ConicGradient,
+    GradientStop,
+    GradientStops,
+    LinearGradient,
+    RadialGradient,
+)
 from canvas.path import (
     Path,
     fill_path_conic_gradient,
@@ -708,6 +714,35 @@ def test_gradient_aa_fill_clips_to_the_canvas() raises:
         c.get_pixel(2, 15).r != 255,
         "the on-canvas part of an overhanging path must still be filled",
     )
+
+
+def test_gradient_stops_stand_alone_as_a_ramp() raises:
+    # No geometry: a value already in [0, 1] maps straight to a colour,
+    # with the same pad clamp and midpoint rounding the gradients use.
+    var ramp = GradientStops()
+    assert_equal(len(ramp), 0)
+    assert_equal(ramp.color_at(0.5).a, 0, "no stops is transparent")
+    ramp.add_stop(1.0, Color(255, 255, 255))
+    ramp.add_stop(0.0, Color(0, 0, 0))
+    assert_equal(len(ramp), 2)
+    assert_equal(ramp[0].offset, 0.0, "sorted on insert")
+    assert_equal(ramp[1].offset, 1.0)
+    # 0.5 * 255 = 127.5 -> 128.
+    assert_equal(ramp.color_at(0.5).r, 128)
+    assert_equal(ramp.color_at(-3.0).r, 0, "pads below")
+    assert_equal(ramp.color_at(7.0).r, 255, "pads above")
+    var stop = GradientStop(0.25, Color(1, 2, 3))
+    assert_equal(stop.offset, 0.25)
+    assert_equal(stop.color.b, 3)
+
+
+def test_a_gradient_exposes_its_ramp() raises:
+    # The gradient's `stops` is a GradientStops, so a caller can read
+    # the ramp back and query it without the geometry.
+    var g = LinearGradient(0.0, 0.0, 10.0, 0.0)
+    g.add_stop(0.0, Color(0, 0, 0))
+    g.add_stop(1.0, Color(255, 255, 255))
+    assert_equal(g.stops.color_at(0.5).r, g.color_at(5.0, 0.0).r)
 
 
 def test_stops_are_sorted_on_insert_whatever_order_they_arrive_in() raises:

@@ -22,6 +22,8 @@ from canvas.geometry import Matrix2D, Point, Transform2D, round_to_int
 from canvas.gradient import (
     ColorSource,
     ConicGradient,
+    GradientStop,
+    GradientStops,
     LinearGradient,
     RadialGradient,
 )

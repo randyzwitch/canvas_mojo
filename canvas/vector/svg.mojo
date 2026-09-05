@@ -560,7 +560,8 @@ struct SvgCanvas(DrawTarget, Movable):
         # which is what SVG needs: `<stop>` clamps each offset to be no
         # less than the previous sibling's, so descending offsets would
         # flatten the gradient to one colour in every viewer.
-        for stop in gradient.stops:
+        for i in range(len(gradient.stops)):
+            var stop = gradient.stops[i]
             self._body.write('<stop offset="')
             _write_svg_float(self._body, stop.offset)
             self._body.write(
