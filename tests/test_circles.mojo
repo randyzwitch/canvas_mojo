@@ -249,6 +249,27 @@ def test_draw_circle_aa_width_widens_the_ring() raises:
     assert_equal(thick.get_pixel(30, 30).r, 0, "the hole is untouched")
 
 
+def test_canvas_method_matches_the_free_function() raises:
+    # Canvas.draw_circle_aa is the DrawTarget method; draw_circle_aa is
+    # the free function it delegates to. They must put down
+    # byte-identical pixels, including antialiased edges -- a caller
+    # rendering generically through the trait gets exactly what a
+    # caller reaching for the free function does.
+    var via_method = Canvas(31, 21, BG)
+    via_method.draw_circle_aa(15.0, 10.0, 8.0, FG, width=3.0)
+
+    var via_function = Canvas(31, 21, BG)
+    draw_circle_aa(via_function, 15.0, 10.0, 8.0, FG, width=3.0)
+
+    for y in range(21):
+        for x in range(31):
+            var a = via_method.get_pixel(x, y)
+            var b = via_function.get_pixel(x, y)
+            assert_equal(a.r, b.r)
+            assert_equal(a.g, b.g)
+            assert_equal(a.b, b.b)
+
+
 def test_draw_circle_aa_sub_pixel_center_moves_the_ring() raises:
     var a = Canvas(60, 60, Color(0, 0, 0))
     draw_circle_aa(a, 30.0, 30.0, 20.0, Color(255, 255, 255))

@@ -656,6 +656,47 @@ struct SvgCanvas(DrawTarget, Movable):
         self._write_blend()
         self._body.write("/>\n")
 
+    def draw_circle_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        radius: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+    ):
+        """Emit an unfilled `<circle>` element, at a sub-pixel center
+        and radius.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
+            radius: Circle radius in pixels, to the middle of the
+                stroke.
+            color: Outline color.
+            width: Stroke width in pixels.
+        """
+        self._body.write('<circle cx="')
+        _write_svg_float(self._body, cx)
+        self._body.write('" cy="')
+        _write_svg_float(self._body, cy)
+        self._body.write('" r="')
+        _write_svg_float(self._body, radius)
+        self._body.write('" fill="none" stroke="', _to_hex(color), '"')
+        _write_opacity(self._body, "stroke", color)
+        _write_stroke_attrs(
+            self._body,
+            width,
+            List[Float64](),
+            0.0,
+            LineCap.ROUND,
+            LineJoin.ROUND,
+            4.0,
+            False,
+        )
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
+
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
@@ -715,6 +756,52 @@ struct SvgCanvas(DrawTarget, Movable):
         )
         _write_opacity(self._body, "stroke", color)
         self._body.write(' stroke-width="1"')
+        self._write_transform()
+        self._write_blend()
+        self._body.write("/>\n")
+
+    def draw_ellipse_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+    ):
+        """Emit an unfilled `<ellipse>` element, at a sub-pixel center
+        and radii.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
+            rx: Horizontal radius in pixels, to the middle of the
+                stroke.
+            ry: Vertical radius in pixels, to the middle of the
+                stroke.
+            color: Outline color.
+            width: Stroke width in pixels.
+        """
+        self._body.write('<ellipse cx="')
+        _write_svg_float(self._body, cx)
+        self._body.write('" cy="')
+        _write_svg_float(self._body, cy)
+        self._body.write('" rx="')
+        _write_svg_float(self._body, rx)
+        self._body.write('" ry="')
+        _write_svg_float(self._body, ry)
+        self._body.write('" fill="none" stroke="', _to_hex(color), '"')
+        _write_opacity(self._body, "stroke", color)
+        _write_stroke_attrs(
+            self._body,
+            width,
+            List[Float64](),
+            0.0,
+            LineCap.ROUND,
+            LineJoin.ROUND,
+            4.0,
+            False,
+        )
         self._write_transform()
         self._write_blend()
         self._body.write("/>\n")

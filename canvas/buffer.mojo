@@ -31,7 +31,7 @@ from canvas.path import (
 )
 from canvas.shapes.lines import draw_line_aa, LineCap, LineJoin
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
-from canvas.shapes.circles import fill_circle_aa
+from canvas.shapes.circles import draw_circle_aa, fill_circle_aa
 from canvas.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
 from canvas.shapes.rects import fill_rect, fill_rect_gradient
 
@@ -1095,6 +1095,27 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         fill_circle_aa(self, cx, cy, radius, color)
 
+    def draw_circle_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        radius: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+    ):
+        """Same as `canvas.shapes.circles.draw_circle_aa`, callable as
+        a method.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
+            radius: Circle radius in pixels, to the middle of the
+                stroke.
+            color: Outline color.
+            width: Stroke width in pixels.
+        """
+        draw_circle_aa(self, cx, cy, radius, color, width=width)
+
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
@@ -1124,6 +1145,30 @@ struct Canvas(Copyable, DrawTarget, Movable):
             color: Outline color.
         """
         draw_ellipse_aa(self, cx, cy, rx, ry, color)
+
+    def draw_ellipse_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+    ):
+        """Same as `canvas.shapes.ellipses.draw_ellipse_aa`, callable
+        as a method.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
+            rx: Horizontal radius in pixels, to the middle of the
+                stroke.
+            ry: Vertical radius in pixels, to the middle of the
+                stroke.
+            color: Outline color.
+            width: Stroke width in pixels.
+        """
+        draw_ellipse_aa(self, cx, cy, rx, ry, color, width=width)
 
     def fill_arc_aa(
         mut self,
