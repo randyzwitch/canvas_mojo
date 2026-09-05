@@ -6,7 +6,7 @@ survey, this one is the gate for a change to a single primitive.
 
 bench_canvas.mojo times each case once, in a fixed order, after a
 warm-up. On a shared machine the parallel sweeps vary by 20% or more
-between runs, which is wider than most single optimisations move a
+between runs, which is wider than most single optimizations move a
 number. Two things bring that down:
 
 - Rounds. Each case is timed `rounds` times, `iters` iterations per

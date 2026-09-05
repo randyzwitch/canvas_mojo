@@ -438,7 +438,7 @@ def test_conic_color_at_wraps_across_the_start_angle_rather_than_clamping() rais
     # before the start_angle ray at +x).
     var almost_wrapped = g.color_at(1.0, -0.001)
     # Very close to a full turn (t near 1.0), so very close to the
-    # last stop's color -- far lighter than the halfway grey a clamp
+    # last stop's color -- far lighter than the halfway gray a clamp
     # would produce.
     assert_true(
         almost_wrapped.r > 250,
@@ -533,15 +533,15 @@ def test_gradient_aa_fill_interior_matches_the_gradient_exactly() raises:
 
 def test_gradient_aa_fill_antialiases_a_diagonal_edge() raises:
     # The point of the whole function. Down the diamond's upper-left
-    # diagonal the hard-edged fill can only write "gradient colour" or
+    # diagonal the hard-edged fill can only write "gradient color" or
     # "background"; the AA fill must produce at least one pixel that is
     # neither, i.e. a real partial blend.
     var hard = Canvas(80, 80, Color(255, 255, 255))
     var soft = Canvas(80, 80, Color(255, 255, 255))
     var p = _diamond(40.0, 40.0, 30.0)
 
-    # A flat "gradient" (both stops the same colour) so any pixel that
-    # is neither that colour nor the background is edge coverage
+    # A flat "gradient" (both stops the same color) so any pixel that
+    # is neither that color nor the background is edge coverage
     # rather than gradient interpolation.
     var g_hard = LinearGradient(0.0, 0.0, 80.0, 0.0)
     g_hard.add_stop(0.0, Color(0, 0, 0, 255))
@@ -577,7 +577,7 @@ def test_gradient_aa_fill_antialiases_a_diagonal_edge() raises:
 
 def test_gradient_aa_fill_edge_matches_flat_aa_fill_coverage() raises:
     # The gradient fill's coverage must come from the same sweep a flat
-    # fill uses, so with a gradient whose stops are all one colour the
+    # fill uses, so with a gradient whose stops are all one color the
     # two must agree pixel for pixel -- including every partially
     # covered edge pixel.
     from canvas.path import fill_path_aa
@@ -603,7 +603,7 @@ def test_gradient_aa_fill_edge_matches_flat_aa_fill_coverage() raises:
 
 
 def test_gradient_aa_fill_scales_a_translucent_stop_by_coverage() raises:
-    # Coverage scales the source colour's own alpha rather than
+    # Coverage scales the source color's own alpha rather than
     # replacing it: a half-transparent gradient over white must land
     # near white-plus-half-black in the interior, never fully opaque.
     var c = Canvas(80, 80, Color(255, 255, 255))
@@ -636,7 +636,7 @@ def test_radial_gradient_aa_fill_interior_matches_the_gradient() raises:
 def test_radial_gradient_hard_and_aa_fills_agree_in_the_interior() raises:
     # The two routes differ only at the boundary; a deep interior pixel
     # must be identical, which is what pins the AA variant to the same
-    # colour source rather than merely a similar one.
+    # color source rather than merely a similar one.
     var hard = Canvas(80, 80, Color(255, 255, 255))
     var soft = Canvas(80, 80, Color(255, 255, 255))
     var p = _diamond(40.0, 40.0, 28.0)
@@ -661,7 +661,7 @@ def test_radial_gradient_hard_and_aa_fills_agree_in_the_interior() raises:
 def test_gradient_aa_fill_respects_the_nonzero_fill_rule() raises:
     # Two concentric diamonds wound the same way: EVEN_ODD punches the
     # inner one out, NONZERO fills straight through it. Same geometry,
-    # same source, so any difference at the centre is the fill rule.
+    # same source, so any difference at the center is the fill rule.
     var eo = Canvas(80, 80, Color(255, 255, 255))
     var nz = Canvas(80, 80, Color(255, 255, 255))
 
@@ -682,13 +682,13 @@ def test_gradient_aa_fill_respects_the_nonzero_fill_rule() raises:
     fill_path_gradient_aa(eo, p, g1, fill_rule=FillRule.EVEN_ODD)
     fill_path_gradient_aa(nz, p, g2, fill_rule=FillRule.NONZERO)
 
-    # Centre: left untouched by EVEN_ODD (still background), filled by
+    # Center: left untouched by EVEN_ODD (still background), filled by
     # NONZERO.
     assert_equal(eo.get_pixel(40, 40).r, 255)
     assert_equal(eo.get_pixel(40, 40).g, 255)
-    var centre = nz.get_pixel(40, 40)
+    var center = nz.get_pixel(40, 40)
     assert_true(
-        centre.r != 255 or centre.g != 255 or centre.b != 255,
+        center.r != 255 or center.g != 255 or center.b != 255,
         "NONZERO must fill through the inner sub-path",
     )
 
@@ -717,7 +717,7 @@ def test_gradient_aa_fill_clips_to_the_canvas() raises:
 
 
 def test_gradient_stops_stand_alone_as_a_ramp() raises:
-    # No geometry: a value already in [0, 1] maps straight to a colour,
+    # No geometry: a value already in [0, 1] maps straight to a color,
     # with the same pad clamp and midpoint rounding the gradients use.
     var ramp = GradientStops()
     assert_equal(len(ramp), 0)
@@ -807,8 +807,8 @@ def test_two_stops_at_one_offset_are_a_hard_transition() raises:
 def test_binary_search_brackets_correctly_across_many_stops() raises:
     # Eleven evenly spaced stops whose red channel is 10 * the stop
     # index, added in a shuffled order. Every stop offset must read
-    # back its own colour, and each midpoint the average of its
-    # neighbours -- which pins the bracketing pair at every position
+    # back its own color, and each midpoint the average of its
+    # neighbors -- which pins the bracketing pair at every position
     # in the list, not just the ends.
     var g = LinearGradient(0.0, 0.0, 100.0, 0.0)
     var order: List[Int] = [5, 0, 9, 3, 10, 1, 7, 2, 8, 4, 6]
@@ -819,7 +819,7 @@ def test_binary_search_brackets_correctly_across_many_stops() raises:
         assert_equal(
             g.color_at(Float64(i) * 10.0, 0.0).r,
             UInt8(i * 10),
-            "stop " + String(i) + " reads back its own colour",
+            "stop " + String(i) + " reads back its own color",
         )
     for i in range(10):
         # Midway between stop i and i+1: 10*i + 0.5*10 = 10*i + 5.

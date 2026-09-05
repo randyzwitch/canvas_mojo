@@ -231,14 +231,14 @@ def _draw_wrapped_diagonal(
     """A 45-degree stripe through the tile (bottom-left to top-right if
     `flip`, top-left to bottom-right otherwise), drawn so the tile
     repeats without a seam: the stripe itself, extended a full tile
-    past each end, and the two neighbouring stripes of the repeated
+    past each end, and the two neighboring stripes of the repeated
     pattern, one tile to either side.
 
     Three lines rather than one because a tile shows more than its own
     stripe. Repeated, the pattern is the family of parallel lines one
     tile apart, and the tile's two off-diagonal corners lie within a
-    line width of the neighbouring stripes -- at spacing 8 and width 2
-    the corner pixel is 0.7 px from the next stripe's centre -- so
+    line width of the neighboring stripes -- at spacing 8 and width 2
+    the corner pixel is 0.7 px from the next stripe's center -- so
     their coverage has to be painted here for the corners of adjacent
     tiles to meet in ink. The stripes are a full diagonal apart, so no
     pixel is covered by two of them and nothing blends twice.

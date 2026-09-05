@@ -326,7 +326,7 @@ def test_float_rect_snaps_to_pixel_boundaries() raises:
     assert_true(c.get_pixel(60, 10).r == INK.r, "pixel 60 is in")
     assert_true(c.get_pixel(61, 10).r == BG.r, "pixel 61 is out")
     # Under scale(2) the float rect maps then snaps in device space:
-    # the edge at 19.5 lands on device 39.0, a pixel centre, and the
+    # the edge at 19.5 lands on device 39.0, a pixel center, and the
     # tie goes to the higher boundary, 39.5, so the rect starts at 40.
     var d = Canvas(W, H, BG)
     d.scale(2.0, 2.0)
@@ -348,7 +348,7 @@ def test_rotation_routes_a_rect_through_the_path_fill() raises:
     var want = Canvas(W, H, BG)
     fill_path(want, p.transformed(m), INK)
     _assert_same(want, c, "a rotated rect")
-    assert_true(_is_ink(c, 60, 45), "centre is inked")
+    assert_true(_is_ink(c, 60, 45), "center is inked")
     assert_true(not _is_ink(c, 60 + 25, 45), "the unrotated corner is not")
 
 
@@ -447,7 +447,7 @@ def test_gradient_samples_in_user_space() raises:
     _assert_nearly_same(want, c, 0, "a translated gradient")
 
     # Under a scale the gradient stretches with the rectangle: the
-    # midpoint colour sits at the rectangle's middle, not 20 px in.
+    # midpoint color sits at the rectangle's middle, not 20 px in.
     var s = Canvas(W, H, BG)
     s.scale(2.0, 1.0)
     fill_rect_gradient(s, 0, 0, 40, 20, g)
@@ -502,7 +502,7 @@ def test_arc_and_ring_under_a_similarity() raises:
     s.translate(60.0, 45.0)
     s.scale(2.0, 1.0)
     fill_arc_aa(s, 0.0, 0.0, 20.0, 0.0, 2.0 * pi, INK)
-    assert_true(_is_ink(s, 60 + 38, 45), "38 px right of centre is inside")
+    assert_true(_is_ink(s, 60 + 38, 45), "38 px right of center is inside")
     assert_true(not _is_ink(s, 60, 45 + 22), "22 px below is not")
 
 
@@ -554,7 +554,7 @@ def test_text_under_scale_and_rotation() raises:
 
 
 def _ink_centroid(c: Canvas) -> FPoint:
-    """The ink-weighted centre of everything drawn, in pixels."""
+    """The ink-weighted center of everything drawn, in pixels."""
     var sum_x = 0.0
     var sum_y = 0.0
     var total = 0.0
@@ -585,9 +585,9 @@ def _max_channel_diff(a: Canvas, b: Canvas) -> Int:
 
 def test_scaled_text_through_the_cache_matches_the_direct_fill() raises:
     # Under scale(3) the glyphs come from the mask cache, rasterized
-    # at the placed size and composited at a 1/64-px-quantised origin.
+    # at the placed size and composited at a 1/64-px-quantized origin.
     # The direct outline fill of the same placement is the reference:
-    # the two must agree to within the quantisation's effect on edge
+    # the two must agree to within the quantization's effect on edge
     # pixels, and have the same ink extent.
     var cache = FontCache()
     var cached = Canvas(W, H, BG)
@@ -623,7 +623,7 @@ def test_scaled_text_through_the_cache_matches_the_direct_fill() raises:
     )
     assert_equal(_ink_width(cached), _ink_width(direct), "same ink width")
     var diff = _max_channel_diff(cached, direct)
-    assert_true(diff <= 48, "edge pixels within quantisation: " + String(diff))
+    assert_true(diff <= 48, "edge pixels within quantization: " + String(diff))
     var cc = _ink_centroid(cached)
     var dc = _ink_centroid(direct)
     assert_true(
@@ -634,7 +634,7 @@ def test_scaled_text_through_the_cache_matches_the_direct_fill() raises:
 
 def test_supersampling_places_text_where_scale_one_does() raises:
     # Rendering at a factor s and shrinking with `downsample` averages,
-    # into output pixel p, the device block whose centre is user
+    # into output pixel p, the device block whose center is user
     # p + (s - 1) / (2 s), so a drawing scaled by s alone shows up that
     # much *early* after the shrink -- 3/8 px at s = 4, for every
     # primitive, not only text. The recipe `downsample` documents,

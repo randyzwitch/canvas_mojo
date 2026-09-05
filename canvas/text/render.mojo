@@ -47,7 +47,7 @@ Shaping a run maps each character through `cmap` and applies the
 font's `GSUB` features for the run's script (`ttf.mojo`). A Latin run
 gets `ccmp` and `liga`, so "f" and "i" become the one "fi" glyph a
 font that has it draws. An Arabic run additionally classifies each
-letter's contextual form from its logical neighbours
+letter's contextual form from its logical neighbors
 (`joining.mojo`) and enables that one of `isol`/`init`/`medi`/`fina`
 on that one glyph, then runs `rlig`, `liga` and `calt`; so "بسم"
 draws as initial beh, medial seen, final meem rather than three
@@ -1036,7 +1036,7 @@ def draw_text(
     Builds a `FontCache` per call and throws it away, so every call
     rescans every font file installed on the machine. That scan is tens
     of milliseconds where a cached label is tens of microseconds, and it
-    does not shrink with the length of the string -- a chart labelling
+    does not shrink with the length of the string -- a chart labeling
     its axes through this overload spends nearly all of its time in font
     discovery. Construct one `FontCache` and pass it to the `cache=`
     overload below for anything past a couple of strings.
@@ -1399,7 +1399,7 @@ def _composite_glyph_mask(
     """
     var masked = canvas.has_clip_mask()
     var total = Float64(mask.total_samples)
-    # An opaque colour over an exact-area mask, which is every glyph a
+    # An opaque color over an exact-area mask, which is every glyph a
     # NONZERO fill rasterizes: the count is in 255ths, so it is the
     # alpha, and the general form below rounds back to it for every
     # count. Skipping the divide there is most of the compositing cost
@@ -1954,7 +1954,7 @@ def _text_on_path_placements(
     The line is laid out straight first, through the same
     `_shape_line` pass every other text call uses, which
     gives each glyph a pen offset and an advance. A glyph is then
-    placed by its *centre*: the point at arc length
+    placed by its *center*: the point at arc length
     `start + pen + advance/2` along the path, rotated to the tangent
     there, with its origin backed off half an advance along that same
     tangent. Cairo/Pango and SVG's `textPath` place a glyph the same
@@ -1965,7 +1965,7 @@ def _text_on_path_placements(
     LEFT, `offset` minus half the total advance for CENTER, `offset`
     minus the whole advance for RIGHT.
 
-    A glyph whose centre falls outside [0, the path's length] is left
+    A glyph whose center falls outside [0, the path's length] is left
     out entirely, SVG's rule -- the alternative, clamping it to an end,
     stacks the overflow into an unreadable pile there. A glyph with no
     ink is left out too, having nothing to draw.
@@ -2011,10 +2011,10 @@ def _text_on_path_placements(
         if not inked[i]:
             continue
         var half = advances[i] / 2.0
-        var centre = start + pens[i] + half
-        if centre < 0.0 or centre > curve.total:
+        var center = start + pens[i] + half
+        if center < 0.0 or center > curve.total:
             continue
-        var s = curve.sample(centre)
+        var s = curve.sample(center)
         placed.append(
             _PlacedGlyph(
                 glyphs[i], s.x - half * s.tx, s.y - half * s.ty, s.tx, s.ty
@@ -2160,7 +2160,7 @@ def draw_text_on_path(
     both: `offset` is a distance measured along the path rather than a
     point, and each glyph turns to the path's tangent where it sits,
     so a string on a circle leans round it. `align` says where `offset`
-    falls in the string -- LEFT starts it there, CENTER centres its
+    falls in the string -- LEFT starts it there, CENTER centers its
     total advance about it, RIGHT ends it there.
 
     Arc length is measured over the path flattened the way
@@ -2168,7 +2168,7 @@ def draw_text_on_path(
     is a distance along the curve that gets drawn. Sub-paths add end to
     end with no distance between them.
 
-    A glyph whose centre falls before the start or past the end of the
+    A glyph whose center falls before the start or past the end of the
     path is not drawn (SVG's `textPath` rule): text longer than the
     curve loses its overflow rather than piling it up at the end. A
     string with no glyphs left on the path draws nothing.

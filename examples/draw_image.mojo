@@ -8,7 +8,7 @@ A 64x64 tile is rendered once and then placed five ways:
   keeps the checker's edges hard
 - doubled with `Filter.BILINEAR`, which mixes the four pixels around
   each sample point and softens them
-- turned 25 degrees at 1.8x about its own centre
+- turned 25 degrees at 1.8x about its own center
 - cropped to its top-left quadrant and drawn at 4x, so the crop
   chooses the pixels and the matrix chooses where they land
 - faded to half opacity over a rule, so the rule shows through
@@ -116,7 +116,7 @@ def main() raises:
     # Doubled two ways. The matrix maps the tile's texel space, where
     # pixel (i, j) covers [i, i+1) x [j, j+1), so a factor of two puts
     # each source pixel on exactly four destination pixels and the
-    # nearest-neighbour panel is the tile with no new colours in it.
+    # nearest-neighbor panel is the tile with no new colors in it.
     draw_canvas(
         sheet,
         tile,
@@ -131,7 +131,7 @@ def main() raises:
     )
 
     # A quarter of a turn's worth of rotation about the tile's own
-    # centre: move the centre to the origin, scale and turn there, and
+    # center: move the center to the origin, scale and turn there, and
     # put it where the panel is.
     var turned = (
         Matrix2D.translation(-32.0, -32.0)

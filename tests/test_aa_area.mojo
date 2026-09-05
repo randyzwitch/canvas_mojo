@@ -50,7 +50,7 @@ def _assert_near(got: Int, want: Int, tol: Int, label: String) raises:
 def test_half_pixel_triangle_is_half_covered() raises:
     # The triangle over pixel (1, 1)'s square, [0.5, 1.5]^2, cut along
     # its diagonal: (0.5,0.5)-(1.5,0.5)-(0.5,1.5) covers exactly half
-    # of the pixel and none of its neighbours. Exact area says 128.
+    # of the pixel and none of its neighbors. Exact area says 128.
     var c = Canvas(4, 4, BG)
     var p = Path()
     p.move_to(0.5, 0.5)

@@ -22,11 +22,11 @@ there, `Filter.NEAREST` taking the pixel the point lands in and
 `Filter.BILINEAR` mixing the four around it.
 
 These overloads work in *texel* coordinates: source pixel (i, j) covers
-the unit square from (i, j) to (i + 1, j + 1), so its centre is at
+the unit square from (i, j) to (i + 1, j + 1), so its center is at
 (i + 0.5, j + 0.5) and a `w x h` source occupies [0, w] x [0, h]. That
 is the convention Cairo and the HTML5 canvas use for an image, and the
 one that makes `Matrix2D.scaling(2.0, 2.0)` land each source pixel on
-exactly four destination pixels. It differs from the pixel-centre
+exactly four destination pixels. It differs from the pixel-center
 convention the shape rasterizers use (see CONTRIBUTING.md), and the two
 agree wherever it matters here: under a translation by whole pixels
 both put source pixel (i, j) at destination pixel (i + tx, j + ty), and
@@ -47,9 +47,9 @@ from canvas.mask import Mask, apply_mask
 struct Filter(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """How a transformed `draw_canvas` reads the source between its
     pixels: `NEAREST` takes the one the sample point lands in, giving
-    hard pixel edges and no colour the source did not already hold, and
+    hard pixel edges and no color the source did not already hold, and
     `BILINEAR` mixes the four around it, giving smooth edges and
-    intermediate colours.
+    intermediate colors.
     """
 
     var _value: Int
@@ -272,12 +272,12 @@ def draw_canvas(
     mapped back through the inverse and sampled at that point, under
     `filter`. A pixel whose sample point falls outside the source is
     not drawn; along the outer edge, a bilinear sample's missing
-    neighbours are the edge pixel itself.
+    neighbors are the edge pixel itself.
 
-    Bilinear interpolation weights each neighbour premultiplied by its
-    alpha and divides the mix back out, so a transparent neighbour
-    contributes its alpha and none of its colour. Alpha itself is
-    interpolated the same way the colours are.
+    Bilinear interpolation weights each neighbor premultiplied by its
+    alpha and divides the mix back out, so a transparent neighbor
+    contributes its alpha and none of its color. Alpha itself is
+    interpolated the same way the colors are.
 
     Writes go through the canvas's pixel-write path, so the active
     rectangle clip, clip path and blend mode all apply. A translation
@@ -492,7 +492,7 @@ def _draw_canvas_mapped(
     var v_hi = v_lo + Float64(ch)
 
     # The mapped rectangle's bounding box in destination pixels, padded
-    # by a pixel so no pixel whose centre lands inside it is lost to
+    # by a pixel so no pixel whose center lands inside it is lost to
     # rounding. Pixels whose sample point falls outside the source are
     # dropped in the loop, so the padding costs a test.
     var p0 = m.apply(u_lo, v_lo)
@@ -604,7 +604,7 @@ def _mapped_band(
     var row_max = job.sy + Int(job.v_hi) - 1
 
     for py in range(first_row, last_row):
-        # The destination pixel's centre, mapped back into the source.
+        # The destination pixel's center, mapped back into the source.
         # Stepping u and v by the inverse map's first column walks the
         # row, since the map is affine.
         var yc = Float64(py) + 0.5
@@ -637,7 +637,7 @@ def _mapped_band(
                             dst.write_pixel(px, py, color.with_alpha(alpha))
                 else:
                     # The four pixels around the sample point. Their
-                    # centres sit at half-integers, so subtracting half
+                    # centers sit at half-integers, so subtracting half
                     # a pixel puts the point's own integer part on the
                     # first of them.
                     var fu = u - 0.5
@@ -683,8 +683,8 @@ def _mapped_band(
                         row_max,
                     )
                     # Weighted premultiplied and divided back out
-                    # below, so a neighbour with no alpha contributes
-                    # its transparency and none of its colour.
+                    # below, so a neighbor with no alpha contributes
+                    # its transparency and none of its color.
                     var wa00 = (1.0 - tu) * (1.0 - tv) * Float64(c00.a)
                     var wa10 = tu * (1.0 - tv) * Float64(c10.a)
                     var wa01 = (1.0 - tu) * tv * Float64(c01.a)

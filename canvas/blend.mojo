@@ -12,7 +12,7 @@ Channels and alphas are 0-255 integers throughout, and the canvas
 stores straight (non-premultiplied) alpha, so each mode is written the
 way `Color.blend_over` is: weights accumulate premultiplied, and one
 division by the output alpha turns the result back into a straight
-colour.
+color.
 
 With `Cs`, `Cb` a source and backdrop channel and `as`, `ab` their
 alphas, every mode here is the same Porter-Duff form,
@@ -118,7 +118,7 @@ from canvas.color import Color, _div255
 
 
 struct BlendMode(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
-    """How a drawn colour combines with the pixel underneath.
+    """How a drawn color combines with the pixel underneath.
 
     SOURCE_OVER, the default, is ordinary alpha compositing: the source
     covers the backdrop in proportion to its alpha. The rest are the
@@ -394,7 +394,7 @@ def _blend_channel[MODE: Int](cb: Int, cs: Int) -> Int:
 
 
 struct _Rgb(Copyable, ImplicitlyCopyable, Movable):
-    """A colour as three 0-1 floats, the form the non-separable modes
+    """A color as three 0-1 floats, the form the non-separable modes
     compute in.
     """
 
@@ -425,8 +425,8 @@ def _sat(c: _Rgb) -> Float64:
 
 @always_inline
 def _clip_color(c: _Rgb) -> _Rgb:
-    """Pull a colour back into 0-1 without moving its luminosity, by
-    scaling its distance from the grey of that luminosity.
+    """Pull a color back into 0-1 without moving its luminosity, by
+    scaling its distance from the gray of that luminosity.
     """
     var l = _lum(c)
     var n = min(c.r, min(c.g, c.b))
@@ -455,7 +455,7 @@ def _set_lum(c: _Rgb, l: Float64) -> _Rgb:
 
 @always_inline
 def _set_sat(c: _Rgb, s: Float64) -> _Rgb:
-    """Rescale a colour's channels so its saturation is `s`: the
+    """Rescale a color's channels so its saturation is `s`: the
     smallest channel goes to 0, the largest to `s`, and the middle one
     keeps its position between them.
     """
@@ -471,7 +471,7 @@ def _set_sat(c: _Rgb, s: Float64) -> _Rgb:
 
 @always_inline
 def _blend_triple[MODE: Int](cb: _Rgb, cs: _Rgb) -> _Rgb:
-    """`B(Cb, Cs)` for a non-separable mode, on the whole colour."""
+    """`B(Cb, Cs)` for a non-separable mode, on the whole color."""
 
     @parameter
     if MODE == 24:
@@ -559,7 +559,7 @@ def _blend_pixel[MODE: Int](src: Color, dst: Color) -> Color:
     var wb = _div255(ba * fb)
     var out_a = min(255, wa + wb)
     if out_a == 0:
-        # Nothing survives from either side, so no colour is defined --
+        # Nothing survives from either side, so no color is defined --
         # and dividing by out_a below would not be either.
         return Color(0, 0, 0, 0)
 

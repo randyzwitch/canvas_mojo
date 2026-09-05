@@ -1,7 +1,7 @@
 """Tests for LineCap: how an open stroke's two ends are finished.
 
 The numbers here are hand-derived from the geometry rather than read
-back from output. A stroke of width W centred on a horizontal segment
+back from output. A stroke of width W centered on a horizontal segment
 from x=a to x=b covers, at its own row:
 
   BUTT    [a, b]                 -- stops dead at each endpoint
@@ -37,7 +37,7 @@ def _row_extent(c: Canvas, y: Int) -> Tuple[Int, Int]:
 
 
 def test_butt_cap_stops_at_the_endpoint() raises:
-    # Width 8 centred on y=20, from x=20 to x=60. A butt cap must not
+    # Width 8 centered on y=20, from x=20 to x=60. A butt cap must not
     # reach x=19 or x=61.
     var c = Canvas(80, 40, BG)
     draw_line_aa(c, 20.0, 20.0, 60.0, 20.0, FG, 8.0, 4, cap=LineCap.BUTT)
@@ -47,7 +47,7 @@ def test_butt_cap_stops_at_the_endpoint() raises:
 
 
 def test_round_cap_overhangs_by_half_the_width() raises:
-    # The default, and the behaviour that motivates the others: a
+    # The default, and the behavior that motivates the others: a
     # width-8 stroke extends 4px past each endpoint.
     var c = Canvas(80, 40, BG)
     draw_line_aa(c, 20.0, 20.0, 60.0, 20.0, FG, 8.0)

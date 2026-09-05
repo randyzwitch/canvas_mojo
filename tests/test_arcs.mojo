@@ -284,7 +284,7 @@ def test_ring_sector_fast_fill_keeps_its_inner_hole() raises:
     var c = Canvas(120, 120, BG)
     fill_ring_sector_aa(c, 60.0, 60.0, 20.0, 45.0, 0.0, 1.2, FG)
 
-    _assert_pixel(c, 60, 60, BG, "the centre stays empty")
+    _assert_pixel(c, 60, 60, BG, "the center stays empty")
     _assert_pixel(c, 68, 63, BG, "and so does the rest of the hole")
     _assert_pixel(c, 85, 70, FG, "while the band itself is solid")
 
@@ -423,10 +423,10 @@ def test_draw_arc_aa_reversed_sweep_covers_the_same_quarter() raises:
         difference * 100 < forward_ink,
         "the two sweeps lay down the same ink to within 1%",
     )
-    # The quarter from 0 to pi/2 runs right and down from the centre
+    # The quarter from 0 to pi/2 runs right and down from the center
     # (y grows downward), so nothing may land above or left of it.
-    _assert_pixel(backward, 8, 30, BG, "nothing left of centre")
-    _assert_pixel(backward, 30, 8, BG, "nothing above centre")
+    _assert_pixel(backward, 8, 30, BG, "nothing left of center")
+    _assert_pixel(backward, 30, 8, BG, "nothing above center")
 
 
 def main() raises:

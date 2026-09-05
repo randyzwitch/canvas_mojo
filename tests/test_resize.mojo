@@ -117,7 +117,7 @@ def test_large_downsample_matches_a_hand_computed_block_average() raises:
     #
     # The source is a deterministic gradient rather than a solid fill,
     # so a band that read or wrote the wrong rows would produce visibly
-    # wrong values rather than the same colour by luck.
+    # wrong values rather than the same color by luck.
     var factor = 2
     var out_w = 160
     var out_h = 120

@@ -42,7 +42,7 @@ def _series_y(i: Int) -> Float64:
 
 def main() raises:
     # Layer 1: the grid. Transparent everywhere except the rules
-    # themselves, so the sheet colour shows between them.
+    # themselves, so the sheet color shows between them.
     var grid = Canvas(W, H, CLEAR)
     for step in range(6):
         var gy = PLOT_T + step * 40

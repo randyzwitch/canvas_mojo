@@ -103,8 +103,8 @@ def write_bmp(canvas: Canvas, path: String) raises:
             else:
                 # 24-bit BMP has nowhere to put alpha, so a translucent
                 # pixel is composited onto white before it is written.
-                # Writing the stored colour instead would render a
-                # transparent region as whatever colour happened to sit
+                # Writing the stored color instead would render a
+                # transparent region as whatever color happened to sit
                 # underneath the transparency -- black, for a canvas
                 # cleared to Color(0, 0, 0, 0) -- which is not what
                 # anyone means by a transparent background.

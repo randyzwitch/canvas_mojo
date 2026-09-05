@@ -284,7 +284,7 @@ comptime _MIN_SPAN_RADIUS = 8.0
 def _pixel_inside(
     px: Int, cx: Float64, far_y_term: Float64, ry2: Float64, limit: Float64
 ) -> Bool:
-    """Whether the pixel square centred at `px`, on a row whose
+    """Whether the pixel square centered at `px`, on a row whose
     `far_y^2 * rx^2` term is `far_y_term`, lies entirely within the
     ellipse.
     """

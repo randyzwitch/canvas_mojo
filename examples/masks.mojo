@@ -6,7 +6,7 @@ Three panels:
 - a conic gradient painted through a star-shaped path mask with
   `fill_mask_source`: the gradient takes the star's shape, edge
   anti-aliased, without a gradient-filling primitive for stars
-- a layer of coloured bars faded through the alpha of a blurred disk
+- a layer of colored bars faded through the alpha of a blurred disk
   with the masked `draw_canvas`: a soft vignette, from a mask built
   by drawing rather than by geometry
 - a hatch pattern clipped to the luminance of a radial gradient with

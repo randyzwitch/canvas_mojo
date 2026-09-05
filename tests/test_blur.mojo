@@ -2,7 +2,7 @@
 draw_shadowed(), the drop-shadow/glow composite built on it.
 
 Most cases below check a structural property (symmetry, conservation,
-flatness away from an edge, exact colour with no bleed) rather than a
+flatness away from an edge, exact color with no bleed) rather than a
 hand-traced pixel value, since deriving a box-blurred pixel by hand
 across three passes is impractical -- see the file docstring's own
 reasoning for why `test_golden.mojo` is the one place a per-pixel trace
@@ -26,7 +26,7 @@ comptime BLACK_OPAQUE = Color(0, 0, 0, 255)
 
 
 def test_radius_zero_is_a_noop() raises:
-    # A few different colours and alphas, so a stray write anywhere
+    # A few different colors and alphas, so a stray write anywhere
     # would show up.
     var c = Canvas(6, 6, Color(0, 0, 0, 0))
     c.set_pixel(1, 1, Color(255, 0, 0, 255))
@@ -106,8 +106,8 @@ def test_opaque_flat_region_stays_flat_away_from_its_edges() raises:
     # A 21x21 opaque block on an opaque white background, blurred with
     # a small radius (box radii summing to 3 -- see blur.mojo). Ten
     # pixels of margin from the block's own boundary is well clear of
-    # that reach, so the block's centre must come out exactly the
-    # colour it was: an opaque flat neighbourhood premultiplies,
+    # that reach, so the block's center must come out exactly the
+    # color it was: an opaque flat neighborhood premultiplies,
     # box-averages, and unpremultiplies back to itself exactly, with no
     # floating-point rounding involved (every value along the way is an
     # integer representable exactly in Float64).
@@ -127,8 +127,8 @@ def test_opaque_flat_region_stays_flat_away_from_its_edges() raises:
 def test_transparent_neighbor_does_not_tint_the_blurred_color() raises:
     # The background is transparent *white* -- (255, 255, 255, 0) --
     # specifically so a blur that averaged straight (non-premultiplied)
-    # colour would pull every touched pixel toward pink. A single
-    # opaque red pixel's premultiplied colour is (255, 0, 0), which is
+    # color would pull every touched pixel toward pink. A single
+    # opaque red pixel's premultiplied color is (255, 0, 0), which is
     # numerically identical to its own alpha (255) in the red channel
     # and zero in the others; the transparent background premultiplies
     # to (0, 0, 0) everywhere regardless of its stored white. Blurring
@@ -259,7 +259,7 @@ def test_draw_shadowed_respects_the_active_clip() raises:
 def test_draw_shadowed_applies_the_blend_mode() raises:
     # Same geometry as the basic draw_shadowed test, over an opaque
     # (200, 100, 50) background instead of white, with the shadow
-    # colour an opaque mid grey (128, 128, 128) and MULTIPLY active.
+    # color an opaque mid gray (128, 128, 128) and MULTIPLY active.
     #
     # For an opaque source over an opaque background, MULTIPLY reduces
     # to _div255(bg_channel * src_channel) exactly (see blend.mojo's

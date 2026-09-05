@@ -593,7 +593,7 @@ def _assert_same_pixels(a: Canvas, b: Canvas, label: String) raises:
 
 def test_glyph_cache_hit_matches_miss_at_whole_pixels() raises:
     # The first draw rasterizes every glyph into the cache; the second
-    # composites the cached masks. A translucent colour makes the alpha
+    # composites the cached masks. A translucent color makes the alpha
     # arithmetic part of what has to agree.
     var cache = FontCache()
     var ink = Color(30, 90, 200, 140)
@@ -959,7 +959,7 @@ def test_kerning_applies_between_the_substituted_glyphs() raises:
     # Substitution runs first, so a pair adjustment is looked up
     # between the glyphs that end up on the line. "Aff" unligated kerns
     # A against f by -73 units: 1401 + 721 + 721 - 73 = 2770 =
-    # 86.5625 px. Ligated, A's right-hand neighbour is the "ff" glyph,
+    # 86.5625 px. Ligated, A's right-hand neighbor is the "ff" glyph,
     # which this font kerns against nothing, so the -73 does not apply
     # and the string measures 1401 + 1411 = 2812 = 87.875 -- wider,
     # not narrower.
@@ -1067,7 +1067,7 @@ def test_stroke_text_empty_string_is_noop() raises:
 
 def test_stroke_text_outlines_the_glyph_rather_than_filling_it() raises:
     # "O" at 120 px: a wide counter and a wall thick enough that a
-    # 2 px stroke centred on each contour leaves clear background
+    # 2 px stroke centered on each contour leaves clear background
     # between the two.
     var cache = FontCache()
     var filled = Canvas(220, 200, BG)
@@ -1096,7 +1096,7 @@ def test_stroke_text_outlines_the_glyph_rather_than_filling_it() raises:
     stroke_text(stroked, 20.0, 150.0, "O", FG, 120.0, width=2.0, cache=cache)
 
     # Ink on the contour the fill's left edge sits on -- within a
-    # pixel either way, a 2 px stroke being centred on it.
+    # pixel either way, a 2 px stroke being centered on it.
     assert_true(
         not _is_bg(stroked, left_edge - 1, row)
         or not _is_bg(stroked, left_edge, row)

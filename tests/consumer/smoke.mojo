@@ -25,7 +25,7 @@ def main() raises:
     var c = Canvas(200, 200, Color(255, 255, 255))
     fill_circle_aa(c, 100, 100, 80, Color(40, 100, 200))
     if c.get_pixel(100, 100).b != 200:
-        raise Error("smoke: disk centre is not the fill colour")
+        raise Error("smoke: disk center is not the fill color")
     if c.get_pixel(2, 2).r != 255:
         raise Error("smoke: a corner well outside the disk was painted")
 
@@ -50,7 +50,7 @@ def main() raises:
     if reread.width != 200 or reread.height != 200:
         raise Error("smoke: PNG round-trip changed the image size")
     if reread.get_pixel(100, 100).b != 200:
-        raise Error("smoke: PNG round-trip changed the disk centre")
+        raise Error("smoke: PNG round-trip changed the disk center")
 
     # The vector backend, a separate subpackage and a different
     # DrawTarget implementation. Reached as a method rather than the

@@ -11,8 +11,8 @@ an axis (linear), from a center relative to a radius (radial), or the
 angle around a center relative to a full turn (conic) -- then hand it
 to a `GradientStops` for stop lookup and interpolation. Only the
 projection differs, so only the projection lives on each struct, and
-`GradientStops` stands on its own as a colour ramp for a caller that
-has already normalised a value to [0, 1].
+`GradientStops` stands on its own as a color ramp for a caller that
+has already normalized a value to [0, 1].
 
 Linear and radial extend "pad" only: a point past either endpoint or
 outside the radius takes that edge's color, clamped. No repeat or
@@ -27,7 +27,7 @@ from canvas.color import Color
 
 
 struct GradientStop(ImplicitlyCopyable, Movable):
-    """One colour stop: the colour a ramp holds at `offset`, 0.0 to
+    """One color stop: the color a ramp holds at `offset`, 0.0 to
     1.0.
     """
 
@@ -48,10 +48,10 @@ def _round_channel(value: Float64) -> UInt8:
 
 
 struct GradientStops(Copyable, Movable, Sized):
-    """A one-dimensional colour ramp: stops sorted by offset, and the
-    interpolated colour at any position in [0, 1]. The half of every
+    """A one-dimensional color ramp: stops sorted by offset, and the
+    interpolated color at any position in [0, 1]. The half of every
     gradient that does not depend on geometry, and on its own the
-    colour scale a data value maps through once it is normalised.
+    color scale a data value maps through once it is normalized.
 
     Index, measure and iterate it like a list: `len(stops)`,
     `stops[i]` and `for stop in stops`.
@@ -94,7 +94,7 @@ struct GradientStops(Copyable, Movable, Sized):
         self._stops.insert(at, GradientStop(offset, color))
 
     def color_at(self, t_in: Float64) -> Color:
-        """The ramp's colour at `t_in`, clamped to [0, 1] first (the
+        """The ramp's color at `t_in`, clamped to [0, 1] first (the
         "pad" extend), interpolated between the two stops bracketing
         it. The bracketing pair comes from a binary search over the
         sorted stops.
@@ -165,7 +165,7 @@ struct GradientStops(Copyable, Movable, Sized):
 
 
 trait ColorSource:
-    """Anything that can answer "what colour is at this point?" -- the
+    """Anything that can answer "what color is at this point?" -- the
     fill source a gradient-filled shape queries per pixel.
 
     Conformance is nominal per Mojo's trait rule, so a new fill source
@@ -173,7 +173,7 @@ trait ColorSource:
     """
 
     def color_at(self, x: Float64, y: Float64) -> Color:
-        """This source's colour at (x, y), in canvas pixel
+        """This source's color at (x, y), in canvas pixel
         coordinates.
 
         Args:
@@ -181,7 +181,7 @@ trait ColorSource:
             y: Point y.
 
         Returns:
-            The colour to paint at that point.
+            The color to paint at that point.
         """
         ...
 
