@@ -4,23 +4,26 @@ raster `Canvas` or a vector `SvgCanvas` without knowing which it holds.
 A vector backend has no fixed pixel resolution, so nothing rendered
 through the trait deals in supersampling.
 
-Ten drawing primitives are declared -- `fill_rect`, `fill_rect_gradient`,
-`draw_line_aa`, `fill_circle_aa`, `fill_ellipse_aa`, `draw_ellipse_aa`,
-`fill_arc_aa`, `fill_ring_sector_aa`, `stroke_path_aa` and
-`fill_path_aa` -- a subset of `canvas.shapes`. `fill_polygon`,
-clipping, radial gradients and path-shaped gradients are not on the
-trait; each exists as a free function or a `Canvas` method instead.
-The two strokes, `draw_line_aa` and `stroke_path_aa`, take the full
-stroke style -- `dashes`, `dash_offset`, `cap`, `join`, `miter_limit`
--- so a dashed series or a square-capped rule renders the same way on
-either backend.
+Eleven drawing primitives are declared -- `fill_rect`,
+`fill_rect_gradient`, `draw_line_aa`, `fill_circle_aa`, `draw_circle_aa`,
+`fill_ellipse_aa`, `draw_ellipse_aa`, `fill_arc_aa`,
+`fill_ring_sector_aa`, `stroke_path_aa` and `fill_path_aa` -- a subset
+of `canvas.shapes`. `fill_polygon`, clipping, radial gradients and
+path-shaped gradients are not on the trait; each exists as a free
+function or a `Canvas` method instead. The two strokes, `draw_line_aa`
+and `stroke_path_aa`, take the full stroke style -- `dashes`,
+`dash_offset`, `cap`, `join`, `miter_limit` -- so a dashed series or a
+square-capped rule renders the same way on either backend.
 
-The ellipse methods are the shapes `fill_path_aa`/`stroke_path_aa`
-cannot reproduce exactly: `Path.arc_to` takes a single `radius`, so a
-`Path` builds circular arcs only and an ellipse comes out as a cubic
-approximation. That makes `draw_ellipse_aa` the only outline primitive
-here, and it takes no `width`, since the raster primitive behind it
-draws a fixed ~1px outline.
+`draw_ellipse_aa` is the outline `fill_path_aa`/`stroke_path_aa` cannot
+reproduce exactly: `Path.arc_to` takes a single `radius`, so a `Path`
+builds circular arcs only and an ellipse comes out as a cubic
+approximation. `draw_circle_aa` has no such gap -- a stroked circular
+`Path` is exact -- and is on the trait instead for parity with
+`fill_circle_aa` and with the sub-pixel, width-taking overloads
+`Canvas` already carries as free-function calls. Both outlines take a
+sub-pixel `(cx, cy)`, the matching sub-pixel radii, and `width`; neither
+takes `dashes`, since the raster primitives behind them do not.
 
 Method parameters mirror the same-named function in
 `canvas.shapes`/`canvas.path`, minus `supersample`: a raster
@@ -165,6 +168,27 @@ trait DrawTarget:
         """
         ...
 
+    def draw_circle_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        radius: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+    ):
+        """An anti-aliased circle outline, `width` pixels wide (default
+        1), at a sub-pixel center and radius.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
+            radius: Circle radius in pixels, to the middle of the
+                stroke.
+            color: Outline color.
+            width: Stroke width in pixels.
+        """
+        ...
+
     def fill_ellipse_aa(
         mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color
     ):
@@ -190,6 +214,30 @@ trait DrawTarget:
             rx: Horizontal radius in pixels.
             ry: Vertical radius in pixels.
             color: Outline color.
+        """
+        ...
+
+    def draw_ellipse_aa(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+        width: Float64 = 1.0,
+    ):
+        """An anti-aliased ellipse outline, `width` pixels wide
+        (default 1), at a sub-pixel center and radii.
+
+        Args:
+            cx: Center x, sub-pixel.
+            cy: Center y, sub-pixel.
+            rx: Horizontal radius in pixels, to the middle of the
+                stroke.
+            ry: Vertical radius in pixels, to the middle of the
+                stroke.
+            color: Outline color.
+            width: Stroke width in pixels.
         """
         ...
 

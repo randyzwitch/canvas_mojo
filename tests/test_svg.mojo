@@ -291,6 +291,103 @@ def test_draw_ellipse_aa_emits_a_stroked_ellipse() raises:
     )
 
 
+def test_draw_circle_aa_emits_expected_circle_element_with_default_width() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.draw_circle_aa(50.0, 40.0, 12.0, Color(255, 0, 0))
+    assert_true(
+        '<circle cx="50.000" cy="40.000" r="12.000" fill="none"'
+        ' stroke="#ff0000" stroke-width="1.000" stroke-linecap="round"/>'
+        in svg.to_string(),
+        "draw_circle_aa's default width (1.0), fill=none, exact attributes",
+    )
+
+
+def test_draw_circle_aa_respects_custom_width() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.draw_circle_aa(50.0, 40.0, 12.0, Color(0, 0, 0), width=3.5)
+    assert_true(
+        'stroke-width="3.500"' in svg.to_string(),
+        "custom width threaded through to stroke-width",
+    )
+
+
+def test_draw_circle_aa_translucent_color_emits_stroke_opacity() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.draw_circle_aa(50.0, 40.0, 12.0, Color(0, 128, 255, 128))
+    assert_true(
+        'stroke="#0080ff" stroke-opacity="0.502"' in svg.to_string(),
+        "translucent outline color carries stroke-opacity, not fill-opacity",
+    )
+    assert_true(
+        "fill-opacity" not in svg.to_string(),
+        "fill is none, so no fill-opacity",
+    )
+
+
+def test_draw_circle_aa_carries_the_transform_attribute() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.translate(10.0, 5.0)
+    svg.draw_circle_aa(1.0, 2.0, 3.0, Color(0, 0, 0))
+    assert_true(
+        'stroke-width="1.000" stroke-linecap="round"'
+        ' transform="matrix(1.000 0.000 0.000 1.000 10.000 5.000)"/>'
+        in svg.to_string(),
+        "draw_circle_aa carries the current transform like every other element",
+    )
+
+
+def test_draw_ellipse_aa_sub_pixel_overload_emits_expected_ellipse_element() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.draw_ellipse_aa(50.0, 40.0, 20.0, 12.0, Color(0, 128, 255))
+    assert_true(
+        '<ellipse cx="50.000" cy="40.000" rx="20.000" ry="12.000"'
+        ' fill="none" stroke="#0080ff" stroke-width="1.000"'
+        ' stroke-linecap="round"/>'
+        in svg.to_string(),
+        (
+            "the sub-pixel draw_ellipse_aa overload's default width (1.0),"
+            " fill=none, exact attributes"
+        ),
+    )
+
+
+def test_draw_ellipse_aa_sub_pixel_overload_respects_custom_width() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.draw_ellipse_aa(50.0, 40.0, 20.0, 12.0, Color(0, 0, 0), width=2.5)
+    assert_true(
+        'stroke-width="2.500"' in svg.to_string(),
+        "custom width threaded through to stroke-width",
+    )
+
+
+def test_draw_ellipse_aa_sub_pixel_overload_translucent_color_emits_stroke_opacity() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.draw_ellipse_aa(50.0, 40.0, 20.0, 12.0, Color(0, 128, 255, 128))
+    assert_true(
+        'stroke="#0080ff" stroke-opacity="0.502"' in svg.to_string(),
+        "translucent outline color carries stroke-opacity, not fill-opacity",
+    )
+    assert_true(
+        "fill-opacity" not in svg.to_string(),
+        "fill is none, so no fill-opacity",
+    )
+
+
+def test_draw_ellipse_aa_sub_pixel_overload_carries_the_transform_attribute() raises:
+    var svg = SvgCanvas(100, 80)
+    svg.translate(10.0, 5.0)
+    svg.draw_ellipse_aa(1.0, 2.0, 3.0, 4.0, Color(0, 0, 0))
+    assert_true(
+        'stroke-width="1.000" stroke-linecap="round"'
+        ' transform="matrix(1.000 0.000 0.000 1.000 10.000 5.000)"/>'
+        in svg.to_string(),
+        (
+            "the sub-pixel draw_ellipse_aa overload carries the current"
+            " transform like every other element"
+        ),
+    )
+
+
 def test_fill_arc_aa_small_wedge_matches_hand_derived_endpoints() raises:
     # cx=50, cy=60, radius=20, start=0, end=pi/2. Endpoints derived
     # via python3 (cx + r*cos(theta), cy + r*sin(theta)): start ->
@@ -950,6 +1047,71 @@ def test_joins_and_miter_limit_on_a_path() raises:
         in bevel.to_string(),
         "a zero dash offset is left to SVG's default",
     )
+
+
+def _outlined_circle_and_ellipse[T: DrawTarget](mut target: T):
+    """Draws both new sub-pixel, width-taking outlines through the
+    trait, so `Canvas` and `SvgCanvas` are checked to conform to both
+    overloads at compile time.
+    """
+    target.draw_circle_aa(10.0, 10.0, 5.0, Color(0, 0, 0), width=2.0)
+    target.draw_ellipse_aa(25.0, 10.0, 6.0, 3.0, Color(0, 0, 0), width=2.0)
+
+
+def test_circle_and_ellipse_outlines_reach_both_backends_through_the_trait() raises:
+    var vector = SvgCanvas(40, 20)
+    _outlined_circle_and_ellipse(vector)
+    var s = vector.to_string()
+    assert_true(
+        '<circle cx="10.000" cy="10.000" r="5.000" fill="none"' in s,
+        "the circle outline reached SvgCanvas through the trait",
+    )
+    assert_true(
+        '<ellipse cx="25.000" cy="10.000" rx="6.000" ry="3.000" fill="none"'
+        in s,
+        "the ellipse outline reached SvgCanvas through the trait",
+    )
+
+    var raster = Canvas(40, 20, Color(255, 255, 255))
+    _outlined_circle_and_ellipse(raster)
+    # (10+5, 10) and (25+6, 10) sit on each ring's own centre line, so
+    # both are fully covered by the stroke.
+    assert_equal(raster.get_pixel(15, 10).r, 0, "circle outline drew ink")
+    assert_equal(raster.get_pixel(31, 10).r, 0, "ellipse outline drew ink")
+
+
+def _draw_circle_aa_through_trait[
+    T: DrawTarget
+](
+    mut target: T,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    color: Color,
+    width: Float64,
+):
+    target.draw_circle_aa(cx, cy, radius, color, width=width)
+
+
+def test_canvas_draw_circle_aa_through_the_trait_matches_the_direct_call() raises:
+    # A caller rendering generically through DrawTarget must get the
+    # same pixels a direct Canvas.draw_circle_aa call would -- the
+    # trait dispatch itself must not change what gets drawn.
+    var via_trait = Canvas(31, 21, Color(255, 255, 255))
+    _draw_circle_aa_through_trait(
+        via_trait, 15.0, 10.0, 8.0, Color(0, 0, 0), 3.0
+    )
+
+    var direct = Canvas(31, 21, Color(255, 255, 255))
+    direct.draw_circle_aa(15.0, 10.0, 8.0, Color(0, 0, 0), width=3.0)
+
+    for y in range(21):
+        for x in range(31):
+            var a = via_trait.get_pixel(x, y)
+            var b = direct.get_pixel(x, y)
+            assert_equal(a.r, b.r)
+            assert_equal(a.g, b.g)
+            assert_equal(a.b, b.b)
 
 
 def _dashed_rule[T: DrawTarget](mut target: T):

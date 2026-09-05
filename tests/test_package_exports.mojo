@@ -41,6 +41,8 @@ def _draw_scene[T: DrawTarget](mut target: T):
     target.set_blend_mode(BlendMode.MULTIPLY)
     target.fill_rect(0, 0, 1, 1, Color(255, 255, 255))
     target.set_blend_mode(BlendMode.SOURCE_OVER)
+    target.draw_circle_aa(2.0, 2.0, 1.0, Color(0, 0, 255), width=1.0)
+    target.draw_ellipse_aa(2.0, 2.0, 1.5, 1.0, Color(0, 255, 0), width=1.0)
 
 
 def test_root_exports_draw_and_round_trip() raises:
@@ -70,7 +72,10 @@ def test_root_exports_draw_and_round_trip() raises:
 
     var svg = SvgCanvas(4, 4)
     _draw_scene(svg)
-    assert_true("<rect" in svg.to_string())
+    var svg_string = svg.to_string()
+    assert_true("<rect" in svg_string)
+    assert_true("<circle" in svg_string)
+    assert_true("<ellipse" in svg_string)
     write_svg(svg, "tests/_test_exports.svg")
 
 
