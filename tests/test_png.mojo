@@ -27,8 +27,16 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.io.deflate import inflate
-from canvas.io.png import read_png, write_png
+from canvas.io.deflate import deflate, inflate
+from canvas.io.png import (
+    decode_png,
+    read_png,
+    write_png,
+    _adler32,
+    _append_u32_be,
+    _crc32_table,
+    _write_chunk,
+)
 
 comptime TMP_PATH = "tests/_test_png_output.png"
 
@@ -446,6 +454,87 @@ def test_write_keeps_none_for_a_flat_row() raises:
         assert_equal(back.get_pixel(x, 0).r, 90)
         assert_equal(back.get_pixel(x, 0).g, 60)
         assert_equal(back.get_pixel(x, 0).b, 30)
+
+
+def _indexed_png(
+    width: Int,
+    height: Int,
+    bit_depth: Int,
+    palette: List[UInt8],
+    trns: List[UInt8],
+    rows: List[List[UInt8]],
+) raises -> List[UInt8]:
+    """A hand-built indexed-color PNG: IHDR, PLTE, tRNS when non-empty,
+    one IDAT of filter-0 scanlines given as their packed bytes, IEND.
+    """
+    var out: List[UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+    var table = _crc32_table()
+    var ihdr = List[UInt8]()
+    _append_u32_be(ihdr, UInt32(width))
+    _append_u32_be(ihdr, UInt32(height))
+    ihdr.append(UInt8(bit_depth))
+    ihdr.append(3)
+    ihdr.append(0)
+    ihdr.append(0)
+    ihdr.append(0)
+    _write_chunk(out, table, "IHDR", ihdr)
+    _write_chunk(out, table, "PLTE", palette)
+    if len(trns) > 0:
+        _write_chunk(out, table, "tRNS", trns)
+    var raw = List[UInt8]()
+    for row in rows:
+        raw.append(0)
+        for b in row:
+            raw.append(b)
+    var zlib = List[UInt8]()
+    zlib.append(0x78)
+    zlib.append(0x01)
+    zlib.extend(deflate(raw))
+    _append_u32_be(zlib, _adler32(raw))
+    _write_chunk(out, table, "IDAT", zlib)
+    _write_chunk(out, table, "IEND", List[UInt8]())
+    return out^
+
+
+def test_decode_indexed_color_with_a_transparent_entry() raises:
+    # A 2x2 image over a three-entry palette at 8 bits, with tRNS
+    # making entry 1 half transparent and entry 2 (past tRNS's end)
+    # opaque by default.
+    var palette: List[UInt8] = [255, 0, 0, 0, 255, 0, 0, 0, 255]
+    var trns: List[UInt8] = [255, 128]
+    var rows: List[List[UInt8]] = [[0, 1], [2, 0]]
+    var c = decode_png(_indexed_png(2, 2, 8, palette, trns, rows))
+    assert_equal(c.width, 2)
+    assert_equal(c.height, 2)
+    var p00 = c.get_pixel(0, 0)
+    assert_equal(Int(p00.r), 255)
+    assert_equal(Int(p00.a), 255)
+    var p10 = c.get_pixel(1, 0)
+    assert_equal(Int(p10.g), 255)
+    assert_equal(Int(p10.a), 128, "tRNS entry 1")
+    var p01 = c.get_pixel(0, 1)
+    assert_equal(Int(p01.b), 255)
+    assert_equal(Int(p01.a), 255, "past tRNS is opaque")
+
+
+def test_decode_indexed_color_at_four_bits_packs_two_pixels_per_byte() raises:
+    # Indices 1, 2, 3, 0 across one 4-pixel row: bytes 0x12 0x30, the
+    # high nibble first.
+    var palette: List[UInt8] = [0, 0, 0, 10, 10, 10, 20, 20, 20, 30, 30, 30]
+    var rows: List[List[UInt8]] = [[0x12, 0x30]]
+    var c = decode_png(_indexed_png(4, 1, 4, palette, List[UInt8](), rows))
+    assert_equal(Int(c.get_pixel(0, 0).r), 10)
+    assert_equal(Int(c.get_pixel(1, 0).r), 20)
+    assert_equal(Int(c.get_pixel(2, 0).r), 30)
+    assert_equal(Int(c.get_pixel(3, 0).r), 0)
+    # A palette index past the table is an error, not a read past it.
+    var bad: List[List[UInt8]] = [[0x1F, 0x00]]
+    var raised = False
+    try:
+        _ = decode_png(_indexed_png(4, 1, 4, palette, List[UInt8](), bad))
+    except e:
+        raised = True
+    assert_true(raised, "index 15 with a 4-entry palette")
 
 
 def test_read_rejects_bad_signature() raises:

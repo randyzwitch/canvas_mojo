@@ -34,7 +34,7 @@ jobs:
       #   resolves "Nimbus Sans" from.
       - name: Install test fonts (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y fonts-ubuntu fonts-dejavu-core fonts-urw-base35
+        run: sudo apt-get update && sudo apt-get install -y fonts-ubuntu fonts-dejavu-core fonts-urw-base35 fonts-noto-color-emoji
 
       # No `fc-cache`: nothing reads fontconfig's cache, and the casks
       # drop files into ~/Library/Fonts, which font_discovery scans.

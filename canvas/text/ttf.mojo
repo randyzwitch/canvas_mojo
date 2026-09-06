@@ -45,6 +45,8 @@ Scope:
 
 from std.memory import ArcPointer
 
+from canvas.buffer import Canvas
+from canvas.io.png import decode_png
 from canvas.path import Path
 from canvas.text.cff import _CffFont, _cff_glyph_outline, _parse_cff
 
@@ -1025,6 +1027,46 @@ struct RawGlyphOutline(Movable):
         return (x_min, y_min, x_max, y_max)
 
 
+struct BitmapMetrics(ImplicitlyCopyable, Movable):
+    """A color bitmap glyph's placement, in the strike's own pixels:
+    `found` is False when the glyph has no bitmap. `bearing_y` is the
+    distance from the baseline up to the bitmap's top edge, as in
+    the `sbit` metrics.
+    """
+
+    var found: Bool
+    var ppem: Int
+    var width: Int
+    var height: Int
+    var bearing_x: Int
+    var bearing_y: Int
+    var advance: Int
+
+    def __init__(
+        out self,
+        found: Bool,
+        ppem: Int,
+        width: Int,
+        height: Int,
+        bearing_x: Int,
+        bearing_y: Int,
+        advance: Int,
+    ):
+        self.found = found
+        self.ppem = ppem
+        self.width = width
+        self.height = height
+        self.bearing_x = bearing_x
+        self.bearing_y = bearing_y
+        self.advance = advance
+
+
+# Decoded color bitmaps are cached per face; past this many the cache
+# restarts, as the glyph mask cache does. A strike-size emoji is tens
+# of kilobytes decoded.
+comptime _MAX_BITMAP_CACHE = 256
+
+
 struct TTFFace(Movable):
     """A parsed TrueType font file: the raw file bytes plus the table
     offsets and global metrics this module reads.
@@ -1086,6 +1128,24 @@ struct TTFFace(Movable):
     var _has_cff: Bool
     """Whether outlines come from a `CFF ` table rather than `glyf`."""
 
+    var _cblc_offset: Int
+    """Absolute offset of the `CBLC` table, -1 without color bitmaps."""
+
+    var _cbdt_offset: Int
+    """Absolute offset of the `CBDT` table the strikes' data lives in."""
+
+    var _strike_ppem: Int
+    """Pixels per em of the largest color strike, 0 without one."""
+
+    var _strike_array: Int
+    """Absolute offset of that strike's index subtable array."""
+
+    var _strike_subtables: Int
+    """How many index subtables that array holds."""
+
+    var _bitmap_cache: Dict[Int, ArcPointer[Canvas]]
+    """Decoded color bitmaps by glyph index, at the strike's size."""
+
     var _cff: _CffFont
     """The parsed `CFF ` table when `_has_cff`, else empty."""
 
@@ -1142,6 +1202,8 @@ struct TTFFace(Movable):
         var gpos_off = -1
         var gsub_off = -1
         var cff_off = -1
+        var cblc_off = -1
+        var cbdt_off = -1
 
         var pos = 12
         for _ in range(num_tables):
@@ -1169,6 +1231,10 @@ struct TTFFace(Movable):
                 gsub_off = offset
             elif tag == "CFF ":
                 cff_off = offset
+            elif tag == "CBLC":
+                cblc_off = offset
+            elif tag == "CBDT":
+                cbdt_off = offset
             pos += 16
 
         if (
@@ -1181,10 +1247,15 @@ struct TTFFace(Movable):
             raise Error(
                 "ttf: missing a required table (head/maxp/hhea/hmtx/cmap)"
             )
-        if (glyf_off == -1 or loca_off == -1) and cff_off == -1:
+        var has_bitmaps = cblc_off != -1 and cbdt_off != -1
+        if (
+            (glyf_off == -1 or loca_off == -1)
+            and cff_off == -1
+            and not has_bitmaps
+        ):
             raise Error(
-                "ttf: no glyf/loca table and no CFF table -- no outlines to"
-                " read"
+                "ttf: no glyf/loca, CFF or CBLC/CBDT table -- nothing to"
+                " draw glyphs from"
             )
 
         self.units_per_em = _u16(data, head_off + 18)
@@ -1202,6 +1273,22 @@ struct TTFFace(Movable):
         self._glyph_cache = Dict[Int, ArcPointer[RawGlyphOutline]]()
         self._cmap_cache = Dict[Int, Int]()
         self._has_cff = cff_off != -1 and (glyf_off == -1 or loca_off == -1)
+        self._cblc_offset = cblc_off if has_bitmaps else -1
+        self._cbdt_offset = cbdt_off if has_bitmaps else -1
+        self._strike_ppem = 0
+        self._strike_array = -1
+        self._strike_subtables = 0
+        self._bitmap_cache = Dict[Int, ArcPointer[Canvas]]()
+        if has_bitmaps:
+            # The largest strike: the one to scale down from.
+            var num_sizes = _u32(data, cblc_off + 4)
+            for k in range(num_sizes):
+                var rec = cblc_off + 8 + k * 48
+                var ppem = _u8(data, rec + 44)
+                if ppem > self._strike_ppem:
+                    self._strike_ppem = ppem
+                    self._strike_array = cblc_off + _u32(data, rec)
+                    self._strike_subtables = _u32(data, rec + 8)
         if self._has_cff:
             self._cff = _parse_cff(data, cff_off, self.num_glyphs)
         else:
@@ -1656,6 +1743,149 @@ struct TTFFace(Movable):
                 return start_glyph + (codepoint - start_char)
         return 0
 
+    def has_color_bitmaps(self) -> Bool:
+        """Whether the font carries a `CBLC`/`CBDT` color strike, so
+        some glyphs draw as bitmaps rather than outlines.
+
+        Returns:
+            True when a color strike was found.
+        """
+        return self._strike_ppem > 0
+
+    def color_bitmap_metrics(self, glyph_index: Int) raises -> BitmapMetrics:
+        """The color bitmap's size and placement for `glyph_index` in
+        the largest strike, `found` False when the strike has no
+        image for it.
+
+        Args:
+            glyph_index: Glyph to look up.
+
+        Returns:
+            The metrics, in the strike's pixels.
+        """
+        var loc = self._locate_bitmap(glyph_index)
+        if not loc[0]:
+            return BitmapMetrics(False, 0, 0, 0, 0, 0, 0)
+        return BitmapMetrics(
+            True, self._strike_ppem, loc[3], loc[4], loc[5], loc[6], loc[7]
+        )
+
+    def color_bitmap(mut self, glyph_index: Int) raises -> ArcPointer[Canvas]:
+        """The decoded color bitmap for `glyph_index`, at the strike's
+        size, cached per face.
+
+        Args:
+            glyph_index: Glyph to decode.
+
+        Returns:
+            The bitmap as an RGBA canvas.
+
+        Raises:
+            Error: The glyph has no bitmap, or its image is not a PNG
+                this package decodes.
+        """
+        if glyph_index in self._bitmap_cache:
+            return self._bitmap_cache[glyph_index]
+        var loc = self._locate_bitmap(glyph_index)
+        if not loc[0]:
+            raise Error(
+                String("ttf: glyph ", glyph_index, " has no color bitmap")
+            )
+        var png = List[UInt8](capacity=loc[2] - loc[1])
+        for i in range(loc[1], loc[2]):
+            png.append(self.data[i])
+        var image = decode_png(png^)
+        if len(self._bitmap_cache) >= _MAX_BITMAP_CACHE:
+            self._bitmap_cache.clear()
+        var arc = ArcPointer(image^)
+        self._bitmap_cache[glyph_index] = arc
+        return arc
+
+    def _locate_bitmap(
+        self, glyph_index: Int
+    ) raises -> Tuple[Bool, Int, Int, Int, Int, Int, Int, Int]:
+        """Find `glyph_index` in the strike's index subtables: whether
+        it has an image, the image's PNG bytes [start, end), and its
+        width, height, bearing x, bearing y and advance. Index formats
+        1, 2 and 3 and image formats 17, 18 and 19, which is what the
+        color-bitmap fonts in the wild use.
+        """
+        if self._strike_array < 0:
+            return (False, 0, 0, 0, 0, 0, 0, 0)
+        for k in range(self._strike_subtables):
+            var entry = self._strike_array + k * 8
+            var first = _u16(self.data, entry)
+            var last = _u16(self.data, entry + 2)
+            if glyph_index < first or glyph_index > last:
+                continue
+            var header = self._strike_array + _u32(self.data, entry + 4)
+            var index_format = _u16(self.data, header)
+            var image_format = _u16(self.data, header + 2)
+            var image_base = self._cbdt_offset + _u32(self.data, header + 4)
+            var n = glyph_index - first
+            var start: Int
+            var end: Int
+            var width = 0
+            var height = 0
+            var bearing_x = 0
+            var bearing_y = 0
+            var advance = 0
+            if index_format == 1:
+                start = image_base + _u32(self.data, header + 8 + n * 4)
+                end = image_base + _u32(self.data, header + 12 + n * 4)
+            elif index_format == 3:
+                start = image_base + _u16(self.data, header + 8 + n * 2)
+                end = image_base + _u16(self.data, header + 10 + n * 2)
+            elif index_format == 2:
+                var image_size = _u32(self.data, header + 8)
+                height = _u8(self.data, header + 12)
+                width = _u8(self.data, header + 13)
+                bearing_x = _i8(self.data, header + 14)
+                bearing_y = _i8(self.data, header + 15)
+                advance = _u8(self.data, header + 16)
+                start = image_base + n * image_size
+                end = start + image_size
+            else:
+                raise Error(
+                    String("ttf: CBLC index subtable format ", index_format)
+                )
+            if end <= start:
+                return (False, 0, 0, 0, 0, 0, 0, 0)
+            var p = start
+            if image_format == 17:
+                height = _u8(self.data, p)
+                width = _u8(self.data, p + 1)
+                bearing_x = _i8(self.data, p + 2)
+                bearing_y = _i8(self.data, p + 3)
+                advance = _u8(self.data, p + 4)
+                p += 5
+            elif image_format == 18:
+                height = _u8(self.data, p)
+                width = _u8(self.data, p + 1)
+                bearing_x = _i8(self.data, p + 2)
+                bearing_y = _i8(self.data, p + 3)
+                advance = _u8(self.data, p + 4)
+                p += 8
+            elif image_format != 19:
+                raise Error(
+                    String(
+                        "ttf: CBDT image format ", image_format, " is not PNG"
+                    )
+                )
+            var data_len = _u32(self.data, p)
+            p += 4
+            return (
+                True,
+                p,
+                p + data_len,
+                width,
+                height,
+                bearing_x,
+                bearing_y,
+                advance,
+            )
+        return (False, 0, 0, 0, 0, 0, 0, 0)
+
     def _loca_entry(self, glyph_index: Int) raises -> Tuple[Int, Int]:
         if self.index_to_loc_format == 0:
             var start = _u16(self.data, self._loca_offset + glyph_index * 2) * 2
@@ -1715,6 +1945,10 @@ struct TTFFace(Movable):
 
         if self._has_cff:
             return _cff_glyph_outline(self._cff, self.data, glyph_index, 0)
+        if self._glyf_offset == -1:
+            # A bitmap-only face: no outline to give, and metrics come
+            # from the strike instead.
+            return RawGlyphOutline()
         var loca = self._loca_entry(glyph_index)
         var glyph_start = self._glyf_offset + loca[0]
         var glyph_len = loca[1] - loca[0]

@@ -112,8 +112,8 @@ real system-font text rendering needs are each native Mojo here: font
 discovery (matching a family/style name against the fonts installed on
 the machine — `canvas/text/font_discovery.mojo`, which reads each
 font's own `name`/`OS/2` tables rather than linking `libfontconfig`),
-font parsing (glyph outlines and metrics —
-`canvas/text/ttf.mojo`), and rasterization (this package's own
+font parsing (TrueType `glyf` and OpenType `CFF` outlines, `CBDT`
+color bitmap emoji, and metrics — `canvas/text/ttf.mojo`), and rasterization (this package's own
 `fill_path_aa`). No FreeType, no Cairo, no fontconfig, no other
 third-party rendering/font engine anywhere in the pipeline.
 

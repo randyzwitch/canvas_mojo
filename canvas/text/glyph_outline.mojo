@@ -152,6 +152,19 @@ def glyph_index_metrics(
     """
     var scale = face.scale()
     var advance = Float64(face.advance_width(glyph_index)) * scale
+    if face.has_color_bitmaps():
+        var bm = face.color_bitmap_metrics(glyph_index)
+        if bm.found:
+            # The bitmap's own placement, scaled from the strike's
+            # pixels to the requested size.
+            var s = scale * Float64(face.units_per_em) / Float64(bm.ppem)
+            return GlyphMetrics(
+                advance,
+                Float64(bm.bearing_x) * s,
+                Float64(bm.bearing_y) * s,
+                Float64(bm.width) * s,
+                Float64(bm.height) * s,
+            )
 
     var outline = face.glyph_outline_shared(glyph_index)
     var bbox = outline[].bounding_box()

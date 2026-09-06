@@ -17,8 +17,9 @@ LEN/NLEN fields are little-endian.
 contains a pixel that is not fully opaque, and color type 2 otherwise.
 It compresses the scanlines twice, unfiltered and Sub-filtered (spec
 section 9), and keeps the smaller stream.
-`read_png` accepts color types 0/2/4/6 at 8-bit depth, non-interlaced;
-indexed/palette color (type 3), other bit depths and Adam7 interlacing
+`read_png` accepts color types 0/2/4/6 at 8-bit depth and indexed
+color (type 3, `PLTE` with an optional `tRNS`) at 1/2/4/8 bits,
+non-interlaced; other bit depths and Adam7 interlacing
 raise rather than misreading pixels. Alpha is preserved in both
 directions, so a file round-trips through `read_png` -> `write_png`
 unchanged.
@@ -295,8 +296,9 @@ def _paeth_predictor(a: Int, b: Int, c: Int) -> Int:
 
 
 def _bytes_per_pixel(color_type: Int) raises -> Int:
-    """Byte width per pixel at 8-bit depth, by color type. `read_png`
-    accepts 0/2/4/6; type 3 (indexed/palette) is out of scope.
+    """Byte width per pixel at 8-bit depth, by color type. Indexed
+    color (type 3) is one byte per pixel at 8 bits and packed below
+    that; `decode_png` handles its row width itself.
     """
     if color_type == 0:
         return 1  # grayscale
@@ -306,17 +308,26 @@ def _bytes_per_pixel(color_type: Int) raises -> Int:
         return 2  # grayscale + alpha
     if color_type == 6:
         return 4  # truecolor + alpha (RGBA)
+    if color_type == 3:
+        return 1  # a palette index
     raise Error(
         String(
             "png: unsupported color type ",
             color_type,
-            " (only 0/2/4/6 at 8-bit depth are supported)",
+            " (only 0/2/3/4/6 are supported)",
         )
     )
 
 
 def _unfilter_scanlines(
     raw: List[UInt8], width: Int, height: Int, bpp: Int
+) raises -> List[UInt8]:
+    """`_unfilter_rows` for rows of `width` whole-byte pixels."""
+    return _unfilter_rows(raw, width * bpp, height, bpp)
+
+
+def _unfilter_rows(
+    raw: List[UInt8], row_bytes: Int, height: Int, bpp: Int
 ) raises -> List[UInt8]:
     """Reverses PNG's per-scanline filtering (spec section 9). `raw` is
     `inflate`'s output: a filter-type byte plus `width * bpp` filtered
@@ -328,7 +339,6 @@ def _unfilter_scanlines(
     needed, since `a`/`c` default to 0 when `x < bpp` and `prev_row`
     starts zeroed.
     """
-    var row_bytes = width * bpp
     var out = List[UInt8](capacity=height * row_bytes)
     # Both row buffers are sized up front and written by index, never
     # appended to. That matters because the unfilter loop below holds
@@ -465,7 +475,24 @@ def read_png(path: String) raises -> Canvas:
     var f = open(path, "r")
     var data = f.read_bytes()
     f.close()
+    return decode_png(data^)
 
+
+def decode_png(var data: List[UInt8]) raises -> Canvas:
+    """Decode a PNG image held in memory into a Canvas: `read_png`
+    after the file is read, for bytes that come from somewhere else,
+    such as a font's embedded bitmaps. Same scope and errors.
+
+    Args:
+        data: The complete PNG file contents.
+
+    Returns:
+        The decoded image as an RGBA canvas.
+
+    Raises:
+        Error: Not a PNG, a corrupted chunk, or an unsupported
+            feature (see the module docstring).
+    """
     var signature: List[UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
     if len(data) < 8:
         raise Error("png: file too short to contain a PNG signature")
@@ -478,8 +505,11 @@ def read_png(path: String) raises -> Canvas:
     var width = 0
     var height = 0
     var color_type = -1
+    var bit_depth = 8
     var have_ihdr = False
     var idat = List[UInt8]()
+    var palette = List[UInt8]()
+    var trns = List[UInt8]()
     var seen_iend = False
 
     var pos = 8
@@ -517,7 +547,7 @@ def read_png(path: String) raises -> Canvas:
                 raise Error("png: malformed IHDR chunk")
             width = _read_u32_be(data, pos)
             height = _read_u32_be(data, pos + 4)
-            var bit_depth = Int(data[pos + 8])
+            bit_depth = Int(data[pos + 8])
             color_type = Int(data[pos + 9])
             var compression_method = Int(data[pos + 10])
             var filter_method = Int(data[pos + 11])
@@ -534,12 +564,15 @@ def read_png(path: String) raises -> Canvas:
                 )
             if interlace_method != 0:
                 raise Error("png: Adam7 interlacing is not supported")
-            if bit_depth != 8:
+            var packed_ok = color_type == 3 and (
+                bit_depth == 1 or bit_depth == 2 or bit_depth == 4
+            )
+            if bit_depth != 8 and not packed_ok:
                 raise Error(
                     String(
                         "png: unsupported bit depth ",
                         bit_depth,
-                        " (only 8-bit depth is supported)",
+                        " (8-bit, or 1/2/4-bit indexed color)",
                     )
                 )
             if width <= 0 or height <= 0:
@@ -549,6 +582,10 @@ def read_png(path: String) raises -> Canvas:
             if not have_ihdr:
                 raise Error("png: IDAT chunk before IHDR")
             idat.extend(data[pos : pos + length])
+        elif chunk_type == "PLTE":
+            palette.extend(data[pos : pos + length])
+        elif chunk_type == "tRNS":
+            trns.extend(data[pos : pos + length])
         elif chunk_type == "IEND":
             seen_iend = True
         # Any other chunk type (PLTE, or ancillary ones like
@@ -580,5 +617,46 @@ def read_png(path: String) raises -> Canvas:
         )
 
     var bpp = _bytes_per_pixel(color_type)
+    if color_type == 3:
+        if len(palette) < 3:
+            raise Error("png: indexed color without a PLTE chunk")
+        var row_bytes = (width * bit_depth + 7) // 8
+        var unfiltered = _unfilter_rows(raw, row_bytes, height, 1)
+        return _canvas_from_indexed(
+            unfiltered, row_bytes, width, height, bit_depth, palette, trns
+        )
     var unfiltered = _unfilter_scanlines(raw, width, height, bpp)
     return _canvas_from_scanlines(unfiltered, width, height, color_type)
+
+
+def _canvas_from_indexed(
+    unfiltered: List[UInt8],
+    row_bytes: Int,
+    width: Int,
+    height: Int,
+    bit_depth: Int,
+    palette: List[UInt8],
+    trns: List[UInt8],
+) raises -> Canvas:
+    """Indexed-color rows to RGBA: each pixel's `bit_depth`-bit index
+    (packed most-significant first at 1/2/4 bits) selects a `PLTE`
+    entry, and its alpha is the matching `tRNS` entry, 255 past the
+    end of `tRNS` or without one.
+    """
+    var entries = len(palette) // 3
+    var per_byte = 8 // bit_depth
+    var mask = (1 << bit_depth) - 1
+    var pixels = List[UInt8](capacity=width * height * BYTES_PER_PIXEL)
+    for y in range(height):
+        var row = y * row_bytes
+        for x in range(width):
+            var byte = Int(unfiltered[row + x // per_byte])
+            var shift = 8 - bit_depth * (x % per_byte + 1)
+            var index = (byte >> shift) & mask
+            if index >= entries:
+                raise Error("png: palette index past the PLTE table")
+            pixels.append(palette[index * 3])
+            pixels.append(palette[index * 3 + 1])
+            pixels.append(palette[index * 3 + 2])
+            pixels.append(trns[index] if index < len(trns) else UInt8(255))
+    return Canvas(width, height, pixels^)
