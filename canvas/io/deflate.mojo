@@ -13,6 +13,7 @@ tests/test_deflate.mojo round-trips both directions against real
 `zlib.compress()`/`zlib.decompress()` output.
 """
 
+
 comptime _MAX_BITS = 15
 comptime _MAX_L_CODES = 286
 comptime _MAX_D_CODES = 30
@@ -210,10 +211,30 @@ struct _BitReader(Movable):
         self.bitcnt -= need
         return val & ((1 << need) - 1)
 
+    def fill(mut self, want: Int) -> Int:
+        """Buffer whole bytes until at least `want` bits are pending,
+        or the input runs out; returns how many are pending. Nothing
+        is consumed: `_decode`'s table lookup peeks at these and
+        `drop_bits` takes only the code's own length.
+        """
+        while self.bitcnt < want and self.pos < len(self.data):
+            self.bitbuf |= Int(self.data[self.pos]) << self.bitcnt
+            self.pos += 1
+            self.bitcnt += 8
+        return self.bitcnt
+
+    @always_inline
+    def drop_bits(mut self, n: Int):
+        self.bitbuf >>= n
+        self.bitcnt -= n
+
     def align_to_byte(mut self):
         """Discard any partial byte in the bit buffer: stored blocks
-        (RFC 1951 3.2.4) always start byte-aligned.
+        (RFC 1951 3.2.4) always start byte-aligned. Whole bytes `fill`
+        buffered ahead go back to the input, since `read_byte` reads
+        from there.
         """
+        self.pos -= self.bitcnt // 8
         self.bitbuf = 0
         self.bitcnt = 0
 
@@ -264,19 +285,50 @@ struct _BitWriter(Movable):
         return self.data.copy()
 
 
+# Codes up to this long decode by one table lookup on the next bits of
+# input (`_Huffman.fast`); longer ones, which are rare, fall through to
+# the bit-at-a-time walk. Nine bits covers every fixed-table literal
+# and length code (RFC 1951 3.2.6) and, in practice, nearly every
+# dynamic one.
+comptime _FAST_BITS = 9
+
+
 struct _Huffman(Movable):
     """Canonical Huffman decode tables, puff.c's `struct huffman`:
     `counts[length]` is how many symbols have that length, `symbols`
     holds symbol values sorted by length then original order. `_decode`
     shows why these two arrays suffice.
+
+    `fast` is the lookup table over the next `_FAST_BITS` bits of
+    input, built from the same two arrays: an entry is
+    `symbol << 4 | length` for a code that short, and -1 where the code
+    is longer. Deflate packs code bits most-significant first into a
+    stream read least-significant first, so a code indexes the table
+    bit-reversed, and every entry whose low `length` bits are that
+    reversed code holds the symbol.
     """
 
     var counts: List[Int]
     var symbols: List[Int]
+    var fast: List[Int]
 
     def __init__(out self, var counts: List[Int], var symbols: List[Int]):
         self.counts = counts^
         self.symbols = symbols^
+        self.fast = List[Int](length=1 << _FAST_BITS, fill=-1)
+        var code = 0
+        var index = 0
+        for length in range(1, _MAX_BITS + 1):
+            for _ in range(self.counts[length]):
+                if length <= _FAST_BITS:
+                    var rev = _reverse_bits(code, length)
+                    var entry = (self.symbols[index] << 4) | length
+                    var stride = 1 << length
+                    for i in range(rev, 1 << _FAST_BITS, stride):
+                        self.fast[i] = entry
+                code += 1
+                index += 1
+            code <<= 1
 
 
 def _construct(
@@ -340,13 +392,22 @@ def _construct(
 
 
 def _decode(mut reader: _BitReader, table: _Huffman) raises -> Int:
-    """Direct translation of puff.c's readable (`#ifdef SLOW`)
-    `decode()`: reads a bit at a time, building a code value the way
+    """The next symbol of `table` from `reader`: a lookup in
+    `table.fast` on the pending bits when the code is short enough and
+    the input holds it whole, otherwise puff.c's readable (`#ifdef
+    SLOW`) `decode()` -- a bit at a time, building a code value the way
     canonical-Huffman construction (RFC 1951 3.2.2) assigns them, and
-    returns once the accumulated (code, length) falls in that length's
-    assigned range. `_construct`'s counts/symbols arrays are all the
-    range check needs -- no decode tree.
+    returning once the accumulated (code, length) falls in that
+    length's assigned range. `_construct`'s counts/symbols arrays are
+    all the range check needs -- no decode tree.
     """
+    var avail = reader.fill(_FAST_BITS)
+    var entry = table.fast[reader.bitbuf & ((1 << _FAST_BITS) - 1)]
+    if entry >= 0:
+        var length = entry & 15
+        if length <= avail:
+            reader.drop_bits(length)
+            return entry >> 4
     var code = 0
     var first = 0
     var index = 0
@@ -399,14 +460,38 @@ def _codes(
             if dist > len(out):
                 raise Error("deflate: distance too far back")
 
-            # Forward, one byte at a time, not a bulk copy: overlapping
-            # copies (length > distance) are legal and common -- dist=1
-            # repeats the last byte `length` times -- so each iteration
-            # has to read from the already-growing `out`. puff.c warns
-            # explicitly that memcpy/memmove are wrong here.
-            var start = len(out) - dist
-            for i in range(length):
-                out.append(out[start + i])
+            # Overlapping copies (length > distance) are legal and
+            # common -- dist=1 repeats the last byte `length` times --
+            # so a single bulk copy of the run is wrong, as puff.c
+            # warns. But the first `dist` bytes of the run never
+            # overlap their source, and once they are written the
+            # next `2 * dist` do not either: the run is copied in
+            # chunks that double, each from bytes already in place, in
+            # sixteen-byte vectors where a chunk is long enough. The
+            # output is grown once for the whole run.
+            var n0 = len(out)
+            var start = n0 - dist
+            if n0 + length > out.capacity():
+                # Grow geometrically: `resize` alone grows to the exact
+                # length, and a run per match would then reallocate
+                # the whole output every few hundred bytes.
+                out.reserve(max(2 * out.capacity(), n0 + length))
+            out.resize(unsafe_uninit_length=n0 + length)
+            var op = out.unsafe_ptr()
+            var copied = 0
+            while copied < length:
+                var chunk = min(dist + copied, length - copied)
+                var d = n0 + copied
+                var k = 0
+                while k + 16 <= chunk:
+                    op.unsafe_offset(d + k).unsafe_store(
+                        op.unsafe_offset(start + k).unsafe_load[width=16]()
+                    )
+                    k += 16
+                while k < chunk:
+                    op[unsafe_offset=d + k] = op[unsafe_offset=start + k]
+                    k += 1
+                copied += chunk
 
 
 def _stored_block(mut reader: _BitReader, mut out: List[UInt8]) raises:

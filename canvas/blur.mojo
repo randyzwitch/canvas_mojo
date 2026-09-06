@@ -90,7 +90,7 @@ most a few levels within the outermost `_shadow_pad` pixels
 
 The whole blur is one task per band of rows (`_blur_band`), and each
 band streams: a row is converted from a read-only copy of the pixels,
-swept horizontally three times in a row-sized buffer, and pushed into
+swept horizontally three times in a row-sized buffer, and fed into
 the first of three vertical stages (`_VStage`), each a sliding window
 over a ring of its input rows that emits an output row the moment the
 window's last row has arrived, into the next stage or, from the last,
@@ -187,14 +187,14 @@ def _box_blur_line(
     src: List[_Lane],
     mut dst: List[_Lane],
     start: Int,
-    stride: Int,
     count: Int,
     r: Int,
+    dst_start: Int = -1,
 ):
-    """One edge-clamped box-blur sweep of `count` pixels starting at
-    pixel `start` of `src`/`dst` and spaced `stride` pixels apart --
-    stride 1 for a horizontal row. A pixel is `_LANES` consecutive
-    values, blurred together as one vector.
+    """One edge-clamped box-blur sweep of the `count` pixels from pixel
+    `start` of `src` into `dst` from pixel `dst_start`, or from `start`
+    when that is left at -1. A pixel is `_LANES` consecutive values,
+    blurred together as one vector.
 
     A sliding window sum: the sum for pixel `x` is the sum for `x - 1`
     plus the newly-included pixel and minus the one dropped, both
@@ -202,40 +202,35 @@ def _box_blur_line(
     wide the box (`r`). `r <= 0` is a box one pixel wide, which copies.
 
     Reads and writes go through pointers rather than `List`'s checked
-    `[]`: every pixel index is `start + k * stride` for `k` in
-    `[0, count)`, which the callers size to stay inside the plane.
+    `[]`: every pixel index is within `count` of its start, which the
+    callers size to stay inside the buffers.
     """
-    var sp = src.unsafe_ptr()
-    var dp = dst.unsafe_ptr()
+    var sp = src.unsafe_ptr().unsafe_offset(start * _LANES)
+    var dp = dst.unsafe_ptr().unsafe_offset(
+        (dst_start if dst_start >= 0 else start) * _LANES
+    )
     if r <= 0:
         for x in range(count):
-            var o = (start + x * stride) * _LANES
-            dp.unsafe_offset(o).unsafe_store(
-                sp.unsafe_offset(o).unsafe_load[width=_LANES]()
+            dp.unsafe_offset(x * _LANES).unsafe_store(
+                sp.unsafe_offset(x * _LANES).unsafe_load[width=_LANES]()
             )
         return
     var inv_window = _Lane(1.0 / Float64(2 * r + 1))
     var sum = _Pixel(0.0)
     for i in range(-r, r + 1):
-        sum += sp.unsafe_offset(
-            (start + _clamp_index(i, count) * stride) * _LANES
-        ).unsafe_load[width=_LANES]()
-    dp.unsafe_offset(start * _LANES).unsafe_store(sum * inv_window)
+        sum += sp.unsafe_offset(_clamp_index(i, count) * _LANES).unsafe_load[
+            width=_LANES
+        ]()
+    dp.unsafe_store(sum * inv_window)
 
     for x in range(1, count):
         var add = _clamp_index(x + r, count)
         var drop = _clamp_index(x - 1 - r, count)
         sum += (
-            sp.unsafe_offset((start + add * stride) * _LANES).unsafe_load[
-                width=_LANES
-            ]()
-            - sp.unsafe_offset((start + drop * stride) * _LANES).unsafe_load[
-                width=_LANES
-            ]()
+            sp.unsafe_offset(add * _LANES).unsafe_load[width=_LANES]()
+            - sp.unsafe_offset(drop * _LANES).unsafe_load[width=_LANES]()
         )
-        dp.unsafe_offset((start + x * stride) * _LANES).unsafe_store(
-            sum * inv_window
-        )
+        dp.unsafe_offset(x * _LANES).unsafe_store(sum * inv_window)
 
 
 def _premultiply_rows(
@@ -316,17 +311,19 @@ def _unpremultiply_rows(
 
 
 struct _VStage(Movable):
-    """One vertical box-blur sweep as a stream: rows arrive in order
-    through `push`, and `emit` produces the next output row as soon as
-    the rows its window needs have arrived, into `out`.
+    """One vertical box-blur sweep as a stream: rows arrive in order,
+    each written into its ring slot and then `absorb`ed, and
+    `emit_into`/`emit` produce the next output row as soon as the rows
+    its window needs have arrived.
 
     The window for output row y is input rows y - r through y + r,
     clamped to the canvas: a row before the top counts as row 0 and
     one past the bottom as row h - 1. The running sum is kept as the
     window slides -- add the row entering, drop the row leaving -- so
     the cost per row is two vector operations per pixel however wide
-    the box. The ring keeps the last `2r + 2` rows pushed, which is
-    every row a drop can still name.
+    the box. The ring keeps the last `2r + 2` rows, which is every row
+    a drop can still name; the stage before writes each row straight
+    into its slot (`slot_off`), so no row is copied between stages.
     """
 
     var r: Int
@@ -384,17 +381,18 @@ struct _VStage(Movable):
             acc -= rp.unsafe_offset(c).unsafe_load[width=_LANES]()
             sp.unsafe_offset(c).unsafe_store(acc)
 
-    def push(mut self, row: List[_Lane], j: Int):
-        """Canvas row `j`, the next in order, from `row`'s first
-        `stride` values. The first row pushed stands in for every
-        window index before it as well, which is the top clamp.
+    @always_inline
+    def slot_off(self, row: Int) -> Int:
+        """The pixel offset in `ring` where canvas row `row` lives:
+        where the stage feeding this one writes it, ahead of `absorb`.
         """
-        var rp = self.ring.unsafe_ptr().unsafe_offset(self._slot(j))
-        var src = row.unsafe_ptr()
-        for c in range(0, self.stride, _LANES):
-            rp.unsafe_offset(c).unsafe_store(
-                src.unsafe_offset(c).unsafe_load[width=_LANES]()
-            )
+        return (row % self.slots) * (self.stride // _LANES)
+
+    def absorb(mut self, j: Int):
+        """Canvas row `j`, the next in order, already written into its
+        ring slot. The first row absorbed stands in for every window
+        index before it as well, which is the top clamp.
+        """
         var count = 1
         if self.last_in < 0:
             count = j - self.filled
@@ -402,21 +400,49 @@ struct _VStage(Movable):
         self.filled = j
         self.last_in = j
 
-    def emit(mut self) -> Bool:
-        """Produce output row `next_out` into `out` if its window is
-        complete, or can be completed by the bottom clamp because the
-        last canvas row has been pushed. Returns whether it did; the
-        row produced is then `next_out - 1`.
+    def _complete(mut self) -> Bool:
+        """Whether output row `next_out`'s window is complete, or can be
+        completed by the bottom clamp because the last canvas row has
+        arrived -- in which case it is completed here.
         """
         if self.next_out >= self.o_hi:
             return False
-        var y = self.next_out
-        var need = y + self.r
+        var need = self.next_out + self.r
         if need > self.filled:
             if self.last_in != self.h - 1:
                 return False
             self._add_row(self.h - 1, need - self.filled)
             self.filled = need
+        return True
+
+    def _finish(mut self):
+        """After an output row is written: slide the window past it."""
+        var y = self.next_out
+        self.next_out = y + 1
+        self._drop_row(max(y - self.r, 0))
+
+    def emit_into(mut self, mut dst: List[_Lane], dst_off: Int) -> Bool:
+        """Produce output row `next_out` into `dst` from pixel
+        `dst_off` -- the next stage's ring slot for it -- if its window
+        is complete. Returns whether it did; the row produced is then
+        `next_out - 1`.
+        """
+        if not self._complete():
+            return False
+        var sp = self.sum.unsafe_ptr()
+        var op = dst.unsafe_ptr().unsafe_offset(dst_off * _LANES)
+        for c in range(0, self.stride, _LANES):
+            op.unsafe_offset(c).unsafe_store(
+                sp.unsafe_offset(c).unsafe_load[width=_LANES]()
+                * self.inv_window
+            )
+        self._finish()
+        return True
+
+    def emit(mut self) -> Bool:
+        """`emit_into` the stage's own `out` row, for the last stage."""
+        if not self._complete():
+            return False
         var sp = self.sum.unsafe_ptr()
         var op = self.out.unsafe_ptr()
         for c in range(0, self.stride, _LANES):
@@ -424,8 +450,7 @@ struct _VStage(Movable):
                 sp.unsafe_offset(c).unsafe_load[width=_LANES]()
                 * self.inv_window
             )
-        self.next_out = y + 1
-        self._drop_row(max(y - self.r, 0))
+        self._finish()
         return True
 
 
@@ -470,14 +495,20 @@ def _blur_band(
     var rb = List[_Lane](unsafe_uninit_length=w * _LANES)
     for j in range(span0[0], span0[1]):
         _premultiply_rows(source, w, j, j + 1, ra, 0)
-        _box_blur_line(ra, rb, 0, 1, w, r0)
-        _box_blur_line(rb, ra, 0, 1, w, r1)
-        _box_blur_line(ra, rb, 0, 1, w, r2)
-        s1.push(rb, j)
-        while s1.emit():
-            s2.push(s1.out, s1.next_out - 1)
-            while s2.emit():
-                s3.push(s2.out, s2.next_out - 1)
+        _box_blur_line(ra, rb, 0, w, r0)
+        _box_blur_line(rb, ra, 0, w, r1)
+        _box_blur_line(ra, s1.ring, 0, w, r2, s1.slot_off(j))
+        s1.absorb(j)
+        while True:
+            var y1 = s1.next_out
+            if not s1.emit_into(s2.ring, s2.slot_off(y1)):
+                break
+            s2.absorb(y1)
+            while True:
+                var y2 = s2.next_out
+                if not s2.emit_into(s3.ring, s3.slot_off(y2)):
+                    break
+                s3.absorb(y2)
                 while s3.emit():
                     var y = s3.next_out - 1
                     _unpremultiply_rows(canvas, s3.out, 0, y, y, y + 1)
@@ -589,17 +620,26 @@ def _tint_and_place(
     color with `color` and scaling its alpha by `color`'s own alpha --
     the "make a shadow layer" step of `draw_shadowed`. `shadow` is
     assumed fresh, transparent, and exactly `layer`'s size plus padding
-    on every side, so every write below is in bounds.
+    on every side, so every write below is in bounds; both buffers go
+    through pointers on that basis.
     """
+    var sp = layer.pixels.unsafe_ptr()
+    var dp = shadow.pixels.unsafe_ptr()
+    var ca = Int(color.a)
     for ly in range(layer.height):
-        for lx in range(layer.width):
-            var a = layer.read_pixel(lx, ly).a
-            if a == 0:
-                continue
-            var tinted_a = UInt8(_div255(Int(a) * Int(color.a)))
-            if tinted_a == 0:
-                continue
-            shadow.write_pixel(ox + lx, oy + ly, color.with_alpha(tinted_a))
+        var s_idx = ly * layer.width * BYTES_PER_PIXEL
+        var d_idx = ((oy + ly) * shadow.width + ox) * BYTES_PER_PIXEL
+        for _ in range(layer.width):
+            var a = Int(sp[unsafe_offset=s_idx + 3])
+            if a != 0:
+                var tinted_a = _div255(a * ca)
+                if tinted_a != 0:
+                    dp[unsafe_offset=d_idx] = color.r
+                    dp[unsafe_offset=d_idx + 1] = color.g
+                    dp[unsafe_offset=d_idx + 2] = color.b
+                    dp[unsafe_offset=d_idx + 3] = UInt8(tinted_a)
+            s_idx += BYTES_PER_PIXEL
+            d_idx += BYTES_PER_PIXEL
 
 
 def _composite_onto(mut dst: Canvas, src: Canvas, x: Int, y: Int):
