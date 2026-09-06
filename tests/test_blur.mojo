@@ -184,7 +184,7 @@ def test_box_blur_line_clamps_at_the_edge() raises:
     src[0] = 10.0
     src[3] = 20.0
     var dst = List[_Lane](length=5 * _LANES, fill=0.0)
-    _box_blur_line(src, dst, 0, 1, 5, 2)
+    _box_blur_line(src, dst, 0, 5, 2)
 
     assert_equal(
         dst[0], 6.0, "x=0 clamps three copies of index 0 into its window"
@@ -208,7 +208,7 @@ def test_box_blur_line_radius_zero_copies() raises:
     for i in range(3 * _LANES):
         src[i] = _Lane(i)
     var dst = List[_Lane](length=3 * _LANES, fill=-1.0)
-    _box_blur_line(src, dst, 0, 1, 3, 0)
+    _box_blur_line(src, dst, 0, 3, 0)
     for i in range(3 * _LANES):
         assert_equal(dst[i], _Lane(i), "a one-wide box is the identity")
 

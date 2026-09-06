@@ -335,25 +335,21 @@ def _unfilter_rows(
     already-reconstructed row above it and its own already-
     reconstructed bytes to the left, the dependency order the spec's
     formulas assume. Bytes left of the first pixel, and the row above
-    the first scanline, are zero per the spec -- no special case
-    needed, since `a`/`c` default to 0 when `x < bpp` and `prev_row`
-    starts zeroed.
-    """
-    var out = List[UInt8](capacity=height * row_bytes)
-    # Both row buffers are sized up front and written by index, never
-    # appended to. That matters because the unfilter loop below holds
-    # raw pointers into them: appending can reallocate, which would
-    # move the buffer and leave those pointers dangling. Sizing them
-    # here makes that impossible rather than merely unlikely, and
-    # reuses them across scanlines instead of allocating per row.
-    var prev_row = List[UInt8](capacity=row_bytes)
-    var cur_row = List[UInt8](capacity=row_bytes)
-    for _ in range(row_bytes):
-        prev_row.append(0)
-        cur_row.append(0)
+    the first scanline, are zero per the spec.
 
+    The output is sized up front and written by index: a row's
+    "above" is the previous output row, and the first row reads its
+    above from a zeroed row. One loop per filter type, since the type
+    is fixed for a row and the loop over its bytes is the hot one.
+    Every index is bounded by the row length checks and the `x >= bpp`
+    guards, so the reads and writes go through pointers.
+    """
+    var out = List[UInt8](unsafe_uninit_length=height * row_bytes)
+    var zero_row = List[UInt8](length=row_bytes, fill=0)
+    var rp = raw.unsafe_ptr()
+    var op = out.unsafe_ptr()
     var pos = 0
-    for _ in range(height):
+    for y in range(height):
         if pos >= len(raw):
             raise Error(
                 "png: truncated scanline data (fewer rows than IHDR's own"
@@ -363,48 +359,52 @@ def _unfilter_rows(
         pos += 1
         if pos + row_bytes > len(raw):
             raise Error("png: truncated scanline data (row cut short)")
-
-        # Four reads per byte of the image, all at indices the loop
-        # bounds already constrain: `pos + x` stays inside `raw`
-        # because the row was length-checked just above, and the
-        # `x >= bpp` guards keep the back-references inside the two row
-        # buffers, which are `row_bytes` long by construction.
-        var rp = raw.unsafe_ptr()
-        var cp = cur_row.unsafe_ptr()
-        var pp = prev_row.unsafe_ptr()
-        for x in range(row_bytes):
-            var filt_x = Int(rp[unsafe_offset=pos + x])
-            var a = Int(cp[unsafe_offset=x - bpp]) if x >= bpp else 0
-            var b = Int(pp[unsafe_offset=x])
-            var c = Int(pp[unsafe_offset=x - bpp]) if x >= bpp else 0
-
-            var recon: Int
-            if filter_type == 0:
-                recon = filt_x
-            elif filter_type == 1:
-                recon = filt_x + a
-            elif filter_type == 2:
-                recon = filt_x + b
-            elif filter_type == 3:
-                recon = filt_x + (a + b) // 2
-            elif filter_type == 4:
-                recon = filt_x + _paeth_predictor(a, b, c)
-            else:
-                raise Error(String("png: invalid filter type ", filter_type))
-            cp[unsafe_offset=x] = UInt8(recon & 0xFF)
-
+        var cp = op.unsafe_offset(y * row_bytes)
+        var pp = zero_row.unsafe_ptr() if y == 0 else op.unsafe_offset(
+            (y - 1) * row_bytes
+        )
+        var fp = rp.unsafe_offset(pos)
+        if filter_type == 0:
+            for x in range(row_bytes):
+                cp[unsafe_offset=x] = fp[unsafe_offset=x]
+        elif filter_type == 1:
+            for x in range(bpp):
+                cp[unsafe_offset=x] = fp[unsafe_offset=x]
+            for x in range(bpp, row_bytes):
+                cp[unsafe_offset=x] = (
+                    fp[unsafe_offset=x] + cp[unsafe_offset=x - bpp]
+                )
+        elif filter_type == 2:
+            for x in range(row_bytes):
+                cp[unsafe_offset=x] = fp[unsafe_offset=x] + pp[unsafe_offset=x]
+        elif filter_type == 3:
+            for x in range(bpp):
+                cp[unsafe_offset=x] = UInt8(
+                    (Int(fp[unsafe_offset=x]) + Int(pp[unsafe_offset=x]) // 2)
+                    & 0xFF
+                )
+            for x in range(bpp, row_bytes):
+                var a = Int(cp[unsafe_offset=x - bpp])
+                var b = Int(pp[unsafe_offset=x])
+                cp[unsafe_offset=x] = UInt8(
+                    (Int(fp[unsafe_offset=x]) + (a + b) // 2) & 0xFF
+                )
+        elif filter_type == 4:
+            for x in range(bpp):
+                # Left and upper-left are zero, so the predictor is
+                # the byte above.
+                cp[unsafe_offset=x] = fp[unsafe_offset=x] + pp[unsafe_offset=x]
+            for x in range(bpp, row_bytes):
+                var a = Int(cp[unsafe_offset=x - bpp])
+                var b = Int(pp[unsafe_offset=x])
+                var c = Int(pp[unsafe_offset=x - bpp])
+                cp[unsafe_offset=x] = UInt8(
+                    (Int(fp[unsafe_offset=x]) + _paeth_predictor(a, b, c))
+                    & 0xFF
+                )
+        else:
+            raise Error(String("png: invalid filter type ", filter_type))
         pos += row_bytes
-        # A copy, not a move: cur_row becomes prev_row just below, so
-        # `out` needs its own bytes. One bulk .copy(), not a per-byte
-        # append loop.
-        out.extend(cur_row.copy())
-        # Swap roles rather than move: both buffers must stay alive and
-        # allocated for the next row, since the pointers above are
-        # taken fresh each iteration but the storage is reused.
-        var spare = prev_row^
-        prev_row = cur_row^
-        cur_row = spare^
-
     return out^
 
 
@@ -417,37 +417,45 @@ def _canvas_from_scanlines(
     `(width, height, pixels)` constructor rather than writing pixels into
     a blank canvas one at a time: a `write_pixel` walk would *composite*
     each pixel onto the canvas's initial background, losing alpha.
-    Decoding a file is a replace, not a draw.
+    Decoding a file is a replace, not a draw. The buffer is sized up
+    front and written through pointers: `unfiltered` holds exactly
+    `width * height * bpp` bytes, and every read below stays inside a
+    pixel of it.
     """
     var bpp = _bytes_per_pixel(color_type)
-    var row_bytes = width * bpp
-    var pixels = List[UInt8](capacity=width * height * BYTES_PER_PIXEL)
-    for y in range(height):
-        var row_start = y * row_bytes
-        for x in range(width):
-            var px = row_start + x * bpp
-            if color_type == 0:
-                var gray = unfiltered[px]
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(255)
-            elif color_type == 2:
-                pixels.append(unfiltered[px])
-                pixels.append(unfiltered[px + 1])
-                pixels.append(unfiltered[px + 2])
-                pixels.append(255)
-            elif color_type == 4:
-                var gray = unfiltered[px]
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(gray)
-                pixels.append(unfiltered[px + 1])
-            else:  # 6 -- _bytes_per_pixel already rejected anything else
-                pixels.append(unfiltered[px])
-                pixels.append(unfiltered[px + 1])
-                pixels.append(unfiltered[px + 2])
-                pixels.append(unfiltered[px + 3])
+    var n = width * height
+    if len(unfiltered) < n * bpp:
+        raise Error("png: scanline data shorter than the image")
+    var pixels = List[UInt8](unsafe_uninit_length=n * BYTES_PER_PIXEL)
+    var sp = unfiltered.unsafe_ptr()
+    var dp = pixels.unsafe_ptr()
+    if color_type == 6:
+        for i in range(n * BYTES_PER_PIXEL):
+            dp[unsafe_offset=i] = sp[unsafe_offset=i]
+    elif color_type == 2:
+        for i in range(n):
+            var px = i * 3
+            var d = i * BYTES_PER_PIXEL
+            dp[unsafe_offset=d] = sp[unsafe_offset=px]
+            dp[unsafe_offset=d + 1] = sp[unsafe_offset=px + 1]
+            dp[unsafe_offset=d + 2] = sp[unsafe_offset=px + 2]
+            dp[unsafe_offset=d + 3] = 255
+    elif color_type == 0:
+        for i in range(n):
+            var gray = sp[unsafe_offset=i]
+            var d = i * BYTES_PER_PIXEL
+            dp[unsafe_offset=d] = gray
+            dp[unsafe_offset=d + 1] = gray
+            dp[unsafe_offset=d + 2] = gray
+            dp[unsafe_offset=d + 3] = 255
+    else:  # 4 -- _bytes_per_pixel already rejected anything else
+        for i in range(n):
+            var gray = sp[unsafe_offset=i * 2]
+            var d = i * BYTES_PER_PIXEL
+            dp[unsafe_offset=d] = gray
+            dp[unsafe_offset=d + 1] = gray
+            dp[unsafe_offset=d + 2] = gray
+            dp[unsafe_offset=d + 3] = sp[unsafe_offset=i * 2 + 1]
     return Canvas(width, height, pixels^)
 
 

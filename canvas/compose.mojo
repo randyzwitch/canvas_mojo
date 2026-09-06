@@ -232,18 +232,30 @@ def _draw_canvas_device(
                         sp[unsafe_offset=s_idx + 2],
                         effective_a,
                     )
-                    var blended = source.blend_over(
-                        Color(
+                    if dp[unsafe_offset=d_idx + 3] == 255:
+                        # Opaque destination, the common case: the
+                        # division-free form `write_pixel` uses.
+                        var over = source.blend_over_opaque(
                             dp[unsafe_offset=d_idx],
                             dp[unsafe_offset=d_idx + 1],
                             dp[unsafe_offset=d_idx + 2],
-                            dp[unsafe_offset=d_idx + 3],
                         )
-                    )
-                    dp[unsafe_offset=d_idx] = blended.r
-                    dp[unsafe_offset=d_idx + 1] = blended.g
-                    dp[unsafe_offset=d_idx + 2] = blended.b
-                    dp[unsafe_offset=d_idx + 3] = blended.a
+                        dp[unsafe_offset=d_idx] = over.r
+                        dp[unsafe_offset=d_idx + 1] = over.g
+                        dp[unsafe_offset=d_idx + 2] = over.b
+                    else:
+                        var blended = source.blend_over(
+                            Color(
+                                dp[unsafe_offset=d_idx],
+                                dp[unsafe_offset=d_idx + 1],
+                                dp[unsafe_offset=d_idx + 2],
+                                dp[unsafe_offset=d_idx + 3],
+                            )
+                        )
+                        dp[unsafe_offset=d_idx] = blended.r
+                        dp[unsafe_offset=d_idx + 1] = blended.g
+                        dp[unsafe_offset=d_idx + 2] = blended.b
+                        dp[unsafe_offset=d_idx + 3] = blended.a
             # sa == 0 at full opacity: fully transparent source, the
             # destination keeps whatever it had.
             s_idx += BYTES_PER_PIXEL
