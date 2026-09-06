@@ -225,11 +225,14 @@ def _box_blur_line(
     for x in range(1, count):
         var add = _clamp_index(x + r, count)
         var drop = _clamp_index(x - 1 - r, count)
-        sum += sp.unsafe_offset(
-            (start + add * stride) * _LANES
-        ).unsafe_load[width=_LANES]() - sp.unsafe_offset(
-            (start + drop * stride) * _LANES
-        ).unsafe_load[width=_LANES]()
+        sum += (
+            sp.unsafe_offset((start + add * stride) * _LANES).unsafe_load[
+                width=_LANES
+            ]()
+            - sp.unsafe_offset((start + drop * stride) * _LANES).unsafe_load[
+                width=_LANES
+            ]()
+        )
         dp.unsafe_offset((start + x * stride) * _LANES).unsafe_store(
             sum * inv_window
         )
@@ -256,9 +259,11 @@ def _premultiply_rows(
     var out = plane.unsafe_ptr().unsafe_offset(plane_off * _LANES)
     var base = first_row * w
     for i in range(base, last_row * w):
-        var v = p.unsafe_offset(i * BYTES_PER_PIXEL).unsafe_load[
-            width=_LANES
-        ]().cast[_PLANE]()
+        var v = (
+            p.unsafe_offset(i * BYTES_PER_PIXEL)
+            .unsafe_load[width=_LANES]()
+            .cast[_PLANE]()
+        )
         var a = v[3]
         var af = a / 255.0
         var scale = _Pixel(af, af, af, 1.0)
@@ -296,9 +301,9 @@ def _unpremultiply_rows(
     comptime ZERO = SIMD[DType.uint8, _LANES](0)
     for i in range(first_row * w, last_row * w):
         var idx = i * BYTES_PER_PIXEL
-        var v = src.unsafe_offset(
-            (i - plane_first * w) * _LANES
-        ).unsafe_load[width=_LANES]()
+        var v = src.unsafe_offset((i - plane_first * w) * _LANES).unsafe_load[
+            width=_LANES
+        ]()
         var a = v[3]
         if _round_byte(a) == 0:
             p.unsafe_offset(idx).unsafe_store(ZERO)

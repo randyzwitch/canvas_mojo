@@ -388,7 +388,9 @@ def _resolve_rows(
             if alpha != 0:
                 var run_color = color.with_alpha(UInt8(alpha))
                 if end - c >= _RUN_MIN:
-                    canvas._fill_region(row_first_px + c, py, end - c, 1, run_color)
+                    canvas._fill_region(
+                        row_first_px + c, py, end - c, 1, run_color
+                    )
                 elif masked:
                     for k in range(c, end):
                         canvas.set_pixel(row_first_px + k, py, run_color)
@@ -414,10 +416,15 @@ def _area_band(
     of every edge reaching it, and the resolve onto `canvas`.
     """
     var acc = _Accumulator(
-        spans, band_start - region_first_row, band_end - band_start, row_width + 2
+        spans,
+        band_start - region_first_row,
+        band_end - band_start,
+        row_width + 2,
     )
     _deposit_all(acc, edges, band_start, band_end, row_first_px)
-    _resolve_rows(canvas, acc, spans, band_start, row_first_px, row_width, color)
+    _resolve_rows(
+        canvas, acc, spans, band_start, row_first_px, row_width, color
+    )
 
 
 async def _area_band_async(
@@ -473,7 +480,9 @@ def _area_edges_aa(
     if row_count <= 0 or row_width <= 0:
         return
 
-    var spans = _row_spans(edges, first_row, last_row, row_first_px, row_width + 2)
+    var spans = _row_spans(
+        edges, first_row, last_row, row_first_px, row_width + 2
+    )
     var bands = _bands_for(spans.cells(), row_count)
     if bands == 1:
         _area_band(
@@ -584,7 +593,10 @@ def _area_mask_band(
 ):
     """`_area_band` writing into a mask."""
     var acc = _Accumulator(
-        spans, band_start - region_first_row, band_end - band_start, row_width + 2
+        spans,
+        band_start - region_first_row,
+        band_end - band_start,
+        row_width + 2,
     )
     _deposit_all(acc, edges, band_start, band_end, row_first_px)
     _resolve_mask_rows(
@@ -657,7 +669,9 @@ def _area_edges_to_mask(
     if row_count <= 0 or row_width <= 0:
         return
 
-    var spans = _row_spans(edges, first_row, last_row, row_first_px, row_width + 2)
+    var spans = _row_spans(
+        edges, first_row, last_row, row_first_px, row_width + 2
+    )
     var bands = _bands_for(spans.cells(), row_count)
     if bands == 1:
         _area_mask_band(
