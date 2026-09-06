@@ -8,6 +8,7 @@ from canvas.resize import downsample
 from canvas.io.bmp import read_bmp, write_bmp
 from canvas.io.png import read_png, write_png
 from canvas.vector.draw_target import DrawTarget
+from canvas.vector.pdf import PdfCanvas, write_pdf
 from canvas.vector.svg import SvgCanvas, write_svg
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import (

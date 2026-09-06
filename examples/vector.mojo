@@ -5,7 +5,7 @@ it against the `DrawTarget` trait rather than either concrete type.
 `draw_scene` below never learns which backend it holds, so a charting
 layer writes its rendering core once and picking raster or vector
 becomes the caller's decision. This example writes both out:
-out_vector.png and out_vector.svg are the same scene through
+out_vector.png, out_vector.svg and out_vector.pdf are the same scene through
 supersampled coverage math on one side and
 `<rect>`/`<ellipse>`/`<path>` elements on the other.
 
@@ -28,6 +28,7 @@ from canvas.color import Color
 from canvas.path import Path
 from canvas.buffer import Canvas
 from canvas.vector.draw_target import DrawTarget
+from canvas.vector.pdf import PdfCanvas, write_pdf
 from canvas.vector.svg import SvgCanvas, write_svg
 from canvas.io.png import write_png
 from canvas.text.render import draw_text, TextAlign
@@ -115,5 +116,18 @@ def main() raises:
     )
     write_svg(svg, "examples/out_vector.svg")
 
-    print("wrote examples/out_vector.png and .svg")
-    print("  same draw_scene() call, two backends")
+    # And a PDF page, the third backend: text there is glyph outlines
+    # through the same layout the raster backend uses.
+    var pdf = PdfCanvas(800, 500)
+    pdf.fill_rect(0, 0, 800, 500, Color(255, 255, 255))
+    draw_scene(pdf)
+    pdf.draw_text(
+        60.0, 50.0, "canvas", Color(35, 38, 46), 36.0, weight=FontWeight.BOLD
+    )
+    pdf.draw_text(
+        60.0, 82.0, "2D drawing, pure Mojo", Color(120, 120, 130), 18.0
+    )
+    write_pdf(pdf, "examples/out_vector.pdf")
+
+    print("wrote examples/out_vector.png, .svg and .pdf")
+    print("  same draw_scene() call, three backends")

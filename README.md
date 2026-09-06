@@ -14,10 +14,11 @@ library — Cairo, Skia, FreeType — from whatever language you're
 actually working in. canvas_mojo asks what that same job looks like
 kept entirely in Mojo instead: one language, top to bottom, so the
 whole rasterizer is readable and hackable rather than a thin wrapper
-around someone else's binary. `Canvas` (raster) and `SvgCanvas`
-(vector) both implement the same `DrawTarget` trait, so code written
-against that trait — a chart library's own rendering core, say — works
-against either backend without knowing which one it's drawing into.
+around someone else's binary. `Canvas` (raster), `SvgCanvas` (SVG
+markup) and `PdfCanvas` (a PDF page) all implement the same
+`DrawTarget` trait, so code written against that trait — a chart
+library's own rendering core, say — works against any backend without
+knowing which one it's drawing into.
 
 This is an early-stage, heavily Claude-influenced personal project, so
 don't expect polish or a clean mapping onto Cairo's concepts. If you
@@ -68,9 +69,11 @@ flowchart LR
 
     Pick -->|"raster"| Canvas["Canvas(width, height, fill)"]
     Pick -->|"vector"| Svg["SvgCanvas(width, height)"]
+    Pick -->|"page"| Pdf["PdfCanvas(width, height)"]
 
     Canvas --> Draw
     Svg --> Draw
+    Pdf --> Draw
 
     subgraph Draw["Draw — same DrawTarget methods on either backend"]
         direction TB
@@ -86,6 +89,7 @@ flowchart LR
 
     Canvas --> Png["write_png / write_bmp<br/>→ files on disk"]
     Svg --> Str["to_string()<br/>→ SVG markup"]
+    Pdf --> File["write_pdf<br/>→ a one-page PDF"]
 ```
 
 See the wiki's
