@@ -310,13 +310,14 @@ struct _Component(Movable):
 
 
 def _idct_table() -> List[Float32]:
-    """`c[x * 8 + u] = C(u) / 2 * cos((2x + 1) u pi / 16)`, the 1-D
-    inverse DCT basis (T.81 A.3.3)."""
+    """`c[u * 8 + x] = C(u) / 2 * cos((2x + 1) u pi / 16)`, the 1-D
+    inverse DCT basis (T.81 A.3.3), laid out so the eight outputs of
+    one input frequency are one contiguous vector."""
     var t = List[Float32](length=64, fill=0.0)
     for x in range(8):
         for u in range(8):
             var cu = 1.0 / sqrt(2.0) if u == 0 else 1.0
-            t[x * 8 + u] = Float32(
+            t[u * 8 + x] = Float32(
                 cu / 2.0 * cos(Float64(2 * x + 1) * Float64(u) * pi / 16.0)
             )
     return t^
@@ -332,45 +333,34 @@ def _idct_block(
 ):
     """Inverse DCT of the 64 dequantized coefficients in `coef`
     (natural order), level-shifted by 128, clamped, into the 8x8 block
-    of `plane` whose top-left sample is (bx, by). Separable: rows
-    first into `tmp`, then columns."""
-    var tmp = List[Float32](length=64, fill=0.0)
+    of `plane` whose top-left sample is (bx, by). Separable, each pass
+    an eight-lane vector: a row's eight outputs are the sum over its
+    frequencies of the coefficient times that frequency's basis
+    vector, and a zero coefficient -- most of them, after
+    quantization -- is skipped."""
+    comptime V = SIMD[DType.float32, 8]
     var cp = coef.unsafe_ptr()
     var bp = basis.unsafe_ptr()
-    var tp = tmp.unsafe_ptr()
+    var rows = InlineArray[V, 8](fill=V(0.0))
     for v in range(8):
-        # A row of coefficients that is all zero past the DC term is
-        # common; the row transform is then a broadcast.
-        var only_dc = True
-        for u in range(1, 8):
-            if cp[unsafe_offset=v * 8 + u] != 0:
-                only_dc = False
-                break
-        if only_dc:
-            var d = Float32(cp[unsafe_offset=v * 8]) * bp[unsafe_offset=0]
-            for x in range(8):
-                tp[unsafe_offset=v * 8 + x] = d
-            continue
-        for x in range(8):
-            var acc = Float32(0.0)
-            for u in range(8):
+        var acc = V(0.0)
+        for u in range(8):
+            var c = cp[unsafe_offset=v * 8 + u]
+            if c != 0:
                 acc += (
-                    Float32(cp[unsafe_offset=v * 8 + u])
-                    * bp[unsafe_offset=x * 8 + u]
+                    V(Float32(c))
+                    * bp.unsafe_offset(u * 8).unsafe_load[width=8]()
                 )
-            tp[unsafe_offset=v * 8 + x] = acc
+        rows[v] = acc
+    # Columns: output row y is the sum over v of rows[v] (the eight x
+    # values at frequency v) times basis[v][y].
     var pp = plane.unsafe_ptr()
-    for x in range(8):
-        for y in range(8):
-            var acc = Float32(0.0)
-            for v in range(8):
-                acc += tp[unsafe_offset=v * 8 + x] * bp[unsafe_offset=y * 8 + v]
-            var s = Int(acc + 128.5)
-            if s < 0:
-                s = 0
-            if s > 255:
-                s = 255
-            pp[unsafe_offset=(by + y) * plane_w + bx + x] = UInt8(s)
+    for y in range(8):
+        var acc = V(128.5)
+        for v in range(8):
+            acc += rows[v] * V(bp[unsafe_offset=v * 8 + y])
+        var clamped = acc.clamp(0.0, 255.0).cast[DType.uint8]()
+        pp.unsafe_offset((by + y) * plane_w + bx).unsafe_store(clamped)
 
 
 def _flat_block(

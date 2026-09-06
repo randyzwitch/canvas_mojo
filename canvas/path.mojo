@@ -1974,10 +1974,18 @@ def _fill_source_band[
     Bands write disjoint rows and only read the mask, which is what
     lets `canvas` be shared mutably between them.
     """
+    # Each row is intersected once with the canvas and the rectangle
+    # clip, as `_sweep_band` does, so its pixels can go through
+    # `write_pixel`; a clip path still needs `set_pixel` per pixel.
+    var masked = canvas.has_clip_mask()
+    var mp = mask.unsafe_ptr()
     for py in range(first_row, last_row):
+        var region = canvas.effective_fill_rect(lo_x, py, hi_x - lo_x, 1)
+        if region[2] == 0 or region[3] == 0:
+            continue
         var row = (py - mask_origin_y) * mask_width
-        for px in range(lo_x, hi_x):
-            var coverage = Int(mask[row + px - lo_x])
+        for px in range(region[0], region[0] + region[2]):
+            var coverage = Int(mp[unsafe_offset=row + px - lo_x])
             if coverage == 0:
                 continue
             var u = to_user.apply(Float64(px), Float64(py))
@@ -1985,7 +1993,10 @@ def _fill_source_band[
             var alpha = _div255(Int(c.a) * coverage)
             if alpha == 0:
                 continue
-            canvas.set_pixel(px, py, c.with_alpha(UInt8(alpha)))
+            if masked:
+                canvas.set_pixel(px, py, c.with_alpha(UInt8(alpha)))
+            else:
+                canvas.write_pixel(px, py, c.with_alpha(UInt8(alpha)))
 
 
 def fill_path_gradient(
