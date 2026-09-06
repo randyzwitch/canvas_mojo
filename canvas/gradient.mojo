@@ -129,6 +129,10 @@ struct GradientStops(Copyable, Movable, Sized):
         it. The bracketing pair comes from a binary search over the
         sorted stops.
 
+        This runs once per pixel of every gradient fill, so the stops
+        are read through a pointer rather than copied out of the list
+        per probe; the arithmetic is unchanged.
+
         Args:
             t_in: Position along the ramp.
 
@@ -136,12 +140,12 @@ struct GradientStops(Copyable, Movable, Sized):
             The interpolated color, transparent black if no stops have
             been added yet.
         """
-        ref stops = self._stops
-        var count = len(stops)
+        var count = len(self._stops)
         if count == 0:
             return Color(0, 0, 0, 0)
+        var sp = self._stops.unsafe_ptr()
         if count == 1:
-            return stops[0].color
+            return sp[unsafe_offset=0].color
 
         var t = t_in
         if t < 0.0:
@@ -149,10 +153,10 @@ struct GradientStops(Copyable, Movable, Sized):
         elif t > 1.0:
             t = 1.0
 
-        if t <= stops[0].offset:
-            return stops[0].color
-        if t >= stops[count - 1].offset:
-            return stops[count - 1].color
+        if t <= sp[unsafe_offset=0].offset:
+            return sp[unsafe_offset=0].color
+        if t >= sp[unsafe_offset=count - 1].offset:
+            return sp[unsafe_offset=count - 1].color
 
         # The last stop at or below t. `lo` ends on it: the loop keeps
         # `stops[lo].offset <= t < stops[hi].offset`, which holds at entry
@@ -161,18 +165,18 @@ struct GradientStops(Copyable, Movable, Sized):
         var hi = count - 1
         while hi - lo > 1:
             var mid = (lo + hi) // 2
-            if stops[mid].offset <= t:
+            if sp[unsafe_offset=mid].offset <= t:
                 lo = mid
             else:
                 hi = mid
 
-        var before = stops[lo]
+        ref before = sp[unsafe_offset=lo]
         # t landing exactly on a stop takes that stop's color. With
         # several at the offset, `lo` is the last of them -- the one that
         # owns the far side of a hard transition.
         if before.offset == t:
             return before.color
-        var after = stops[hi]
+        ref after = sp[unsafe_offset=hi]
 
         if before.offset == after.offset:
             return before.color

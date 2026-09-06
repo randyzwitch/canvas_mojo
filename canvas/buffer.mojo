@@ -16,7 +16,14 @@ comptime BYTES_PER_PIXEL = 4
 from std.sys import size_of
 
 from canvas.blend import BlendMode, _blend_pixel, _blend_span
-from canvas.color import Color, ColorSpace, _Transfer, _div255
+from canvas.color import (
+    Color,
+    ColorSpace,
+    _Transfer,
+    _div255,
+    _DIV255_MUL,
+    _DIV255_SHIFT,
+)
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.fill_rule import FillRule
@@ -1122,15 +1129,53 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
 
         # Unit-stride inner loop with the index carried along rather
-        # than a strided `range`, which benchmarked slower (#78).
+        # than a strided `range`, which benchmarked slower (#78). Four
+        # opaque destination pixels at a time go through one
+        # sixteen-lane vector of the same hoisted arithmetic, `_div255`
+        # as the same multiply and shift; a group with a translucent pixel
+        # takes the scalar loop below.
         var sa = Int(color.a)
         var inv = 255 - sa
         var cr = Int(color.r) * sa
         var cg = Int(color.g) * sa
         var cb = Int(color.b) * sa
+        comptime W = 16
+        var src_v = SIMD[DType.uint32, W]()
+        var inv_v = SIMD[DType.uint32, W](UInt32(inv))
+        for k in range(W):
+            var ch = k % 4
+            if ch == 0:
+                src_v[k] = UInt32(cr)
+            elif ch == 1:
+                src_v[k] = UInt32(cg)
+            elif ch == 2:
+                src_v[k] = UInt32(cb)
+            else:
+                # The alpha lane comes out 255 whatever it held: full
+                # source-over weight on an opaque destination.
+                src_v[k] = UInt32(255 * sa)
         for y in range(ry, ry + rh):
             var idx = y * stride + rx * BYTES_PER_PIXEL
-            for _ in range(rw):
+            var remaining = rw
+            while remaining >= 4:
+                if not (
+                    p[unsafe_offset=idx + 3] == 255
+                    and p[unsafe_offset=idx + 7] == 255
+                    and p[unsafe_offset=idx + 11] == 255
+                    and p[unsafe_offset=idx + 15] == 255
+                ):
+                    break
+                var dst = (
+                    p.unsafe_offset(idx)
+                    .unsafe_load[width=W]()
+                    .cast[DType.uint32]()
+                )
+                var t = src_v + dst * inv_v
+                var out = (t * UInt32(_DIV255_MUL)) >> UInt32(_DIV255_SHIFT)
+                p.unsafe_offset(idx).unsafe_store(out.cast[DType.uint8]())
+                idx += 4 * BYTES_PER_PIXEL
+                remaining -= 4
+            for _ in range(remaining):
                 if p[unsafe_offset=idx + 3] == 255:
                     # Opaque destination: the hoisted division-free
                     # form, and the result stays opaque.

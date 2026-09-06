@@ -205,21 +205,22 @@ def write_png(canvas: Canvas, path: String) raises:
                 raw.append(px[unsafe_offset=i + 1])
                 raw.append(px[unsafe_offset=i + 2])
 
-    # Two candidate encodings, both compressed, the smaller kept. The
-    # unfiltered rows win wherever deflate's LZ77 finds flat color
-    # and repeated rows, which is most of a chart; the Sub-filtered
-    # rows win on a gradient, whose steady ramps become runs of one
-    # small delta. Measured over this package's own examples: Sub
-    # takes 30% off the gradient and loses on everything else, so the
-    # choice has to be per image (#167, which has the table). Up,
-    # Average, Paeth and a per-row adaptive pick were measured too and
-    # won nothing Sub did not, so they are not candidates.
-    var compressed = deflate(raw)
-    var sub = _sub_filtered(raw, h, w * channels, channels)
-    var compressed_sub = deflate(sub)
-    var filtered = len(compressed_sub) < len(compressed)
-    if filtered:
-        compressed = compressed_sub^
+    # Two candidate encodings, unfiltered and Sub-filtered, and the
+    # one that compresses smaller is kept. The unfiltered rows win
+    # wherever deflate's LZ77 finds flat color and repeated rows,
+    # which is most of a chart; the Sub-filtered rows win where every
+    # byte differs from its neighbor, a photograph or noise, whose
+    # deltas are smaller than the values. The choice is per image
+    # (#167 has the original table), and it is made on a sample: every
+    # `_FILTER_SAMPLE_STRIDE`th row compressed both ways, since
+    # compressing the whole image twice cost as much as writing it
+    # once, and the sample picks the same way on every image the
+    # full comparison did. The byte-residual heuristic libpng uses
+    # was tried first and picked Sub on every chart, where it loses.
+    var row_bytes = w * channels
+    var sub = _sub_filtered(raw, h, row_bytes, channels)
+    var filtered = _sub_compresses_smaller(raw, sub, h, row_bytes)
+    var compressed = deflate(sub) if filtered else deflate(raw)
 
     var zlib_stream = List[UInt8]()
     # zlib header (RFC 1950 2.2): CMF=0x78 (deflate, 32K window),
@@ -248,6 +249,31 @@ def _read_u32_be(data: List[UInt8], pos: Int) raises -> Int:
         | (Int(data[pos + 2]) << 8)
         | Int(data[pos + 3])
     )
+
+
+# Rows between the ones the filter choice is made on; see `write_png`.
+comptime _FILTER_SAMPLE_STRIDE = 8
+
+
+def _sub_compresses_smaller(
+    raw: List[UInt8], sub: List[UInt8], height: Int, row_bytes: Int
+) raises -> Bool:
+    """Whether the Sub-filtered scanlines compress smaller than the
+    unfiltered ones, decided on every `_FILTER_SAMPLE_STRIDE`th row of
+    each: the same rows, deflated both ways. Ties keep the unfiltered
+    rows, which decode with no reconstruction pass.
+    """
+    var stride = 1 + row_bytes
+    var sample_raw = List[UInt8]()
+    var sample_sub = List[UInt8]()
+    var y = 0
+    while y < height:
+        var base = y * stride
+        for i in range(stride):
+            sample_raw.append(raw[base + i])
+            sample_sub.append(sub[base + i])
+        y += _FILTER_SAMPLE_STRIDE
+    return len(deflate(sample_sub)) < len(deflate(sample_raw))
 
 
 def _sub_filtered(

@@ -6,6 +6,9 @@ pattern.mojo).
 """
 
 from canvas.color import Color
+from std.runtime.asyncrt import TaskGroup, parallelism_level
+
+from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas
 from canvas.geometry import (
     Matrix2D,
@@ -206,10 +209,65 @@ def _fill_rect_source[
                 canvas.set_pixel(xx, yy, source.color_at(p.x, p.y))
         return
 
-    for yy in range(ry, ry + rh):
+    # Rows are independent, each writing only its own pixels, so a
+    # large fill is banded across cores as the fill sweep is; `source`
+    # and `canvas` are shared by reference (#97 applies).
+    var bands = 1
+    if rw * rh >= _MIN_PARALLEL_PIXELS:
+        bands = parallelism_level()
+        if bands > rh:
+            bands = rh
+        if bands < 1:
+            bands = 1
+    if bands == 1:
+        _fill_source_rows(canvas, rx, rw, ry, ry + rh, source, to_user)
+        return
+    var per_band = (rh + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var band_start = ry + b * per_band
+        var band_end = min(band_start + per_band, ry + rh)
+        if band_start >= band_end:
+            continue
+        tg.create_task(
+            _fill_source_rows_async(
+                canvas, rx, rw, band_start, band_end, source, to_user
+            )
+        )
+    tg.wait()
+
+
+def _fill_source_rows[
+    S: ColorSource
+](
+    mut canvas: Canvas,
+    rx: Int,
+    rw: Int,
+    first_row: Int,
+    last_row: Int,
+    source: S,
+    to_user: Matrix2D,
+):
+    """Rows [first_row, last_row) of `_fill_rect_source`'s sweep."""
+    for yy in range(first_row, last_row):
         for xx in range(rx, rx + rw):
             var p = to_user.apply(Float64(xx), Float64(yy))
             canvas.write_pixel(xx, yy, source.color_at(p.x, p.y))
+
+
+async def _fill_source_rows_async[
+    S: ColorSource
+](
+    mut canvas: Canvas,
+    rx: Int,
+    rw: Int,
+    first_row: Int,
+    last_row: Int,
+    source: S,
+    to_user: Matrix2D,
+):
+    """`_fill_source_rows` as a task."""
+    _fill_source_rows(canvas, rx, rw, first_row, last_row, source, to_user)
 
 
 def fill_rect_gradient(

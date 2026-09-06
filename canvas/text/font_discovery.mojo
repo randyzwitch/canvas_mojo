@@ -53,6 +53,7 @@ measuring, hinting or rasterizing.
 """
 
 from std.os import getenv, listdir
+from std.runtime.asyncrt import TaskGroup, parallelism_level
 from std.os.path import expanduser, isdir, realpath
 from std.sys.info import CompilationTarget
 
@@ -385,6 +386,48 @@ keeps a symlink cycle from turning the walk into an infinite one.
 """
 
 
+comptime _ENTRY_OTHER = 0
+comptime _ENTRY_DIRECTORY = 1
+comptime _ENTRY_FONT = 2
+
+
+def _classify_entries(
+    children: List[String],
+    font_named: List[Bool],
+    mut kind: List[Int],
+    mut canonical: List[String],
+    first: Int,
+    last: Int,
+):
+    """Entries [first, last) of a directory level: a font by extension
+    is resolved through `realpath` (a directory named `*.ttf` would be
+    misfiled here and then dropped by `_parse_font_file`, which cannot
+    open it); anything else is a subdirectory or not."""
+    for i in range(first, last):
+        if font_named[i]:
+            var resolved = children[i]
+            try:
+                resolved = String(realpath(children[i]))
+            except:
+                pass
+            canonical[i] = resolved
+            kind[i] = _ENTRY_FONT
+        elif isdir(children[i]):
+            kind[i] = _ENTRY_DIRECTORY
+
+
+async def _classify_entries_async(
+    children: List[String],
+    font_named: List[Bool],
+    mut kind: List[Int],
+    mut canonical: List[String],
+    first: Int,
+    last: Int,
+):
+    """`_classify_entries` as a task; bands write disjoint slots."""
+    _classify_entries(children, font_named, kind, canonical, first, last)
+
+
 def _collect_font_files() -> List[String]:
     """Every readable `sfnt` file under `_font_directories`, resolved
     through symlinks and deduplicated.
@@ -401,43 +444,57 @@ def _collect_font_files() -> List[String]:
     """
     var files = List[String]()
     var seen = Dict[String, Bool]()
-    var pending = List[String]()
-    var depths = List[Int]()
-
-    for directory in _font_directories():
-        pending.append(directory)
-        depths.append(0)
-
-    var i = 0
-    while i < len(pending):
-        var directory = pending[i]
-        var depth = depths[i]
-        i += 1
-
-        var entries = _listdir_or_empty(directory)
-        sort(entries)
-        for entry in entries:
-            var child = String(directory, "/", entry)
-            # Extension first, `isdir` second: `listdir` reports no
-            # entry type, so deciding "recurse or not" costs a stat,
-            # and a name that already looks like a font never needs
-            # one. A directory named `*.ttf` would be misfiled here and
-            # then dropped by `_parse_font_file`, which cannot open it.
-            if not _has_sfnt_extension(entry):
-                if isdir(child) and depth < _MAX_SCAN_DEPTH:
-                    pending.append(child)
-                    depths.append(depth + 1)
-                continue
-            var canonical = child
-            try:
-                canonical = String(realpath(child))
-            except:
-                pass
-            if canonical in seen:
-                continue
-            seen[canonical] = True
-            files.append(canonical)
-
+    var frontier = _font_directories()
+    var depth = 0
+    # Level by level: every directory of the level is listed, then
+    # each entry is classified -- a stat to tell a subdirectory from
+    # a stray file, `realpath` on a font -- in bands across cores,
+    # since those two calls are the whole cost of the walk and each
+    # entry's is independent. The tasks borrow the entry lists and
+    # write their own slots of `kind` and `canonical` (#97, #263).
+    while len(frontier) > 0 and depth <= _MAX_SCAN_DEPTH:
+        var children = List[String]()
+        var font_named = List[Bool]()
+        for directory in frontier:
+            var entries = _listdir_or_empty(directory)
+            sort(entries)
+            for entry in entries:
+                children.append(String(directory, "/", entry))
+                font_named.append(_has_sfnt_extension(entry))
+        var count = len(children)
+        var kind = List[Int](length=count, fill=0)
+        var canonical = List[String](length=count, fill="")
+        var bands = parallelism_level()
+        if bands > count:
+            bands = count
+        if bands <= 1:
+            _classify_entries(children, font_named, kind, canonical, 0, count)
+        else:
+            var per_band = (count + bands - 1) // bands
+            var tg = TaskGroup()
+            for b in range(bands):
+                var first = b * per_band
+                var last = min(first + per_band, count)
+                if first >= last:
+                    continue
+                tg.create_task(
+                    _classify_entries_async(
+                        children, font_named, kind, canonical, first, last
+                    )
+                )
+            tg.wait()
+            _ = len(children) + len(font_named) + len(kind) + len(canonical)
+        var next_frontier = List[String]()
+        for i in range(count):
+            if kind[i] == _ENTRY_DIRECTORY:
+                next_frontier.append(children[i])
+            elif kind[i] == _ENTRY_FONT:
+                if canonical[i] in seen:
+                    continue
+                seen[canonical[i]] = True
+                files.append(canonical[i])
+        frontier = next_frontier^
+        depth += 1
     sort(files)
     return files^
 
@@ -687,6 +744,28 @@ def _parse_font_file(path: String) -> List[FontFace]:
     except:
         pass
     return faces^
+
+
+def _parse_files(
+    files: List[String],
+    mut results: List[List[FontFace]],
+    first: Int,
+    last: Int,
+):
+    """`_parse_font_file` for files [first, last), each into its slot
+    of `results`."""
+    for i in range(first, last):
+        results[i] = _parse_font_file(files[i])
+
+
+async def _parse_files_async(
+    files: List[String],
+    mut results: List[List[FontFace]],
+    first: Int,
+    last: Int,
+):
+    """`_parse_files` as a task; bands write disjoint slots."""
+    _parse_files(files, results, first, last)
 
 
 # --- Codepoint coverage ---------------------------------------------------
@@ -1028,8 +1107,39 @@ struct FontDatabase(Movable):
         yields an empty database, and it is `resolve` that reports that.
         """
         self.faces = List[FontFace]()
-        for path in _collect_font_files():
-            for face in _parse_font_file(path):
+        var files = _collect_font_files()
+        var count = len(files)
+        if count == 0:
+            return
+        # The per-file reads are the cost -- a thousand files on a
+        # desktop, each opened and read at three offsets -- and they
+        # are independent, so the files are parsed in bands across
+        # cores, each task writing its own slots of `results`. The
+        # tasks borrow `files` and `results`, so both are named again
+        # after `wait` (#263).
+        var results = List[List[FontFace]]()
+        for _ in range(count):
+            results.append(List[FontFace]())
+        var bands = parallelism_level()
+        if bands > count:
+            bands = count
+        if bands < 1:
+            bands = 1
+        if bands == 1:
+            _parse_files(files, results, 0, count)
+        else:
+            var per_band = (count + bands - 1) // bands
+            var tg = TaskGroup()
+            for b in range(bands):
+                var first = b * per_band
+                var last = min(first + per_band, count)
+                if first >= last:
+                    continue
+                tg.create_task(_parse_files_async(files, results, first, last))
+            tg.wait()
+            _ = len(files) + len(results)
+        for i in range(count):
+            for face in results[i]:
                 self.faces.append(face.copy())
 
     def __init__(out self, var faces: List[FontFace]):
