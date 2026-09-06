@@ -1,27 +1,32 @@
 """Tests for vector/pdf.mojo: what each `DrawTarget` call becomes in
 the page's content stream, the resources those calls register, the
-file's structure (objects, the cross-reference table's offsets, the
+embedded fonts real text draws with, pages and images, the file's
+structure (objects, the cross-reference table's offsets, the
 compressed stream inflating back to the operators), and the state
 stack. The operators are read back from `PdfCanvas.content()` as
 text, the way test_svg.mojo reads markup.
 
 Rendering correctness -- that a viewer draws the same picture the
-raster backend does -- was checked by rendering the file through
-`pdftoppm` beside `write_png` of the same scene, which a Mojo test
-cannot do; see the wiki Changelog for that comparison.
+raster backend does, and that a viewer extracts the text drawn --
+was checked by rendering the file through `pdftoppm` beside
+`write_png` of the same scene and by `pdftotext`, which a Mojo test
+cannot do; see the wiki Changelog for those comparisons.
 """
 
 from std.math import pi
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.blend import BlendMode
+from canvas.buffer import Canvas
 from canvas.color import Color, ColorSpace
+from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.io.deflate import inflate
 from canvas.path import Path
 from canvas.shapes.lines import LineCap, LineJoin
+from canvas.text.font_cache import FontCache
 from canvas.vector.pdf import PdfCanvas, write_pdf, _pdf_string
 
 comptime INK = Color(30, 60, 120)
@@ -295,34 +300,179 @@ def test_annotated_group_is_marked_content() raises:
     assert_equal(_pdf_string("a(b)c\\"), "(a\\(b\\)c\\\\)")
 
 
-def test_text_becomes_filled_outlines() raises:
+def test_text_is_real_text_in_an_embedded_subset() raises:
     var pdf = PdfCanvas(200, 100)
     pdf.draw_text(10.0, 60.0, "Hi", Color(0, 0, 0), 24.0)
     var c = pdf.content()
-    assert_true(" m " in c and " l " in c, "glyph contours")
-    assert_true("h f Q" in c or "h f " in c, "filled under nonzero")
+    assert_true(
+        "BT /F1 24.000 Tf " in c, "a text object selecting the font at size"
+    )
+    assert_true(
+        "1.000 0.000 0.000 -1.000 10.000 60.000 Tm " in c,
+        "the text matrix flips the glyphs upright at the anchor",
+    )
+    assert_true("] TJ ET" in c, "one TJ run, then ET")
+    assert_true("<" in c and ">" in c, "glyph indices as hex codes")
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    assert_true(
+        "/Subtype /Type0" in file and "/Encoding /Identity-H" in file,
+        "a composite font",
+    )
+    assert_true(
+        "/Subtype /CIDFontType2" in file and "/CIDToGIDMap /Identity" in file,
+        "TrueType descendant",
+    )
+    assert_true(
+        "/FontFile2" in file and "/Length1" in file,
+        "an embedded TrueType program",
+    )
+    assert_true(
+        "begincmap" in file and "beginbfchar" in file, "a ToUnicode map"
+    )
+    assert_true("<0048>" in file and "<0069>" in file, "H and i in the map")
+    assert_true(
+        "/Font << /F1 3 0 R >>" in file, "the font in the page resources"
+    )
+    assert_true("/BaseFont /AAAAAA+" in file, "a subset tag on the name")
+
+    # The subset is a small fraction of the font file it came from.
+    var cache = FontCache()
+    var full = cache.resolve_face(
+        "Sans", FontSlant.NORMAL, FontWeight.NORMAL, 24.0
+    )
+    var packed = pdf.to_bytes(compress=False)
+    assert_true(
+        len(packed) < len(full[].data) // 4,
+        String("subset file ", len(packed), " vs font ", len(full[].data)),
+    )
+
+
+def test_ligature_maps_to_its_characters() raises:
+    var pdf = PdfCanvas(200, 100)
+    pdf.draw_text(10.0, 60.0, "fi", Color(0, 0, 0), 24.0)
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    # Whether or not the font ligates, both characters are reachable:
+    # as one glyph mapped to <00660069> or two glyphs mapped one each.
+    assert_true(
+        "<00660069>" in file or ("<0066>" in file and "<0069>" in file),
+        "f and i survive into ToUnicode",
+    )
+
+
+def test_kerning_is_a_tj_adjustment() raises:
+    var pdf = PdfCanvas(200, 100)
+    pdf.draw_text(10.0, 60.0, "AVA", Color(0, 0, 0), 24.0)
+    var c = pdf.content()
+    # DejaVu Sans kerns A-V; a negative number moves the next glyph
+    # right (the pen advanced by the kern), a positive one left.
+    var tj = String(c[byte = c.find("[") : c.find("] TJ")])
+    # An adjustment follows a glyph code directly: `<0024>64 <0039>`.
+    var adjusted = False
+    var bytes = tj.as_bytes()
+    for i in range(len(bytes) - 1):
+        var here = Int(bytes[i])
+        var next = Int(bytes[i + 1])
+        if here == 62 and (next == 45 or (next >= 48 and next <= 57)):
+            adjusted = True
+    assert_true(adjusted, "adjustments between glyph codes")
+
+
+def test_stroke_text_uses_render_mode_1() raises:
     var s = PdfCanvas(200, 100)
     s.stroke_text(10.0, 60.0, "Hi", Color(0, 0, 0), 24.0, 1.5)
-    assert_true(
-        "1.500 w" in s.content() and " S " in s.content(), "stroked outlines"
-    )
+    var c = s.content()
+    assert_true("1.500 w" in c and "1 Tr " in c and "BT" in c, "stroked text")
+    assert_true("RG" in c, "the stroke color")
+
+
+def test_empty_and_outline_text() raises:
     var e = PdfCanvas(10, 10)
     e.draw_text(1.0, 1.0, "", Color(0, 0, 0), 12.0)
     assert_equal(e.content(), "", "empty text draws nothing")
+    var o = PdfCanvas(100, 100)
+    var outline = o.text_outline(10.0, 60.0, "Hi", 24.0)
+    assert_true(
+        len(outline.commands) > 8, "an outline path with the glyph contours"
+    )
+    o.fill_path_aa(outline, Color(0, 0, 0), FillRule.NONZERO)
+    assert_true(
+        "BT" not in o.content() and " l " in o.content(),
+        "drawn as a path, not text",
+    )
+
+
+def test_pages() raises:
+    var pdf = PdfCanvas(100, 50)
+    pdf.fill_rect(0, 0, 10, 10, INK)
+    pdf.push_clip(0, 0, 5, 5)
+    pdf.begin_annotated_group("a")
+    pdf.new_page(200, 100)
+    assert_equal(pdf.page_count(), 2)
+    assert_equal(pdf.content(), "", "the new page starts empty")
+    pdf.fill_rect(0, 0, 10, 10, INK)
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    assert_true("/Count 2" in file, "two pages in the tree")
+    assert_true(
+        "/MediaBox [0 0 100 50]" in file and "/MediaBox [0 0 200 100]" in file,
+        "each page its own size",
+    )
+    assert_true("/Kids [3 0 R 5 0 R ]" in file, "pages are objects 3 and 5")
+    # The first page's open clip and group were closed on that page.
+    var first_stream = file[
+        byte = file.find("stream\n") : file.find("endstream")
+    ]
+    assert_true(
+        "EMC\nQ\n" in first_stream, "group and clip closed at the page's end"
+    )
+
+
+def test_images_are_xobjects_with_a_soft_mask() raises:
+    var img = Canvas(4, 3, Color(10, 20, 30))
+    var pdf = PdfCanvas(100, 100)
+    pdf.draw_image(img, 5.0, 6.0, 40.0, 30.0)
+    var c = pdf.content()
+    assert_true(
+        "40.000 0.000 0.000 -30.000 5.000 36.000 cm /Im1 Do" in c,
+        "placed with a flipped unit square at the top-left",
+    )
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    assert_true(
+        "/Subtype /Image /Width 4 /Height 3 /ColorSpace /DeviceRGB" in file,
+        "an RGB image",
+    )
+    assert_true("/SMask" not in file, "opaque pixels need no mask")
+    assert_true("/XObject << /Im1 3 0 R >>" in file, "in the resources")
+
+    var translucent = Canvas(2, 2, Color(255, 0, 0, 128))
+    var m = PdfCanvas(100, 100)
+    m.draw_image(translucent, 0.0, 0.0)
+    var mf = _bytes_to_string(m.to_bytes(compress=False))
+    assert_true(
+        "/SMask 4 0 R" in mf and "/ColorSpace /DeviceGray" in mf,
+        "a soft mask for the alpha",
+    )
+    assert_true(
+        "2.000 0.000 0.000 -2.000 0.000 2.000 cm" in m.content(),
+        "the image's own size by default",
+    )
 
 
 def test_file_structure_and_xref_offsets() raises:
     var pdf = PdfCanvas(120, 80)
     pdf.set_title("Report")
+    pdf.set_author("Me")
     pdf.fill_rect(0, 0, 10, 10, INK)
+    pdf.draw_text(5.0, 40.0, "x", Color(0, 0, 0), 12.0)
     var data = pdf.to_bytes(compress=False)
     var file = _bytes_to_string(data)
     assert_true(file.startswith("%PDF-1.4\n%"), "header")
     assert_true("/MediaBox [0 0 120 80]" in file, "page size")
     assert_true("1 0 0 -1 0 80.000 cm\n" in file, "the flip opens the stream")
     assert_true(
-        "/Title (Report)" in file and "/Info 5 0 R" in file, "title in Info"
+        "/Title (Report)" in file and "/Author (Me)" in file,
+        "title and author in Info",
     )
+    assert_true("/Producer (canvas_mojo)" in file, "producer")
     assert_true(file.endswith("%%EOF\n"), "trailer")
     # startxref points at the xref table, and each entry at its object.
     var sx = file.rfind("startxref\n")
@@ -333,15 +483,20 @@ def test_file_structure_and_xref_offsets() raises:
         file[byte = xref_off : xref_off + 4] == "xref",
         "startxref lands on xref",
     )
-    for n in range(1, 6):
-        var entry_start = (
-            xref_off + 5 + 4 + 20 * n
-        )  # "xref\n0 6\n" then 20-byte entries
+    var header_end = file.find("\n", xref_off + 5)
+    var count = Int(String(file[byte = xref_off + 7 : header_end]))
+    assert_true(
+        count >= 10,
+        "catalog, pages, five font objects, a page, its stream, info",
+    )
+    for n in range(1, count):
+        var entry_start = header_end + 1 + 20 * n
         var off = Int(String(file[byte = entry_start : entry_start + 10]))
         assert_true(
-            file[byte = off : off + 8].startswith(String(n) + " 0 obj"),
+            file[byte = off : off + 12].startswith(String(n) + " 0 obj"),
             String("xref entry ", n, " points at its object"),
         )
+    assert_true(("/Size " + String(count)) in file, "the trailer's size")
 
 
 def test_compressed_stream_inflates_to_the_operators() raises:
