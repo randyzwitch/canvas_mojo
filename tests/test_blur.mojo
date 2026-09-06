@@ -15,7 +15,14 @@ an opaque background) the test asserts it exactly.
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.blend import BlendMode
-from canvas.blur import blur, draw_shadowed, _box_blur_line, _clamp_index
+from canvas.blur import (
+    blur,
+    draw_shadowed,
+    _box_blur_line,
+    _clamp_index,
+    _LANES,
+    _Lane,
+)
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.shapes.rects import fill_rect
@@ -158,7 +165,7 @@ def test_transparent_neighbor_does_not_tint_the_blurred_color() raises:
 
 
 def test_box_blur_line_clamps_at_the_edge() raises:
-    # _box_blur_line directly, on a 5-sample line with all the mass at
+    # _box_blur_line directly, on a 5-pixel line with all the mass at
     # index 0 and a window radius of 2 (width 5). Edge clamp means an
     # out-of-range index repeats the nearest in-range one, so the
     # window for output x is the five (possibly repeated) samples
@@ -170,17 +177,40 @@ def test_box_blur_line_clamps_at_the_edge() raises:
     #        -> 10/5 = 2.0
     #   x=3: window 1..5 -> clamped 1,2,3,4,4 -> 0,0,0,0,0 -> 0.0
     #   x=4: window 2..6 -> clamped 2,3,4,4,4 -> 0,0,0,0,0 -> 0.0
-    var src: List[Float64] = [10.0, 0.0, 0.0, 0.0, 0.0]
-    var dst: List[Float64] = [0.0, 0.0, 0.0, 0.0, 0.0]
+    # A pixel is _LANES consecutive values; lane 0 carries the mass
+    # above, lane 3 carries it doubled, and the other two lanes are
+    # empty, so the same sweep checks that lanes do not mix.
+    var src = List[_Lane](length=5 * _LANES, fill=0.0)
+    src[0] = 10.0
+    src[3] = 20.0
+    var dst = List[_Lane](length=5 * _LANES, fill=0.0)
     _box_blur_line(src, dst, 0, 1, 5, 2)
 
     assert_equal(
         dst[0], 6.0, "x=0 clamps three copies of index 0 into its window"
     )
-    assert_equal(dst[1], 4.0, "x=1 clamps two copies of index 0")
-    assert_equal(dst[2], 2.0, "x=2 needs no clamping")
-    assert_equal(dst[3], 0.0, "x=3's window no longer reaches the source")
-    assert_equal(dst[4], 0.0, "x=4's window clamps the far (empty) edge")
+    assert_equal(dst[1 * _LANES], 4.0, "x=1 clamps two copies of index 0")
+    assert_equal(dst[2 * _LANES], 2.0, "x=2 needs no clamping")
+    assert_equal(
+        dst[3 * _LANES], 0.0, "x=3's window no longer reaches the source"
+    )
+    assert_equal(
+        dst[4 * _LANES], 0.0, "x=4's window clamps the far (empty) edge"
+    )
+    assert_equal(dst[3], 12.0, "lane 3 is swept on its own")
+    assert_equal(dst[1 * _LANES + 3], 8.0, "lane 3 at x=1")
+    assert_equal(dst[1], 0.0, "an empty lane stays empty")
+    assert_equal(dst[2], 0.0, "an empty lane stays empty (lane 2)")
+
+
+def test_box_blur_line_radius_zero_copies() raises:
+    var src = List[_Lane](length=3 * _LANES, fill=0.0)
+    for i in range(3 * _LANES):
+        src[i] = _Lane(i)
+    var dst = List[_Lane](length=3 * _LANES, fill=-1.0)
+    _box_blur_line(src, dst, 0, 1, 3, 0)
+    for i in range(3 * _LANES):
+        assert_equal(dst[i], _Lane(i), "a one-wide box is the identity")
 
 
 def test_clamp_index_helper() raises:

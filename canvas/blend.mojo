@@ -679,8 +679,7 @@ def _blend_lanes[
     """
     var m = (cb * cs * 32897) >> 23
 
-    @parameter
-    if MODE == 13:
+    comptime if MODE == 13:
         return m
     elif MODE == 14:
         return cb + cs - m
