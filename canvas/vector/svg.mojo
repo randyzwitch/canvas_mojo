@@ -29,7 +29,7 @@ rest -- emit no attribute and render as ordinary source-over.
 from std.math import cos, pi, sin
 
 from canvas.blend import BlendMode, _css_blend_name
-from canvas.color import Color
+from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D, _snap_rect
 from canvas.gradient import GradientStops, LinearGradient, RadialGradient
@@ -274,19 +274,25 @@ def _write_path_d(mut out: String, path: Path):
 
 struct _SvgState(ImplicitlyCopyable, Movable):
     """What `SvgCanvas.save` records and `restore` puts back: this
-    backend's whole drawing state, which is the transform and the
-    blend mode.
+    backend's whole drawing state, which is the transform, the blend
+    mode and the color space.
     """
 
     var transform: Matrix2D
     var blend: BlendMode
+    var space: ColorSpace
     var clip_depth: Int
 
     def __init__(
-        out self, transform: Matrix2D, blend: BlendMode, clip_depth: Int
+        out self,
+        transform: Matrix2D,
+        blend: BlendMode,
+        space: ColorSpace,
+        clip_depth: Int,
     ):
         self.transform = transform
         self.blend = blend
+        self.space = space
         self.clip_depth = clip_depth
 
 
@@ -320,6 +326,7 @@ struct SvgCanvas(DrawTarget, Movable):
     var _transform: Matrix2D
     var _transformed: Bool
     var _blend: BlendMode
+    var _space: ColorSpace
     # What `save` pushes: everything above that `restore` puts back.
     var _saved: List[_SvgState]
     # The document title and description `set_title` stored, emitted
@@ -347,6 +354,7 @@ struct SvgCanvas(DrawTarget, Movable):
         self._transform = Matrix2D.identity()
         self._transformed = False
         self._blend = BlendMode.SOURCE_OVER
+        self._space = ColorSpace.SRGB
         self._saved = List[_SvgState]()
 
     def _write_transform(mut self):
@@ -360,11 +368,15 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body.write('"')
 
     def _write_blend(mut self):
-        """Append the `style` attribute carrying `mix-blend-mode` for
-        an element drawn now: nothing under SOURCE_OVER, and nothing
-        under a Porter-Duff mode, which CSS cannot express.
+        """Append the attributes an element drawn now carries for its
+        blend mode and color space: `style="mix-blend-mode:..."` for a
+        blend mode (nothing under SOURCE_OVER, and nothing under a
+        Porter-Duff mode, which CSS cannot express), and
+        `color-interpolation="linearRGB"` under `ColorSpace.LINEAR`.
         """
         var name = _css_blend_name(self._blend)
+        if self._space.is_linear():
+            self._body.write(' color-interpolation="linearRGB"')
         if name == "":
             return
         self._body.write(' style="mix-blend-mode:', name, '"')
@@ -391,7 +403,9 @@ struct SvgCanvas(DrawTarget, Movable):
         `restore` to put back, as `Canvas.save` does.
         """
         self._saved.append(
-            _SvgState(self._transform, self._blend, self._clip_depth)
+            _SvgState(
+                self._transform, self._blend, self._space, self._clip_depth
+            )
         )
 
     def restore(mut self):
@@ -405,6 +419,7 @@ struct SvgCanvas(DrawTarget, Movable):
             self.pop_clip_path()
         self._set_transform(state.transform)
         self._blend = state.blend
+        self._space = state.space
 
     def translate(mut self, tx: Float64, ty: Float64):
         """Shift subsequent elements by (tx, ty) in the current user
@@ -498,6 +513,28 @@ struct SvgCanvas(DrawTarget, Movable):
             `set_blend_mode` says otherwise.
         """
         return self._blend
+
+    def set_color_space(mut self, space: ColorSpace):
+        """Set the space elements drawn from here on composite in, the
+        counterpart of `Canvas.set_color_space`: under LINEAR each
+        element carries `color-interpolation="linearRGB"`, which asks
+        the viewer to composite it in linear light. Viewer support
+        varies; a caller needing the result guaranteed has the raster
+        backend. `save`/`restore` carry the space.
+
+        Args:
+            space: The color space later elements carry.
+        """
+        self._space = space
+
+    def color_space(self) -> ColorSpace:
+        """The color space elements drawn now carry.
+
+        Returns:
+            The current space, `ColorSpace.SRGB` until
+            `set_color_space` says otherwise.
+        """
+        return self._space
 
     def _set_transform(mut self, matrix: Matrix2D):
         self._transform = matrix
@@ -601,7 +638,9 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body.write(
             '<defs><linearGradient id="grad',
             self._gradient_count,
-            '" gradientUnits="userSpaceOnUse" x1="',
+            '"',
+            ' color-interpolation="linearRGB"' if gradient.stops.color_space().is_linear() else "",
+            ' gradientUnits="userSpaceOnUse" x1="',
         )
         _write_svg_float(self._body, gradient.x0)
         self._body.write('" y1="')
@@ -624,7 +663,9 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body.write(
             '<defs><radialGradient id="grad',
             self._gradient_count,
-            '" gradientUnits="userSpaceOnUse" cx="',
+            '"',
+            ' color-interpolation="linearRGB"' if gradient.stops.color_space().is_linear() else "",
+            ' gradientUnits="userSpaceOnUse" cx="',
         )
         _write_svg_float(self._body, gradient.cx)
         self._body.write('" cy="')

@@ -203,6 +203,11 @@ def _draw_canvas_device(
                 s_idx += BYTES_PER_PIXEL
         return
 
+    # In linear light every translucent source pixel goes through
+    # `write_pixel`, which owns the conversion; the opaque ones below
+    # still replace outright.
+    var linear = dst.color_space().is_linear()
+
     var dp = dst.pixels.unsafe_ptr()
     var dst_stride = dst.width * BYTES_PER_PIXEL
 
@@ -232,7 +237,14 @@ def _draw_canvas_device(
                         sp[unsafe_offset=s_idx + 2],
                         effective_a,
                     )
-                    if dp[unsafe_offset=d_idx + 3] == 255:
+                    if linear:
+                        dst.write_pixel(
+                            (d_idx - (ry + row) * dst_stride)
+                            // BYTES_PER_PIXEL,
+                            ry + row,
+                            source,
+                        )
+                    elif dp[unsafe_offset=d_idx + 3] == 255:
                         # Opaque destination, the common case: the
                         # division-free form `write_pixel` uses.
                         var over = source.blend_over_opaque(

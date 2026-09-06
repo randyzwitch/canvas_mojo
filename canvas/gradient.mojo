@@ -23,7 +23,7 @@ before it reaches the ramp.
 
 from std.math import atan2, floor, pi, sqrt
 
-from canvas.color import Color
+from canvas.color import Color, ColorSpace, _Transfer
 
 
 struct GradientStop(ImplicitlyCopyable, Movable):
@@ -58,12 +58,42 @@ struct GradientStops(Copyable, Movable, Sized):
     """
 
     var _stops: List[GradientStop]
+    # The space `color_at` interpolates in (see `set_color_space`),
+    # and the transfer tables, built when it first becomes LINEAR.
+    var _space: ColorSpace
+    var _transfer: _Transfer
 
     def __init__(out self):
         """A ramp with no stops yet; `color_at` returns transparent
         black until one is added.
         """
         self._stops = List[GradientStop]()
+        self._space = ColorSpace.SRGB
+        self._transfer = _Transfer()
+
+    def set_color_space(mut self, space: ColorSpace):
+        """Set the space `color_at` interpolates in: SRGB, the default,
+        mixes the stops' channel bytes directly; LINEAR mixes them in
+        linear light (see `ColorSpace`), which keeps a ramp between two
+        saturated colors from sagging through a dark middle. Alpha
+        interpolates the same way in both. `SvgCanvas` writes a
+        LINEAR ramp with `color-interpolation="linearRGB"`.
+
+        Args:
+            space: The space the ramp interpolates in.
+        """
+        self._space = space
+        if space.is_linear():
+            self._transfer.build()
+
+    def color_space(self) -> ColorSpace:
+        """The space `color_at` interpolates in.
+
+        Returns:
+            The current space, `ColorSpace.SRGB` until
+            `set_color_space` says otherwise.
+        """
+        return self._space
 
     def __len__(self) -> Int:
         return len(self._stops)
@@ -148,6 +178,31 @@ struct GradientStops(Copyable, Movable, Sized):
             return before.color
 
         var local_t = (t - before.offset) / (after.offset - before.offset)
+        if self._space.is_linear():
+            var lt = Float32(local_t)
+            ref tr = self._transfer
+            return Color(
+                tr.byte(
+                    tr.linear(before.color.r)
+                    + lt
+                    * (tr.linear(after.color.r) - tr.linear(before.color.r))
+                ),
+                tr.byte(
+                    tr.linear(before.color.g)
+                    + lt
+                    * (tr.linear(after.color.g) - tr.linear(before.color.g))
+                ),
+                tr.byte(
+                    tr.linear(before.color.b)
+                    + lt
+                    * (tr.linear(after.color.b) - tr.linear(before.color.b))
+                ),
+                _round_channel(
+                    Float64(before.color.a)
+                    + local_t
+                    * (Float64(after.color.a) - Float64(before.color.a))
+                ),
+            )
         var br = Float64(before.color.r)
         var bg = Float64(before.color.g)
         var bb = Float64(before.color.b)
@@ -237,6 +292,23 @@ struct LinearGradient(ColorSource, Movable):
             color: This stop's color.
         """
         self.stops.add_stop(offset, color)
+
+    def set_color_space(mut self, space: ColorSpace):
+        """Set the space the ramp interpolates in; see
+        `GradientStops.set_color_space`.
+
+        Args:
+            space: The space the ramp interpolates in.
+        """
+        self.stops.set_color_space(space)
+
+    def color_space(self) -> ColorSpace:
+        """The space the ramp interpolates in.
+
+        Returns:
+            The current space, `ColorSpace.SRGB` by default.
+        """
+        return self.stops.color_space()
 
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): project onto the axis, clamp
@@ -371,6 +443,23 @@ struct RadialGradient(ColorSource, Movable):
         """
         self.stops.add_stop(offset, color)
 
+    def set_color_space(mut self, space: ColorSpace):
+        """Set the space the ramp interpolates in; see
+        `GradientStops.set_color_space`.
+
+        Args:
+            space: The space the ramp interpolates in.
+        """
+        self.stops.set_color_space(space)
+
+    def color_space(self) -> ColorSpace:
+        """The space the ramp interpolates in.
+
+        Returns:
+            The current space, `ColorSpace.SRGB` by default.
+        """
+        return self.stops.color_space()
+
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): project onto [0, 1] as
         `distance_from_center / radius`, clamp ("pad" extend -- a
@@ -495,6 +584,23 @@ struct ConicGradient(ColorSource, Movable):
             color: This stop's color.
         """
         self.stops.add_stop(offset, color)
+
+    def set_color_space(mut self, space: ColorSpace):
+        """Set the space the ramp interpolates in; see
+        `GradientStops.set_color_space`.
+
+        Args:
+            space: The space the ramp interpolates in.
+        """
+        self.stops.set_color_space(space)
+
+    def color_space(self) -> ColorSpace:
+        """The space the ramp interpolates in.
+
+        Returns:
+            The current space, `ColorSpace.SRGB` by default.
+        """
+        return self.stops.color_space()
 
     def color_at(self, x: Float64, y: Float64) -> Color:
         """The gradient's color at (x, y): the clockwise angle from

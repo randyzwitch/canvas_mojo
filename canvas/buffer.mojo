@@ -16,7 +16,7 @@ comptime BYTES_PER_PIXEL = 4
 from std.sys import size_of
 
 from canvas.blend import BlendMode, _blend_pixel, _blend_span
-from canvas.color import Color, _div255
+from canvas.color import Color, ColorSpace, _Transfer, _div255
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.fill_rule import FillRule
@@ -63,12 +63,14 @@ struct _ClipRect(ImplicitlyCopyable, Movable):
 
 struct _CanvasState(ImplicitlyCopyable, Movable):
     """What `Canvas.save` records and `Canvas.restore` puts back: the
-    transform, the blend mode, and how deep the two clip stacks were.
+    transform, the blend mode, the color space, and how deep the two
+    clip stacks were.
     """
 
     var transform: Matrix2D
     var transformed: Bool
     var blend: BlendMode
+    var space: ColorSpace
     var clip_depth: Int
     var mask_depth: Int
 
@@ -77,12 +79,14 @@ struct _CanvasState(ImplicitlyCopyable, Movable):
         transform: Matrix2D,
         transformed: Bool,
         blend: BlendMode,
+        space: ColorSpace,
         clip_depth: Int,
         mask_depth: Int,
     ):
         self.transform = transform
         self.transformed = transformed
         self.blend = blend
+        self.space = space
         self.clip_depth = clip_depth
         self.mask_depth = mask_depth
 
@@ -173,6 +177,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # The current blend mode (see `set_blend_mode`). SOURCE_OVER until
     # a caller sets otherwise, and every pixel write tests it.
     var _blend: BlendMode
+    # The space source-over blends mix in (see `set_color_space`), and
+    # the transfer tables, built when it first becomes LINEAR.
+    var _space: ColorSpace
+    var _transfer: _Transfer
     var _saved: List[_CanvasState]
 
     def __init__(
@@ -222,6 +230,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._transform = Matrix2D.identity()
         self._transformed = False
         self._blend = BlendMode.SOURCE_OVER
+        self._space = ColorSpace.SRGB
+        self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
         if total == 0:
             return
@@ -273,6 +283,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._transform = Matrix2D.identity()
         self._transformed = False
         self._blend = BlendMode.SOURCE_OVER
+        self._space = ColorSpace.SRGB
+        self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
 
     def save(mut self):
@@ -280,8 +292,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         `restore` to put back. The pair works as Cairo's
         `cairo_save`/`cairo_restore` and the HTML5 canvas's
         `save`/`restore` do: whatever `translate`, `rotate`, `scale`,
-        `transform`, `set_transform`, `set_blend_mode`, `push_clip` or
-        `push_clip_path` does between the two is undone by `restore`,
+        `transform`, `set_transform`, `set_blend_mode`,
+        `set_color_space`, `push_clip` or `push_clip_path` does between
+        the two is undone by `restore`,
         so a caller can set up a local frame for one part of a drawing
         and leave the canvas as it found it.
         """
@@ -290,6 +303,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 self._transform,
                 self._transformed,
                 self._blend,
+                self._space,
                 len(self._clip_stack),
                 self._clip_mask_count,
             )
@@ -311,6 +325,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._transform = state.transform
         self._transformed = state.transformed
         self._blend = state.blend
+        self._space = state.space
 
     def translate(mut self, tx: Float64, ty: Float64):
         """Shift the origin subsequent drawing is measured from by
@@ -424,6 +439,33 @@ struct Canvas(Copyable, DrawTarget, Movable):
             `set_blend_mode` says otherwise.
         """
         return self._blend
+
+    def set_color_space(mut self, space: ColorSpace):
+        """Set the space later source-over blends mix in: SRGB, the
+        default, blends the stored channel bytes directly; LINEAR
+        converts them to linear light, blends, and converts back (see
+        `ColorSpace`). Every anti-aliased edge, translucent fill and
+        composite drawn from here on takes it, since they all reach the
+        pixels through the same source-over. The Porter-Duff operators
+        and the blend modes (`set_blend_mode`) stay in sRGB either way.
+
+        `save`/`restore` carry the space, as they do the blend mode.
+
+        Args:
+            space: The color space later blends use.
+        """
+        self._space = space
+        if space.is_linear():
+            self._transfer.build()
+
+    def color_space(self) -> ColorSpace:
+        """The space source-over blends mix in now.
+
+        Returns:
+            The current space, `ColorSpace.SRGB` until
+            `set_color_space` says otherwise.
+        """
+        return self._space
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.
@@ -758,6 +800,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
             p[unsafe_offset=idx + 2] = color.b
             p[unsafe_offset=idx + 3] = 255
             return
+        if self._space.is_linear():
+            self._write_pixel_linear(idx, color)
+            return
 
         var dst_a = p[unsafe_offset=idx + 3]
         if dst_a == 255:
@@ -821,6 +866,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 if a != 0:
                     self._write_pixel_blended(x + i, y, color.with_alpha(a))
             return
+        if self._space.is_linear():
+            for i in range(count):
+                var a = alphas[base + i]
+                if a != 0:
+                    self.write_pixel(x + i, y, color.with_alpha(a))
+            return
         var p = self.pixels.unsafe_ptr()
         var ap = alphas.unsafe_ptr()
         var idx = (y * self.width + x) * BYTES_PER_PIXEL
@@ -858,6 +909,35 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 p[unsafe_offset=idx + 2] = blended.b
                 p[unsafe_offset=idx + 3] = blended.a
             idx += BYTES_PER_PIXEL
+
+    def _write_pixel_linear(mut self, idx: Int, color: Color):
+        """`write_pixel`'s LINEAR color-space branch, kept out of line
+        for the same reason `_set_pixel_masked` is: `color` is neither
+        opaque nor, when this is reached, blended by a mode other than
+        source-over."""
+        var p = self.pixels.unsafe_ptr()
+        var blended: Color
+        if p[unsafe_offset=idx + 3] == 255:
+            blended = self._transfer.blend_over_opaque(
+                color,
+                p[unsafe_offset=idx],
+                p[unsafe_offset=idx + 1],
+                p[unsafe_offset=idx + 2],
+            )
+        else:
+            blended = self._transfer.blend_over(
+                color,
+                Color(
+                    p[unsafe_offset=idx],
+                    p[unsafe_offset=idx + 1],
+                    p[unsafe_offset=idx + 2],
+                    p[unsafe_offset=idx + 3],
+                ),
+            )
+        p[unsafe_offset=idx] = blended.r
+        p[unsafe_offset=idx + 1] = blended.g
+        p[unsafe_offset=idx + 2] = blended.b
+        p[unsafe_offset=idx + 3] = blended.a
 
     def _write_pixel_blended(mut self, x: Int, y: Int, color: Color):
         """`write_pixel` under any mode but SOURCE_OVER, kept out of
@@ -1033,6 +1113,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
 
         if color.a == 0:
+            return
+
+        if self._space.is_linear():
+            for y in range(ry, ry + rh):
+                for x in range(rx, rx + rw):
+                    self.write_pixel(x, y, color)
             return
 
         # Unit-stride inner loop with the index carried along rather
