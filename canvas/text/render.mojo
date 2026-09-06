@@ -2181,6 +2181,110 @@ def _draw_placed_glyphs(
         )
 
 
+def _append_path(mut out: Path, src: Path) raises:
+    """Append every command of `src` to `out`; glyph outlines carry no
+    arcs, so the five builder ops cover them."""
+    for cmd in src.commands:
+        if cmd.op == PathOp.MOVE_TO:
+            out.move_to(cmd.p1.x, cmd.p1.y)
+        elif cmd.op == PathOp.LINE_TO:
+            out.line_to(cmd.p1.x, cmd.p1.y)
+        elif cmd.op == PathOp.QUAD_TO:
+            out.quad_curve_to(cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y)
+        elif cmd.op == PathOp.CUBIC_TO:
+            out.cubic_curve_to(
+                cmd.p1.x, cmd.p1.y, cmd.p2.x, cmd.p2.y, cmd.p3.x, cmd.p3.y
+            )
+        elif cmd.op == PathOp.CLOSE:
+            out.close()
+
+
+def text_path(
+    x: Float64,
+    y: Float64,
+    text: String,
+    size: Float64,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
+    ligatures: Bool = True,
+    *,
+    mut cache: FontCache,
+) raises -> Path:
+    """The outline of `text` as one `Path`: every glyph's contours,
+    laid out exactly as `draw_text` lays them out (shaping, kerning,
+    line breaking, alignment and rotation about the `(x, y)` anchor),
+    in canvas coordinates. Cairo's `text_path`. Fill it under
+    `FillRule.NONZERO`, which is how a TrueType outline's contours
+    are wound, or stroke it; a backend with no text of its own
+    (`PdfCanvas`) draws text through it. Color glyphs (emoji) have no
+    outline and contribute nothing.
+
+    Args:
+        x: Anchor x -- baseline left end for LEFT alignment.
+        y: Anchor y -- baseline.
+        text: Text to outline, "\\n"-separated lines.
+        size: Font size in points.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic/oblique style.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `GSUB` shaping.
+        cache: Shared cache for font resolution and parsed faces.
+
+    Returns:
+        The outline, empty for empty text or text with no ink.
+
+    Raises:
+        Error: No font could be resolved for `family`.
+    """
+    var out = Path()
+    if text == "":
+        return out^
+    var block = _layout_block(
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        ligatures,
+        cache,
+    )
+    if not block.any_ink:
+        return out^
+    var face = cache.resolve_face(family, slant, weight, size)
+    var c = cos(rotation)
+    var s = sin(rotation)
+    for i in range(len(block.lines)):
+        ref line = block.lines[i]
+        var pen_x = line.x
+        for shaped in line.glyphs:
+            pen_x += shaped.kern_before
+            var g = _resolve_glyph(
+                face[],
+                family,
+                slant,
+                weight,
+                size,
+                shaped,
+                pen_x,
+                line.y,
+                cache,
+            )
+            if g.metrics.width > 0.0 and g.metrics.height > 0.0:
+                _append_path(out, _place_glyph_path(g.path, c, s, x, y))
+            pen_x += g.metrics.advance
+    return out^
+
+
 def draw_text_on_path(
     mut canvas: Canvas,
     path: Path,
