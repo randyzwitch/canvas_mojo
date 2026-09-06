@@ -278,5 +278,144 @@ def test_edge_table_bounds() raises:
     assert_equal(b[3], 8)
 
 
+def _ridge_over_the_top() raises -> Path:
+    # A ridgeline shape from dataviz_mojo (#263): its peak runs 50 px
+    # above the canvas, so row 0 is both the first accumulator row and
+    # a row every band boundary condition has to get right.
+    var xs: List[Float64] = [
+        75,
+        85,
+        95,
+        105,
+        115,
+        125,
+        135,
+        145,
+        155,
+        165,
+        175,
+        185,
+        195,
+        205,
+        215,
+        225,
+        235,
+        245,
+        255,
+        265,
+        275,
+        285,
+        295,
+        305,
+        315,
+        325,
+        335,
+        345,
+        355,
+        365,
+    ]
+    var ys: List[Float64] = [
+        33.866,
+        18.592,
+        4.979,
+        -6.856,
+        -16.894,
+        -25.2,
+        -31.905,
+        -37.186,
+        -41.242,
+        -44.277,
+        -46.484,
+        -48.035,
+        -49.072,
+        -49.703,
+        -50.0,
+        -50.0,
+        -49.703,
+        -49.072,
+        -48.035,
+        -46.484,
+        -44.277,
+        -41.242,
+        -37.186,
+        -31.905,
+        -25.2,
+        -16.894,
+        -6.856,
+        4.979,
+        18.592,
+        33.866,
+    ]
+    var p = Path()
+    p.move_to(75.0, 249.0)
+    for i in range(len(xs)):
+        p.line_to(xs[i], ys[i])
+    p.line_to(365.0, 249.0)
+    p.close()
+    return p^
+
+
+def test_banded_fill_is_the_same_every_time() raises:
+    # The banded resolve runs as tasks that read the accumulator after
+    # the function has stopped naming it, so nothing but an explicit
+    # use keeps it alive until they finish (#263). Freed early, its
+    # first bytes -- row 0's span and cells -- pick up allocator
+    # bookkeeping, and row 0 comes out blank or partly covered. The
+    # window is timing, widest on two to four cores, so this renders
+    # many times and holds every render to the first.
+    var path = _ridge_over_the_top()
+    var first = Canvas(400, 300)
+    first.fill(Color(255, 255, 255))
+    fill_path_aa(first, path, Color(30, 100, 180), FillRule.NONZERO)
+    assert_equal(Int(first.get_pixel(200, 0).r), 30, "row 0 interior")
+    assert_equal(Int(first.get_pixel(200, 1).r), 30, "row 1 interior")
+    for run in range(40):
+        var c = Canvas(400, 300)
+        c.fill(Color(255, 255, 255))
+        fill_path_aa(c, path, Color(30, 100, 180), FillRule.NONZERO)
+        for y in range(300):
+            for x in range(400):
+                var a = c.get_pixel(x, y)
+                var b = first.get_pixel(x, y)
+                if a.r != b.r or a.g != b.g or a.b != b.b:
+                    raise Error(
+                        String(
+                            "render ",
+                            run,
+                            " differs at (",
+                            x,
+                            ", ",
+                            y,
+                            "): ",
+                            Int(a.r),
+                            " vs ",
+                            Int(b.r),
+                        )
+                    )
+
+
+def test_banded_clip_mask_is_the_same_every_time() raises:
+    # The clip-mask twin of the test above: a NONZERO `push_clip_path`
+    # resolves the same accumulator into a mask by bands.
+    var path = _ridge_over_the_top()
+    var first = Canvas(400, 300)
+    first.fill(Color(255, 255, 255))
+    first.push_clip_path(path, FillRule.NONZERO)
+    first.fill_rect(0, 0, 400, 300, Color(30, 100, 180))
+    first.pop_clip_path()
+    assert_equal(Int(first.get_pixel(200, 0).r), 30, "row 0 interior")
+    for run in range(40):
+        var c = Canvas(400, 300)
+        c.fill(Color(255, 255, 255))
+        c.push_clip_path(path, FillRule.NONZERO)
+        c.fill_rect(0, 0, 400, 300, Color(30, 100, 180))
+        c.pop_clip_path()
+        for x in range(400):
+            var a = c.get_pixel(x, 0)
+            var b = first.get_pixel(x, 0)
+            if a.r != b.r:
+                raise Error(String("render ", run, " differs at (", x, ", 0)"))
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

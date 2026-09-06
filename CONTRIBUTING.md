@@ -237,6 +237,25 @@ def measure_text(..., *, mut cache: FontCache) raises -> TextMetrics:
 Anything that would be a module-level singleton elsewhere has to be
 constructed by the caller and passed down here.
 
+### Tasks borrow; the compiler does not count it
+
+Mojo destroys a value right after its last use. A `TaskGroup` task
+that borrows a local (`tg.create_task(work(acc, ...))`) is not a use
+the compiler tracks, so a value named for the last time inside the
+task-creation loop is freed before `tg.wait()` returns, while the
+tasks still read it. It shows up as rare wrong output on two to four
+cores, not as a crash: the freed block's first bytes take allocator
+bookkeeping, so whatever lived there (row 0 of an accumulator, #263)
+goes wrong. Name the value again after `tg.wait()`:
+
+```mojo
+tg.wait()
+_ = acc.rows  # last use past the tasks
+```
+
+Parameters of the function that waits are safe, since the caller's
+frame owns them for the whole call. Locals are not.
+
 ### No FFI anywhere
 
 Nothing in this package links or dlopens a library. `text/
