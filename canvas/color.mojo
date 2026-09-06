@@ -214,3 +214,151 @@ struct Color(ImplicitlyCopyable, Movable):
             UInt8(_div255(Int(self.g) * sa + Int(bg_g) * inv)),
             UInt8(_div255(Int(self.b) * sa + Int(bg_b) * inv)),
         )
+
+
+struct ColorSpace(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
+    """The space colors are mixed in: where a blend or a gradient
+    interpolation does its arithmetic.
+
+    SRGB, the default, mixes the stored 8-bit channel values directly,
+    as browsers, Cairo and most raster libraries do; LINEAR converts
+    each channel through the sRGB transfer function to linear light
+    first and back afterward, so that a 50% blend of black and white
+    is the gray that reflects half the light (sRGB 188) rather than
+    the one halfway up the byte scale (128), and a red-to-green
+    gradient does not sag through a dark middle. `Canvas.set_color_space`
+    and `GradientStops.set_color_space` choose it; see each for what
+    it covers.
+    """
+
+    var _value: Int
+
+    comptime SRGB = Self(0)
+    comptime LINEAR = Self(1)
+
+    def __init__(out self, value: Int):
+        """Prefer the comptime constants over constructing one
+        directly.
+
+        Args:
+            value: 0 SRGB, 1 LINEAR.
+        """
+        self._value = value
+
+    def __eq__(self, other: Self) -> Bool:
+        return self._value == other._value
+
+    def is_linear(self) -> Bool:
+        """Whether this is LINEAR."""
+        return self._value == Self.LINEAR._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.LINEAR._value:
+            writer.write("LINEAR")
+        else:
+            writer.write("SRGB")
+
+
+# Steps the linear-to-sRGB table resolves: 12 bits keeps every sRGB
+# byte reachable, including the steep first few near black, and a
+# byte round-trips through both tables unchanged.
+comptime _LINEAR_STEPS = 4096
+
+
+struct _Transfer(Copyable, Movable):
+    """The sRGB transfer function (IEC 61966-2-1) both ways as lookup
+    tables: `linear` takes a channel byte to linear light in [0, 1],
+    `byte` takes linear light back to the nearest channel byte. Built
+    on demand by `build`, since a `Canvas` or a `GradientStops` that
+    never leaves SRGB should not pay for the 4096 `pow` calls.
+    """
+
+    var to_linear: List[Float32]
+    var to_srgb: List[UInt8]
+    var ready: Bool
+
+    def __init__(out self):
+        self.to_linear = List[Float32]()
+        self.to_srgb = List[UInt8]()
+        self.ready = False
+
+    def build(mut self):
+        if self.ready:
+            return
+        self.to_linear = List[Float32](length=256, fill=0.0)
+        for i in range(256):
+            var c = Float64(i) / 255.0
+            var lin = c / 12.92
+            if c > 0.04045:
+                lin = ((c + 0.055) / 1.055) ** 2.4
+            self.to_linear[i] = Float32(lin)
+        self.to_srgb = List[UInt8](length=_LINEAR_STEPS + 1, fill=0)
+        for i in range(_LINEAR_STEPS + 1):
+            var lin = Float64(i) / Float64(_LINEAR_STEPS)
+            var c = lin * 12.92
+            if lin > 0.0031308:
+                c = 1.055 * (lin ** (1.0 / 2.4)) - 0.055
+            var v = Int(c * 255.0 + 0.5)
+            if v > 255:
+                v = 255
+            self.to_srgb[i] = UInt8(v)
+        self.ready = True
+
+    @always_inline
+    def linear(self, b: UInt8) -> Float32:
+        """Channel byte to linear light. `build` must have run."""
+        return self.to_linear.unsafe_ptr()[unsafe_offset=Int(b)]
+
+    @always_inline
+    def byte(self, v: Float32) -> UInt8:
+        """Linear light to the nearest channel byte, clamped."""
+        var x = v
+        if x <= 0.0:
+            return 0
+        if x >= 1.0:
+            return 255
+        return self.to_srgb.unsafe_ptr()[
+            unsafe_offset=Int(x * Float32(_LINEAR_STEPS) + 0.5)
+        ]
+
+    def blend_over_opaque(
+        self, src: Color, bg_r: UInt8, bg_g: UInt8, bg_b: UInt8
+    ) -> Color:
+        """`Color.blend_over_opaque` with the channels mixed in linear
+        light: the result is opaque, and each channel is the source's
+        linear value weighted by its alpha plus the background's
+        weighted by the rest, encoded back to a byte."""
+        if src.a == 255:
+            return Color(src.r, src.g, src.b)
+        if src.a == 0:
+            return Color(bg_r, bg_g, bg_b)
+        var sa = Float32(src.a) / 255.0
+        var inv = 1.0 - sa
+        return Color(
+            self.byte(self.linear(src.r) * sa + self.linear(bg_r) * inv),
+            self.byte(self.linear(src.g) * sa + self.linear(bg_g) * inv),
+            self.byte(self.linear(src.b) * sa + self.linear(bg_b) * inv),
+        )
+
+    def blend_over(self, src: Color, bg: Color) -> Color:
+        """`Color.blend_over` with the channels mixed in linear light:
+        straight-alpha source-over, the output alpha as in
+        `Color.blend_over`, each channel the alpha-weighted mix of
+        linear values divided back out by the output alpha."""
+        if src.a == 255:
+            return src
+        if src.a == 0:
+            return bg
+        if bg.a == 255:
+            return self.blend_over_opaque(src, bg.r, bg.g, bg.b)
+        var sa = Float32(src.a) / 255.0
+        var ba = Float32(bg.a) / 255.0 * (1.0 - sa)
+        var oa = sa + ba
+        if oa <= 0.0:
+            return Color(0, 0, 0, 0)
+        return Color(
+            self.byte((self.linear(src.r) * sa + self.linear(bg.r) * ba) / oa),
+            self.byte((self.linear(src.g) * sa + self.linear(bg.g) * ba) / oa),
+            self.byte((self.linear(src.b) * sa + self.linear(bg.b) * ba) / oa),
+            UInt8(Int(oa * 255.0 + 0.5)),
+        )

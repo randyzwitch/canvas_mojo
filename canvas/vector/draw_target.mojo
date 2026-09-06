@@ -96,7 +96,7 @@ their struct declaration.
 """
 
 from canvas.blend import BlendMode
-from canvas.color import Color
+from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.path import Path
@@ -581,5 +581,25 @@ trait DrawTarget:
         Returns:
             The current mode, `BlendMode.SOURCE_OVER` until
             `set_blend_mode` says otherwise.
+        """
+        ...
+
+    def set_color_space(mut self, space: ColorSpace):
+        """Set the space later source-over blends mix in (see
+        `ColorSpace`). `save`/`restore` carry it. The raster backend
+        blends in it; `SvgCanvas` asks the viewer to, with
+        `color-interpolation="linearRGB"`.
+
+        Args:
+            space: The color space later calls blend in.
+        """
+        ...
+
+    def color_space(self) -> ColorSpace:
+        """The color space later drawing calls will blend in.
+
+        Returns:
+            The current space, `ColorSpace.SRGB` until
+            `set_color_space` says otherwise.
         """
         ...
