@@ -427,6 +427,13 @@ def _area_edges_aa(
             )
         )
     tg.wait()
+    # Mojo destroys a value right after its last use, and the tasks
+    # borrow `acc` without the compiler counting that as one: named
+    # for the last time inside the loop, it was freed before `wait`
+    # returned, and a band still resolving read allocator bookkeeping
+    # where row 0's span and cells had been (#263). Naming it here
+    # moves its last use past the tasks.
+    _ = acc.rows
 
 
 def _resolve_mask_rows(
@@ -572,3 +579,4 @@ def _area_edges_to_mask(
             )
         )
     tg.wait()
+    _ = acc.rows  # last use past the tasks; see `_area_edges_aa`
