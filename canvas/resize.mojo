@@ -42,11 +42,16 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
         ... draw ...
         var out = downsample(big, f)
 
-    The recipe is exact for continuous coordinates: paths, text, and
-    the `Float64` overloads. An `Int` `fill_rect` maps its indices as
-    edges under a transform rather than its pixel centers, so it lands
-    half a device pixel off under the offset (and exactly without it);
-    see #244 for unifying the two.
+    The recipe is exact for every primitive, `Int` rects included. It
+    moves geometry, not snapping: `fill_rect` snaps its edges in
+    *device* space after the transform, so a fractional logical edge
+    that resolves to one gray column at factor 1 resolves to `factor`
+    finer steps instead, and the edge no longer matches the factor-1
+    output. A caller who wants hard edges under supersampling snaps
+    each edge to the nearest half-integer in logical space before
+    drawing; every factor then produces the same crisp edge in the
+    same place. Lines, paths, and text are never snapped and need
+    nothing.
 
     Args:
         source: Canvas to shrink.
