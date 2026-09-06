@@ -15,7 +15,7 @@ actually working in. canvas_mojo asks what that same job looks like
 kept entirely in Mojo instead: one language, top to bottom, so the
 whole rasterizer is readable and hackable rather than a thin wrapper
 around someone else's binary. `Canvas` (raster), `SvgCanvas` (SVG
-markup) and `PdfCanvas` (a PDF page) all implement the same
+markup) and `PdfCanvas` (PDF pages, with real embedded text) all implement the same
 `DrawTarget` trait, so code written against that trait — a chart
 library's own rendering core, say — works against any backend without
 knowing which one it's drawing into.
@@ -89,7 +89,7 @@ flowchart LR
 
     Canvas --> Png["write_png / write_bmp<br/>→ files on disk"]
     Svg --> Str["to_string()<br/>→ SVG markup"]
-    Pdf --> File["write_pdf<br/>→ a one-page PDF"]
+    Pdf --> File["write_pdf<br/>→ PDF pages, fonts embedded"]
 ```
 
 See the wiki's

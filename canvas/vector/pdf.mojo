@@ -1,13 +1,13 @@
-"""`PdfCanvas`: a `DrawTarget` that writes a one-page PDF, the third
+"""`PdfCanvas`: a `DrawTarget` that writes a PDF document, the third
 backend beside `Canvas` (raster) and `SvgCanvas` (SVG markup), and
 the one output a chart library's users ask for after PNG and SVG.
 
-Every call appends operators to the page's content stream, in the
-same coordinate space the other backends use: the stream opens with
-`1 0 0 -1 0 h cm`, which flips PDF's bottom-left, y-up page onto the
-canvas's top-left, y-down pixels, so a caller's numbers go through
-unchanged and one unit is one point (1/72 inch). The page is
-`width x height` points.
+Every call appends operators to the current page's content stream,
+in the same coordinate space the other backends use: the stream opens
+with `1 0 0 -1 0 h cm`, which flips PDF's bottom-left, y-up page onto
+the canvas's top-left, y-down pixels, so a caller's numbers go through
+unchanged and one unit is one point (1/72 inch). `new_page` starts
+another page; a document is one page until it is called.
 
 What maps onto PDF one to one: `Path` onto `m`/`l`/`c`/`h` (a quadratic
 is raised to a cubic, an `arc_to` becomes cubic arcs of at most a
@@ -17,12 +17,19 @@ around each element (as `SvgCanvas` writes a `transform` attribute per
 element, so no CTM state has to be tracked), a translucent color or a
 blend mode onto an `ExtGState` (`/ca`, `/CA`, `/BM`), a rectangle or
 path clip onto `re W n` / `W n` inside a `q` that `pop_clip` closes
-with `Q`, and a linear or radial gradient onto an axial or radial
-shading (`sh`) with a stitching function over the stops, clipped to
-the shape. Text is drawn as outlines through `canvas.text.text_path`,
-so it needs no font embedding and looks exactly as the raster backend
-draws it, at the cost of not being selectable; embedding a font subset
-is the follow-up. The content stream is Flate-compressed through this
+with `Q`, a linear or radial gradient onto an axial or radial shading
+(`sh`) with a stitching function over the stops, clipped to the shape,
+and a `Canvas` drawn with `draw_image` onto an image XObject with a
+soft mask for its alpha.
+
+Text is real text. `draw_text` lays the string out exactly as the
+raster `draw_text` does -- the same shaping, kerning, alignment and
+rotation -- and writes each run of glyphs as a `TJ` in the font that
+produced it, the font embedded as a subset (`canvas.vector.pdf_font`)
+with a `ToUnicode` map, so a label is selectable, searchable and
+copyable in a viewer and sits exactly where the PNG's does. A
+fallback font a glyph came from is embedded alongside the primary. The
+content stream and the font programs are Flate-compressed through this
 package's own `deflate`.
 
 Not expressible here, and said so rather than approximated: the
@@ -30,15 +37,18 @@ Porter-Duff operators other than source-over (a PDF blend mode is a
 separable or non-separable mode only), alpha on gradient stops (a
 shading has no per-stop opacity), conic gradients, `ColorSpace.LINEAR`
 (PDF has no linear-light compositing switch; the setting is kept for
-`color_space` and otherwise ignored), and canvas-to-canvas image
-drawing. Annotated groups become marked content
-(`/Span << /Alt (title) >> BDC ... EMC`), which is what a PDF has for
-"this run of drawing has a label".
+`color_space` and otherwise ignored), and color bitmap glyphs (emoji),
+which have no outline in the embedded program and draw nothing.
+Annotated groups become marked content (`/Span << /Alt (title) >> BDC
+... EMC`), which is what a PDF has for "this run of drawing has a
+label".
 """
 
 from std.math import cos, sin, pi, sqrt, ceil
+from std.memory import ArcPointer
 
 from canvas.blend import BlendMode
+from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D, FPoint
@@ -49,9 +59,12 @@ from canvas.path import Path, PathOp
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
-from canvas.text.render import text_path
+from canvas.text.glyph_outline import glyph_index_metrics
+from canvas.text.render import _layout_block, text_path
 from canvas.text.text_align import TextAlign
+from canvas.text.ttf import TTFFace
 from canvas.vector.draw_target import DrawTarget
+from canvas.vector.pdf_font import _EmbeddedFont, _hex4
 from canvas.vector.svg import _write_svg_float
 
 # Cubic Bezier control-point distance for a quarter circle of unit
@@ -121,6 +134,37 @@ def _pdf_string(text: String) -> String:
     return out
 
 
+struct _PdfImage(Movable):
+    """A `Canvas` drawn onto a page: its RGB bytes and, when any
+    pixel is not opaque, its alpha bytes for a soft mask."""
+
+    var width: Int
+    var height: Int
+    var rgb: List[UInt8]
+    var alpha: List[UInt8]
+    var has_alpha: Bool
+
+    def __init__(out self, image: Canvas):
+        self.width = image.width
+        self.height = image.height
+        var n = image.width * image.height
+        self.rgb = List[UInt8](unsafe_uninit_length=n * 3)
+        self.alpha = List[UInt8](unsafe_uninit_length=n)
+        self.has_alpha = False
+        var p = image.pixels.unsafe_ptr()
+        var rp = self.rgb.unsafe_ptr()
+        var ap = self.alpha.unsafe_ptr()
+        for i in range(n):
+            var idx = i * BYTES_PER_PIXEL
+            rp[unsafe_offset=i * 3] = p[unsafe_offset=idx]
+            rp[unsafe_offset=i * 3 + 1] = p[unsafe_offset=idx + 1]
+            rp[unsafe_offset=i * 3 + 2] = p[unsafe_offset=idx + 2]
+            var a = p[unsafe_offset=idx + 3]
+            ap[unsafe_offset=i] = a
+            if a != 255:
+                self.has_alpha = True
+
+
 struct _PdfState(ImplicitlyCopyable, Movable):
     """What `PdfCanvas.save` records and `restore` puts back."""
 
@@ -146,19 +190,27 @@ struct _PdfState(ImplicitlyCopyable, Movable):
 
 
 struct PdfCanvas(DrawTarget, Movable):
-    """A one-page PDF document built from `DrawTarget` calls; see the
-    module docstring for what each becomes. `to_bytes` produces the
-    file, `write_pdf` writes it.
+    """A PDF document built from `DrawTarget` calls, one page at a time;
+    see the module docstring for what each becomes. `to_bytes` produces
+    the file, `write_pdf` writes it.
     """
 
     var width: Int
     var height: Int
     var _content: String
+    # Finished pages' content streams and sizes; the current page is
+    # `_content` with `width`/`height`.
+    var _pages: List[String]
+    var _page_widths: List[Int]
+    var _page_heights: List[Int]
     # ExtGState dictionaries by their body text, so two elements with
     # the same alpha and blend share one resource.
     var _gstates: List[String]
     # Shading dictionaries, one per gradient fill.
     var _shadings: List[String]
+    # Fonts the text used, and images drawn, in resource order.
+    var _efonts: List[_EmbeddedFont]
+    var _images: List[_PdfImage]
     var _transform: Matrix2D
     var _transformed: Bool
     var _blend: BlendMode
@@ -167,10 +219,11 @@ struct PdfCanvas(DrawTarget, Movable):
     var _saved: List[_PdfState]
     var _open_group: Bool
     var _title: String
+    var _author: String
     var _fonts: FontCache
 
     def __init__(out self, width: Int, height: Int) raises:
-        """An empty page of `width x height` points.
+        """A document with one empty page of `width x height` points.
 
         Args:
             width: Page width in points.
@@ -179,8 +232,13 @@ struct PdfCanvas(DrawTarget, Movable):
         self.width = width
         self.height = height
         self._content = ""
+        self._pages = List[String]()
+        self._page_widths = List[Int]()
+        self._page_heights = List[Int]()
         self._gstates = List[String]()
         self._shadings = List[String]()
+        self._efonts = List[_EmbeddedFont]()
+        self._images = List[_PdfImage]()
         self._transform = Matrix2D.identity()
         self._transformed = False
         self._blend = BlendMode.SOURCE_OVER
@@ -189,7 +247,48 @@ struct PdfCanvas(DrawTarget, Movable):
         self._saved = List[_PdfState]()
         self._open_group = False
         self._title = ""
+        self._author = ""
         self._fonts = FontCache()
+
+    # ---- pages ----------------------------------------------------
+
+    def _page_stream(self) -> String:
+        """The current page's content stream as it would be written:
+        the flip, the operators, and closers for anything still open."""
+        var stream = String("1 0 0 -1 0 ")
+        _num(stream, Float64(self.height))
+        stream += "cm\n" + self._content
+        if self._open_group:
+            stream += "EMC\n"
+        for _ in range(self._clip_depth):
+            stream += "Q\n"
+        return stream
+
+    def new_page(mut self, width: Int = -1, height: Int = -1):
+        """Finish the current page and start another, of the same size
+        unless `width` and `height` say otherwise. Open clips and an
+        open annotated group are closed on the page they belong to;
+        the transform, blend mode and color space carry over, as they
+        are drawing state rather than page state.
+
+        Args:
+            width: The new page's width in points, or -1 for the same.
+            height: The new page's height in points, or -1 for the same.
+        """
+        self._pages.append(self._page_stream())
+        self._page_widths.append(self.width)
+        self._page_heights.append(self.height)
+        self._content = ""
+        self._clip_depth = 0
+        self._open_group = False
+        if width > 0:
+            self.width = width
+        if height > 0:
+            self.height = height
+
+    def page_count(self) -> Int:
+        """How many pages the document has, the current one included."""
+        return len(self._pages) + 1
 
     # ---- state -------------------------------------------------------
 
@@ -290,6 +389,14 @@ struct PdfCanvas(DrawTarget, Movable):
             title: Document title.
         """
         self._title = title
+
+    def set_author(mut self, author: String):
+        """The document's `/Author`, in its `/Info` dictionary.
+
+        Args:
+            author: Document author.
+        """
+        self._author = author
 
     # ---- element framing ------------------------------------------
 
@@ -1256,6 +1363,116 @@ struct PdfCanvas(DrawTarget, Movable):
 
     # ---- text -----------------------------------------------------
 
+    def _font_index(mut self, path: String, face: ArcPointer[TTFFace]) -> Int:
+        """The resource index of the embedded font for `path`, made on
+        first use."""
+        for i in range(len(self._efonts)):
+            if self._efonts[i].path == path:
+                return i
+        self._efonts.append(_EmbeddedFont(path, face, len(self._efonts)))
+        return len(self._efonts) - 1
+
+    def _emit_text(
+        mut self,
+        x: Float64,
+        y: Float64,
+        text: String,
+        color: Color,
+        size: Float64,
+        family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        rotation: Float64,
+        align: TextAlign,
+        stroke: Bool,
+        width: Float64,
+        join: LineJoin,
+        miter_limit: Float64,
+    ) raises:
+        """The shared body of `draw_text` and `stroke_text`: the raster
+        layout, then one `TJ` per run of glyphs from one font, each run
+        positioned by its text matrix and kerned by `TJ` adjustments."""
+        if text == "":
+            return
+        var block = _layout_block(
+            text,
+            size,
+            family,
+            slant,
+            weight,
+            rotation,
+            align,
+            True,
+            True,
+            self._fonts,
+        )
+        if not block.any_ink:
+            return
+        var primary_path = self._fonts.resolve(family, slant, weight)
+        var primary = self._fonts.resolve_face(family, slant, weight, size)
+        var primary_index = self._font_index(primary_path, primary)
+        var c = cos(rotation)
+        var sn = sin(rotation)
+
+        self._begin(color, stroke)
+        if stroke:
+            self._write_stroke_attrs(
+                width, List[Float64](), 0.0, LineCap.ROUND, join, miter_limit
+            )
+            self._content += "1 Tr "
+        self._content += "BT "
+        for i in range(len(block.lines)):
+            ref line = block.lines[i]
+            var pen_x = line.x
+            var run_font = -1
+            var run = String()
+            for shaped in line.glyphs:
+                pen_x += shaped.kern_before
+                var font_index = primary_index
+                var gid = shaped.glyph
+                var advance = 0.0
+                if gid != 0:
+                    advance = glyph_index_metrics(primary[], gid).advance
+                    self._efonts[primary_index].mark(gid, shaped.chars)
+                else:
+                    var fpath = self._fonts.resolve_for_char(
+                        family, slant, weight, shaped.codepoint
+                    )
+                    var fface = self._fonts.resolve_face_for_char(
+                        family, slant, weight, shaped.codepoint, size
+                    )
+                    gid = fface[].glyph_index_for_codepoint(shaped.codepoint)
+                    advance = glyph_index_metrics(fface[], gid).advance
+                    font_index = self._font_index(fpath, fface)
+                    self._efonts[font_index].mark(gid, shaped.chars)
+                if font_index != run_font:
+                    if run_font >= 0:
+                        self._content += run + "] TJ "
+                    run_font = font_index
+                    self._content += "/F" + String(font_index + 1) + " "
+                    _num(self._content, size)
+                    self._content += "Tf "
+                    _num(self._content, c)
+                    _num(self._content, sn)
+                    _num(self._content, sn)
+                    _num(self._content, -c)
+                    _num(self._content, x + pen_x * c - line.y * sn)
+                    _num(self._content, y + pen_x * sn + line.y * c)
+                    self._content += "Tm "
+                    run = "["
+                elif shaped.kern_before != 0.0:
+                    var adjust = -shaped.kern_before / size * 1000.0
+                    run += (
+                        String(Int(adjust + (0.5 if adjust >= 0.0 else -0.5)))
+                        + " "
+                    )
+                run += "<" + _hex4(gid) + ">"
+                pen_x += advance
+            if run_font >= 0:
+                self._content += run + "] TJ "
+        self._content += "ET "
+        self._end()
+
     def draw_text(
         mut self,
         x: Float64,
@@ -1269,14 +1486,15 @@ struct PdfCanvas(DrawTarget, Movable):
         rotation: Float64 = 0.0,
         align: TextAlign = TextAlign.LEFT,
     ) raises:
-        """Draw `text` as filled glyph outlines (`canvas.text.text_path`),
-        laid out exactly as the raster `draw_text` lays it out. Not on
-        `DrawTarget`, which excludes text.
+        """Draw `text` as real, selectable text in an embedded subset
+        of the font, laid out exactly as the raster `draw_text` lays it
+        out (shaping, kerning, line breaking, alignment, rotation about
+        the anchor). Not on `DrawTarget`, which excludes text.
 
         Args:
             x: Anchor x -- baseline left end for LEFT alignment.
             y: Anchor y -- baseline.
-            text: Text to draw, "\\\\n"-separated lines.
+            text: Text to draw, "\\n"-separated lines.
             color: Fill color.
             size: Font size in points.
             family: Font family name or generic alias.
@@ -1288,19 +1506,22 @@ struct PdfCanvas(DrawTarget, Movable):
         Raises:
             Error: No font could be resolved for `family`.
         """
-        var outline = text_path(
+        self._emit_text(
             x,
             y,
             text,
+            color,
             size,
             family,
             slant,
             weight,
             rotation,
             align,
-            cache=self._fonts,
+            False,
+            1.0,
+            LineJoin.ROUND,
+            4.0,
         )
-        self.fill_path_aa(outline, color, FillRule.NONZERO)
 
     def stroke_text(
         mut self,
@@ -1318,7 +1539,8 @@ struct PdfCanvas(DrawTarget, Movable):
         join: LineJoin = LineJoin.ROUND,
         miter_limit: Float64 = 4.0,
     ) raises:
-        """Outline `text` rather than fill it; see `draw_text`.
+        """Outline `text` rather than fill it (text render mode 1); see
+        `draw_text`.
 
         Args:
             x: Anchor x.
@@ -1338,7 +1560,58 @@ struct PdfCanvas(DrawTarget, Movable):
         Raises:
             Error: No font could be resolved for `family`.
         """
-        var outline = text_path(
+        self._emit_text(
+            x,
+            y,
+            text,
+            color,
+            size,
+            family,
+            slant,
+            weight,
+            rotation,
+            align,
+            True,
+            width,
+            join,
+            miter_limit,
+        )
+
+    def text_outline(
+        mut self,
+        x: Float64,
+        y: Float64,
+        text: String,
+        size: Float64,
+        family: String = "Sans",
+        slant: FontSlant = FontSlant.NORMAL,
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+    ) raises -> Path:
+        """`text`'s outline as a `Path`, through this document's font
+        cache: `canvas.text.text_path` for a caller that wants glyphs
+        as shapes (to clip with, or to fill with a gradient) rather
+        than as text.
+
+        Args:
+            x: Anchor x.
+            y: Anchor y -- baseline.
+            text: Text to outline.
+            size: Font size in points.
+            family: Font family name or generic alias.
+            slant: Requested upright/italic/oblique style.
+            weight: Requested normal/bold weight.
+            rotation: Radians, rotating the block around the anchor.
+            align: Horizontal alignment of each line.
+
+        Returns:
+            The outline, filled correctly under `FillRule.NONZERO`.
+
+        Raises:
+            Error: No font could be resolved for `family`.
+        """
+        return text_path(
             x,
             y,
             text,
@@ -1350,9 +1623,47 @@ struct PdfCanvas(DrawTarget, Movable):
             align,
             cache=self._fonts,
         )
-        self.stroke_path_aa(
-            outline, color, width, join=join, miter_limit=miter_limit
-        )
+
+    # ---- images ---------------------------------------------------
+
+    def draw_image(
+        mut self,
+        image: Canvas,
+        x: Float64,
+        y: Float64,
+        width: Float64 = 0.0,
+        height: Float64 = 0.0,
+    ):
+        """Draw `image` with its top-left at (x, y), scaled to
+        `width x height` points (its own pixel size when 0), as an
+        image XObject; a pixel that is not opaque gives the image a
+        soft mask. The `draw_canvas` of this backend, though not on
+        `DrawTarget`.
+
+        Args:
+            image: The pixels to draw. Unchanged.
+            x: Left edge.
+            y: Top edge.
+            width: Drawn width in points, or 0 for `image.width`.
+            height: Drawn height in points, or 0 for `image.height`.
+        """
+        if image.width <= 0 or image.height <= 0:
+            return
+        var w = width if width > 0.0 else Float64(image.width)
+        var h = height if height > 0.0 else Float64(image.height)
+        self._images.append(_PdfImage(image))
+        var index = len(self._images)
+        self._begin_clip_element()
+        # The unit square's top row is the image's first row; under the
+        # page's y-down space a negative height keeps it at the top.
+        _num(self._content, w)
+        _num(self._content, 0.0)
+        _num(self._content, 0.0)
+        _num(self._content, -h)
+        _num(self._content, x)
+        _num(self._content, y + h)
+        self._content += "cm /Im" + String(index) + " Do "
+        self._end()
 
     # ---- groups ---------------------------------------------------
 
@@ -1380,44 +1691,40 @@ struct PdfCanvas(DrawTarget, Movable):
     # ---- output ---------------------------------------------------
 
     def content(self) -> String:
-        """The page's content stream operators as written so far,
-        without the flip that opens the stream in the file: what a
-        test reads to see what a call became."""
+        """The current page's content stream operators as written so
+        far, without the flip that opens the stream in the file: what
+        a test reads to see what a call became."""
         return self._content
 
-    def to_bytes(self, compress: Bool = True) raises -> List[UInt8]:
-        """The complete PDF file.
+    def to_bytes(mut self, compress: Bool = True) raises -> List[UInt8]:
+        """The complete PDF file: catalog, page tree, the embedded
+        fonts, the images, each page with its content stream, and the
+        `/Info` dictionary when a title or author was set. Building it
+        marks nothing on the document; the same call can be made again.
 
         Args:
-            compress: Flate-compress the content stream (the default);
-                False leaves it readable.
+            compress: Flate-compress the streams (the default); False
+                leaves the content readable and the fonts as they are.
 
         Returns:
             The file's bytes.
+
+        Raises:
+            Error: Never in practice; the compressor's signature.
         """
-        var stream = String("1 0 0 -1 0 ")
-        _num(stream, Float64(self.height))
-        stream += "cm\n" + self._content
-        if self._open_group:
-            stream += "EMC\n"
-        for _ in range(self._clip_depth):
-            stream += "Q\n"
-        var raw = List[UInt8]()
-        for b in stream.as_bytes():
-            raw.append(b)
-        var body = List[UInt8]()
-        if compress:
-            var packed = deflate(raw)
-            body.append(0x78)
-            body.append(0x9C)
-            body.extend(packed^)
-            var adler = _adler32(raw)
-            body.append(UInt8((adler >> 24) & 0xFF))
-            body.append(UInt8((adler >> 16) & 0xFF))
-            body.append(UInt8((adler >> 8) & 0xFF))
-            body.append(UInt8(adler & 0xFF))
-        else:
-            body = raw^
+        # Object numbers: 1 catalog, 2 pages, then the fonts (five
+        # objects each), the images (one, or two with a soft mask), the
+        # pages (two each), and the info dictionary last.
+        var font_base = 3
+        var image_base = font_base + 5 * len(self._efonts)
+        var image_objects = 0
+        for i in range(len(self._images)):
+            image_objects += 2 if self._images[i].has_alpha else 1
+        var page_base = image_base + image_objects
+        var page_count = len(self._pages) + 1
+        var info_number = page_base + 2 * page_count
+        var have_info = self._title != "" or self._author != ""
+        var total = info_number if have_info else info_number - 1
 
         var out = List[UInt8]()
         var offsets = List[Int]()
@@ -1433,58 +1740,226 @@ struct PdfCanvas(DrawTarget, Movable):
             out, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
         )
         offsets.append(len(out))
-        _append_text(
-            out, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
-        )
-        offsets.append(len(out))
-        var page = String(
-            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
-        )
-        page += String(self.width) + " " + String(self.height) + "]"
-        page += " /Contents 4 0 R /Resources << "
-        if len(self._gstates) > 0:
-            page += "/ExtGState << "
-            for i in range(len(self._gstates)):
-                page += (
-                    "/GS" + String(i + 1) + " << " + self._gstates[i] + ">> "
-                )
-            page += ">> "
-        if len(self._shadings) > 0:
-            page += "/Shading << "
-            for i in range(len(self._shadings)):
-                page += "/Sh" + String(i + 1) + " " + self._shadings[i] + " "
-            page += ">> "
-        page += ">> >>\nendobj\n"
-        _append_text(out, page)
-        offsets.append(len(out))
-        _append_text(out, "4 0 obj\n<< /Length " + String(len(body)))
-        if compress:
-            _append_text(out, " /Filter /FlateDecode")
-        _append_text(out, " >>\nstream\n")
-        out.extend(body^)
-        _append_text(out, "\nendstream\nendobj\n")
-        var count = 5
-        if self._title != "":
+        var kids = String("2 0 obj\n<< /Type /Pages /Kids [")
+        for i in range(page_count):
+            kids += String(page_base + 2 * i) + " 0 R "
+        kids += "] /Count " + String(page_count) + " >>\nendobj\n"
+        _append_text(out, kids)
+
+        # Fonts.
+        for i in range(len(self._efonts)):
+            var base = font_base + 5 * i
+            ref font = self._efonts[i]
+            var name = font.base_name()
+            var cff = font.is_cff()
             offsets.append(len(out))
             _append_text(
                 out,
-                "5 0 obj\n<< /Title "
-                + _pdf_string(self._title)
-                + " >>\nendobj\n",
+                String(base)
+                + " 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /"
+                + name
+                + " /Encoding /Identity-H /DescendantFonts ["
+                + String(base + 1)
+                + " 0 R] /ToUnicode "
+                + String(base + 4)
+                + " 0 R >>\nendobj\n",
             )
-            count = 6
+            offsets.append(len(out))
+            var cid = String(base + 1) + " 0 obj\n<< /Type /Font /Subtype /"
+            cid += "CIDFontType0" if cff else "CIDFontType2"
+            cid += " /BaseFont /" + name
+            cid += (
+                " /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity)"
+                " /Supplement 0 >>"
+            )
+            cid += " /FontDescriptor " + String(base + 2) + " 0 R /DW 1000 /W "
+            cid += font.widths_array()
+            if not cff:
+                cid += " /CIDToGIDMap /Identity"
+            cid += " >>\nendobj\n"
+            _append_text(out, cid)
+            offsets.append(len(out))
+            var bbox = font.bbox_1000()
+            var desc = (
+                String(base + 2)
+                + " 0 obj\n<< /Type /FontDescriptor /FontName /"
+                + name
+            )
+            desc += (
+                " /Flags 4 /FontBBox ["
+                + String(bbox[0])
+                + " "
+                + String(bbox[1])
+            )
+            desc += " " + String(bbox[2]) + " " + String(bbox[3]) + "]"
+            desc += " /ItalicAngle 0 /Ascent " + String(font.ascent_1000())
+            desc += " /Descent " + String(font.descent_1000())
+            desc += " /CapHeight " + String(font.ascent_1000()) + " /StemV 80 "
+            desc += "/FontFile3 " if cff else "/FontFile2 "
+            desc += String(base + 3) + " 0 R >>\nendobj\n"
+            _append_text(out, desc)
+            offsets.append(len(out))
+            var program = self._efonts[i].font_file()
+            var extra = String(" /Subtype /OpenType") if cff else (
+                " /Length1 " + String(len(program))
+            )
+            _append_stream(out, base + 3, extra, program^, compress)
+            offsets.append(len(out))
+            var cmap = List[UInt8]()
+            _append_text(cmap, font.to_unicode())
+            _append_stream(out, base + 4, "", cmap^, compress)
+
+        # Images.
+        var number = image_base
+        for i in range(len(self._images)):
+            ref img = self._images[i]
+            offsets.append(len(out))
+            var dict = String(
+                " /Type /XObject /Subtype /Image /Width "
+            ) + String(img.width)
+            dict += " /Height " + String(img.height)
+            dict += " /ColorSpace /DeviceRGB /BitsPerComponent 8"
+            if img.has_alpha:
+                dict += " /SMask " + String(number + 1) + " 0 R"
+            _append_stream(out, number, dict, img.rgb.copy(), compress)
+            number += 1
+            if img.has_alpha:
+                offsets.append(len(out))
+                var mask = String(
+                    " /Type /XObject /Subtype /Image /Width "
+                ) + String(img.width)
+                mask += " /Height " + String(img.height)
+                mask += " /ColorSpace /DeviceGray /BitsPerComponent 8"
+                _append_stream(out, number, mask, img.alpha.copy(), compress)
+                number += 1
+
+        # Resources, shared by every page.
+        var resources = String("/Resources << ")
+        if len(self._gstates) > 0:
+            resources += "/ExtGState << "
+            for i in range(len(self._gstates)):
+                resources += (
+                    "/GS" + String(i + 1) + " << " + self._gstates[i] + ">> "
+                )
+            resources += ">> "
+        if len(self._shadings) > 0:
+            resources += "/Shading << "
+            for i in range(len(self._shadings)):
+                resources += (
+                    "/Sh" + String(i + 1) + " " + self._shadings[i] + " "
+                )
+            resources += ">> "
+        if len(self._efonts) > 0:
+            resources += "/Font << "
+            for i in range(len(self._efonts)):
+                resources += (
+                    "/F"
+                    + String(i + 1)
+                    + " "
+                    + String(font_base + 5 * i)
+                    + " 0 R "
+                )
+            resources += ">> "
+        if len(self._images) > 0:
+            resources += "/XObject << "
+            var n = image_base
+            for i in range(len(self._images)):
+                resources += "/Im" + String(i + 1) + " " + String(n) + " 0 R "
+                n += 2 if self._images[i].has_alpha else 1
+            resources += ">> "
+        resources += ">>"
+
+        # Pages.
+        for i in range(page_count):
+            var page_number = page_base + 2 * i
+            var w = self._page_widths[i] if i < len(self._pages) else self.width
+            var h = (
+                self._page_heights[i] if i < len(self._pages) else self.height
+            )
+            offsets.append(len(out))
+            var page = (
+                String(page_number)
+                + " 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
+            )
+            page += (
+                String(w)
+                + " "
+                + String(h)
+                + "] /Contents "
+                + String(page_number + 1)
+            )
+            page += " 0 R " + resources + " >>\nendobj\n"
+            _append_text(out, page)
+            offsets.append(len(out))
+            var stream = (
+                self._pages[i] if i < len(self._pages) else self._page_stream()
+            )
+            var raw = List[UInt8]()
+            _append_text(raw, stream)
+            _append_stream(out, page_number + 1, "", raw^, compress)
+
+        if have_info:
+            offsets.append(len(out))
+            var info = (
+                String(info_number) + " 0 obj\n<< /Producer (canvas_mojo)"
+            )
+            if self._title != "":
+                info += " /Title " + _pdf_string(self._title)
+            if self._author != "":
+                info += " /Author " + _pdf_string(self._author)
+            info += " >>\nendobj\n"
+            _append_text(out, info)
+
         var xref = len(out)
         var table = (
-            String("xref\n0 ") + String(count) + "\n0000000000 65535 f \n"
+            String("xref\n0 ") + String(total + 1) + "\n0000000000 65535 f \n"
         )
         for off in offsets:
             table += _pad10(off) + " 00000 n \n"
-        table += "trailer\n<< /Size " + String(count) + " /Root 1 0 R"
-        if self._title != "":
-            table += " /Info 5 0 R"
+        table += "trailer\n<< /Size " + String(total + 1) + " /Root 1 0 R"
+        if have_info:
+            table += " /Info " + String(info_number) + " 0 R"
         table += " >>\nstartxref\n" + String(xref) + "\n%%EOF\n"
         _append_text(out, table)
         return out^
+
+
+def _append_stream(
+    mut out: List[UInt8],
+    number: Int,
+    dict_extra: String,
+    var body: List[UInt8],
+    compress: Bool,
+) raises:
+    """Object `number` as a stream: the dictionary with `dict_extra`
+    inside it, `body` Flate-compressed in the zlib framing when
+    `compress`."""
+    var data = List[UInt8]()
+    if compress:
+        var packed = deflate(body)
+        data.append(0x78)
+        data.append(0x9C)
+        data.extend(packed^)
+        var adler = _adler32(body)
+        data.append(UInt8((adler >> 24) & 0xFF))
+        data.append(UInt8((adler >> 16) & 0xFF))
+        data.append(UInt8((adler >> 8) & 0xFF))
+        data.append(UInt8(adler & 0xFF))
+    else:
+        data = body^
+    _append_text(
+        out,
+        String(number)
+        + " 0 obj\n<<"
+        + dict_extra
+        + " /Length "
+        + String(len(data)),
+    )
+    if compress:
+        _append_text(out, " /Filter /FlateDecode")
+    _append_text(out, " >>\nstream\n")
+    out.extend(data^)
+    _append_text(out, "\nendstream\nendobj\n")
 
 
 def _pad10(n: Int) -> String:
@@ -1500,7 +1975,7 @@ def _append_text(mut out: List[UInt8], text: String):
         out.append(b)
 
 
-def write_pdf(pdf: PdfCanvas, path: String) raises:
+def write_pdf(mut pdf: PdfCanvas, path: String) raises:
     """Write `pdf` to `path`, the PDF counterpart to `write_png` and
     `write_svg`.
 
