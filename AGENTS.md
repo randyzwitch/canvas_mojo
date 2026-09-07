@@ -147,7 +147,18 @@ resolves.
   harness for a single primitive.
 - Check the machine is quiet first: `ps -eo args | grep '^mojo run'`
   and `/proc/loadavg`. Another session's test run makes parallel numbers
-  meaningless.
+  meaningless. This gates `pixi run bench-record` too: recording under
+  load put every row 15-40% high, which raises the floor `bench-check`
+  compares against for good. The tell is rows the branch never touched
+  moving, so diff a new recording against the old and read those first.
+- A leaf function timed in a loop of its own can point the wrong way,
+  because the loop vectorizes and the call site does not. A polynomial
+  `asin` measured 2.7x faster than the library's that way and 1.75x
+  slower where it was actually used.
+- A loop copying or combining two buffers a byte at a time will not
+  vectorize: the compiler cannot know they do not overlap. Saying it
+  with `unsafe_load[width=N]` and `unsafe_store` is worth 3x to 20x,
+  and was most of what the PNG codec had left to give.
 - Phase-time inside the real call sequence, not each phase alone; the
   cache-coherence cost of a banded pass shows up in the *next* serial
   phase.
