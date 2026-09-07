@@ -26,9 +26,10 @@ misrender it.
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.color import Color
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.io.deflate import deflate, inflate
 from canvas.io.png import (
+    PngLevel,
     decode_png,
     read_png,
     write_png,
@@ -568,6 +569,85 @@ def test_read_rejects_corrupted_crc() raises:
     except:
         raised = True
     assert_true(raised)
+
+
+def _level_scene(with_alpha: Bool) raises -> Canvas:
+    """Flat regions, a smooth ramp and fine grain in one image, so the
+    filter choice is not the same everywhere.
+    """
+    var c = Canvas(61, 37, Color(255, 255, 255))
+    var p = c.pixels.unsafe_ptr()
+    var seed = 4242
+    for y in range(37):
+        for x in range(61):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            var i = (y * 61 + x) * BYTES_PER_PIXEL
+            if x < 20:
+                # Flat, where unfiltered rows win.
+                p[unsafe_offset=i] = 30
+                p[unsafe_offset=i + 1] = 90
+                p[unsafe_offset=i + 2] = 160
+            elif x < 40:
+                # A ramp.
+                p[unsafe_offset=i] = UInt8((x * 6) & 0xFF)
+                p[unsafe_offset=i + 1] = UInt8((y * 5) & 0xFF)
+                p[unsafe_offset=i + 2] = UInt8((x + y) & 0xFF)
+            else:
+                # Grain, where Sub-filtered rows win.
+                p[unsafe_offset=i] = UInt8(seed & 0xFF)
+                p[unsafe_offset=i + 1] = UInt8((seed >> 8) & 0xFF)
+                p[unsafe_offset=i + 2] = UInt8((seed >> 16) & 0xFF)
+            p[unsafe_offset=i + 3] = UInt8(
+                (seed >> 5) & 0xFF
+            ) if with_alpha else 255
+    return c^
+
+
+def test_every_encoding_level_round_trips_the_same_pixels() raises:
+    # The levels trade encode time against file size. What none of
+    # them may do is change a pixel.
+    var levels: List[PngLevel] = [
+        PngLevel.FAST,
+        PngLevel.DEFAULT,
+        PngLevel.SMALL,
+    ]
+    for alpha in range(2):
+        var source = _level_scene(alpha == 1)
+        for li in range(len(levels)):
+            write_png(source, TMP_PATH, levels[li])
+            var back = read_png(TMP_PATH)
+            assert_equal(back.width, source.width)
+            assert_equal(back.height, source.height)
+            for i in range(len(source.pixels)):
+                assert_equal(
+                    back.pixels[i],
+                    source.pixels[i],
+                    String(
+                        "byte ",
+                        i,
+                        " at level ",
+                        levels[li],
+                        " with alpha ",
+                        alpha,
+                    ),
+                )
+
+
+def test_the_default_encoding_level_is_the_default() raises:
+    # Passing DEFAULT explicitly must produce the same file as not
+    # passing anything, byte for byte.
+    var source = _level_scene(False)
+    write_png(source, TMP_PATH)
+    var f = open(TMP_PATH, "r")
+    var implicit = f.read_bytes()
+    f.close()
+    write_png(source, TMP_PATH, PngLevel.DEFAULT)
+    var g = open(TMP_PATH, "r")
+    var explicit = g.read_bytes()
+    g.close()
+    assert_equal(len(implicit), len(explicit))
+    for i in range(len(implicit)):
+        assert_equal(implicit[i], explicit[i], String("byte ", i))
 
 
 def main() raises:

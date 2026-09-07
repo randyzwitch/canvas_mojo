@@ -36,7 +36,7 @@ from std.testing import assert_equal, assert_true, TestSuite
 from canvas.color import Color
 from canvas.buffer import Canvas
 from canvas.path import Path
-from canvas.text.font_cache import FontCache
+from canvas.text.font_cache import _GLYPH_MASK_BUDGET, FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.render import (
     draw_text,
@@ -1170,6 +1170,89 @@ def test_stroke_text_leaves_the_glyph_mask_cache_alone() raises:
     stroke_text(c, 20.0, 90.0, "Outline", FG, 48.0, width=2.0, cache=cache)
     assert_equal(cache.glyph_mask_count(), 0, "stroking caches no masks")
     assert_true(_ink_bbox(c, BG).found_any, "and still renders")
+
+
+def _churn_glyphs(mut cache: FontCache, rounds: Int, size: Float64) raises:
+    """Draw a word at `rounds` distinct sub-pixel anchors, which makes
+    a new mask per call and is what drives the store past its bounds.
+    """
+    var canvas = Canvas(400, 200, BG)
+    for i in range(rounds):
+        var fx = 20.0 + Float64(i % 64) / 64.0
+        var fy = 120.0 + Float64((i // 64) % 64) / 64.0
+        draw_text(
+            canvas, fx, fy, "Heading", Color(20, 30, 40), size, cache=cache
+        )
+
+
+def test_glyph_masks_turn_over_within_their_bounds() raises:
+    # The store is bounded twice: by bytes, because a 200-pixel mask is
+    # forty times a 12-pixel one and a count cannot tell them apart,
+    # and by entries, because a dictionary of tens of thousands costs
+    # more to probe than the hits it holds are worth.
+    #
+    # A label drawn throughout keeps its masks. Turning over releases
+    # the older of two generations and a lookup moves an entry back to
+    # the younger one, where clearing the whole store would have thrown
+    # the label away and re-rasterized it on the next draw.
+    var cache = FontCache()
+    var canvas = Canvas(400, 120, BG)
+    var ink = Color(20, 30, 40)
+    draw_text(canvas, 10.0, 60.0, "Q3 revenue", ink, 13.0, cache=cache)
+    var hot = cache.glyph_mask_count()
+    assert_true(hot >= 8, "the hot label cached its glyphs")
+
+    _churn_glyphs(cache, 300, 12.0)
+    draw_text(canvas, 10.0, 60.0, "Q3 revenue", ink, 13.0, cache=cache)
+
+    assert_true(
+        cache.glyph_mask_turnovers() > 0,
+        "the churn was large enough to force a turnover",
+    )
+    assert_true(
+        cache.glyph_mask_bytes() <= _GLYPH_MASK_BUDGET,
+        String(
+            "glyph masks hold ",
+            cache.glyph_mask_bytes(),
+            " bytes, over the ",
+            _GLYPH_MASK_BUDGET,
+            " budget",
+        ),
+    )
+    # Two generations of 2,048, so the store never holds more than
+    # 4,096 however long the churn runs.
+    assert_true(
+        cache.glyph_mask_count() <= 4096,
+        String("glyph masks grew to ", cache.glyph_mask_count()),
+    )
+
+    var before = cache.glyph_mask_count()
+    draw_text(canvas, 10.0, 60.0, "Q3 revenue", ink, 13.0, cache=cache)
+    assert_equal(
+        cache.glyph_mask_count(),
+        before,
+        "a label drawn through the churn is still cached",
+    )
+
+
+def test_clear_glyph_masks_releases_them_and_keeps_faces() raises:
+    var cache = FontCache()
+    var canvas = Canvas(400, 120, BG)
+    draw_text(
+        canvas, 10.0, 60.0, "Release", Color(20, 30, 40), 16.0, cache=cache
+    )
+    assert_true(cache.glyph_mask_count() > 0, "masks were cached")
+    var scanned = cache.has_scanned()
+    cache.clear_glyph_masks()
+    assert_equal(cache.glyph_mask_count(), 0, "masks released")
+    assert_equal(cache.glyph_mask_bytes(), 0, "bytes released with them")
+    assert_equal(cache.has_scanned(), scanned, "the font scan is kept")
+    # And drawing again still works, from a cold mask store.
+    var again = Canvas(400, 120, BG)
+    draw_text(
+        again, 10.0, 60.0, "Release", Color(20, 30, 40), 16.0, cache=cache
+    )
+    assert_true(cache.glyph_mask_count() > 0, "re-rasterized after the clear")
 
 
 def main() raises:

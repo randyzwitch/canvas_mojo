@@ -903,7 +903,12 @@ struct _Match(ImplicitlyCopyable, Movable):
         self.distance = distance
 
 
-def _find_match(chains: _HashChains, data: List[UInt8], pos: Int) -> _Match:
+def _find_match(
+    chains: _HashChains,
+    data: List[UInt8],
+    pos: Int,
+    max_chain: Int = _MAX_CHAIN,
+) -> _Match:
     """The best LZ77 match for the bytes at `pos` -- longest, and
     nearest among equal lengths, since the chain is walked
     most-recent-first -- among the _MAX_CHAIN most recent positions
@@ -940,7 +945,7 @@ def _find_match(chains: _HashChains, data: List[UInt8], pos: Int) -> _Match:
         chains.head.unsafe_ptr()[unsafe_offset=_hash3(data, pos, chains.mask)]
     )
     var walked = 0
-    while candidate >= 0 and walked < _MAX_CHAIN:
+    while candidate >= 0 and walked < max_chain:
         walked += 1
         var distance = pos - candidate
         if distance > _WINDOW:
@@ -1215,7 +1220,11 @@ def _run_length_code(lengths: List[Int]) -> List[_LengthCode]:
     return out^
 
 
-def deflate(data: List[UInt8]) raises -> List[UInt8]:
+def deflate(
+    data: List[UInt8],
+    max_chain: Int = _MAX_CHAIN,
+    max_lazy: Int = _MAX_LAZY,
+) raises -> List[UInt8]:
     """Compress `data` into a raw DEFLATE stream (RFC 1951): LZ77 over
     a head/prev hash-chain match search (see _HashChains) capped at
     _MAX_CHAIN candidates, then one Huffman-coded block. Not a zlib
@@ -1271,7 +1280,7 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
             m = deferred
             have_deferred = False
         else:
-            m = _find_match(chains, data, i)
+            m = _find_match(chains, data, i, max_chain)
         if m.length >= _MIN_MATCH:
             # Lazy matching: a match starting one byte later may be
             # longer than this one, and a literal plus the longer match
@@ -1279,9 +1288,9 @@ def deflate(data: List[UInt8]) raises -> List[UInt8]:
             # plus whatever follows it. Skipped when this match already
             # runs as far as one starting a byte later could reach,
             # where no improvement is possible.
-            if m.length < min(_MAX_LAZY, n - i):
+            if m.length < min(max_lazy, n - i):
                 chains.index_upto(data, i + 1)
-                var later = _find_match(chains, data, i + 1)
+                var later = _find_match(chains, data, i + 1, max_chain)
                 if later.length > m.length:
                     var byte = Int(data[i])
                     tokens.append(_Token(byte, 0))
