@@ -184,6 +184,18 @@ def _downsample_band(
     two ever touch the same byte -- which is the basis on which
     `pixels` is shared mutably between them.
     """
+    # `n` is fixed for the whole band, and a supersampling factor is
+    # usually a power of two, where the mean is a shift rather than
+    # four integer divisions per output pixel. The branch below goes
+    # the same way every time through, so it costs nothing the divide
+    # was not already costing.
+    var half = n // 2
+    var shift = 0
+    var probe = n
+    while probe > 1 and probe & 1 == 0:
+        probe >>= 1
+        shift += 1
+    var pow2 = probe == 1
     for oy in range(first_row, last_row):
         var out_idx = oy * out_width * BYTES_PER_PIXEL
         for ox in range(out_width):
@@ -200,8 +212,14 @@ def _downsample_band(
                     g_sum += Int(p.g)
                     b_sum += Int(p.b)
                     a_sum += Int(p.a)
-            pixels[out_idx] = UInt8((r_sum + n // 2) // n)
-            pixels[out_idx + 1] = UInt8((g_sum + n // 2) // n)
-            pixels[out_idx + 2] = UInt8((b_sum + n // 2) // n)
-            pixels[out_idx + 3] = UInt8((a_sum + n // 2) // n)
+            if pow2:
+                pixels[out_idx] = UInt8((r_sum + half) >> shift)
+                pixels[out_idx + 1] = UInt8((g_sum + half) >> shift)
+                pixels[out_idx + 2] = UInt8((b_sum + half) >> shift)
+                pixels[out_idx + 3] = UInt8((a_sum + half) >> shift)
+            else:
+                pixels[out_idx] = UInt8((r_sum + half) // n)
+                pixels[out_idx + 1] = UInt8((g_sum + half) // n)
+                pixels[out_idx + 2] = UInt8((b_sum + half) // n)
+                pixels[out_idx + 3] = UInt8((a_sum + half) // n)
             out_idx += BYTES_PER_PIXEL
