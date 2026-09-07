@@ -1735,5 +1735,78 @@ def test_fill_path_aa_under_a_clip_missing_the_shape() raises:
     _assert_clipped_fill_matches_reference(0, 0, 100, 2)
 
 
+def _ink(c: Canvas) raises -> Int:
+    """Total darkness on a white ground, in 255ths of a pixel."""
+    var total = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            total += 255 - Int(c.get_pixel(x, y).r)
+    return total
+
+
+def test_stroke_wider_than_the_curve_leaves_no_hole() raises:
+    # #279. A stroke covers every point within half its width of the
+    # curve, so once half the width reaches the radius the center is
+    # covered too and the result is a solid disk out to
+    # `radius + half`. The inner offset ring is no help there: offset
+    # a radius-8 circle inward by 15 and you get a tidy radius-7
+    # circle wound the same way, which looks right at every vertex and
+    # subtracts a disk that should be inked.
+    var c = Canvas(80, 60, Color(255, 255, 255))
+    # Built with `ellipse`, whose four cubics flatten to the smooth
+    # ring where nothing local looks wrong. An `arc_to` circle samples
+    # densely enough that a vertex trips the simplicity check on its
+    # own and takes the union path anyway, so it would not exercise
+    # this.
+    var circle = Path()
+    circle.ellipse(40.0, 30.0, 8.0, 8.0)
+    stroke_path_aa(c, circle, Color(0, 0, 0), 30.0)
+
+    assert_equal(
+        c.get_pixel(40, 30).r, 0, "the center of an over-wide stroke is inked"
+    )
+    # And the whole region: a disk of radius 23 is pi * 23^2 = 1661.9
+    # pixels, so 423_795 in 255ths. Within a percent covers the
+    # flattening and the edge's antialiasing.
+    var ink = _ink(c)
+    assert_true(
+        abs(ink - 423795) < 4238,
+        String("ink ", ink, " should be about 423795, the disk it covers"),
+    )
+
+
+def test_stroke_narrower_than_the_curve_keeps_its_hole() raises:
+    # The other side of the same boundary: half the width under the
+    # radius leaves a real hole, and it must survive.
+    var c = Canvas(80, 60, Color(255, 255, 255))
+    var circle = Path()
+    circle.ellipse(40.0, 30.0, 8.0, 8.0)
+    stroke_path_aa(c, circle, Color(0, 0, 0), 6.0)
+    assert_equal(
+        c.get_pixel(40, 30).r, 255, "a 6 px stroke on a radius-8 circle"
+    )
+
+
+def test_stroke_hole_survives_where_only_the_ends_invert() raises:
+    # An ellipse 100 x 30 stroked 24 wide. Half the width, 12, is past
+    # the radius of curvature at the ends of the major axis
+    # (ry^2/rx = 9) but well under the 30 from the center to the
+    # curve, so the ends fill in while the middle stays hollow.
+    #
+    # The guard added for #279 deliberately does not fire here: the
+    # inner ring still bounds a real hole, its centroid being 30 from
+    # the curve against a half-width of 12, so the stroke keeps the
+    # exact-area path. This is the case that says the guard asks what
+    # the ring encloses rather than whether the offset self-intersects
+    # anywhere -- the latter would have thrown away a correct hole.
+    var c = Canvas(230, 100, Color(255, 255, 255))
+    var e = Path()
+    e.ellipse(110.0, 50.0, 100.0, 30.0)
+    stroke_path_aa(c, e, Color(0, 0, 0), 24.0)
+    assert_equal(c.get_pixel(110, 50).r, 255, "the middle stays hollow")
+    assert_equal(c.get_pixel(210, 50).r, 0, "the major-axis end is inked")
+    assert_equal(c.get_pixel(110, 20).r, 0, "the minor-axis top is inked")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

@@ -476,11 +476,12 @@ def _draw_circle_aa_device(
     var half = width / 2.0
     if half >= radius:
         # Every point within `half` of the circle, the center
-        # included, so the stroked region is the solid disk out to
-        # `radius + half`. Stroking it would ask `stroke_path_aa` for
-        # an inner offset of negative radius, which turns itself
-        # inside out and punches a hole that should not be there
-        # (#279); the disk is both correct and cheaper.
+        # included, so the stroked region is exactly the disk out to
+        # `radius + half`. #279 makes the general stroke correct here
+        # too, but it gets there by unioning the segment quads, which
+        # only the sampled sweep can do -- 17 coverage levels against
+        # this fill's 256, measured as a worst pixel of 14 levels
+        # against 4. The closed form is both sharper and cheaper.
         _fill_circle_aa_device(canvas, cx, cy, radius + half, color)
         return
     # `stroke_path_aa` is the public entry and re-applies the canvas
