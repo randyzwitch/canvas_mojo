@@ -7,14 +7,23 @@ This is the mechanism behind supersampled anti-aliasing -- render
 so every output pixel averages `factor * factor` real source samples.
 """
 
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
+from canvas.workers import _bands_for
 
 # Below this many *source* pixels read, the resize runs inline rather
 # than dispatching tasks. Matches the fill sweep's threshold in
 # canvas.aa_crossing; set by benchmark (#96).
 comptime _MIN_PARALLEL_PIXELS = 40000
+
+
+# Source samples read worth one downsampling task -- samples, not
+# output pixels, since a factor-8 pass writes little and reads 64
+# pixels for each of them. A 1600x1200 factor-2 pass improves through
+# 32 bands (7527 us at one worker, 769 at thirty-two, 813 at
+# sixty-four). See `canvas.workers`.
+comptime _RESIZE_SAMPLES_PER_BAND = 60000
 
 
 def downsample(source: Canvas, factor: Int) raises -> Canvas:
@@ -114,13 +123,12 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     # that is what the work actually scales with: a factor-8
     # downsample writes very little but reads 64 pixels for each of
     # them.
-    var bands = 1
-    if out_width * out_height * n >= _MIN_PARALLEL_PIXELS:
-        bands = parallelism_level()
-        if bands > out_height:
-            bands = out_height
-        if bands < 1:
-            bands = 1
+    var bands = _bands_for(
+        out_width * out_height * n,
+        out_height,
+        _RESIZE_SAMPLES_PER_BAND,
+        source.max_workers(),
+    )
 
     if bands == 1:
         _downsample_band(source, pixels, 0, out_height, out_width, factor, n)

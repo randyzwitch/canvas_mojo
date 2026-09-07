@@ -13,7 +13,7 @@ function above builds on.
 """
 
 from std.math import acos, atan2, ceil, cos, pi, sin
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.color import Color
 from canvas.fill_rule import FillRule

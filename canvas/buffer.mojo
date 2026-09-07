@@ -187,6 +187,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # The space source-over blends mix in (see `set_color_space`), and
     # the transfer tables, built when it first becomes LINEAR.
     var _space: ColorSpace
+    # A per-render ceiling on worker threads, 0 for the runtime's own
+    # count. Not part of `save`/`restore`: it is a resource policy for
+    # the whole render, not drawing state a local frame should undo.
+    var _max_workers: Int
     var _transfer: _Transfer
     var _saved: List[_CanvasState]
 
@@ -238,6 +242,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._transformed = False
         self._blend = BlendMode.SOURCE_OVER
         self._space = ColorSpace.SRGB
+        self._max_workers = 0
         self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
         if total == 0:
@@ -291,6 +296,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._transformed = False
         self._blend = BlendMode.SOURCE_OVER
         self._space = ColorSpace.SRGB
+        self._max_workers = 0
         self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
 
@@ -446,6 +452,40 @@ struct Canvas(Copyable, DrawTarget, Movable):
             `set_blend_mode` says otherwise.
         """
         return self._blend
+
+    def set_max_workers(mut self, workers: Int):
+        """Cap how many worker threads a banded pass on this canvas may
+        use. 0, the default, leaves it to the runtime.
+
+        An application rendering several canvases at once otherwise
+        has each one fan out to every thread, which oversubscribes the
+        machine rather than sharing it. This is a per-render ceiling,
+        not a budget across renders: two canvases each capped at 8 may
+        use 16 threads between them.
+
+        Passing a number above what the runtime offers is the same as
+        passing 0. The cap changes how work is divided, never what is
+        drawn: every banded pass writes disjoint rows, so a render is
+        identical at any worker count.
+
+        `save`/`restore` do not carry it, unlike the transform, the
+        blend mode and the color space. It is a resource policy for the
+        whole render rather than drawing state a local frame should be
+        able to undo.
+
+        Args:
+            workers: Maximum worker threads, 0 for the runtime's count.
+        """
+        self._max_workers = workers if workers > 0 else 0
+
+    def max_workers(self) -> Int:
+        """The worker cap `set_max_workers` set.
+
+        Returns:
+            The cap, or 0 when there is none and the runtime's count
+            applies.
+        """
+        return self._max_workers
 
     def set_color_space(mut self, space: ColorSpace):
         """Set the space later source-over blends mix in: SRGB, the
