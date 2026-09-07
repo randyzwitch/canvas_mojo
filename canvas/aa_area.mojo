@@ -53,9 +53,10 @@ own rows of the canvas (#97 applies as it does in the sweep).
 """
 
 from std.math import ceil, floor
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.aa_crossing import _EdgeTable, _MIN_PARALLEL_PIXELS
+from canvas.workers import _bands_for as _shared_bands_for
 from canvas.buffer import Canvas
 from canvas.color import Color
 
@@ -305,22 +306,12 @@ def _deposit_all(
         )
 
 
-def _bands_for(work: Int, row_count: Int) -> Int:
+def _bands_for(work: Int, row_count: Int, max_workers: Int = 0) -> Int:
     """How many row bands to spread `work` cells over: one below
-    `_MIN_PARALLEL_PIXELS`, otherwise `_CELLS_PER_BAND` cells each,
-    never more than the core count or the row count.
+    `_MIN_PARALLEL_WORK`, otherwise `_CELLS_PER_BAND` cells each,
+    never more than the caller's worker cap or the row count.
     """
-    if work < _MIN_PARALLEL_PIXELS:
-        return 1
-    var bands = work // _CELLS_PER_BAND
-    var cores = parallelism_level()
-    if bands > cores:
-        bands = cores
-    if bands > row_count:
-        bands = row_count
-    if bands < 1:
-        bands = 1
-    return bands
+    return _shared_bands_for(work, row_count, _CELLS_PER_BAND, max_workers)
 
 
 @always_inline
@@ -483,7 +474,7 @@ def _area_edges_aa(
     var spans = _row_spans(
         edges, first_row, last_row, row_first_px, row_width + 2
     )
-    var bands = _bands_for(spans.cells(), row_count)
+    var bands = _bands_for(spans.cells(), row_count, canvas.max_workers())
     if bands == 1:
         _area_band(
             canvas,
@@ -656,6 +647,7 @@ def _area_edges_to_mask(
     max_x: Int,
     max_y: Int,
     full_coverage: Int,
+    max_workers: Int = 0,
 ):
     """`_area_edges_aa` writing coverage into a mask instead of
     blending onto a canvas: the same spans first, and the same banding
@@ -672,7 +664,7 @@ def _area_edges_to_mask(
     var spans = _row_spans(
         edges, first_row, last_row, row_first_px, row_width + 2
     )
-    var bands = _bands_for(spans.cells(), row_count)
+    var bands = _bands_for(spans.cells(), row_count, max_workers)
     if bands == 1:
         _area_mask_band(
             mask,

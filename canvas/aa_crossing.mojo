@@ -27,7 +27,9 @@ downward, so each sub-scanline touches only the edges near it.
 """
 
 from std.math import ceil, floor
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime.asyncrt import TaskGroup
+
+from canvas.workers import _MIN_PARALLEL_WORK, _bands_for
 
 from canvas.aa_area import _area_edges_aa, _area_edges_to_mask
 from canvas.buffer import Canvas
@@ -443,7 +445,13 @@ struct _EdgeTable(Movable):
 # inline rather than dispatching tasks: task setup is not free and the
 # shapes this package fills most often are glyph-sized. Set by
 # benchmark (#92) -- re-benchmark before changing it.
-comptime _MIN_PARALLEL_PIXELS = 40000
+comptime _MIN_PARALLEL_PIXELS = _MIN_PARALLEL_WORK
+
+# Pixels of a fill's bounding box worth one sweep task. An 800x600
+# even-odd fill stops improving at 8 bands (4710 us at one worker,
+# 1949 at eight, 1991 at sixty-four), which is where 60,000 puts it.
+# See `canvas.workers`.
+comptime _SWEEP_PIXELS_PER_BAND = 60000
 
 
 struct _CoverageAlpha(Movable):
@@ -663,13 +671,12 @@ def _sweep_edges_sampled_aa(
     #
     # Only a large one. See _MIN_PARALLEL_PIXELS: dispatching for a
     # glyph costs more than sweeping it inline.
-    var bands = 1
-    if row_count * row_width >= _MIN_PARALLEL_PIXELS:
-        bands = parallelism_level()
-        if bands > row_count:
-            bands = row_count
-        if bands < 1:
-            bands = 1
+    var bands = _bands_for(
+        row_count * row_width,
+        row_count,
+        _SWEEP_PIXELS_PER_BAND,
+        canvas.max_workers(),
+    )
 
     # Top-sort the edges so each sub-scanline touches only the edges
     # near it, and each band starts already positioned among them (see
@@ -847,6 +854,7 @@ def _sweep_edges_to_mask(
     fill_rule: FillRule,
     supersample: Int,
     full_coverage: Int = 255,
+    max_workers: Int = 0,
 ):
     """`_sweep_edges_aa`'s counterpart for a coverage mask: the same
     coverage, written as one byte per pixel into `mask` instead of
@@ -881,6 +889,7 @@ def _sweep_edges_to_mask(
             max_x,
             max_y,
             full_coverage,
+            max_workers,
         )
         return
     var s = supersample
@@ -893,13 +902,9 @@ def _sweep_edges_to_mask(
     if row_count <= 0 or row_width <= 0:
         return
 
-    var bands = 1
-    if row_count * row_width >= _MIN_PARALLEL_PIXELS:
-        bands = parallelism_level()
-        if bands > row_count:
-            bands = row_count
-        if bands < 1:
-            bands = 1
+    var bands = _bands_for(
+        row_count * row_width, row_count, _SWEEP_PIXELS_PER_BAND, max_workers
+    )
 
     edges.sort_by_top()
 

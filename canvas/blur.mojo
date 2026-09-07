@@ -106,7 +106,9 @@ tall.
 """
 
 from std.math import sqrt
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime.asyncrt import TaskGroup
+
+from canvas.workers import _bands_for as _shared_bands_for
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -124,6 +126,14 @@ comptime _LANES = 4
 comptime _PLANE = DType.float32
 comptime _Lane = Scalar[_PLANE]
 comptime _Pixel = SIMD[_PLANE, _LANES]
+
+
+# Pixels worth one blur task. An 800x600 blur at radius 8 improves
+# through 32 bands and beyond (5252 us at one worker, 1005 at
+# sixty-four). A band
+# also has to be at least a halo tall, which often binds first; see
+# `_bands_for`.
+comptime _BLUR_PIXELS_PER_BAND = 8000
 
 
 def _sigma_from_radius(radius: Float64) -> Float64:
@@ -530,16 +540,14 @@ async def _blur_band_async(
     _blur_band(canvas, source, r0, r1, r2, y0, y1)
 
 
-def _bands_for(w: Int, h: Int, halo: Int) -> Int:
+def _bands_for(w: Int, h: Int, halo: Int, max_workers: Int = 0) -> Int:
     """How many row bands to blur a `w x h` canvas in: one below
     `_MIN_PARALLEL_PIXELS`, otherwise the core count, capped so that
     a band is at least `halo` rows -- the rows a band computes over
     again for its neighbors are then at most twice its own, which
     measured as the point past which more bands stopped paying.
     """
-    if w * h < _MIN_PARALLEL_PIXELS:
-        return 1
-    var bands = parallelism_level()
+    var bands = _shared_bands_for(w * h, h, _BLUR_PIXELS_PER_BAND, max_workers)
     var by_halo = h // max(halo, 1)
     if bands > by_halo:
         bands = by_halo
@@ -580,7 +588,7 @@ def blur(mut canvas: Canvas, radius: Float64):
     # Every band reads its halo rows from the copy while its neighbors
     # write theirs into `canvas`.
     var source = canvas.pixels.copy()
-    var bands = _bands_for(w, h, halo)
+    var bands = _bands_for(w, h, halo, canvas.max_workers())
     if bands == 1:
         _blur_band(canvas, source, r0, r1, r2, 0, h)
         return

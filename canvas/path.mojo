@@ -27,7 +27,7 @@ called.
 """
 
 from std.math import atan2, ceil, cos, floor, pi, sin, sqrt
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.buffer import Canvas
 from canvas.color import Color, _div255
@@ -66,12 +66,19 @@ from canvas.shapes.lines import (
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_fpoints
+from canvas.workers import _bands_for
 
 # Control-point offset for approximating a quarter ellipse with one
 # cubic Bezier: 4/3 * (sqrt(2) - 1). Maximum radial error is about
 # 0.027% of the radius, which at any size this package draws is far
 # below one supersample step.
 comptime _KAPPA = 0.5522847498307936
+
+
+# Mask pixels worth one task when painting a swept coverage mask
+# through a color source -- the same work per pixel as the rectangle
+# source fill, and the same figure. See `canvas.workers`.
+comptime _SOURCE_PIXELS_PER_BAND = 15000
 
 
 struct PathOp(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
@@ -1869,13 +1876,12 @@ def _fill_path_source_aa[
     # writes its own pixels -- so a large fill is split into bands, one
     # task per band, the same shape the sweep that produced the mask
     # uses and above the same threshold.
-    var bands = 1
-    if mask_width * mask_height >= _MIN_PARALLEL_PIXELS:
-        bands = parallelism_level()
-        if bands > mask_height:
-            bands = mask_height
-        if bands < 1:
-            bands = 1
+    var bands = _bands_for(
+        mask_width * mask_height,
+        mask_height,
+        _SOURCE_PIXELS_PER_BAND,
+        canvas.max_workers(),
+    )
 
     if bands == 1:
         _fill_source_band(

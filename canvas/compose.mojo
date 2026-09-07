@@ -35,13 +35,21 @@ that call takes the blit path above.
 
 from std.math import ceil, floor
 from std.memory import unsafe_memcpy
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, _DIV255_MUL, _DIV255_SHIFT, _div255
 from canvas.geometry import Matrix2D, round_to_int
 from canvas.mask import Mask
+from canvas.workers import _bands_for
+
+
+# Destination pixels worth one task when compositing through a
+# transform. An 800x600 bilinear draw stops improving at 16 bands
+# (7548 us at one worker, 1889 at sixteen, 2140 at sixty-four). The
+# untransformed composite is not banded at all. See `canvas.workers`.
+comptime _COMPOSE_PIXELS_PER_BAND = 30000
 
 
 struct Filter(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
@@ -862,13 +870,9 @@ def _draw_canvas_mapped(
     # Bands write disjoint destination rows and only read the source,
     # the basis the fill sweep bands on, and the same threshold: below
     # it the tasks cost more than the rows do.
-    var bands = 1
-    if rw * rh >= _MIN_PARALLEL_PIXELS:
-        bands = parallelism_level()
-        if bands > rh:
-            bands = rh
-        if bands < 1:
-            bands = 1
+    var bands = _bands_for(
+        rw * rh, rh, _COMPOSE_PIXELS_PER_BAND, dst.max_workers()
+    )
 
     if bands == 1:
         _mapped_band(dst, src, job, rx, rw, ry, ry + rh)
