@@ -838,6 +838,12 @@ def _survey() raises -> List[_Row]:
 # The survey's own run-to-run swing on parallel rows is about 20%;
 # the regression this exists to catch was 2.3x.
 comptime _REGRESSION_FACTOR = 1.5
+
+# Rows faster than this are not compared. A case measuring tens of
+# nanoseconds -- the cached font scan is one -- swings by a factor on
+# timer granularity alone, and reporting that as a regression trains
+# the reader to ignore the check.
+comptime _MIN_COMPARABLE_US = 1.0
 comptime _REFERENCE_PATH = "benchmarks/reference.txt"
 
 
@@ -966,6 +972,15 @@ def _check(rows: List[_Row]) raises:
                 _lpad(_fixed(now, 1), 12),
                 _lpad("-", 8),
                 "  no reference (record to add)",
+            )
+            continue
+        if ref_us < _MIN_COMPARABLE_US and now < _MIN_COMPARABLE_US:
+            print(
+                _pad(r.name, name_w),
+                _lpad(_fixed(ref_us, 1), 12),
+                _lpad(_fixed(now, 1), 12),
+                _lpad("-", 8),
+                "  below the comparable floor",
             )
             continue
         var ratio = now / ref_us

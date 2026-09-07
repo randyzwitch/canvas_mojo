@@ -12,10 +12,11 @@ _angle_in_span, _arc_bounds, _union_bounds, _extend_bounds) every
 function above builds on.
 """
 
-from std.math import atan2, cos, pi, sin
+from std.math import acos, atan2, ceil, cos, pi, sin
 from std.runtime.asyncrt import TaskGroup, parallelism_level
 
 from canvas.color import Color
+from canvas.fill_rule import FillRule
 from canvas.buffer import Canvas
 from canvas.geometry import Point, FPoint, round_to_int
 from canvas.aa_crossing import _CoverageAlpha
@@ -25,8 +26,12 @@ from canvas.shapes.lines import (
     draw_polyline,
     draw_polyline_aa,
 )
-from canvas.shapes.polygon_fill import fill_polygon
-from canvas.path import fill_path_aa, _ring_path, _wedge_path
+from canvas.shapes.polygon_fill import fill_polygon, _fill_polygon_aa_device
+from canvas.path import (
+    fill_path_aa,
+    _ring_path,
+    _wedge_path,
+)
 
 
 # Below this many pixels in a shape's bounding box, the fill runs
@@ -179,6 +184,119 @@ def _arc_points(
     for i in range(len(fpoints)):
         points.append(
             Point(round_to_int(fpoints[i].x), round_to_int(fpoints[i].y))
+        )
+    return points^
+
+
+# The largest a flattened chord may sag from the true curve, in
+# pixels, and the floor and ceiling on the step count it implies.
+# Matches `canvas.path`'s own `_FLATTEN_TOLERANCE`, so a shape drawn
+# through a primitive and the same shape drawn as a `Path` land on the
+# same polygon: a boundary displaced by this much moves a pixel's
+# alpha by about five levels of 255.
+comptime _CURVE_TOLERANCE = 0.02
+comptime _MIN_CURVE_STEPS = 8
+comptime _MAX_CURVE_STEPS = 2048
+
+
+def _steps_for_sweep(radius: Float64, span: Float64) -> Int:
+    """Segments needed to flatten an arc of `radius` over `span`
+    radians within `_CURVE_TOLERANCE`.
+
+    A chord subtending `theta` sags from its arc by
+    `radius * (1 - cos(theta / 2))`, so holding that under the
+    tolerance gives `theta <= 2 * acos(1 - tolerance / radius)` and the
+    count is the sweep over that. Radius-driven rather than the flat
+    one-segment-per-pixel `_arc_fpoints` uses: a 3 px marker needs
+    about thirty segments to stay under a hundredth of a pixel, and
+    one per pixel of arc length would give it twenty.
+    """
+    if radius <= 0.0 or span == 0.0:
+        return _MIN_CURVE_STEPS
+    var ratio = 1.0 - _CURVE_TOLERANCE / radius
+    if ratio <= -1.0:
+        return _MIN_CURVE_STEPS
+    var theta = 2.0 * acos(ratio)
+    if theta <= 0.0:
+        return _MAX_CURVE_STEPS
+    var n = Int(ceil(abs(span) / theta))
+    if n < _MIN_CURVE_STEPS:
+        return _MIN_CURVE_STEPS
+    if n > _MAX_CURVE_STEPS:
+        return _MAX_CURVE_STEPS
+    return n
+
+
+def _ellipse_fpoints(
+    cx: Float64, cy: Float64, rx: Float64, ry: Float64
+) -> List[FPoint]:
+    """A closed ellipse as points on it, spaced to stay within
+    `_CURVE_TOLERANCE` of the true curve. Exact ellipse math
+    (`cx + rx*cos t`, `cy + ry*sin t`), not a Bezier approximation, and
+    the count comes from the larger radius so an eccentric ellipse is
+    sampled for its flatter end too.
+    """
+    var steps = _steps_for_sweep(max(rx, ry), 2.0 * pi)
+    var points = List[FPoint](capacity=steps)
+    var step = 2.0 * pi / Float64(steps)
+    for i in range(steps):
+        var t = Float64(i) * step
+        points.append(FPoint(cx + rx * cos(t), cy + ry * sin(t)))
+    return points^
+
+
+def _wedge_fpoints(
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+) -> List[FPoint]:
+    """A pie wedge as a closed polygon: the center, then the arc from
+    `start_angle` to `end_angle`. Implicitly closed by the caller, so
+    the run back to the center is the closing edge.
+    """
+    var span = end_angle - start_angle
+    var steps = _steps_for_sweep(radius, span)
+    var points = List[FPoint](capacity=steps + 2)
+    points.append(FPoint(cx, cy))
+    var step = span / Float64(steps)
+    for i in range(steps + 1):
+        var t = start_angle + Float64(i) * step
+        points.append(FPoint(cx + radius * cos(t), cy + radius * sin(t)))
+    return points^
+
+
+def _ring_fpoints(
+    cx: Float64,
+    cy: Float64,
+    inner_radius: Float64,
+    outer_radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+) -> List[FPoint]:
+    """An annular sector as one closed polygon: out along the outer
+    arc, then back along the inner one. A single ring that winds once,
+    so it fills the same under either rule.
+    """
+    var span = end_angle - start_angle
+    var outer_steps = _steps_for_sweep(outer_radius, span)
+    var inner_steps = _steps_for_sweep(inner_radius, span)
+    var points = List[FPoint](capacity=outer_steps + inner_steps + 4)
+    var outer_step = span / Float64(outer_steps)
+    for i in range(outer_steps + 1):
+        var t = start_angle + Float64(i) * outer_step
+        points.append(
+            FPoint(cx + outer_radius * cos(t), cy + outer_radius * sin(t))
+        )
+    if inner_radius <= 0.0:
+        points.append(FPoint(cx, cy))
+        return points^
+    var inner_step = span / Float64(inner_steps)
+    for i in range(inner_steps + 1):
+        var t = end_angle - Float64(i) * inner_step
+        points.append(
+            FPoint(cx + inner_radius * cos(t), cy + inner_radius * sin(t))
         )
     return points^
 
@@ -493,7 +611,7 @@ def fill_arc_aa(
             canvas,
             _wedge_path(cx, cy, radius, start_angle, end_angle),
             color,
-            supersample=supersample,
+            FillRule.NONZERO,
         )
         return
     _fill_arc_aa_device(
@@ -511,142 +629,27 @@ def _fill_arc_aa_device(
     color: Color,
     supersample: Int = 4,
 ):
-    """`fill_arc_aa` for device-space arguments: the body every
-    call lands in. It has no transform check of its own, so its
-    loops compile with nothing ahead of them and it never calls
-    back into the public function.
+    """`fill_arc_aa` for device-space arguments: the body every call
+    lands in.
+
+    The wedge goes to `fill_path_aa` under `FillRule.NONZERO`, which is
+    `canvas.aa_area`'s exact-area accumulation -- each pixel's real
+    covered fraction in 256 levels, where the sampled grid this used to
+    walk resolved 17 (#275). `_wedge_path` traces the same arc points
+    the sampler tested against, so the geometry is unchanged and only
+    the coverage is finer. `supersample` is accepted and unused, as it
+    is on every other nonzero fill.
+
+    A wedge is traced once around, so nonzero and even-odd describe the
+    same region; the rule only picks the rasterizer.
     """
     if radius <= 0.0:
         return
-
-    var r2 = radius * radius
-    var n = supersample
-    var total_samples = n * n
-    var step = 1.0 / Float64(n)
-
-    var bounds = _arc_bounds(cx, cy, radius, start_angle, end_angle, True)
-    var min_px = round_to_int(bounds[0]) - 1
-    var max_px = round_to_int(bounds[2]) + 1
-    var min_py = round_to_int(bounds[1]) - 1
-    var max_py = round_to_int(bounds[3]) + 1
-
-    # One rotation's worth of trigonometry per wedge, replacing an
-    # `atan2` per sub-sample -- see `_AngleSpan`.
-    var span = _AngleSpan(start_angle, end_angle)
-
-    # Whether a "whole pixel square is provably inside" test is sound
-    # for this wedge. See _square_in_cone: the argument needs the
-    # angular cone to be convex, which it is exactly when the sweep is
-    # at most half a turn. A wider sweep gets no fast path and is
-    # filled one sub-sample grid at a time.
-    var can_fast_fill = span.always_inside or not span.wide
-
-    # Rows are independent -- each tests its own pixels against the
-    # wedge's equations and writes only its own -- so a large wedge is
-    # split into bands, one task per band. Same pattern as the fill
-    # sweep in canvas.aa_crossing.
-    #
-    # Everything a band needs is scalars: center, radius, the angle
-    # span (itself a struct of plain floats and bools) and the color.
-    # That matters here, because the aggregate arguments that corrupt
-    # under `create_task` are the heap-backed ones -- see #97. There is
-    # no List anywhere in this call.
-    var row_count = max_py + 1 - min_py
-    var col_count = max_px + 1 - min_px
-    if row_count <= 0 or col_count <= 0:
-        return
-
-    var bands = 1
-    if row_count * col_count >= _MIN_PARALLEL_PIXELS:
-        bands = parallelism_level()
-        if bands > row_count:
-            bands = row_count
-        if bands < 1:
-            bands = 1
-
-    if bands == 1:
-        _fill_arc_band(
-            canvas,
-            cx,
-            cy,
-            r2,
-            span,
-            can_fast_fill,
-            min_px,
-            max_px,
-            min_py,
-            max_py + 1,
-            n,
-            step,
-            total_samples,
-            color,
-        )
-        return
-
-    var per_band = (row_count + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
-        var band_start = min_py + b * per_band
-        var band_end = band_start + per_band
-        if band_end > max_py + 1:
-            band_end = max_py + 1
-        if band_start >= band_end:
-            continue
-        tg.create_task(
-            _fill_arc_band_async(
-                canvas,
-                cx,
-                cy,
-                r2,
-                span,
-                can_fast_fill,
-                min_px,
-                max_px,
-                band_start,
-                band_end,
-                n,
-                step,
-                total_samples,
-                color,
-            )
-        )
-    tg.wait()
-
-
-async def _fill_arc_band_async(
-    mut canvas: Canvas,
-    cx: Float64,
-    cy: Float64,
-    r2: Float64,
-    span: _AngleSpan,
-    can_fast_fill: Bool,
-    min_px: Int,
-    max_px: Int,
-    first_row: Int,
-    last_row: Int,
-    n: Int,
-    step: Float64,
-    total_samples: Int,
-    color: Color,
-):
-    """`_fill_arc_band` as a task, so the single-band path stays an
-    ordinary call with no coroutine machinery around it.
-    """
-    _fill_arc_band(
+    _fill_polygon_aa_device(
         canvas,
-        cx,
-        cy,
-        r2,
-        span,
-        can_fast_fill,
-        min_px,
-        max_px,
-        first_row,
-        last_row,
-        n,
-        step,
-        total_samples,
+        _wedge_fpoints(cx, cy, radius, start_angle, end_angle),
         color,
+        FillRule.NONZERO,
     )
 
 
@@ -809,7 +812,7 @@ def fill_ring_sector_aa(
                 cx, cy, inner_radius, outer_radius, start_angle, end_angle
             ),
             color,
-            supersample=supersample,
+            FillRule.NONZERO,
         )
         return
     _fill_ring_sector_aa_device(
@@ -837,143 +840,26 @@ def _fill_ring_sector_aa_device(
     supersample: Int = 4,
 ):
     """`fill_ring_sector_aa` for device-space arguments: the body every
-    call lands in. It has no transform check of its own, so its
-    loops compile with nothing ahead of them and it never calls
-    back into the public function.
+    call lands in.
+
+    The sector goes to `fill_path_aa` under `FillRule.NONZERO`, which
+    is `canvas.aa_area`'s exact-area accumulation -- each pixel's real
+    covered fraction in 256 levels, where the sampled grid this used to
+    walk resolved 17 (#275). `_ring_path` traces out along the outer
+    arc and back along the inner one, a single closed outline that
+    winds once, so nonzero and even-odd describe the same region and
+    the rule only picks the rasterizer. `supersample` is accepted and
+    unused, as it is on every other nonzero fill.
     """
-    if (
-        outer_radius <= 0.0
-        or inner_radius < 0.0
-        or inner_radius >= outer_radius
-    ):
+    if outer_radius <= 0.0:
         return
-
-    var outer_r2 = outer_radius * outer_radius
-    var inner_r2 = inner_radius * inner_radius
-    var n = supersample
-    var total_samples = n * n
-    var step = 1.0 / Float64(n)
-
-    var outer_bounds = _arc_bounds(
-        cx, cy, outer_radius, start_angle, end_angle, False
-    )
-    var inner_bounds = _arc_bounds(
-        cx, cy, inner_radius, start_angle, end_angle, False
-    )
-    var bounds = _union_bounds(outer_bounds, inner_bounds)
-    var min_px = round_to_int(bounds[0]) - 1
-    var max_px = round_to_int(bounds[2]) + 1
-    var min_py = round_to_int(bounds[1]) - 1
-    var max_py = round_to_int(bounds[3]) + 1
-
-    # One rotation's worth of trigonometry per wedge, replacing an
-    # `atan2` per sub-sample -- see `_AngleSpan`.
-    var span = _AngleSpan(start_angle, end_angle)
-
-    # Sound only for a sweep of at most half a turn -- see
-    # _square_in_cone, and fill_arc_aa which uses the same guard.
-    var can_fast_fill = span.always_inside or not span.wide
-
-    # Banded exactly as fill_arc_aa is, and for the same reason: rows
-    # are independent and every argument a band needs is a scalar.
-    var row_count = max_py + 1 - min_py
-    var col_count = max_px + 1 - min_px
-    if row_count <= 0 or col_count <= 0:
-        return
-
-    var bands = 1
-    if row_count * col_count >= _MIN_PARALLEL_PIXELS:
-        bands = parallelism_level()
-        if bands > row_count:
-            bands = row_count
-        if bands < 1:
-            bands = 1
-
-    if bands == 1:
-        _fill_ring_band(
-            canvas,
-            cx,
-            cy,
-            inner_r2,
-            outer_r2,
-            span,
-            can_fast_fill,
-            min_px,
-            max_px,
-            min_py,
-            max_py + 1,
-            n,
-            step,
-            total_samples,
-            color,
-        )
-        return
-
-    var per_band = (row_count + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
-        var band_start = min_py + b * per_band
-        var band_end = band_start + per_band
-        if band_end > max_py + 1:
-            band_end = max_py + 1
-        if band_start >= band_end:
-            continue
-        tg.create_task(
-            _fill_ring_band_async(
-                canvas,
-                cx,
-                cy,
-                inner_r2,
-                outer_r2,
-                span,
-                can_fast_fill,
-                min_px,
-                max_px,
-                band_start,
-                band_end,
-                n,
-                step,
-                total_samples,
-                color,
-            )
-        )
-    tg.wait()
-
-
-async def _fill_ring_band_async(
-    mut canvas: Canvas,
-    cx: Float64,
-    cy: Float64,
-    inner_r2: Float64,
-    outer_r2: Float64,
-    span: _AngleSpan,
-    can_fast_fill: Bool,
-    min_px: Int,
-    max_px: Int,
-    first_row: Int,
-    last_row: Int,
-    n: Int,
-    step: Float64,
-    total_samples: Int,
-    color: Color,
-):
-    """`_fill_ring_band` as a task; see fill_arc_aa's equivalent."""
-    _fill_ring_band(
+    _fill_polygon_aa_device(
         canvas,
-        cx,
-        cy,
-        inner_r2,
-        outer_r2,
-        span,
-        can_fast_fill,
-        min_px,
-        max_px,
-        first_row,
-        last_row,
-        n,
-        step,
-        total_samples,
+        _ring_fpoints(
+            cx, cy, inner_radius, outer_radius, start_angle, end_angle
+        ),
         color,
+        FillRule.NONZERO,
     )
 
 

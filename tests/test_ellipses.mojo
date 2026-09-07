@@ -138,29 +138,43 @@ def test_fill_ellipse_aa_far_pixel_is_untouched() raises:
 
 
 def test_fill_ellipse_aa_partial_coverage_matches_hand_computed_values() raises:
-    # Hand-summed 4x4 sub-sample grids for rx=4, ry=2 at cx=5, cy=3,
-    # each pixel centered AT (px,py): pixel (5,1), above center at the
-    # top of the minor axis, has 8/16 sub-samples inside the true
-    # ellipse; (3,1) has 3/16; and (1,3), left of center at the end of
-    # the major axis, also has 8/16 -- so both radii are honored, not
-    # just one.
+    # True covered areas for rx=4, ry=2 at (5, 3), integrated
+    # independently rather than read back out of the rasterizer: the
+    # ellipse's half-width at a scanline is rx * sqrt(1 - (dy/ry)^2),
+    # and a pixel's coverage is that chord clipped to the pixel's
+    # column, averaged down the pixel's height.
+    #
+    #   (5, 1): the top, chord centered on the column   -> 49.5%
+    #   (3, 1): two columns left along the same row     -> 22.4%
+    #   (1, 3): the left end, on the major axis         -> 45.8%
+    #
+    # Both radii are honored, not just one: the top and the side are
+    # different fractions because the curve is steeper at the end of
+    # the major axis. The 4x4 grid these were written for gave 8/16,
+    # 3/16 and 8/16, i.e. 128, 48 and 128 -- the last of them eleven
+    # levels off the truth.
+    #
+    # The tolerance is `canvas.shapes.arcs._CURVE_TOLERANCE`'s inward
+    # bias, as in test_circles.mojo; a regression to sampling exceeds
+    # it.
     var c = Canvas(11, 7, BG)
     fill_ellipse_aa(c, 5, 3, 4, 2, FG)
 
-    var top_mid = c.get_pixel(5, 1)  # 8/16 covered -> alpha 128
-    assert_equal(top_mid.r, 128)
-    assert_equal(top_mid.g, 128)
-    assert_equal(top_mid.b, 128)
-
-    var top_corner = c.get_pixel(3, 1)  # 3/16 covered -> alpha 48
-    assert_equal(top_corner.r, 48)
-    assert_equal(top_corner.g, 48)
-    assert_equal(top_corner.b, 48)
-
-    var side_mid = c.get_pixel(1, 3)  # 8/16 covered -> alpha 128
-    assert_equal(side_mid.r, 128)
-    assert_equal(side_mid.g, 128)
-    assert_equal(side_mid.b, 128)
+    var top_mid = Int(c.get_pixel(5, 1).r)
+    assert_true(
+        abs(top_mid - 126) <= 3,
+        String("top of the minor axis: got ", top_mid, ", true 126"),
+    )
+    var top_corner = Int(c.get_pixel(3, 1).r)
+    assert_true(
+        abs(top_corner - 57) <= 3,
+        String("two columns along: got ", top_corner, ", true 57"),
+    )
+    var side_mid = Int(c.get_pixel(1, 3).r)
+    assert_true(
+        abs(side_mid - 117) <= 3,
+        String("end of the major axis: got ", side_mid, ", true 117"),
+    )
 
 
 def test_fill_ellipse_aa_agrees_with_hard_edged_on_interior_pixels() raises:
