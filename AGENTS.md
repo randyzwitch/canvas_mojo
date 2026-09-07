@@ -93,6 +93,11 @@ resolves.
 - Strings have no `len` or `s[a:b]`. Use `s.byte_length()` and
   `s[byte = a:b]`; wrap a slice in `String(...)` before assigning it
   back to the variable it came from, or the aliasing check rejects it.
+  Walk `s.codepoints()` when rebuilding text: `for b in s.as_bytes()`
+  with `chr(b)` turns each UTF-8 byte into its own character, which
+  only shows up on text outside ASCII (macOS font filenames are
+  Japanese; the Linux CI font set is not).
+- `case` is a reserved word and cannot name a variable, like `out`.
 - No module-level `var`. A `comptime` List cannot be indexed at runtime
   without materializing a copy each time. Tables live in a struct
   (`_Transfer` in color.mojo is the pattern) and are built on demand.
