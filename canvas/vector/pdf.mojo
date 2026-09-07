@@ -1430,7 +1430,7 @@ struct PdfCanvas(DrawTarget, Movable):
                 pen_x += shaped.kern_before
                 var font_index = primary_index
                 var gid = shaped.glyph
-                var advance = 0.0
+                var advance: Float64
                 if gid != 0:
                     advance = glyph_index_metrics(primary[], gid).advance
                     self._efonts[primary_index].mark(gid, shaped.chars)

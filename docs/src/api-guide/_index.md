@@ -149,10 +149,12 @@ which it holds.
   producing SVG markup instead of pixels — `to_string()` for the
   markup, `write_svg` for a file.
 - [`vector.pdf`](../canvas/vector/pdf/) — `PdfCanvas`: the same
-  drawing methods again, writing a one-page PDF through `write_pdf`.
-  Paths, clips, transforms, blend modes and gradients map onto PDF
-  operators; text is drawn as filled outlines, so it renders exactly
-  as the raster backend draws it but is not yet selectable.
+  drawing methods again, writing a PDF through `write_pdf`, with
+  `new_page` for more than one page and `draw_image` for a raster
+  `Canvas`. Paths, clips, transforms, blend modes and gradients map
+  onto PDF operators; text is real text in an embedded font subset,
+  so a label is selectable, searchable and copyable while sitting
+  exactly where the raster backend puts it.
 - [`vector.draw_target`](../canvas/vector/draw_target/) —
   `DrawTarget`: the trait all three implement. Write against this
   instead of `Canvas` directly and your code works against any of

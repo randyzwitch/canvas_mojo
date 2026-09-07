@@ -263,8 +263,8 @@ struct _EmbeddedFont(Movable):
 def _glyph_range(face: TTFFace, gid: Int) -> Tuple[Int, Int]:
     """(offset, length) of `gid`'s data in `glyf`."""
     var loca = face._loca_offset
-    var start = 0
-    var end = 0
+    var start: Int
+    var end: Int
     if face.index_to_loc_format == 0:
         start = _u16(face.data, loca + 2 * gid) * 2
         end = _u16(face.data, loca + 2 * gid + 2) * 2
