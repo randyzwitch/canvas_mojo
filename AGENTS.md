@@ -68,6 +68,12 @@ resolves.
 - A new module gets a test file listed in `pixi.toml`'s `test` task; a
   new example goes in the `example` task and in `_titles()` and
   `_categories()` of `scripts/gen_example_docs.mojo`.
+- Font discovery persists its table to
+  `$XDG_CACHE_HOME/canvas_mojo/fonts.txt` (see `font_discovery.mojo`).
+  Set `CANVAS_MOJO_FONT_CACHE=off` when changing or debugging
+  discovery, and bump `_CACHE_FORMAT` in the same commit as any change
+  to what `_parse_face` reads, or an old file will feed stale records
+  to the new code.
 - Public API is exported from `canvas/__init__.mojo` and the subpackage
   `__init__.mojo` files; the trait is the contract chart code writes
   against, so adding to it means all three backends.

@@ -8,8 +8,10 @@ Four steps, matching what `libfontconfig` does for a drawing library:
 1. **Enumerate.** Walk each platform's font directories
    (`_font_directories`), collect every `sfnt` container
    (`.ttf`/`.ttc`/`.otf`/`.otc`), and read each one's identity from its
-   `name`/`OS/2`/`head`/`post` tables (`_parse_face`). There is no cache
-   file and no XML; the font files are the database.
+   `name`/`OS/2`/`head`/`post` tables (`_parse_face`). No XML; the font
+   files are the database. The result is written to a cache file (see
+   below), since it is the same on every run until a font is installed
+   or removed.
 2. **Expand generic families.** "sans-serif"/"serif"/"monospace" and the
    metric aliases (Helvetica, Arial, Times, Courier) are ordered
    preference lists, not real families (`_family_candidates`) -- the job
@@ -23,10 +25,9 @@ Four steps, matching what `libfontconfig` does for a drawing library:
    candidate `cmap` tables in score order (`_face_covers_codepoint`) --
    fontconfig's `FC_CHARSET` constraint.
 
-Not covered: fontconfig's XML rule engine, its `~/.cache/fontconfig`
-binary cache, per-language coverage matching, and named-instance
-expansion of variable fonts (a variable font matches as its default
-instance).
+Not covered: fontconfig's XML rule engine, per-language coverage
+matching, and named-instance expansion of variable fonts (a variable
+font matches as its default instance).
 
 Where it looks: on Linux `~/.local/share/fonts` and `~/.fonts` plus
 `/usr/share/fonts`, `/usr/local/share/fonts` and `/usr/share/X11/fonts`;
@@ -36,10 +37,31 @@ on macOS `~/Library/Fonts`, `/Library/Fonts`, `/System/Library/Fonts`
 ahead of those. Fonts have to be installed for text to render; this
 package bundles none.
 
-A scan costs a few milliseconds, most of it the directory walk. Matching
-against an already-built `FontDatabase` is arithmetic over a list, so
-build one `FontDatabase` (or `FontCache`) and reuse it rather than
-resolving per call.
+A scan costs a few milliseconds, most of it the directory walk, and
+its result is a pure function of which font files are installed -- the
+same table on every run of every program. `FontDatabase()` therefore
+reads it from a cache file when one is valid and writes one when it
+scans (`_cache_path`, `_read_cache`, `_write_cache`), which takes a
+first text call from tens of milliseconds to about one. The cache is
+an accelerator and never a source of truth: unreadable, stale, corrupt
+or unwritable, the scan runs exactly as it would have.
+
+**Invalidation.** The cache records `_CACHE_FORMAT`, the font
+directories searched, and the modification time of every directory the
+walk visited. Installing or removing a font changes its directory's
+mtime, so the next call rebuilds rather than silently missing the new
+font -- the failure mode a version-keyed-only cache (matplotlib's
+`fontlist-vXXX.json`) is famous for.
+
+**`CANVAS_MOJO_FONT_CACHE`** overrides where the file lives, and the
+value `off` disables the cache so every call scans -- what the tests
+and anything debugging discovery want. Otherwise it is
+`$XDG_CACHE_HOME/canvas_mojo/fonts.txt`, or `~/.cache/canvas_mojo/`
+when that is unset.
+
+Matching against an already-built `FontDatabase` is arithmetic over a
+list, so build one `FontDatabase` (or `FontCache`) and reuse it rather
+than resolving per call.
 
 This module imports nothing from `canvas.text`, which is why
 `FontSlant`/`FontWeight` and the small binary readers below live here:
@@ -52,12 +74,28 @@ This module resolves a font *file* and nothing more: no outline parsing,
 measuring, hinting or rasterizing.
 """
 
-from std.os import getenv, listdir
+from std.os import getenv, listdir, makedirs, stat
 from std.runtime.asyncrt import TaskGroup, parallelism_level
 from std.os.path import expanduser, isdir, realpath
 from std.sys.info import CompilationTarget
 
 comptime _FONT_PATH_ENV_VAR = "CANVAS_MOJO_FONT_PATH"
+comptime _FONT_CACHE_ENV_VAR = "CANVAS_MOJO_FONT_CACHE"
+
+# The cache file's format version, and the guard against a stale table
+# after this module changes. Bump it in the same commit whenever the
+# record layout changes OR `_parse_face` starts reading a field
+# differently -- an older file then fails to validate and is rewritten.
+# It stands in for the package version, which cannot be read at runtime
+# from an installed package (there is no pixi.toml beside a
+# `.mojopkg`), and keying on the package version would also discard a
+# still-valid table on every release.
+comptime _CACHE_FORMAT = 1
+# Written as the last line, so a file cut short by a crash or by two
+# processes writing at once is recognized and discarded. Mojo's stdlib
+# has no `rename`, so the write cannot be made atomic by the usual
+# temp-file-and-rename; this is what stands in for it.
+comptime _CACHE_END_MARKER = "# end"
 """Colon-separated extra font directories, searched before the platform
 defaults. The escape hatch for a font tree in a nonstandard prefix --
 a container image, a test fixture, a vendored font shipped beside an
@@ -429,6 +467,14 @@ async def _classify_entries_async(
 
 
 def _collect_font_files() -> List[String]:
+    """Every readable `sfnt` file under `_font_directories`, discarding
+    the visited-directory list `_collect_font_files_visited` also
+    returns."""
+    var visited = List[String]()
+    return _collect_font_files_visited(visited)
+
+
+def _collect_font_files_visited(mut visited: List[String]) -> List[String]:
     """Every readable `sfnt` file under `_font_directories`, resolved
     through symlinks and deduplicated.
 
@@ -445,6 +491,8 @@ def _collect_font_files() -> List[String]:
     var files = List[String]()
     var seen = Dict[String, Bool]()
     var frontier = _font_directories()
+    for directory in frontier:
+        visited.append(directory)
     var depth = 0
     # Level by level: every directory of the level is listed, then
     # each entry is classified -- a stat to tell a subdirectory from
@@ -488,6 +536,7 @@ def _collect_font_files() -> List[String]:
         for i in range(count):
             if kind[i] == _ENTRY_DIRECTORY:
                 next_frontier.append(children[i])
+                visited.append(children[i])
             elif kind[i] == _ENTRY_FONT:
                 if canonical[i] in seen:
                     continue
@@ -1086,6 +1135,289 @@ def _score(
 # --- The database ---------------------------------------------------------
 
 
+# --- The cache file -------------------------------------------------------
+
+
+def _cache_path() -> String:
+    """Where the cache file lives: `CANVAS_MOJO_FONT_CACHE` if set,
+    `$XDG_CACHE_HOME/canvas_mojo/fonts.txt` if that is set, else
+    `~/.cache/canvas_mojo/fonts.txt`. The value `off` disables the
+    cache, as does a home directory that cannot be resolved; both come
+    back as "" and every caller reads that as "scan, do not cache".
+
+    `off` rather than an empty value because a variable set to nothing
+    and one never set are the same string through `getenv`, and the
+    difference would have to be recovered from `/proc/self/environ`,
+    which does not exist on macOS and does not see a `setenv` made by
+    the running process.
+    """
+    var override = String(getenv(_FONT_CACHE_ENV_VAR).strip())
+    if override == "off":
+        return String("")
+    if override.byte_length() > 0:
+        return override
+    var xdg = String(getenv("XDG_CACHE_HOME").strip())
+    if xdg.byte_length() > 0:
+        return String(xdg, "/canvas_mojo/fonts.txt")
+    try:
+        return String(expanduser("~/.cache/canvas_mojo/fonts.txt"))
+    except:
+        return String("")
+
+
+def _directory_mtime(path: String) -> Int:
+    """`path`'s modification time in nanoseconds, or -1 if it cannot be
+    read (the directory does not exist, or is not readable). A
+    directory that is absent on this machine keys as -1 and stays
+    valid as long as it stays absent.
+    """
+    try:
+        var spec = stat(path).st_mtimespec
+        return Int(spec.tv_sec) * 1_000_000_000 + Int(spec.tv_subsec)
+    except:
+        return -1
+
+
+def _search_key(directories: List[String]) -> String:
+    """The part of the key known without walking: the format version
+    and the directories that would be searched. A font directory that
+    appears or disappears (a new `XDG_DATA_HOME`, a Homebrew prefix
+    created) changes this.
+    """
+    var key = String("v", _CACHE_FORMAT, " dirs=")
+    for directory in directories:
+        key += directory + ","
+    return key
+
+
+def _mtimes_line(visited: List[String]) -> String:
+    """Every directory the walk visited with its modification time, as
+    the cache file's `# mtimes` line. Installing or removing a font
+    changes the mtime of the directory holding it; creating or deleting
+    a subdirectory changes its parent's. Checking these is what lets a
+    valid cache skip the walk entirely, which is most of what the scan
+    costs.
+    """
+    var out = String()
+    for directory in visited:
+        out += (
+            _escape_field(directory)
+            + ":"
+            + String(_directory_mtime(directory))
+            + "\t"
+        )
+    return out
+
+
+def _mtimes_match(line: String) raises -> Bool:
+    """Whether every directory recorded in a `# mtimes` line still has
+    the modification time recorded for it. A directory that has since
+    disappeared reads as -1, which is what `_directory_mtime` recorded
+    for one that was already absent, so those agree too.
+
+    Raises on a malformed line, which `_read_cache` catches as "scan".
+
+    Raises:
+        Error: A recorded time is not a number.
+    """
+    for entry in line.split("\t"):
+        var field = String(entry)
+        if field.byte_length() == 0:
+            continue
+        var colon = field.rfind(":")
+        if colon <= 0:
+            return False
+        var directory = _unescape_field(String(field[byte=:colon]))
+        var recorded = Int(String(field[byte = colon + 1 :]))
+        if _directory_mtime(directory) != recorded:
+            return False
+    return True
+
+
+def _escape_field(text: String) -> String:
+    """A field for one tab-separated record: tabs, newlines and
+    backslashes escaped, so a path or a family name containing one
+    survives the round trip."""
+    var out = String()
+    for cp in text.codepoints():
+        var c = Int(cp)
+        if c == 92:
+            out += "\\\\"
+        elif c == 9:
+            out += "\\t"
+        elif c == 10:
+            out += "\\n"
+        else:
+            out += chr(c)
+    return out
+
+
+def _unescape_field(text: String) -> String:
+    """`_escape_field` backwards."""
+    var out = String()
+    var bytes = text.as_bytes()
+    var i = 0
+    while i < len(bytes):
+        var c = Int(bytes[i])
+        if c == 92 and i + 1 < len(bytes):
+            var n = Int(bytes[i + 1])
+            if n == 92:
+                out += "\\"
+            elif n == 116:
+                out += "\t"
+            elif n == 110:
+                out += "\n"
+            else:
+                out += chr(n)
+            i += 2
+            continue
+        out += chr(c)
+        i += 1
+    return out
+
+
+def _write_cache(
+    path: String,
+    search_key: String,
+    visited: List[String],
+    faces: List[FontFace],
+):
+    """Write `faces` to `path` under `search_key` and the modification
+    times of `visited`. Silent on any failure: an unwritable or absent
+    cache directory is a machine this library still has to draw on.
+
+    The record count is in the header and `_CACHE_END_MARKER` is the
+    last line, so a reader can tell a complete file from one cut short
+    -- there is no `rename` in the stdlib to make the write atomic, and
+    two processes racing simply both scan and the last write wins.
+    """
+    if path.byte_length() == 0:
+        return
+    try:
+        var slash = path.rfind("/")
+        if slash > 0:
+            makedirs(String(path[byte=:slash]), exist_ok=True)
+        var out = String(
+            "# canvas_mojo font cache -- delete freely; it is rebuilt on"
+            " demand.\n"
+        )
+        out += "# key\t" + search_key + "\n"
+        out += "# mtimes\t" + _mtimes_line(visited) + "\n"
+        out += "# count\t" + String(len(faces)) + "\n"
+        for i in range(len(faces)):
+            ref face = faces[i]
+            out += _escape_field(face.path)
+            out += "\t" + String(len(face.names))
+            for name in face.names:
+                out += "\t" + _escape_field(name)
+            out += "\t" + String(face.weight)
+            out += "\t" + String(face.slant)
+            out += "\t" + String(face.width)
+            out += "\t" + ("1" if face.monospace else "0")
+            out += "\t" + ("1" if face.renderable else "0")
+            out += "\t" + String(face.cmap_offset)
+            out += "\t" + String(face.cmap_length)
+            out += "\n"
+        out += _CACHE_END_MARKER + "\n"
+        var f = open(path, "w")
+        f.write(out)
+        f.close()
+    except:
+        pass
+
+
+def _read_cache(path: String, search_key: String) -> List[FontFace]:
+    """The faces `path` holds if it is a complete file recorded under
+    `search_key` whose recorded directories all still carry the
+    modification times it recorded, else an empty list -- which the
+    caller reads as "scan". Every failure mode (missing, unreadable,
+    stale, truncated, corrupt) comes back the same way.
+
+    Validating from the file's own directory list is the point: it
+    costs one `stat` per directory, tens of microseconds, against the
+    milliseconds the walk it replaces would cost.
+    """
+    var faces = List[FontFace]()
+    if path.byte_length() == 0:
+        return faces^
+    try:
+        var f = open(path, "r")
+        var text = f.read()
+        f.close()
+        var lines = List[String]()
+        for span in text.split("\n"):
+            lines.append(String(span))
+        if len(lines) < 4:
+            return List[FontFace]()
+        var found_key = String("")
+        var mtimes = String("")
+        var have_mtimes = False
+        var count = -1
+        var first_record = 0
+        for i in range(len(lines)):
+            var line = lines[i]
+            if line.startswith("# key\t"):
+                found_key = String(line[byte=6:])
+            elif line.startswith("# mtimes\t"):
+                mtimes = String(line[byte=9:])
+                have_mtimes = True
+            elif line.startswith("# count\t"):
+                count = Int(String(line[byte=8:].strip()))
+            elif not line.startswith("#"):
+                first_record = i
+                break
+        if found_key != search_key or count < 0 or not have_mtimes:
+            return List[FontFace]()
+        # A complete file ends with the marker; anything else was cut
+        # short while being written.
+        var complete = False
+        for i in range(len(lines) - 1, first_record - 1, -1):
+            var line = String(lines[i].strip())
+            if line == "":
+                continue
+            complete = line == _CACHE_END_MARKER
+            break
+        if not complete:
+            return List[FontFace]()
+        if not _mtimes_match(mtimes):
+            return List[FontFace]()
+        for i in range(first_record, len(lines)):
+            var line = lines[i]
+            if line.startswith("#") or String(line.strip()) == "":
+                continue
+            var fields = List[String]()
+            for span in line.split("\t"):
+                fields.append(String(span))
+            if len(fields) < 9:
+                return List[FontFace]()
+            var face_path = _unescape_field(fields[0])
+            var name_count = Int(fields[1])
+            if len(fields) != 2 + name_count + 7:
+                return List[FontFace]()
+            var names = List[String]()
+            for k in range(name_count):
+                names.append(_unescape_field(fields[2 + k]))
+            var rest = 2 + name_count
+            faces.append(
+                FontFace(
+                    face_path,
+                    names^,
+                    Int(fields[rest]),
+                    Int(fields[rest + 1]),
+                    Int(fields[rest + 2]),
+                    fields[rest + 3] == "1",
+                    fields[rest + 4] == "1",
+                    Int(fields[rest + 5]),
+                    Int(fields[rest + 6]),
+                )
+            )
+        if len(faces) != count:
+            return List[FontFace]()
+        return faces^
+    except:
+        return List[FontFace]()
+
+
 struct FontDatabase(Movable):
     """Every installed face on this machine, scanned once.
 
@@ -1102,12 +1434,28 @@ struct FontDatabase(Movable):
     def __init__(out self):
         """Scan the platform's font directories.
 
-        Never raises on a bad font file or an unreadable directory --
-        those are skipped -- so a machine with no fonts installed at all
-        yields an empty database, and it is `resolve` that reports that.
+        Reads the cache file when it holds a table recorded for these
+        directories at these modification times, and writes one after a
+        scan; see this module's docstring for the file and how to
+        disable it.
+
+        Never raises on a bad font file, an unreadable directory or an
+        unusable cache -- those are skipped -- so a machine with no
+        fonts installed at all yields an empty database, and it is
+        `resolve` that reports that.
         """
         self.faces = List[FontFace]()
-        var files = _collect_font_files()
+        var path = _cache_path()
+        var search_key = _search_key(_font_directories())
+        # Before the walk, not after: the file carries the directories
+        # it was built from, so checking it is one `stat` each rather
+        # than the walk those `stat`s would otherwise drive.
+        var cached = _read_cache(path, search_key)
+        if len(cached) > 0:
+            self.faces = cached^
+            return
+        var visited = List[String]()
+        var files = _collect_font_files_visited(visited)
         var count = len(files)
         if count == 0:
             return
@@ -1141,6 +1489,7 @@ struct FontDatabase(Movable):
         for i in range(count):
             for face in results[i]:
                 self.faces.append(face.copy())
+        _write_cache(path, search_key, visited, self.faces)
 
     def __init__(out self, var faces: List[FontFace]):
         """A database over `faces` alone, with no scan of the installed
