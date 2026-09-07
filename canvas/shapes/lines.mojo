@@ -1520,6 +1520,80 @@ def _outline_open(
     return simple
 
 
+def _point_segment_distance(
+    px: Float64,
+    py: Float64,
+    ax: Float64,
+    ay: Float64,
+    bx: Float64,
+    by: Float64,
+) -> Float64:
+    """Distance from (px, py) to the segment (ax, ay)-(bx, by)."""
+    var dx = bx - ax
+    var dy = by - ay
+    var len2 = dx * dx + dy * dy
+    if len2 <= 0.0:
+        var qx = px - ax
+        var qy = py - ay
+        return sqrt(qx * qx + qy * qy)
+    var t = ((px - ax) * dx + (py - ay) * dy) / len2
+    if t < 0.0:
+        t = 0.0
+    elif t > 1.0:
+        t = 1.0
+    var cx = ax + t * dx
+    var cy = ay + t * dy
+    var ex = px - cx
+    var ey = py - cy
+    return sqrt(ex * ex + ey * ey)
+
+
+def _ring_is_spurious(
+    ring_x: List[Float64],
+    ring_y: List[Float64],
+    xs: List[Float64],
+    ys: List[Float64],
+    half_width: Float64,
+) -> Bool:
+    """Whether the inner ring carves a hole that should not be there.
+
+    The inner offset only bounds a hole while `half_width` stays under
+    the curve's radius of curvature. Past that the offset passes
+    through the center of curvature and comes out the other side,
+    still a tidy ring wound the same way -- a circle of radius 8
+    offset inward by 10 is a circle of radius 2, traversed in the same
+    direction, and nothing local at any vertex looks wrong. Emitted
+    against the outer ring it subtracts a disk that is entirely within
+    `half_width` of the curve and therefore entirely inked (#279).
+
+    Detected by asking what the ring encloses rather than how it is
+    shaped: take its centroid and measure to the path. Inside a real
+    hole every point is farther than `half_width` from the curve, so a
+    centroid nearer than that says the ring is spurious.
+    """
+    var n = len(ring_x)
+    if n < 3 or len(xs) < 2:
+        return False
+    var cx = 0.0
+    var cy = 0.0
+    for i in range(n):
+        cx += ring_x[i]
+        cy += ring_y[i]
+    cx /= Float64(n)
+    cy /= Float64(n)
+    var m = len(xs)
+    var best = _point_segment_distance(
+        cx, cy, xs[m - 1], ys[m - 1], xs[0], ys[0]
+    )
+    for i in range(m - 1):
+        var d = _point_segment_distance(
+            cx, cy, xs[i], ys[i], xs[i + 1], ys[i + 1]
+        )
+        if d < best:
+            best = d
+    return best < half_width
+
+
 def _outline_closed(
     mut edges: _EdgeTable,
     xs: List[Float64],
@@ -1593,6 +1667,14 @@ def _outline_closed(
             miter_limit,
         )
         simple = simple and left_ok and right_ok
+    # An inner ring that has turned itself inside out still looks
+    # right at every vertex; what gives it away is what it encloses.
+    # The union of quads and joint disks handles it correctly, whether
+    # the whole ring inverted or only the sharply curved part of it,
+    # so this hands the caller back to that rather than trying to
+    # repair the ring.
+    if _ring_is_spurious(right_x, right_y, xs, ys, half_width):
+        simple = False
     _emit_ring(edges, left_x, left_y)
     var rev_x = List[Float64](capacity=len(right_x))
     var rev_y = List[Float64](capacity=len(right_x))
