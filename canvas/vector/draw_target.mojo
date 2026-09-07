@@ -1,8 +1,8 @@
 """DrawTarget: the drawing-primitive interface a higher-level charting
-layer renders through, so a plot/scale/theme layer can target either a
-raster `Canvas` or a vector `SvgCanvas` without knowing which it holds.
-A vector backend has no fixed pixel resolution, so nothing rendered
-through the trait deals in supersampling.
+layer renders through, so a plot/scale/theme layer can target a raster
+`Canvas`, a vector `SvgCanvas` or a `PdfCanvas` page without knowing
+which it holds. Neither vector backend has a fixed pixel resolution,
+so nothing rendered through the trait deals in supersampling.
 
 Eleven drawing primitives are declared -- `fill_rect`,
 `fill_rect_gradient`, `draw_line_aa`, `fill_circle_aa`, `draw_circle_aa`,
@@ -13,7 +13,7 @@ path-shaped gradients are not on the trait; each exists as a free
 function or a `Canvas` method instead. The two strokes, `draw_line_aa`
 and `stroke_path_aa`, take the full stroke style -- `dashes`,
 `dash_offset`, `cap`, `join`, `miter_limit` -- so a dashed series or a
-square-capped rule renders the same way on either backend.
+square-capped rule renders the same way on every backend.
 
 `draw_ellipse_aa` is the outline `fill_path_aa`/`stroke_path_aa` cannot
 reproduce exactly: `Path.arc_to` takes a single `radius`, so a `Path`
@@ -40,14 +40,15 @@ The transform state is on the trait too: `save`/`restore`,
 `reset_transform`, `current_transform` and `has_transform`, with the
 semantics `Canvas` defines (see `Canvas.save`). A mark drawn through
 the trait can set up a local frame -- translate to a panel, rotate for
-a wedge -- and draw at the origin on either backend. `SvgCanvas` puts
-the current matrix on each element as a `transform` attribute. One
+a wedge -- and draw at the origin on any backend. `SvgCanvas` puts
+the current matrix on each element as a `transform` attribute and
+`PdfCanvas` as a `cm` inside the element's `q`/`Q` pair. One
 rule holds on both: strokes are built in user space, so under a
 `scale` a stroke's width, dashes and caps scale with the shape; the
 state is for placement and rotation, and data still maps through
 scales.
 
-Placement is one rule on both backends. Pixel (px, py) is centered at
+Placement is one rule on every backend. Pixel (px, py) is centered at
 (px, py) and spans half a pixel each way. `Int` arguments are pixel
 indices: a rectangle from column x with width w covers pixels x
 through x + w - 1, whose geometric edges are x - 0.5 and x + w - 0.5;
@@ -58,21 +59,25 @@ and `fill_rect` snaps each edge to the nearest pixel boundary, so
 the same call. Under a transform every primitive maps its geometry --
 an `Int` rectangle maps its edges at x - 0.5, not x -- and a
 rectangle then snaps in the space it is drawn in: device space on
-`Canvas`, user space on `SvgCanvas`, which has no device pixels. That
-one rule is what makes the supersampling recipe on `downsample` exact
-for rectangles as well as paths and text.
+`Canvas`, user space on `SvgCanvas` and `PdfCanvas`, which have no
+device pixels. That one rule is what makes the supersampling recipe on
+`downsample` exact for rectangles as well as paths and text.
 
 The blend mode is on the trait as well: `set_blend_mode` and
 `blend_mode`, carried by `save`/`restore`, with the formulas in
 canvas/blend.mojo. `SvgCanvas` emits the blend modes as
 `mix-blend-mode` and draws the Porter-Duff operators source-over,
-since CSS has no keyword for them.
+since CSS has no keyword for them; `PdfCanvas` emits them as an
+`ExtGState` `/BM`. So is the color space -- `set_color_space` and
+`color_space` -- which decides whether a later source-over blend mixes
+in sRGB or linear light.
 
 Two further methods, `begin_annotated_group` and
 `end_annotated_group`, declare no drawing at all: they label whatever
 is drawn between them. A vector backend has somewhere to put that
 label and a raster one does not, so `SvgCanvas` wraps the run in
-`<g><title>` and `Canvas` implements both as no-ops. That asymmetry is
+`<g><title>`, `PdfCanvas` opens a marked-content sequence, and
+`Canvas` implements both as no-ops. That asymmetry is
 the point rather than a wart -- a raster image has no per-shape
 metadata to carry, and a caller drawing through the trait should not
 have to know which backend it holds in order to name what it draws.
@@ -83,16 +88,18 @@ whiskers, median and caps are one thing to a reader and four calls to
 this trait. A group spans however many a datum happens to need.
 
 Text is not on the trait. `Canvas` rasterizes glyph outlines through
-`fill_path_aa` while `SvgCanvas` emits `<text>` markup, so there is no
-shared operation to declare. A generic caller collects text as plain
+`fill_path_aa`, `SvgCanvas` emits `<text>` markup and `PdfCanvas`
+fills the outlines as paths, so there is no shared operation to
+declare. A generic caller collects text as plain
 data (position, string, color, size, alignment) and lets each backend
 draw it. Keeping text off `Canvas`'s method surface also keeps
 `canvas.text`'s imports off every `Canvas` user, since Mojo resolves a
 struct's whole method surface eagerly.
 
-Conformance is nominal, not structural: `Canvas` (`canvas/buffer.mojo`)
-and `SvgCanvas` (`canvas/vector/svg.mojo`) each name `DrawTarget` in
-their struct declaration.
+Conformance is nominal, not structural: `Canvas` (`canvas/buffer.mojo`),
+`SvgCanvas` (`canvas/vector/svg.mojo`) and `PdfCanvas`
+(`canvas/vector/pdf.mojo`) each name `DrawTarget` in their struct
+declaration.
 """
 
 from canvas.blend import BlendMode
@@ -454,7 +461,7 @@ trait DrawTarget:
             path: Path to fill.
             color: Fill color.
             fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
-                The same rule on either backend.
+                The same rule on every backend.
         """
         ...
 

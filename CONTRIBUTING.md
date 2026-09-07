@@ -13,14 +13,21 @@ Everything runs through [pixi](https://pixi.sh); there is no other build
 step.
 
 ```sh
-pixi run test      # every file in tests/, in parallel
-pixi run example   # every file in examples/, writes examples/out_*.{bmp,png}
-pixi run docs      # regenerates and serves docs/ -- run `example` first
+pixi run test        # every file in tests/, in parallel
+pixi run example     # every file in examples/, writes examples/out_*.{png,bmp,svg,pdf}
+pixi run bench       # times the drawing primitives, one row per case
+pixi run fmt         # mojo format over canvas/ tests/ examples/ scripts/
+pixi run docs        # builds the site into docs/site/public -- run `example` first
+pixi run docs-serve  # the same build, then a live preview on localhost:1313
 ```
 
 Both `test` and `example` fan out through `scripts/run_parallel.sh`,
-capped at the machine's real core count. Each test and example file has
-its own `main()` and runs standalone, so you can also run one directly:
+capped at the machine's real core count. `test` goes through
+`scripts/run_tests.sh` first, which fails before compiling anything if
+a `tests/test_*.mojo` file is missing from the task list in
+`pixi.toml` — CI has to cover every module. Each test and example file
+has its own `main()` and runs standalone, so you can also run one
+directly:
 
 ```sh
 pixi run mojo run -I . tests/test_circles.mojo
@@ -39,55 +46,85 @@ defaults in `text/font_discovery.mojo` do not cover yours.
 ## The DrawTarget trait, and why the package works
 
 `DrawTarget` (`canvas/vector/draw_target.mojo`) is the load-bearing
-idea in this package. It declares ten drawing primitives, plus two
-methods that label rather than draw:
+idea in this package. It declares eleven drawing primitives, two
+methods that label rather than draw, and the drawing state those
+primitives read:
 
 ```mojo
 trait DrawTarget:
+    # Eleven drawing primitives. Most take both an Int (pixel-index)
+    # and a Float64 (geometry) overload; only one of each is shown.
     def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color): ...
     def fill_rect_gradient(mut self, ..., gradient: LinearGradient): ...
-    def draw_line_aa(mut self, ..., width: Float64 = 1.0): ...
+    def draw_line_aa(mut self, ..., width: Float64 = 1.0, dashes: List[Float64] = ..., cap: LineCap = ..., join: LineJoin = ...): ...
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color): ...
     def draw_circle_aa(mut self, cx: Float64, cy: Float64, radius: Float64, color: Color, width: Float64 = 1.0): ...
     def fill_ellipse_aa(mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color): ...
-    def draw_ellipse_aa(mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color): ...
     def draw_ellipse_aa(mut self, cx: Float64, cy: Float64, rx: Float64, ry: Float64, color: Color, width: Float64 = 1.0): ...
     def fill_arc_aa(mut self, ...): ...
     def fill_ring_sector_aa(mut self, ...): ...
-    def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0): ...
-    def fill_path_aa(mut self, path: Path, color: Color): ...
+    def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0, dashes: ..., dash_offset: ..., cap: ..., join: ..., miter_limit: ...): ...
+    def fill_path_aa(mut self, path: Path, color: Color, fill_rule: FillRule = FillRule.EVEN_ODD): ...
+
+    # Two that label rather than draw
     def begin_annotated_group(mut self, title: String): ...
     def end_annotated_group(mut self): ...
+
+    # Drawing state, with the semantics Canvas defines
+    def save(mut self): ...
+    def restore(mut self): ...
+    def translate(mut self, tx: Float64, ty: Float64): ...
+    def rotate(mut self, angle: Float64): ...
+    def scale(mut self, sx: Float64, sy: Float64): ...
+    def transform(mut self, matrix: Matrix2D): ...
+    def set_transform(mut self, matrix: Matrix2D): ...
+    def reset_transform(mut self): ...
+    def current_transform(self) -> Matrix2D: ...
+    def has_transform(self) -> Bool: ...
+    def set_blend_mode(mut self, mode: BlendMode): ...
+    def blend_mode(self) -> BlendMode: ...
+    def set_color_space(mut self, space: ColorSpace): ...
+    def color_space(self) -> ColorSpace: ...
 ```
 
-Two backends implement it, and they work in completely different ways:
+Three backends implement it, and they work in completely different
+ways:
 
-- **`Canvas`** (`canvas/buffer.mojo`) owns an RGB pixel buffer.
-  Its methods delegate to the free functions in `canvas.shapes`
-  and `canvas.path`, which rasterize with supersampled coverage
-  math.
+- **`Canvas`** (`canvas/buffer.mojo`) owns an RGBA pixel buffer, four
+  bytes per pixel, row-major. Its methods delegate to the free
+  functions in `canvas.shapes` and `canvas.path`, which rasterize with
+  coverage math: exact analytic area for circles, ellipses, arcs and
+  nonzero path fills (`aa_area.mojo`), and a supersampled scanline
+  sweep for even-odd path fills (`aa_crossing.mojo`).
 - **`SvgCanvas`** (`canvas/vector/svg.mojo`) owns a string. Its
   methods append markup. There is no anti-aliasing math anywhere in it,
   because an SVG renderer does that itself, at whatever resolution it
   displays at.
+- **`PdfCanvas`** (`canvas/vector/pdf.mojo`) owns a page content
+  stream and appends PDF operators to it — `m`/`l`/`c` for a path,
+  `f`/`f*` for the two fill rules, `cm` inside a `q`/`Q` pair for the
+  transform. Like SVG it does no coverage math; unlike SVG it has no
+  text element yet, so it draws glyphs as outlines through
+  `canvas.text.render.text_path`.
 
 A caller written against the trait — a chart library's rendering core,
-say — targets either without knowing which it holds. That is the whole
-payoff, and it constrains what may join the trait:
+say — targets any of the three without knowing which it holds. That is
+the whole payoff, and it constrains what may join the trait:
 
-**Only operations both backends can express belong in `DrawTarget`.**
+**Only operations every backend can express belong in `DrawTarget`.**
 Text is the instructive exclusion. `Canvas` rasterizes glyph outlines
 through `fill_path_aa`; `SvgCanvas` emits a `<text>` element and never
-touches an outline. There is no shared operation to generalize, so
-`draw_text` is a free function for raster and a method on `SvgCanvas`
-for vector, and a generic caller collects text as plain data (position,
-string, color, size, alignment) and lets each backend draw it outside
-the generic path.
+touches an outline; `PdfCanvas` fills the outlines as paths. There is
+no shared operation to generalize, so `draw_text` is a free function
+for raster and a method on each vector backend, and a generic caller
+collects text as plain data (position, string, color, size, alignment)
+and lets each backend draw it outside the generic path.
 
 `begin_annotated_group`/`end_annotated_group` look like a violation of
 that and are not, for a reason worth stating precisely. `SvgCanvas`
-emits `<g><title>`; `Canvas` does nothing at all. The line is whether a
-backend's *inability* is lossy:
+emits `<g><title>` and `PdfCanvas` a marked-content sequence
+(`/Span << /Alt (title) >> BDC`); `Canvas` does nothing at all. The
+line is whether a backend's *inability* is lossy:
 
 - Text is lossy to drop, and each backend has to do something
   different, so there is nothing to generalize — it stays off the
@@ -104,14 +141,15 @@ adds *drawing* a backend would then silently omit. If you are proposing
 a trait method one backend would no-op, that is the question to answer
 first.
 
-Two further consequences worth knowing before you propose an addition:
+Three further consequences worth knowing before you propose an
+addition:
 
-- **The trait is deliberately narrow.** No `fill_polygon`, no dashes,
-  clipping, radial gradients, or path-shaped gradients. Each exists in
-  the package as a free function or `Canvas` method; none has a
-  concrete caller *through the trait*. Add to the trait when something
-  concrete needs it, not before — every addition is a method both
-  backends must implement forever.
+- **The trait is deliberately narrow.** No `fill_polygon`, clipping,
+  radial gradients, or path-shaped gradients. Each exists in the
+  package as a free function or `Canvas` method; none has a concrete
+  caller *through the trait*. Add to the trait when something concrete
+  needs it, not before — every addition is a method all three backends
+  must implement forever.
 - **The ellipse is where "use `fill_path_aa`/`stroke_path_aa`" stops
   being the answer.** Every other shape left off the trait is left off
   because one of those two covers it. An ellipse is the case where
@@ -124,14 +162,21 @@ Two further consequences worth knowing before you propose an addition:
   `fill_circle_aa` and with the sub-pixel, width-taking overloads
   `Canvas` already had as free functions (#194). Circle and ellipse
   are the two shapes here carrying both a fill and an outline.
-- **Trait parameters are trimmed.** No `supersample`, `dashes`, or
-  `fill_rule`. A raster implementation picks its own supersample factor
-  internally; a vector one has no equivalent knob to expose.
+- **Trait parameters mirror the free functions, minus `supersample`.**
+  A raster implementation picks its own supersample factor internally
+  and a vector one has no equivalent knob, so that is the one
+  parameter the trait drops. The two strokes do carry the full stroke
+  style — `dashes`, `dash_offset`, `cap`, `join`, `miter_limit` — so a
+  dashed series renders the same way on every backend. `fill_path_aa`
+  carries `fill_rule` for a sharper reason: SVG's own default is
+  nonzero, so without it a hole that even-odd punches in a PNG would
+  fill solid in the SVG.
 
-Conformance in Mojo is **nominal, not structural**: `Canvas` and
-`SvgCanvas` each name `DrawTarget` in their struct signature
-(`struct Canvas(Copyable, DrawTarget, Movable)`). Implementing the
-methods is not enough; the declaration is what makes it conform.
+Conformance in Mojo is **nominal, not structural**: `Canvas`,
+`SvgCanvas` and `PdfCanvas` each name `DrawTarget` in their struct
+signature (`struct Canvas(Copyable, DrawTarget, Movable)`).
+Implementing the methods is not enough; the declaration is what makes
+it conform.
 
 ## Mojo features you will meet here
 
@@ -206,8 +251,9 @@ struct FillRule(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
 ```
 
 `FillRule`, `TextAlign`, `FontSlant`, `FontWeight`, `LineCap`,
-`LineJoin`, `BlendMode`, `Extend`, `Hatch`, `Filter` and `PathOp` all
-follow this exactly. New enum-like types should too.
+`LineJoin`, `BlendMode`, `ColorSpace`, `Extend`, `Hatch`, `Filter`,
+`PathOp` and `PngLevel` all follow this exactly. New enum-like types
+should too.
 
 `comptime` also carries file-scope constants (`_SVG_DECIMALS`,
 `_FC_WEIGHT_BOLD`, `_MIN_MATCH`). One limitation to know:
@@ -326,13 +372,18 @@ translucent color, since opaque colors hide it completely.
 ### Scope discipline
 
 The package does not grow speculative API surface. Several modules
-document a deliberate limit — `ttf.mojo` rejects CFF outlines and
-implements no hinting, `png.mojo` rejects indexed color and interlacing,
-`bidi.mojo` implements a documented subset of UAX #9, gradients support
-"pad" extend only. Each raises a clear, specific error rather than
-silently misreading input. Widening one of these is welcome when
-something concrete needs it; widening it speculatively is the thing to
-avoid.
+document a deliberate limit — `ttf.mojo` implements no hinting and does
+not read `CFF2`, `png.mojo` rejects Adam7 interlacing and 16-bit
+samples, `jpeg.mojo` rejects progressive JPEG, `bidi.mojo` implements a
+documented subset of UAX #9, gradients support "pad" extend only. Each
+raises a clear, specific error rather than silently misreading input.
+
+Widening one of these is welcome when something concrete needs it;
+widening it speculatively is the thing to avoid. Two limits this
+section used to list have been widened exactly that way: `cff.mojo`
+now reads OpenType CFF outlines, and `png.mojo` reads indexed color at
+1/2/4/8 bits. Both arrived with a caller and a fixture, not on
+principle.
 
 ### Comments and docstrings
 
@@ -384,6 +435,13 @@ change to one primitive use `pixi run micro` (`benchmarks/
 micro_canvas.mojo`), which times a case in interleaved rounds and
 reports a median with its spread; add a case for the primitive if
 there isn't one, and quote its median and ratio in the pull request.
+
+`pixi run bench-check` runs the survey twice and compares each row's
+faster time against `benchmarks/reference.txt`, failing any row more
+than 1.5x slower than its recorded time. A change that moves rows on
+purpose re-records that reference with `pixi run bench-record` — on a
+quiet machine, in the same pull request — since recording under load
+raises the floor every later check compares against.
 
 Docstrings are rendered into the docs site by `mojo doc` + modo, so
 public ones are user-facing documentation, not just internal notes.
@@ -529,9 +587,16 @@ The reference is keyed to the machine it was recorded on, so on other
 hardware it reports that and passes; `pixi run bench-record` rewrites
 it, which a change that moved rows on purpose does in its own PR.
 
-Then bump the version in `pixi.toml` **first**, then tag — the tag
-should point at the commit that already carries the new version, not
-the other way around.
+Run `pixi run bench-verify` too. It renders each verification scene
+outside any timed region and digests every byte against
+`benchmarks/digests.txt`, which is what catches a rendering change the
+survey's sampled checksum cannot see. It needs no quiet machine, since
+nothing in it is timed.
+
+Then bump the version in `pixi.toml` **first** — in both the
+`[workspace]` and `[package]` sections — and tag after: the tag should
+point at the commit that already carries the new version, not the
+other way around.
 
 ## License
 

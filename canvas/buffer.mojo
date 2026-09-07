@@ -1248,8 +1248,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
     def begin_annotated_group(mut self, title: String):
         """`DrawTarget`'s group label, which a raster canvas has
         nowhere to put: a no-op, so code written against the trait runs
-        unchanged on either backend. `SvgCanvas` emits
-        `<g><title>` here.
+        unchanged on any backend. `SvgCanvas` emits `<g><title>` here
+        and `PdfCanvas` a marked-content sequence.
 
         Args:
             title: Ignored.

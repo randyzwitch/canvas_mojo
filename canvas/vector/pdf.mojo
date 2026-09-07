@@ -19,7 +19,8 @@ blend mode onto an `ExtGState` (`/ca`, `/CA`, `/BM`), a rectangle or
 path clip onto `re W n` / `W n` inside a `q` that `pop_clip` closes
 with `Q`, and a linear or radial gradient onto an axial or radial
 shading (`sh`) with a stitching function over the stops, clipped to
-the shape. Text is drawn as outlines through `canvas.text.text_path`,
+the shape. Text is drawn as outlines through
+`canvas.text.render.text_path`,
 so it needs no font embedding and looks exactly as the raster backend
 draws it, at the cost of not being selectable; embedding a font subset
 is the follow-up. The content stream is Flate-compressed through this
@@ -1269,9 +1270,10 @@ struct PdfCanvas(DrawTarget, Movable):
         rotation: Float64 = 0.0,
         align: TextAlign = TextAlign.LEFT,
     ) raises:
-        """Draw `text` as filled glyph outlines (`canvas.text.text_path`),
-        laid out exactly as the raster `draw_text` lays it out. Not on
-        `DrawTarget`, which excludes text.
+        """Draw `text` as filled glyph outlines, through
+        `canvas.text.render.text_path` and laid out exactly as the
+        raster `draw_text` lays it out. Not on `DrawTarget`, which
+        excludes text.
 
         Args:
             x: Anchor x -- baseline left end for LEFT alignment.

@@ -123,7 +123,9 @@ def main() raises:
     var pdf = PdfCanvas(800, 300)          # 1 unit = 1 point
     pdf.fill_rect(0, 0, 800, 300, Color(255, 255, 255))
     scene(pdf)
-    pdf.draw_text(20.0, 280.0, "Real, selectable text", Color(0, 0, 0), 18.0)
+    # Drawn as filled outlines, so it looks exactly as the raster
+    # backend draws it but is not selectable or searchable.
+    pdf.draw_text(20.0, 280.0, "Vector text", Color(0, 0, 0), 18.0)
     write_pdf(pdf, "scene.pdf")
 ```
 
