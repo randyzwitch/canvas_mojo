@@ -21,8 +21,10 @@ from canvas.text.font_discovery import (
     FontSlant,
     FontWeight,
     _cache_path,
+    _escape_field,
     _read_cache,
     _search_key,
+    _unescape_field,
     _font_directories,
 )
 
@@ -54,6 +56,36 @@ def _write_file(path: String, text: String) raises:
     var f = open(path, "w")
     f.write(text)
     f.close()
+
+
+def test_fields_survive_escaping() raises:
+    """A record is tab-separated, so a field holding a tab, a newline
+    or a backslash has to come back as it went in -- and so does one
+    holding text outside ASCII, which macOS ships as font filenames
+    (`/System/Library/Fonts/\u30d2\u30e9\u30ae\u30ce\u4e38\u30b4 ProN W4.ttc`) and any
+    machine can have as a family name.
+    """
+    var cases: List[String] = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        (
+            "/System/Library/Fonts/\u30d2\u30e9\u30ae\u30ce\u4e38\u30b4 ProN"
+            " W4.ttc"
+        ),
+        "Noto Sans CJK JP",
+        "\u0627\u0644\u062e\u0637 \u0627\u0644\u0639\u0631\u0628\u064a",
+        "back\\slash",
+        "tab\there",
+        "new\nline",
+        "",
+        "\u00e9\u00e8\u00ea",
+    ]
+    for sample in cases:
+        var round_tripped = _unescape_field(_escape_field(sample))
+        assert_equal(round_tripped, sample, "field survives the round trip")
+    # And the escaped form carries no raw tab or newline, which is what
+    # the record format depends on.
+    assert_false("\t" in _escape_field("tab\there"), "no raw tab escapes")
+    assert_false("\n" in _escape_field("new\nline"), "no raw newline escapes")
 
 
 def test_disabled_cache_writes_nothing() raises:

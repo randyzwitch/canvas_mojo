@@ -1253,14 +1253,23 @@ def _escape_field(text: String) -> String:
 
 
 def _unescape_field(text: String) -> String:
-    """`_escape_field` backwards."""
+    """`_escape_field` backwards.
+
+    Walks codepoints rather than bytes: every escape this introduces is
+    ASCII, but the text between them is not -- a macOS system font is
+    `/System/Library/Fonts/\u30d2\u30e9\u30ae\u30ce\u4e38\u30b4 ProN W4.ttc`, and
+    rebuilding one of those bytes at a time through `chr` turns each
+    UTF-8 byte into its own character.
+    """
+    var chars = List[Int]()
+    for cp in text.codepoints():
+        chars.append(Int(cp))
     var out = String()
-    var bytes = text.as_bytes()
     var i = 0
-    while i < len(bytes):
-        var c = Int(bytes[i])
-        if c == 92 and i + 1 < len(bytes):
-            var n = Int(bytes[i + 1])
+    while i < len(chars):
+        var c = chars[i]
+        if c == 92 and i + 1 < len(chars):
+            var n = chars[i + 1]
             if n == 92:
                 out += "\\"
             elif n == 116:

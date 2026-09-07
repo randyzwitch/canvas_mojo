@@ -366,8 +366,7 @@ def _blend_channel[MODE: Int](cb: Int, cs: Int) -> Int:
     `_blend_pixel` cover the Porter-Duff operators too.
     """
 
-    @parameter
-    if MODE == 13:
+    comptime if MODE == 13:
         return _multiply(cb, cs)
     elif MODE == 14:
         return _screen(cb, cs)
@@ -473,8 +472,7 @@ def _set_sat(c: _Rgb, s: Float64) -> _Rgb:
 def _blend_triple[MODE: Int](cb: _Rgb, cs: _Rgb) -> _Rgb:
     """`B(Cb, Cs)` for a non-separable mode, on the whole color."""
 
-    @parameter
-    if MODE == 24:
+    comptime if MODE == 24:
         return _set_lum(_set_sat(cs, _sat(cb)), _lum(cb))
     elif MODE == 25:
         return _set_lum(_set_sat(cb, _sat(cs)), _lum(cb))
@@ -517,8 +515,7 @@ def _blend_pixel[MODE: Int](src: Color, dst: Color) -> Color:
     var fa = 255
     var fb = 255 - sa
 
-    @parameter
-    if MODE == 1:  # SOURCE
+    comptime if MODE == 1:  # SOURCE
         fb = 0
     elif MODE == 2:  # DESTINATION_IN
         fa = 0
@@ -570,8 +567,7 @@ def _blend_pixel[MODE: Int](src: Color, dst: Color) -> Color:
     var sg = Int(src.g)
     var sb = Int(src.b)
 
-    @parameter
-    if MODE >= 24:
+    comptime if MODE >= 24:
         var b = _blend_triple[MODE](_Rgb(dr, dg, db), _Rgb(sr, sg, sb))
         sr = _mix_source(ba, sr, _to_channel(b.r))
         sg = _mix_source(ba, sg, _to_channel(b.g))
@@ -714,16 +710,14 @@ def _blend_span_impl[
     var idx = start * 4
     var end = idx + count * 4
 
-    @parameter
-    if MODE >= 13 and MODE <= 23:
+    comptime if MODE >= 13 and MODE <= 23:
         var sa = Int(src.a)
         var inv = 255 - sa
         var sr = Int(src.r)
         var sg = Int(src.g)
         var sb = Int(src.b)
 
-        @parameter
-        if (
+        comptime if (
             MODE == 13
             or MODE == 14
             or MODE == 16
