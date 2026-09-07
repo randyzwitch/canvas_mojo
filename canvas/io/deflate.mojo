@@ -1251,6 +1251,11 @@ def deflate(
 
     Args:
         data: Bytes to compress.
+        max_chain: Hash-chain candidates the match search may walk at
+            each position. Lower trades compression for speed.
+        max_lazy: Match length below which the search still looks one
+            byte ahead for a longer match. Zero turns lazy matching
+            off, which costs more bytes than it saves time.
 
     Returns:
         The compressed bytes, no zlib wrapper.

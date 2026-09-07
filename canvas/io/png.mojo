@@ -15,8 +15,13 @@ LEN/NLEN fields are little-endian.
 
 `write_png` emits color type 6 (truecolor + alpha) when the canvas
 contains a pixel that is not fully opaque, and color type 2 otherwise.
-It compresses the scanlines twice, unfiltered and Sub-filtered (spec
-section 9), and keeps the smaller stream.
+Rows go out either unfiltered or Sub-filtered (spec section 9),
+whichever compresses smaller, and the choice is made on a sample:
+every eighth row is compressed both ways, then the whole image is
+compressed once in the encoding that sample picked. `PngLevel` sets
+how much of that search happens -- `FAST` skips it outright on an
+image flat enough for the answer not to be in doubt, `SMALL`
+compresses both encodings in full rather than sampling.
 `read_png` accepts color types 0/2/4/6 at 8-bit depth and indexed
 color (type 3, `PLTE` with an optional `tRNS`) at 1/2/4/8 bits,
 non-interlaced; other bit depths and Adam7 interlacing

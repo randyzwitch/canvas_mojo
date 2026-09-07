@@ -73,7 +73,7 @@ flowchart LR
     Svg --> Draw
     Pdf --> Draw
 
-    subgraph Draw["Draw — same DrawTarget methods on either backend"]
+    subgraph Draw["Draw — same DrawTarget methods on any backend"]
         direction TB
         Prim["Shape primitives<br/>fill_circle_aa, fill_rect,<br/>fill_arc_aa, draw_line_aa …"]
         PathAPI["Path<br/>move_to → line_to / curve_to / arc_to<br/>→ fill_path_aa / stroke_path_aa"]
