@@ -34,6 +34,11 @@ test = "bash scripts/run_parallel.sh tests/test_text.mojo tests/test_text_path.m
 # on. Run it before and after a change. See the file's own docstring
 # for what the numbers do and don't mean.
 bench = "mojo run -I . benchmarks/bench_canvas.mojo"
+# Two survey runs, each row at its faster time, against benchmarks/
+# reference.txt; fails on a row 1.5x slower. Run before tagging.
+bench-check = "CANVAS_BENCH_MODE=check mojo run -I . benchmarks/bench_canvas.mojo"
+# Rewrite the reference from this machine; commit the result.
+bench-record = "CANVAS_BENCH_MODE=record mojo run -I . benchmarks/bench_canvas.mojo"
 
 # One primitive at a time, in rounds, interleaved: the gate for a
 # change to a single primitive. See the file's docstring for how to

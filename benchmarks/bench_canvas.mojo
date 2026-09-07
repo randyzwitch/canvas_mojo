@@ -23,9 +23,28 @@ iterations here before the sink was added.
 Sizes are chart-shaped rather than maximal: an 800x600 surface, a
 scatter of a few thousand markers, a series with a few thousand
 segments, a paragraph of real text.
+
+## Reference numbers
+
+A run compares rows only with each other, so a row that doubled in an
+earlier release looks like the number rather than a doubled one --
+which is how #251 made large nonzero fills 2.3x slower for four
+releases until dataviz_mojo bisected canvas versions (dataviz #329).
+`benchmarks/reference.txt` is the memory this file lacks: every row's
+time on one named machine, written by `pixi run bench-record` and
+read by `pixi run bench-check`, which runs the survey twice, keeps
+each row's faster time, and fails on any row more than
+`_REGRESSION_FACTOR` slower than its reference. Run the check before
+tagging a release; re-record after a change that moved rows on
+purpose, on a quiet machine. The file is keyed to the machine it was
+recorded on (CPU model and thread count); on another machine the
+check reports that and passes, since absolute numbers do not carry
+across hardware.
 """
 
 from std.math import cos, pi, sin
+from std.os import getenv
+from std.runtime.asyncrt import parallelism_level
 from std.time import perf_counter_ns
 
 from canvas.blend import BlendMode
@@ -135,7 +154,8 @@ def _print_table(rows: List[_Row]):
     print(rule)
 
 
-def main() raises:
+def _survey() raises -> List[_Row]:
+    """One pass over every case: the rows, in order."""
     var rows = List[_Row]()
     var sink = 0
 
@@ -149,7 +169,9 @@ def main() raises:
     for _ in range(iters):
         var c = Canvas(W, H, WHITE)
         sink += Int(c.get_pixel(0, 0).r)
-    _report(rows, "Canvas(800x600) construct+fill", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "Canvas(800x600) construct+fill", perf_counter_ns() - t0, iters
+    )
 
     var canvas = Canvas(W, H, WHITE)
     iters = 200
@@ -164,7 +186,9 @@ def main() raises:
     for _ in range(iters):
         canvas.fill(TRANSLUCENT)
         sink += Int(canvas.get_pixel(0, 0).r)
-    _report(rows, "Canvas.fill translucent (blend)", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "Canvas.fill translucent (blend)", perf_counter_ns() - t0, iters
+    )
 
     iters = 500
     t0 = perf_counter_ns()
@@ -196,21 +220,33 @@ def main() raises:
             var fy = 20.0 + Float64((i * 53) % 560)
             fill_circle_aa(canvas, fx, fy, 3.5, INK)
         sink += Int(canvas.get_pixel(100, 100).r)
-    _report(rows, "fill_circle_aa x2000 markers (r=3.5)", perf_counter_ns() - t0, iters)
+    _report(
+        rows,
+        "fill_circle_aa x2000 markers (r=3.5)",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     iters = 200
     t0 = perf_counter_ns()
     for _ in range(iters):
         fill_circle_aa(canvas, 400.0, 300.0, 250.0, INK)
         sink += Int(canvas.get_pixel(400, 300).r)
-    _report(rows, "fill_circle_aa one large (r=250)", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "fill_circle_aa one large (r=250)", perf_counter_ns() - t0, iters
+    )
 
     iters = 200
     t0 = perf_counter_ns()
     for _ in range(iters):
         fill_ellipse_aa(canvas, 400.0, 300.0, 340.0, 220.0, INK)
         sink += Int(canvas.get_pixel(400, 300).r)
-    _report(rows, "fill_ellipse_aa one large (340x220)", perf_counter_ns() - t0, iters)
+    _report(
+        rows,
+        "fill_ellipse_aa one large (340x220)",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     iters = 40
     t0 = perf_counter_ns()
@@ -220,7 +256,9 @@ def main() raises:
             var ey = 20.0 + Float64((i * 53) % 560)
             fill_ellipse_aa(canvas, ex, ey, 5.0, 3.0, INK)
         sink += Int(canvas.get_pixel(100, 100).r)
-    _report(rows, "fill_ellipse_aa x2000 small (5x3)", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "fill_ellipse_aa x2000 small (5x3)", perf_counter_ns() - t0, iters
+    )
 
     # Pie and donut segments, the shapes a chart makes most of these
     # for. A near-half sweep specifically, since the wedge's
@@ -266,9 +304,7 @@ def main() raises:
     var poly = List[FPoint]()
     for i in range(64):
         var t = Float64(i) / 64.0 * 6.283185307179586
-        poly.append(
-            FPoint(400.0 + 250.0 * cos(t), 300.0 + 200.0 * sin(t))
-        )
+        poly.append(FPoint(400.0 + 250.0 * cos(t), 300.0 + 200.0 * sin(t)))
     iters = 100
     t0 = perf_counter_ns()
     for _ in range(iters):
@@ -297,7 +333,10 @@ def main() raises:
         fill_path_aa(canvas, glyph, INK, FillRule.NONZERO)
         sink += Int(canvas.get_pixel(20, 30).r)
     _report(
-        rows, "fill_path_aa glyph-sized (nonzero)", perf_counter_ns() - t0, iters
+        rows,
+        "fill_path_aa glyph-sized (nonzero)",
+        perf_counter_ns() - t0,
+        iters,
     )
 
     var big_path = Path()
@@ -351,14 +390,21 @@ def main() raises:
     for _ in range(iters):
         fill_path_gradient_aa(canvas, glyph, gradient)
         sink += Int(canvas.get_pixel(20, 30).r)
-    _report(rows, "fill_path_gradient_aa glyph-sized", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "fill_path_gradient_aa glyph-sized", perf_counter_ns() - t0, iters
+    )
 
     iters = 60
     t0 = perf_counter_ns()
     for _ in range(iters):
         fill_path_gradient_aa(canvas, big_path, gradient)
         sink += Int(canvas.get_pixel(400, 400).r)
-    _report(rows, "fill_path_gradient_aa large 39-curve", perf_counter_ns() - t0, iters)
+    _report(
+        rows,
+        "fill_path_gradient_aa large 39-curve",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     # RadialGradient's projection is a sqrt per pixel; ConicGradient's
     # is an atan2 per pixel. Same shapes as the linear rows above, so
@@ -372,7 +418,10 @@ def main() raises:
         fill_path_radial_gradient_aa(canvas, glyph, radial)
         sink += Int(canvas.get_pixel(20, 30).r)
     _report(
-        rows, "fill_path_radial_gradient_aa glyph-sized", perf_counter_ns() - t0, iters
+        rows,
+        "fill_path_radial_gradient_aa glyph-sized",
+        perf_counter_ns() - t0,
+        iters,
     )
 
     iters = 60
@@ -396,7 +445,10 @@ def main() raises:
         fill_path_conic_gradient_aa(canvas, glyph, conic)
         sink += Int(canvas.get_pixel(20, 30).r)
     _report(
-        rows, "fill_path_conic_gradient_aa glyph-sized", perf_counter_ns() - t0, iters
+        rows,
+        "fill_path_conic_gradient_aa glyph-sized",
+        perf_counter_ns() - t0,
+        iters,
     )
 
     iters = 60
@@ -417,7 +469,9 @@ def main() raises:
     for _ in range(iters):
         draw_line_aa(canvas, 30.0, 30.0, 770.0, 570.0, INK, width=2.0)
         sink += Int(canvas.get_pixel(400, 300).r)
-    _report(rows, "draw_line_aa full diagonal (w=2)", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "draw_line_aa full diagonal (w=2)", perf_counter_ns() - t0, iters
+    )
 
     var series = List[FPoint]()
     for i in range(3000):
@@ -429,7 +483,12 @@ def main() raises:
     for _ in range(iters):
         draw_polyline_aa(canvas, series, INK, width=1.5)
         sink += Int(canvas.get_pixel(400, 300).r)
-    _report(rows, "draw_polyline_aa 3000-segment series", perf_counter_ns() - t0, iters)
+    _report(
+        rows,
+        "draw_polyline_aa 3000-segment series",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     # The same length of line without the hairpins: a gentle sine whose
     # outline is simple, so it rasterizes by exact area. The series
@@ -460,14 +519,21 @@ def main() raises:
     for _ in range(iters):
         draw_polyline_aa(canvas, series, INK, width=1.5, dashes=dashes)
         sink += Int(canvas.get_pixel(400, 300).r)
-    _report(rows, "draw_polyline_aa 3000-segment dashed", perf_counter_ns() - t0, iters)
+    _report(
+        rows,
+        "draw_polyline_aa 3000-segment dashed",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     iters = 400
     t0 = perf_counter_ns()
     for _ in range(iters):
         draw_line(canvas, 30, 30, 770, 570, INK, dashes=dashes)
         sink += Int(canvas.get_pixel(400, 300).r)
-    _report(rows, "draw_line dashed full diagonal", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "draw_line dashed full diagonal", perf_counter_ns() - t0, iters
+    )
 
     # The solid counterpart of the row above: same Bresenham walk with
     # no dash pattern, which is what every caller that omits `dashes`
@@ -477,7 +543,9 @@ def main() raises:
     for _ in range(iters):
         draw_line(canvas, 30, 30, 770, 570, INK)
         sink += Int(canvas.get_pixel(400, 300).r)
-    _report(rows, "draw_line solid full diagonal", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "draw_line solid full diagonal", perf_counter_ns() - t0, iters
+    )
 
     iters = 200
     t0 = perf_counter_ns()
@@ -502,7 +570,9 @@ def main() raises:
     for _ in range(iters):
         draw_text(canvas, 40.0, 100.0, paragraph, INK, size=13.0, cache=cache)
         sink += Int(canvas.get_pixel(45, 95).r)
-    _report(rows, "draw_text 3 lines @13px (cached)", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "draw_text 3 lines @13px (cached)", perf_counter_ns() - t0, iters
+    )
 
     # The same paragraph through the overload that takes no cache --
     # the shortest call to write, and the one a reader reaches for
@@ -519,7 +589,10 @@ def main() raises:
         draw_text(canvas, 40.0, 100.0, paragraph, INK, size=13.0)
         sink += Int(canvas.get_pixel(45, 95).r)
     _report(
-        rows, "draw_text 3 lines @13px (uncached)", perf_counter_ns() - t0, iters
+        rows,
+        "draw_text 3 lines @13px (uncached)",
+        perf_counter_ns() - t0,
+        iters,
     )
 
     # Text along a curve: 20 glyphs on a quarter-circle arc, through
@@ -739,7 +812,9 @@ def main() raises:
     for _ in range(iters):
         var m = measure_text("−12,345.67", 13.0, cache=cache)
         sink += Int(m.advance)
-    _report(rows, "measure_text one label (cached)", perf_counter_ns() - t0, iters)
+    _report(
+        rows, "measure_text one label (cached)", perf_counter_ns() - t0, iters
+    )
 
     iters = 100
     t0 = perf_counter_ns()
@@ -753,7 +828,183 @@ def main() raises:
         iters,
     )
 
-    _print_table(rows)
     # Printed so nothing above can be optimized away as unused. The
     # value itself is not meaningful; only that it was computed is.
     print("checksum:", sink)
+    return rows^
+
+
+# A row this many times slower than its reference fails the check.
+# The survey's own run-to-run swing on parallel rows is about 20%;
+# the regression this exists to catch was 2.3x.
+comptime _REGRESSION_FACTOR = 1.5
+comptime _REFERENCE_PATH = "benchmarks/reference.txt"
+
+
+def _machine_id() -> String:
+    """The CPU model and thread count, which is what a reference is
+    valid for."""
+    var model = String("unknown")
+    try:
+        var f = open("/proc/cpuinfo", "r")
+        var text = f.read()
+        f.close()
+        for line in text.split("\n"):
+            if line.startswith("model name"):
+                var colon = line.find(":")
+                model = String(line[byte = colon + 1 :].strip())
+                break
+    except:
+        pass
+    return model + " x" + String(parallelism_level())
+
+
+def _package_version() -> String:
+    try:
+        var f = open("pixi.toml", "r")
+        var text = f.read()
+        f.close()
+        for line in text.split("\n"):
+            if line.startswith("version = "):
+                return String(line[byte=10:].strip()).replace('"', "")
+    except:
+        pass
+    return "unknown"
+
+
+def _best_of_two() raises -> List[_Row]:
+    """The survey twice, each row at its faster time, which takes the
+    edge off a run that another process leaned on."""
+    var first = _survey()
+    var second = _survey()
+    var rows = List[_Row]()
+    for i in range(len(first)):
+        var ns = first[i].ns_per_iter
+        if i < len(second) and second[i].ns_per_iter < ns:
+            ns = second[i].ns_per_iter
+        rows.append(_Row(first[i].name, ns, first[i].iters))
+    return rows^
+
+
+def _record(rows: List[_Row]) raises:
+    var out = String(
+        "# canvas_mojo bench reference: us/iter per row, the faster of two"
+        " runs.\n"
+    )
+    out += "# machine: " + _machine_id() + "\n"
+    out += "# version: " + _package_version() + "\n"
+    out += (
+        "# Written by `pixi run bench-record`; read by `pixi run"
+        " bench-check`.\n"
+    )
+    for i in range(len(rows)):
+        out += (
+            rows[i].name + "\t" + _fixed(rows[i].ns_per_iter / 1000.0, 3) + "\n"
+        )
+    var f = open(_REFERENCE_PATH, "w")
+    f.write(out)
+    f.close()
+    print(
+        "recorded", len(rows), "rows to", _REFERENCE_PATH, "for", _machine_id()
+    )
+
+
+def _check(rows: List[_Row]) raises:
+    var f = open(_REFERENCE_PATH, "r")
+    var text = f.read()
+    f.close()
+    var machine = String("")
+    var version = String("")
+    var names = List[String]()
+    var times = List[Float64]()
+    for line in text.split("\n"):
+        if line.startswith("# machine: "):
+            machine = String(line[byte=11:].strip())
+        elif line.startswith("# version: "):
+            version = String(line[byte=11:].strip())
+        elif line.startswith("#") or String(line.strip()) == "":
+            continue
+        else:
+            var tab = line.find("\t")
+            names.append(String(line[byte=:tab]))
+            times.append(Float64(String(line[byte = tab + 1 :].strip())))
+    var here = _machine_id()
+    if machine != here:
+        print("bench-check: reference was recorded on", machine)
+        print("             this machine is", here)
+        print(
+            "             absolute numbers do not carry across hardware;"
+            " nothing checked."
+        )
+        return
+    print("")
+    print("bench-check against", _REFERENCE_PATH, "(version", version + ")")
+    var name_w = 4
+    for i in range(len(rows)):
+        if rows[i].name.byte_length() > name_w:
+            name_w = rows[i].name.byte_length()
+    print(
+        _pad("case", name_w),
+        _lpad("ref us", 12),
+        _lpad("now us", 12),
+        _lpad("ratio", 8),
+        "  verdict",
+    )
+    var regressions = 0
+    for i in range(len(rows)):
+        ref r = rows[i]
+        var now = r.ns_per_iter / 1000.0
+        var ref_us = -1.0
+        for k in range(len(names)):
+            if names[k] == r.name:
+                ref_us = times[k]
+                break
+        if ref_us < 0.0:
+            print(
+                _pad(r.name, name_w),
+                _lpad("-", 12),
+                _lpad(_fixed(now, 1), 12),
+                _lpad("-", 8),
+                "  no reference (record to add)",
+            )
+            continue
+        var ratio = now / ref_us
+        var verdict = String("ok")
+        if ratio > _REGRESSION_FACTOR:
+            verdict = "REGRESSION"
+            regressions += 1
+        elif ratio < 1.0 / _REGRESSION_FACTOR:
+            verdict = "faster; re-record when intended"
+        print(
+            _pad(r.name, name_w),
+            _lpad(_fixed(ref_us, 1), 12),
+            _lpad(_fixed(now, 1), 12),
+            _lpad(_fixed(ratio, 2), 8),
+            "  " + verdict,
+        )
+    if regressions > 0:
+        raise Error(
+            String(
+                "bench-check: ",
+                regressions,
+                " row(s) more than ",
+                _REGRESSION_FACTOR,
+                "x slower than the reference",
+            )
+        )
+    print(
+        "bench-check: no row more than",
+        _REGRESSION_FACTOR,
+        "x slower than its reference",
+    )
+
+
+def main() raises:
+    var mode = getenv("CANVAS_BENCH_MODE")
+    if mode == "record":
+        _record(_best_of_two())
+        return
+    if mode == "check":
+        _check(_best_of_two())
+        return
+    _print_table(_survey())
