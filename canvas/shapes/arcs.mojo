@@ -239,9 +239,22 @@ def _ellipse_fpoints(
     var steps = _steps_for_sweep(max(rx, ry), 2.0 * pi)
     var points = List[FPoint](capacity=steps)
     var step = 2.0 * pi / Float64(steps)
-    for i in range(steps):
-        var t = Float64(i) * step
-        points.append(FPoint(cx + rx * cos(t), cy + ry * sin(t)))
+    # The unit vector is turned by one step each time rather than
+    # rebuilt from `cos`/`sin` -- two multiply-adds against a pair of
+    # transcendentals, and the flattening loop is where every large
+    # circle, ellipse, arc and ring spends its setup. Turning a unit
+    # vector repeatedly drifts, but by about one part in 1e16 per
+    # step, so even the longest run this takes stays far below a
+    # millionth of a pixel.
+    var cd = cos(step)
+    var sd = sin(step)
+    var ux = 1.0
+    var uy = 0.0
+    for _ in range(steps):
+        points.append(FPoint(cx + rx * ux, cy + ry * uy))
+        var nx = ux * cd - uy * sd
+        uy = ux * sd + uy * cd
+        ux = nx
     return points^
 
 
@@ -261,9 +274,15 @@ def _wedge_fpoints(
     var points = List[FPoint](capacity=steps + 2)
     points.append(FPoint(cx, cy))
     var step = span / Float64(steps)
-    for i in range(steps + 1):
-        var t = start_angle + Float64(i) * step
-        points.append(FPoint(cx + radius * cos(t), cy + radius * sin(t)))
+    var cd = cos(step)
+    var sd = sin(step)
+    var ux = cos(start_angle)
+    var uy = sin(start_angle)
+    for _ in range(steps + 1):
+        points.append(FPoint(cx + radius * ux, cy + radius * uy))
+        var nx = ux * cd - uy * sd
+        uy = ux * sd + uy * cd
+        ux = nx
     return points^
 
 
@@ -284,20 +303,29 @@ def _ring_fpoints(
     var inner_steps = _steps_for_sweep(inner_radius, span)
     var points = List[FPoint](capacity=outer_steps + inner_steps + 4)
     var outer_step = span / Float64(outer_steps)
-    for i in range(outer_steps + 1):
-        var t = start_angle + Float64(i) * outer_step
-        points.append(
-            FPoint(cx + outer_radius * cos(t), cy + outer_radius * sin(t))
-        )
+    var ocd = cos(outer_step)
+    var osd = sin(outer_step)
+    var ox = cos(start_angle)
+    var oy = sin(start_angle)
+    for _ in range(outer_steps + 1):
+        points.append(FPoint(cx + outer_radius * ox, cy + outer_radius * oy))
+        var nx = ox * ocd - oy * osd
+        oy = ox * osd + oy * ocd
+        ox = nx
     if inner_radius <= 0.0:
         points.append(FPoint(cx, cy))
         return points^
+    # Back along the inner arc, so the turn runs the other way.
     var inner_step = span / Float64(inner_steps)
-    for i in range(inner_steps + 1):
-        var t = end_angle - Float64(i) * inner_step
-        points.append(
-            FPoint(cx + inner_radius * cos(t), cy + inner_radius * sin(t))
-        )
+    var icd = cos(inner_step)
+    var isd = -sin(inner_step)
+    var ix = cos(end_angle)
+    var iy = sin(end_angle)
+    for _ in range(inner_steps + 1):
+        points.append(FPoint(cx + inner_radius * ix, cy + inner_radius * iy))
+        var nx = ix * icd - iy * isd
+        iy = ix * isd + iy * icd
+        ix = nx
     return points^
 
 
