@@ -199,6 +199,7 @@ struct _BitReader(Movable):
         self.bitbuf = 0
         self.bitcnt = 0
 
+    @always_inline
     def read_bits(mut self, need: Int) raises -> Int:
         var val = self.bitbuf
         while self.bitcnt < need:
@@ -211,6 +212,7 @@ struct _BitReader(Movable):
         self.bitcnt -= need
         return val & ((1 << need) - 1)
 
+    @always_inline
     def fill(mut self, want: Int) -> Int:
         """Buffer whole bytes until at least `want` bits are pending,
         or the input runs out; returns how many are pending. Nothing
@@ -391,6 +393,7 @@ def _construct(
     return _Huffman(counts^, symbols^)
 
 
+@always_inline
 def _decode(mut reader: _BitReader, table: _Huffman) raises -> Int:
     """The next symbol of `table` from `reader`: a lookup in
     `table.fast` on the pending bits when the code is short enough and
@@ -435,29 +438,51 @@ def _codes(
     transcribed from the spec and cross-checked against puff.c's.
 
     The tables come from `_length_bases` and friends below.
+
+    `out`'s logical length is carried in a local and written back to
+    the list once, at the end. Letting the list track it means a
+    length update, a capacity test and a fresh base pointer on every
+    literal and every match, which for a stream that expands more than
+    a hundredfold is most of the work; the local costs an add.
     """
     var lens = _length_bases()
     var lext = _length_extra_bits()
     var dists = _distance_bases()
     var dext = _distance_extra_bits()
 
+    var n = len(out)
+    var cap = out.capacity()
+    if cap < 1024:
+        out.reserve(1024)
+        cap = out.capacity()
+    var op = out.unsafe_ptr()
+
     while True:
         var symbol = _decode(reader, lencode)
         if symbol < 256:
-            out.append(UInt8(symbol))
+            if n == cap:
+                out.resize(unsafe_uninit_length=n)
+                out.reserve(2 * cap)
+                cap = out.capacity()
+                op = out.unsafe_ptr()
+            op[unsafe_offset=n] = UInt8(symbol)
+            n += 1
         elif symbol == 256:
             break
         else:
             symbol -= 257
             if symbol >= 29:
+                out.resize(unsafe_uninit_length=n)
                 raise Error("deflate: invalid length code")
             var length = lens[symbol] + reader.read_bits(lext[symbol])
 
             var dsymbol = _decode(reader, distcode)
             if dsymbol >= 30:
+                out.resize(unsafe_uninit_length=n)
                 raise Error("deflate: invalid distance code")
             var dist = dists[dsymbol] + reader.read_bits(dext[dsymbol])
-            if dist > len(out):
+            if dist > n:
+                out.resize(unsafe_uninit_length=n)
                 raise Error("deflate: distance too far back")
 
             # Overlapping copies (length > distance) are legal and
@@ -467,21 +492,20 @@ def _codes(
             # overlap their source, and once they are written the
             # next `2 * dist` do not either: the run is copied in
             # chunks that double, each from bytes already in place, in
-            # sixteen-byte vectors where a chunk is long enough. The
-            # output is grown once for the whole run.
-            var n0 = len(out)
-            var start = n0 - dist
-            if n0 + length > out.capacity():
-                # Grow geometrically: `resize` alone grows to the exact
-                # length, and a run per match would then reallocate
-                # the whole output every few hundred bytes.
-                out.reserve(max(2 * out.capacity(), n0 + length))
-            out.resize(unsafe_uninit_length=n0 + length)
-            var op = out.unsafe_ptr()
+            # sixteen-byte vectors where a chunk is long enough.
+            if n + length > cap:
+                # Grow geometrically: growing to the exact length
+                # would reallocate the whole output every few hundred
+                # bytes.
+                out.resize(unsafe_uninit_length=n)
+                out.reserve(max(2 * cap, n + length))
+                cap = out.capacity()
+                op = out.unsafe_ptr()
+            var start = n - dist
             var copied = 0
             while copied < length:
                 var chunk = min(dist + copied, length - copied)
-                var d = n0 + copied
+                var d = n + copied
                 var k = 0
                 while k + 16 <= chunk:
                     op.unsafe_offset(d + k).unsafe_store(
@@ -492,6 +516,8 @@ def _codes(
                     op[unsafe_offset=d + k] = op[unsafe_offset=start + k]
                     k += 1
                 copied += chunk
+            n += length
+    out.resize(unsafe_uninit_length=n)
 
 
 def _stored_block(mut reader: _BitReader, mut out: List[UInt8]) raises:
