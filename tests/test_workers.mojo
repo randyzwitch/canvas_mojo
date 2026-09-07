@@ -123,15 +123,22 @@ def test_small_work_stays_on_one_band() raises:
     # because dispatching costs more than the work does.
     assert_equal(_bands_for(1000, 100, 5000, 0), 1)
     assert_equal(_bands_for(39999, 1000, 5000, 0), 1)
-    assert_true(_bands_for(400000, 1000, 5000, 0) > 1)
+    if _worker_limit(0) > 1:
+        assert_true(_bands_for(400000, 1000, 5000, 0) > 1)
 
 
 def test_bands_follow_the_work_and_respect_every_bound() raises:
     # One band per `work_per_band`, then the caller's cap, then the
-    # rows there are to divide.
-    assert_equal(_bands_for(400000, 1000, 50000, 0), 8)
-    assert_equal(_bands_for(400000, 1000, 50000, 4), 4)
-    assert_equal(_bands_for(400000, 3, 50000, 0), 3)
+    # rows there are to divide. Every expectation is written against
+    # the runtime's own worker count: a two-core runner is meant to
+    # come out at two bands where a workstation comes out at eight,
+    # and hard-coding the larger answer only says which machine wrote
+    # the test.
+    var available = _worker_limit(0)
+    assert_equal(_bands_for(400000, 1000, 50000, 0), min(8, available))
+    assert_equal(_bands_for(400000, 1000, 50000, 4), min(4, available))
+    assert_equal(_bands_for(400000, 3, 50000, 0), min(3, available))
+    # Nothing divides work smaller than one band's worth of it.
     assert_equal(_bands_for(400000, 1000, 10000000, 0), 1)
 
 
