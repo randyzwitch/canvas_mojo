@@ -249,29 +249,43 @@ def test_draw_circle_aa_center_stays_background() raises:
 
 
 def test_draw_circle_aa_partial_coverage_matches_hand_computed_value() raises:
-    # Hand-summed, pixel centered AT (px,py): for radius=3 at cx=cy=4,
-    # pixel (2,1) has 5/16 sub-samples inside the ring [2.5, 3.5) and
-    # (4,1) is fully inside at 16/16.
+    # True coverage of the annulus [2.5, 3.5] for radius=3, width=1 at
+    # (4, 4), integrated independently: the ring's area inside a pixel
+    # is the outer disk's chord minus the inner disk's, clipped to the
+    # pixel's column and averaged down its height.
+    #
+    #   (2, 1): the ring passing diagonally through          -> 35.4%
+    #   (4, 1): under the ring's center line                 -> 98.8%
+    #
+    # (4, 1) is the one worth reading twice. It sits directly above
+    # the center at distance 3, the ring's middle, and the 4x4 grid
+    # called it 16/16 -- but the pixel spans y in [0.5, 1.5] while the
+    # ring only spans [0.5, 1.5] at x = 4 exactly, narrowing away from
+    # it, so a little over 1% of the pixel is outside. Exact area sees
+    # that; sixteen samples did not.
     var c = Canvas(9, 9, BG)
     draw_circle_aa(c, 4, 4, 3, FG)
 
-    var p = c.get_pixel(2, 1)  # 5/16 covered -> alpha 80
-    assert_equal(p.r, 80)
-    assert_equal(p.g, 80)
-    assert_equal(p.b, 80)
-
-    _assert_pixel(c, 4, 1, FG, "fully inside the ring")
+    _assert_coverage(c, 2, 1, 90, "ring crossing the pixel diagonally")
+    _assert_coverage(c, 4, 1, 252, "under the ring's center line")
     _assert_pixel(c, 0, 0, BG, "corner, well outside the ring")
 
 
 def test_draw_circle_aa_respects_translucent_input_color() raises:
-    # Same property as fill_circle_aa's: a fully-covered ring pixel
-    # with a translucent input color must show the single-blend value,
-    # not the raw (unblended) color.
+    # Same property as fill_circle_aa's: a ring pixel drawn with a
+    # translucent color must show the single-blend value, not the raw
+    # color and not a double blend.
+    #
+    # (4, 1) is 98.8% covered (see the test above), so over black the
+    # red channel is 200 * 128/255 * 0.988 = 98, where a fully covered
+    # pixel would be 100.
     var c = Canvas(9, 9, Color(0, 0, 0))
     draw_circle_aa(c, 4, 4, 3, Color(200, 0, 0, 128))
-    var p = c.get_pixel(4, 1)  # fully inside the ring
-    assert_equal(p.r, 100)
+    var p = c.get_pixel(4, 1)
+    assert_true(
+        abs(Int(p.r) - 98) <= _AREA_TOLERANCE,
+        String("blended once, got ", Int(p.r), ", expected about 98"),
+    )
     assert_equal(p.g, 0)
     assert_equal(p.b, 0)
 
@@ -291,8 +305,11 @@ def test_draw_circle_aa_width_widens_the_ring() raises:
             thin_ink += Int(thin.get_pixel(x, y).r)
             thick_ink += Int(thick.get_pixel(x, y).r)
     assert_true(thick_ink > thin_ink, "a wider ring is more ink")
-    assert_equal(thin.get_pixel(50, 30).r, 255, "on the stroke's center")
-    assert_equal(thick.get_pixel(50, 30).r, 255)
+    # (50, 30) sits on the stroke's center line at radius 20. A 1 px
+    # ring leaves a sliver of that pixel uncovered where the ring
+    # curves away (true coverage 99.6%); a 4 px ring covers it whole.
+    _assert_coverage(thin, 50, 30, 254, "on a 1 px stroke's center")
+    assert_equal(thick.get_pixel(50, 30).r, 255, "on a 4 px stroke's center")
     assert_equal(thick.get_pixel(30, 30).r, 0, "the hole is untouched")
 
 

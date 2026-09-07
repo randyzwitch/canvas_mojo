@@ -471,45 +471,21 @@ def _draw_circle_aa_device(
     loops compile with nothing ahead of them and it never calls
     back into the public function.
     """
-    if radius <= 0.0:
-        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
+    if radius <= 0.0 or width <= 0.0:
         return
-
     var half = width / 2.0
-    var inner = max(0.0, radius - half)
-    var outer = radius + half
-    var inner2 = inner * inner
-    var outer2 = outer * outer
-    var n = supersample
-    var coverage_alpha = _CoverageAlpha(n * n, color.a)
-    var step = 1.0 / Float64(n)
-
-    for py in range(Int(floor(cy - outer)), Int(ceil(cy + outer)) + 1):
-        for px in range(Int(floor(cx - outer)), Int(ceil(cx + outer)) + 1):
-            var dx = abs(Float64(px) - cx)
-            var dy = abs(Float64(py) - cy)
-
-            var near_dx = max(0.0, dx - 0.5)
-            var near_dy = max(0.0, dy - 0.5)
-            if near_dx * near_dx + near_dy * near_dy >= outer2:
-                continue  # whole pixel square is outside the outer edge
-
-            var far_dx = dx + 0.5
-            var far_dy = dy + 0.5
-            if far_dx * far_dx + far_dy * far_dy < inner2:
-                continue  # whole pixel square is inside the hole
-
-            var covered = 0
-            for sy in range(n):
-                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
-                for sx in range(n):
-                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
-                    var d2 = fx * fx + fy * fy
-                    if d2 >= inner2 and d2 < outer2:
-                        covered += 1
-            if covered > 0:
-                canvas.set_pixel(
-                    px,
-                    py,
-                    color.with_alpha(coverage_alpha[covered]),
-                )
+    if half >= radius:
+        # Every point within `half` of the circle, the center
+        # included, so the stroked region is the solid disk out to
+        # `radius + half`. Stroking it would ask `stroke_path_aa` for
+        # an inner offset of negative radius, which turns itself
+        # inside out and punches a hole that should not be there
+        # (#279); the disk is both correct and cheaper.
+        _fill_circle_aa_device(canvas, cx, cy, radius + half, color)
+        return
+    # `stroke_path_aa` is the public entry and re-applies the canvas
+    # transform; these arguments are already in device space, so the
+    # transform comes off for the call and goes back after.
+    var saved = canvas._take_transform()
+    stroke_path_aa(canvas, _ellipse_path(cx, cy, radius, radius), color, width)
+    canvas._set_transform(saved)
