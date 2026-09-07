@@ -47,6 +47,48 @@ def _round_channel(value: Float64) -> UInt8:
     return UInt8(value + 0.5)
 
 
+struct _Interval(Copyable, ImplicitlyCopyable, Movable):
+    """One span between consecutive stops, holding what `color_at`
+    would otherwise recompute for every pixel it paints: where the
+    span starts, the reciprocal of its width, and the four channels'
+    start values and deltas as vectors, so interpolating is one
+    multiply-add across r, g, b and a at once.
+
+    `span` is zero for two stops at the same offset -- a hard
+    transition, where there is nothing to interpolate.
+
+    The width is stored rather than its reciprocal on purpose. A
+    reciprocal and a multiply is faster and differs from the division
+    by at most an ulp, but that ulp moved 184 pixels of the gradient
+    golden by one level, which is exactly the systematic shift that
+    golden's pixel-count threshold exists to catch.
+    """
+
+    var offset: Float64
+    var span: Float64
+    var base: SIMD[DType.float64, 4]
+    var delta: SIMD[DType.float64, 4]
+
+    def __init__(
+        out self,
+        offset: Float64,
+        span: Float64,
+        base: SIMD[DType.float64, 4],
+        delta: SIMD[DType.float64, 4],
+    ):
+        self.offset = offset
+        self.span = span
+        self.base = base
+        self.delta = delta
+
+
+@always_inline
+def _channels(color: Color) -> SIMD[DType.float64, 4]:
+    return SIMD[DType.float64, 4](
+        Float64(color.r), Float64(color.g), Float64(color.b), Float64(color.a)
+    )
+
+
 struct GradientStops(Copyable, Movable, Sized):
     """A one-dimensional color ramp: stops sorted by offset, and the
     interpolated color at any position in [0, 1]. The half of every
@@ -58,6 +100,9 @@ struct GradientStops(Copyable, Movable, Sized):
     """
 
     var _stops: List[GradientStop]
+    # One entry per gap between consecutive stops, rebuilt by
+    # `add_stop`. Setup work moved off the per-pixel path.
+    var _intervals: List[_Interval]
     # The space `color_at` interpolates in (see `set_color_space`),
     # and the transfer tables, built when it first becomes LINEAR.
     var _space: ColorSpace
@@ -68,6 +113,7 @@ struct GradientStops(Copyable, Movable, Sized):
         black until one is added.
         """
         self._stops = List[GradientStop]()
+        self._intervals = List[_Interval]()
         self._space = ColorSpace.SRGB
         self._transfer = _Transfer()
 
@@ -122,6 +168,27 @@ struct GradientStops(Copyable, Movable, Sized):
         while at > 0 and self._stops[at - 1].offset > offset:
             at -= 1
         self._stops.insert(at, GradientStop(offset, color))
+        self._rebuild_intervals()
+
+    def _rebuild_intervals(mut self):
+        """Recompute the per-gap data `color_at` reads. Called on every
+        `add_stop`, which is setup; a ramp is built once and then
+        sampled once per pixel of every fill that uses it.
+        """
+        var n = len(self._stops)
+        self._intervals = List[_Interval](capacity=max(n - 1, 0))
+        for i in range(n - 1):
+            ref lo = self._stops[i]
+            ref hi = self._stops[i + 1]
+            var base = _channels(lo.color)
+            self._intervals.append(
+                _Interval(
+                    lo.offset,
+                    hi.offset - lo.offset,
+                    base,
+                    _channels(hi.color) - base,
+                )
+            )
 
     def color_at(self, t_in: Float64) -> Color:
         """The ramp's color at `t_in`, clamped to [0, 1] first (the
@@ -131,7 +198,10 @@ struct GradientStops(Copyable, Movable, Sized):
 
         This runs once per pixel of every gradient fill, so the stops
         are read through a pointer rather than copied out of the list
-        per probe; the arithmetic is unchanged.
+        per probe, and the span it lands in carries its own reciprocal
+        and channel deltas (`_Interval`) rather than deriving them
+        again. What is left per pixel is a search, a multiply and one
+        four-lane multiply-add.
 
         Args:
             t_in: Position along the ramp.
@@ -170,19 +240,16 @@ struct GradientStops(Copyable, Movable, Sized):
             else:
                 hi = mid
 
-        ref before = sp[unsafe_offset=lo]
-        # t landing exactly on a stop takes that stop's color. With
-        # several at the offset, `lo` is the last of them -- the one that
-        # owns the far side of a hard transition.
-        if before.offset == t:
-            return before.color
-        ref after = sp[unsafe_offset=hi]
+        ref span = self._intervals[lo]
+        # Two stops at one offset are a hard transition with nothing
+        # between them; the lower one owns the far side of it.
+        if span.span == 0.0:
+            return sp[unsafe_offset=lo].color
+        var local_t = (t - span.offset) / span.span
 
-        if before.offset == after.offset:
-            return before.color
-
-        var local_t = (t - before.offset) / (after.offset - before.offset)
         if self._space.is_linear():
+            ref before = sp[unsafe_offset=lo]
+            ref after = sp[unsafe_offset=hi]
             var lt = Float32(local_t)
             ref tr = self._transfer
             return Color(
@@ -201,26 +268,11 @@ struct GradientStops(Copyable, Movable, Sized):
                     + lt
                     * (tr.linear(after.color.b) - tr.linear(before.color.b))
                 ),
-                _round_channel(
-                    Float64(before.color.a)
-                    + local_t
-                    * (Float64(after.color.a) - Float64(before.color.a))
-                ),
+                _round_channel(span.base[3] + local_t * span.delta[3]),
             )
-        var br = Float64(before.color.r)
-        var bg = Float64(before.color.g)
-        var bb = Float64(before.color.b)
-        var ba = Float64(before.color.a)
-        var ar = Float64(after.color.r)
-        var ag = Float64(after.color.g)
-        var ab = Float64(after.color.b)
-        var aa = Float64(after.color.a)
-        return Color(
-            _round_channel(br + local_t * (ar - br)),
-            _round_channel(bg + local_t * (ag - bg)),
-            _round_channel(bb + local_t * (ab - bb)),
-            _round_channel(ba + local_t * (aa - ba)),
-        )
+
+        var v = span.base + local_t * span.delta + 0.5
+        return Color(UInt8(v[0]), UInt8(v[1]), UInt8(v[2]), UInt8(v[3]))
 
 
 trait ColorSource:
@@ -492,10 +544,9 @@ struct RadialGradient(ColorSource, Movable):
             return self.stops.color_at(self._focal_t(x, y))
         var dx = x - self.cx
         var dy = y - self.cy
-        var dist = sqrt(dx * dx + dy * dy)
         var t = 1.0
         if self.radius != 0.0:
-            t = dist / self.radius
+            t = sqrt(dx * dx + dy * dy) / self.radius
         return self.stops.color_at(t)
 
     def _focal_t(self, x: Float64, y: Float64) -> Float64:
