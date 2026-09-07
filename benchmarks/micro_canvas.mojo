@@ -44,6 +44,7 @@ from canvas.path import Path, fill_path_aa
 from canvas.shapes.lines import draw_line, draw_line_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.render import draw_text
 
 comptime W = 800
@@ -372,6 +373,28 @@ struct TextLarge(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(104, 96).r)
 
 
+struct FirstFontResolution(MicroCase, Movable):
+    """A new caller's first lookup, with the persisted file already warm.
+
+    Every iteration constructs a fresh cache, so this includes database
+    reading, validation, parsing, and matching rather than a dictionary
+    hit. The harness warm-up creates the file if it was absent.
+    """
+
+    def __init__(out self):
+        pass
+
+    def name(self) -> String:
+        return "FontCache first resolve (warm file)"
+
+    def run(mut self, mut sink: Int) raises:
+        var cache = FontCache()
+        var path = cache.resolve(
+            "sans-serif", FontSlant.NORMAL, FontWeight.NORMAL
+        )
+        sink += path.byte_length()
+
+
 def main() raises:
     var sink = 0
     print("")
@@ -405,6 +428,9 @@ def main() raises:
 
     var text_l = TextLarge()
     _ = measure(text_l, sink, rounds=9, iters=100)
+
+    var first_font = FirstFontResolution()
+    _ = measure(first_font, sink, rounds=9, iters=200)
 
     print("")
     print("sink", sink)

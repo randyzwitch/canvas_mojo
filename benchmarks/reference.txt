@@ -35,7 +35,7 @@ draw_line dashed full diagonal	7.910
 draw_line solid full diagonal	4.693
 stroke_path_aa 39-curve path	2330.320
 draw_text 3 lines @13px (cached)	95.593
-draw_text 3 lines @13px (uncached)	3276.023
+draw_text 3 lines @13px (uncached)	1740.269
 draw_text_on_path 20 glyphs on an arc	114.101
 FontCache() font scan	0.064
 write_png 800x600 (deflate)	4215.859
