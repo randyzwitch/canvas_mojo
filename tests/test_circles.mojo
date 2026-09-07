@@ -27,6 +27,37 @@ def _assert_pixel(
     assert_equal(p.b, expected.b, label + " (b)")
 
 
+# How far a fill may sit from the shape's true covered area. The
+# rasterizer computes the exact area of the *flattened* outline, and
+# `canvas.shapes.arcs._CURVE_TOLERANCE` lets a chord sag up to 0.02 px
+# from the curve, which biases a boundary pixel inward by a couple of
+# levels. Three is that bias with room to spare, and still far under
+# the six-to-nine-level error a 4x4 sub-sample grid produces, so a
+# regression to sampling fails these.
+comptime _AREA_TOLERANCE = 3
+
+
+def _assert_coverage(
+    c: Canvas, x: Int, y: Int, expected: Int, label: String
+) raises:
+    """White on black, so the gray value is the covered fraction in
+    255ths. `expected` is the true area, computed independently."""
+    var got = Int(c.get_pixel(x, y).r)
+    assert_true(
+        abs(got - expected) <= _AREA_TOLERANCE,
+        String(
+            label,
+            ": got ",
+            got,
+            ", true coverage ",
+            expected,
+            " (tolerance ",
+            _AREA_TOLERANCE,
+            ")",
+        ),
+    )
+
+
 def test_draw_circle_radius_zero_plots_center() raises:
     var c = Canvas(3, 3, BG)
     draw_circle(c, 1, 1, 0, FG)
@@ -125,14 +156,24 @@ def test_fill_circle_blends_translucent_color_correctly() raises:
 
 
 def test_fill_circle_aa_center_is_fully_opaque() raises:
+    # Pixel (px, py) spans [px - 0.5, px + 0.5] in both axes, so for a
+    # radius-2 disk at (3, 3) the pixels sharing an edge with the
+    # center are wholly inside -- their farthest corner is at distance
+    # sqrt(0.5^2 + 1.5^2) = 1.58 -- while the four diagonal neighbours
+    # are not: (2, 2)'s far corner (1.5, 1.5) is at sqrt(4.5) = 2.12,
+    # outside the disk, so a sliver of that pixel is uncovered and its
+    # true coverage is 98.5%, not 100%.
+    #
+    # A 4x4 sub-sample grid called that pixel full, because its
+    # outermost sample sits at (1.625, 1.625), distance 1.94, inside.
+    # Exact area does not, which is the point of #275.
     var c = Canvas(7, 7, BG)
     fill_circle_aa(c, 3, 3, 2, FG)
-    # the 2x2 block at the center is fully inside the disk (16/16
-    # sub-samples covered), so it's written directly, no blending
-    _assert_pixel(c, 2, 2, FG, "fully covered")
-    _assert_pixel(c, 3, 2, FG, "fully covered")
-    _assert_pixel(c, 2, 3, FG, "fully covered")
-    _assert_pixel(c, 3, 3, FG, "fully covered")
+    _assert_pixel(c, 3, 3, FG, "center")
+    _assert_pixel(c, 3, 2, FG, "edge neighbour")
+    _assert_pixel(c, 2, 3, FG, "edge neighbour")
+    _assert_coverage(c, 2, 2, 251, "diagonal neighbour, corner outside")
+    _assert_coverage(c, 4, 4, 251, "diagonal neighbour, corner outside")
 
 
 def test_fill_circle_aa_far_pixel_is_untouched() raises:
@@ -142,23 +183,22 @@ def test_fill_circle_aa_far_pixel_is_untouched() raises:
 
 
 def test_fill_circle_aa_partial_coverage_matches_hand_computed_values() raises:
-    # Hand-summed 4x4 sub-sample grids for radius=2 at cx=cy=3, each
-    # pixel sampled as centered AT (px,py): pixel (3,1) has 8/16
-    # sub-samples inside the true circle, (2,1) has 4/16. White-on-black
-    # makes the gray value equal the coverage fraction exactly,
-    # round(n/16 * 255).
+    # True covered areas for radius=2 at (3, 3), integrated
+    # independently rather than read back out of the rasterizer: the
+    # circle's half-width at each scanline is sqrt(4 - dy^2), and a
+    # pixel's coverage is that chord clipped to the pixel's column,
+    # averaged down the pixel's height.
+    #
+    #   (3, 1): the disk's top, chord centered on the column -> 47.9%
+    #   (2, 1): one column left of it, mostly outside          -> 21.4%
+    #
+    # The 4x4 grid these were written for gave 8/16 and 4/16, i.e. 128
+    # and 64, both several levels off the truth.
     var c = Canvas(7, 7, BG)
     fill_circle_aa(c, 3, 3, 2, FG)
-
-    var edge_mid = c.get_pixel(3, 1)  # 8/16 covered -> alpha 128
-    assert_equal(edge_mid.r, 128)
-    assert_equal(edge_mid.g, 128)
-    assert_equal(edge_mid.b, 128)
-
-    var corner = c.get_pixel(2, 1)  # 4/16 covered -> alpha 64
-    assert_equal(corner.r, 64)
-    assert_equal(corner.g, 64)
-    assert_equal(corner.b, 64)
+    _assert_coverage(c, 3, 1, 122, "top edge, 47.9% covered")
+    _assert_coverage(c, 1, 3, 122, "left edge, 47.9% covered")
+    _assert_coverage(c, 2, 1, 55, "top-left corner, 21.4% covered")
 
 
 def test_fill_circle_aa_agrees_with_hard_edged_on_interior_pixels() raises:
@@ -174,11 +214,18 @@ def test_fill_circle_aa_agrees_with_hard_edged_on_interior_pixels() raises:
     # something false about area.
     var c = Canvas(7, 7, BG)
     fill_circle_aa(c, 3, 3, 2, FG)
+    # Only the pixels sharing an edge with the center are wholly
+    # inside; the four diagonal neighbours each have one corner
+    # outside the disk (see the fully-opaque test above), so they are
+    # 98.5% covered rather than 100%.
     _assert_pixel(c, 3, 3, FG, "center")
-    _assert_pixel(c, 2, 2, FG, "interior")
-    _assert_pixel(c, 4, 2, FG, "interior")
-    _assert_pixel(c, 2, 4, FG, "interior")
-    _assert_pixel(c, 4, 4, FG, "interior")
+    _assert_pixel(c, 3, 2, FG, "edge neighbour")
+    _assert_pixel(c, 2, 3, FG, "edge neighbour")
+    _assert_pixel(c, 4, 3, FG, "edge neighbour")
+    _assert_pixel(c, 3, 4, FG, "edge neighbour")
+    _assert_coverage(c, 4, 2, 251, "diagonal neighbour")
+    _assert_coverage(c, 2, 4, 251, "diagonal neighbour")
+    _assert_coverage(c, 4, 4, 251, "diagonal neighbour")
 
 
 def test_fill_circle_aa_respects_translucent_input_color() raises:

@@ -20,6 +20,8 @@ from canvas.path import (
     _ellipse_path,
 )
 from canvas.aa_crossing import _CoverageAlpha
+from canvas.shapes.arcs import _ellipse_fpoints
+from canvas.shapes.polygon_fill import _fill_polygon_aa_device
 
 
 def _plot_ellipse_points(
@@ -260,8 +262,7 @@ def fill_ellipse_aa(
             canvas,
             _ellipse_path(Float64(cx), Float64(cy), Float64(rx), Float64(ry)),
             color,
-            FillRule.EVEN_ODD,
-            supersample,
+            FillRule.NONZERO,
         )
         return
     fill_ellipse_aa(
@@ -336,8 +337,7 @@ def fill_ellipse_aa(
             canvas,
             _ellipse_path(Float64(cx), Float64(cy), Float64(rx), Float64(ry)),
             color,
-            FillRule.EVEN_ODD,
-            supersample,
+            FillRule.NONZERO,
         )
         return
     _fill_ellipse_aa_device(canvas, cx, cy, rx, ry, color, supersample)
@@ -353,147 +353,22 @@ def _fill_ellipse_aa_device(
     supersample: Int = 4,
 ):
     """`fill_ellipse_aa` for device-space arguments: the body every
-    call lands in. It has no transform check of its own, so its
-    loops compile with nothing ahead of them and it never calls
-    back into the public function.
+    call lands in.
+
+    The ellipse goes to `fill_path_aa` under `FillRule.NONZERO`, which
+    is `canvas.aa_area`'s exact-area accumulation -- each pixel's real
+    covered fraction in 256 levels, where the sampled grid this used to
+    walk resolved 17 (#275). `supersample` is accepted and unused, as
+    it is on every other nonzero fill.
+
+    A single closed convex outline winds once, so nonzero and even-odd
+    describe the same region here; the rule only picks the rasterizer.
     """
     if rx <= 0.0 or ry <= 0.0:
-        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
-
-    var rx_f = rx
-    var ry_f = ry
-    var n = supersample
-    var coverage_alpha = _CoverageAlpha(n * n, color.a)
-    var step = 1.0 / Float64(n)
-
-    # The membership test is (x/rx)^2 + (y/ry)^2 <= 1, multiplied
-    # through by (rx*ry)^2 to give x^2*ry^2 + y^2*rx^2 <= (rx*ry)^2:
-    # the divided form runs four divisions per pixel in the bounds test
-    # and two more per sub-sample. With whole-pixel radii every term is
-    # exact in Float64; with sub-pixel radii the multiplied form rounds
-    # no more than the divided one would.
-    var rx2 = rx_f * rx_f
-    var ry2 = ry_f * ry_f
-    var limit = rx2 * ry2
-
-    # Widened outward to whole pixels, so a pixel the ellipse only
-    # partly covers is still visited.
-    var lo_x = Int(floor(cx - rx)) - 1
-    var hi_x = Int(ceil(cx + rx)) + 2
-    var lo_y = Int(floor(cy - ry)) - 1
-    var hi_y = Int(ceil(cy + ry)) + 2
-
-    # Solving the interior span costs a sqrt and some endpoint nudging
-    # per row, which only pays off once a row's interior run is long
-    # enough to matter -- and run length is governed by the horizontal
-    # radius. Same threshold and same reasoning as fill_circle_aa.
-    var solve_span = rx >= _MIN_SPAN_RADIUS
-
-    for py in range(lo_y, hi_y):
-        var dy = abs(Float64(py) - cy)
-        var near_y = max(0.0, dy - 0.5)
-        var far_y = dy + 0.5
-        var far_y_term = far_y * far_y * rx2
-        var near_y_term = near_y * near_y * rx2
-
-        # The run of provably-interior pixels on this row, in closed
-        # form. A pixel is wholly inside when its farthest corner is:
-        #
-        #   far_x^2 * ry^2 + far_y^2 * rx^2 <= (rx*ry)^2
-        #
-        # which for a fixed row rearranges to
-        #
-        #   |dx| <= sqrt(limit - far_y^2 * rx^2) / ry - 0.5
-        #
-        # so the whole interior is one bulk fill and only the pixels at
-        # the two ends need sampling. This is fill_circle_aa's span
-        # solve generalized to independent radii; see there for the
-        # measurements that motivated it.
-        var span_lo = 1
-        var span_hi = 0  # empty unless this row reaches the interior
-        if solve_span:
-            var interior = limit - far_y_term
-            if interior > 0.0:
-                var half = sqrt(interior) / ry_f - 0.5
-                if half >= 0.0:
-                    span_lo = Int(ceil(cx - half))
-                    span_hi = Int(floor(cx + half))
-
-                    # sqrt/ceil/floor on a float expression can land a
-                    # step either side of the true boundary, so both
-                    # ends are nudged against the exact test the
-                    # per-pixel path below applies -- what keeps the two
-                    # routes bit-for-bit identical rather than close.
-                    while span_lo <= span_hi and not _pixel_inside(
-                        span_lo, cx, far_y_term, ry2, limit
-                    ):
-                        span_lo += 1
-                    while span_lo > lo_x and _pixel_inside(
-                        span_lo - 1, cx, far_y_term, ry2, limit
-                    ):
-                        span_lo -= 1
-                    while span_hi >= span_lo and not _pixel_inside(
-                        span_hi, cx, far_y_term, ry2, limit
-                    ):
-                        span_hi -= 1
-                    while span_hi < hi_x - 1 and _pixel_inside(
-                        span_hi + 1, cx, far_y_term, ry2, limit
-                    ):
-                        span_hi += 1
-
-                    if span_lo < lo_x:
-                        span_lo = lo_x
-                    if span_hi > hi_x - 1:
-                        span_hi = hi_x - 1
-
-        var edge_end = hi_x
-        var edge_resume = hi_x
-        if span_lo <= span_hi:
-            var region = canvas.effective_fill_rect(
-                span_lo, py, span_hi - span_lo + 1, 1
-            )
-            canvas._fill_region(
-                region[0], region[1], region[2], region[3], color
-            )
-            edge_end = span_lo
-            edge_resume = span_hi + 1
-
-        # Everything the run did not cover, as two explicit ranges
-        # rather than a per-pixel skip test -- see fill_circle_aa for
-        # why, including why the body is inline rather than a helper.
-        for seg in range(2):
-            var seg_lo = lo_x if seg == 0 else edge_resume
-            var seg_hi = edge_end if seg == 0 else hi_x
-            for px in range(seg_lo, seg_hi):
-                var dx = abs(Float64(px) - cx)
-                var near_x = max(0.0, dx - 0.5)
-                if near_x * near_x * ry2 + near_y_term > limit:
-                    continue  # whole pixel square is outside the ellipse
-
-                var far_x = dx + 0.5
-                if far_x * far_x * ry2 + far_y_term <= limit:
-                    canvas.set_pixel(px, py, color)  # wholly inside
-                    continue
-
-                var covered = 0
-                for sy in range(n):
-                    var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
-                    var fy_term = fy * fy * rx2
-                    for sx in range(n):
-                        var fx = (
-                            Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
-                        )
-                        if fx * fx * ry2 + fy_term <= limit:
-                            covered += 1
-                if covered > 0:
-                    canvas.set_pixel(
-                        px,
-                        py,
-                        Color(
-                            color.r, color.g, color.b, coverage_alpha[covered]
-                        ),
-                    )
+    _fill_polygon_aa_device(
+        canvas, _ellipse_fpoints(cx, cy, rx, ry), color, FillRule.NONZERO
+    )
 
 
 def draw_ellipse_aa(

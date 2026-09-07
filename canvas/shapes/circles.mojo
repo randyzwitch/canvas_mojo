@@ -1,8 +1,12 @@
 """Circle drawing: midpoint-algorithm hard-edged outline/fill
-(draw_circle/fill_circle) and supersampled analytic-coverage
-anti-aliased variants (draw_circle_aa/fill_circle_aa) -- see
-canvas.shapes.lines for the hard-edged
-vs. `_aa` naming convention this follows.
+(draw_circle/fill_circle) and exact-area anti-aliased variants
+(draw_circle_aa/fill_circle_aa) -- see canvas.shapes.lines for the
+hard-edged vs. `_aa` naming convention this follows.
+
+The `_aa` fills describe the disk as a path and hand it to
+`fill_path_aa` under `FillRule.NONZERO`, so they land on the same
+exact-area rasterizer (`canvas.aa_area`) as every other nonzero fill
+rather than carrying a sampler of their own (#275).
 """
 
 from std.math import ceil, floor, sqrt
@@ -19,6 +23,8 @@ from canvas.path import (
     _ellipse_path,
 )
 from canvas.aa_crossing import _CoverageAlpha
+from canvas.shapes.arcs import _ellipse_fpoints
+from canvas.shapes.polygon_fill import _fill_polygon_aa_device
 
 
 def draw_circle(
@@ -220,8 +226,7 @@ def fill_circle_aa(
                 Float64(cx), Float64(cy), Float64(radius), Float64(radius)
             ),
             color,
-            FillRule.EVEN_ODD,
-            supersample,
+            FillRule.NONZERO,
         )
         return
     fill_circle_aa(
@@ -292,8 +297,7 @@ def fill_circle_aa(
                 Float64(cx), Float64(cy), Float64(radius), Float64(radius)
             ),
             color,
-            FillRule.EVEN_ODD,
-            supersample,
+            FillRule.NONZERO,
         )
         return
     _fill_circle_aa_device(canvas, cx, cy, radius, color, supersample)
@@ -308,133 +312,28 @@ def _fill_circle_aa_device(
     supersample: Int = 4,
 ):
     """`fill_circle_aa` for device-space arguments: the body every
-    call lands in. It has no transform check of its own, so its
-    loops compile with nothing ahead of them and it never calls
-    back into the public function.
+    call lands in.
+
+    The disk goes to `fill_path_aa` under `FillRule.NONZERO`, which is
+    `canvas.aa_area`'s exact-area accumulation -- each pixel's real
+    covered fraction in 256 levels. The sampled grid this used to walk
+    resolved 17, which measured as up to 15 levels of error against a
+    16x reference where the accumulation is within 6 (#275).
+    `supersample` is accepted and unused, as it is on every other
+    nonzero fill.
+
+    A single closed convex outline winds once, so nonzero and even-odd
+    describe the same region here; the rule only picks the rasterizer.
     """
     if radius <= 0.0:
         canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
-
-    var r2 = radius * radius
-    var n = supersample
-    var coverage_alpha = _CoverageAlpha(n * n, color.a)
-    var step = 1.0 / Float64(n)
-
-    # Widened outward to whole pixels, so a pixel the disk only partly
-    # covers is still visited.
-    var lo_x = Int(floor(cx - radius)) - 1
-    var hi_x = Int(ceil(cx + radius)) + 2
-    var lo_y = Int(floor(cy - radius)) - 1
-    var hi_y = Int(ceil(cy + radius)) + 2
-
-    var solve_span = radius >= _MIN_SPAN_RADIUS
-
-    for py in range(lo_y, hi_y):
-        var dy = abs(Float64(py) - cy)
-        var near_dy = max(0.0, dy - 0.5)
-        var far_dy = dy + 0.5
-
-        # The run of provably-interior pixels on this row, solved rather
-        # than discovered one pixel at a time.
-        #
-        # A pixel is wholly inside when its farthest corner is within
-        # the disk: (|dx| + 0.5)^2 + (|dy| + 0.5)^2 <= r^2. For a fixed
-        # row that rearranges to |dx| <= sqrt(r^2 - far_dy^2) - 0.5, a
-        # closed-form span -- so the interior is written in one bulk
-        # fill and only the ends need testing.
-        var span_lo = 1
-        var span_hi = 0  # empty unless this row reaches the interior
-        if solve_span:
-            var interior_r2 = r2 - far_dy * far_dy
-            if interior_r2 > 0.0:
-                var half = sqrt(interior_r2) - 0.5
-                if half >= 0.0:
-                    span_lo = Int(ceil(cx - half))
-                    span_hi = Int(floor(cx + half))
-
-                    # sqrt/ceil/floor on a float expression can land a
-                    # step either side of the true boundary, so both
-                    # ends are nudged against the exact test the
-                    # per-pixel path below applies. That is what keeps
-                    # the two routes bit-for-bit identical rather than
-                    # merely close.
-                    while span_lo <= span_hi and not _pixel_inside(
-                        span_lo, cx, far_dy, r2
-                    ):
-                        span_lo += 1
-                    while span_lo > lo_x and _pixel_inside(
-                        span_lo - 1, cx, far_dy, r2
-                    ):
-                        span_lo -= 1
-                    while span_hi >= span_lo and not _pixel_inside(
-                        span_hi, cx, far_dy, r2
-                    ):
-                        span_hi -= 1
-                    while span_hi < hi_x - 1 and _pixel_inside(
-                        span_hi + 1, cx, far_dy, r2
-                    ):
-                        span_hi += 1
-
-                    if span_lo < lo_x:
-                        span_lo = lo_x
-                    if span_hi > hi_x - 1:
-                        span_hi = hi_x - 1
-
-        var edge_end = hi_x
-        var edge_resume = hi_x
-        if span_lo <= span_hi:
-            var region = canvas.effective_fill_rect(
-                span_lo, py, span_hi - span_lo + 1, 1
-            )
-            canvas._fill_region(
-                region[0], region[1], region[2], region[3], color
-            )
-            edge_end = span_lo
-            edge_resume = span_hi + 1
-
-        # Everything the run did not cover: the segment before it and
-        # the segment after. Two explicit ranges rather than one scan
-        # with a per-pixel "am I in the span" test, and the body inline
-        # rather than in a helper called twice -- both benchmarked (#83),
-        # both slower the other way. With no run
-        # (edge_end == edge_resume == hi_x) the first segment is the
-        # whole row and the second is empty.
-        for seg in range(2):
-            var seg_lo = lo_x if seg == 0 else edge_resume
-            var seg_hi = edge_end if seg == 0 else hi_x
-            for px in range(seg_lo, seg_hi):
-                var dx = abs(Float64(px) - cx)
-                var near_dx = max(0.0, dx - 0.5)
-                if near_dx * near_dx + near_dy * near_dy > r2:
-                    continue  # whole pixel square is outside the disk
-
-                # Wholly inside, so every sample would agree. Reached
-                # for real work only below _MIN_SPAN_RADIUS, where the
-                # span solve is skipped and this is what keeps a small
-                # disk's interior off the sampling grid.
-                var far_dx = dx + 0.5
-                if far_dx * far_dx + far_dy * far_dy <= r2:
-                    canvas.set_pixel(px, py, color)
-                    continue
-
-                var covered = 0
-                for sy in range(n):
-                    var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
-                    for sx in range(n):
-                        var fx = (
-                            Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
-                        )
-                        if fx * fx + fy * fy <= r2:
-                            covered += 1
-                if covered > 0:
-                    canvas.set_pixel(
-                        px,
-                        py,
-                        Color(
-                            color.r, color.g, color.b, coverage_alpha[covered]
-                        ),
-                    )
+    _fill_polygon_aa_device(
+        canvas,
+        _ellipse_fpoints(cx, cy, radius, radius),
+        color,
+        FillRule.NONZERO,
+    )
 
 
 def draw_circle_aa(
