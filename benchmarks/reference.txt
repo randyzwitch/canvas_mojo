@@ -1,54 +1,54 @@
 # canvas_mojo bench reference: us/iter per row, the faster of two runs.
 # machine: AMD Ryzen Threadripper 3970X 32-Core Processor x64
-# version: 0.22.0
+# version: 0.23.0
 # Written by `pixi run bench-record`; read by `pixi run bench-check`.
-Canvas(800x600) construct+fill	44.832
-Canvas.fill opaque	27.145
-Canvas.fill translucent (blend)	222.878
-fill_rect 600x400 opaque	15.892
-fill_rect 600x400 multiply	308.606
-fill_circle_aa x2000 markers (r=3.5)	4960.277
-fill_circle_aa one large (r=250)	143.284
-fill_ellipse_aa one large (340x220)	134.048
-fill_ellipse_aa x2000 small (5x3)	5839.632
-fill_arc_aa large pie wedge (r=260)	92.194
-fill_ring_sector_aa large donut (150-260)	93.613
-fill_arc_aa x2000 small (r=4)	2841.115
-fill_polygon_aa 64-gon	445.792
-fill_path_aa glyph-sized	22.527
-fill_path_aa glyph-sized (nonzero)	5.244
-fill_path_aa large 39-curve	647.999
-fill_path_aa large 39-curve (nonzero)	395.550
-fill_path_aa large under a clip rect	583.091
-fill_path_gradient_aa glyph-sized	28.083
-fill_path_gradient_aa large 39-curve	1214.041
-fill_path_radial_gradient_aa glyph-sized	29.331
-fill_path_radial_gradient_aa large 39-curve	1269.502
-fill_path_conic_gradient_aa glyph-sized	36.391
-fill_path_conic_gradient_aa large 39-curve	1359.376
-draw_line_aa full diagonal (w=2)	47.216
-draw_polyline_aa 3000-segment series	2316.273
-draw_polyline_aa 3000-segment smooth series	1150.066
-draw_polyline_aa 3000-segment dashed	3267.200
-draw_line dashed full diagonal	7.805
-draw_line solid full diagonal	4.597
-stroke_path_aa 39-curve path	2405.864
-draw_text 3 lines @13px (cached)	96.560
-draw_text 3 lines @13px (uncached)	3257.642
-draw_text_on_path 20 glyphs on an arc	114.489
+Canvas(800x600) construct+fill	44.154
+Canvas.fill opaque	34.616
+Canvas.fill translucent (blend)	219.475
+fill_rect 600x400 opaque	18.637
+fill_rect 600x400 multiply	303.174
+fill_circle_aa x2000 markers (r=3.5)	3131.915
+fill_circle_aa one large (r=250)	145.537
+fill_ellipse_aa one large (340x220)	135.228
+fill_ellipse_aa x2000 small (5x3)	3989.227
+fill_arc_aa large pie wedge (r=260)	89.955
+fill_ring_sector_aa large donut (150-260)	86.453
+fill_arc_aa x2000 small (r=4)	2782.557
+fill_polygon_aa 64-gon	496.681
+fill_path_aa glyph-sized	22.579
+fill_path_aa glyph-sized (nonzero)	5.137
+fill_path_aa large 39-curve	644.785
+fill_path_aa large 39-curve (nonzero)	421.627
+fill_path_aa large under a clip rect	547.721
+fill_path_gradient_aa glyph-sized	28.050
+fill_path_gradient_aa large 39-curve	1187.892
+fill_path_radial_gradient_aa glyph-sized	29.265
+fill_path_radial_gradient_aa large 39-curve	1220.419
+fill_path_conic_gradient_aa glyph-sized	36.159
+fill_path_conic_gradient_aa large 39-curve	1339.213
+draw_line_aa full diagonal (w=2)	47.337
+draw_polyline_aa 3000-segment series	2306.637
+draw_polyline_aa 3000-segment smooth series	1201.725
+draw_polyline_aa 3000-segment dashed	3162.601
+draw_line dashed full diagonal	7.792
+draw_line solid full diagonal	4.612
+stroke_path_aa 39-curve path	2364.850
+draw_text 3 lines @13px (cached)	96.772
+draw_text 3 lines @13px (uncached)	3244.784
+draw_text_on_path 20 glyphs on an arc	114.085
 FontCache() font scan	0.050
-write_png 800x600 (deflate)	10470.936
-read_png 800x600 (inflate)	2181.862
-downsample 1600x1200 -> 2x	1292.701
-blur 800x600 r=4	1180.418
-blur 800x600 r=16	2345.567
-push_clip_path rect mask	711.702
-fill_circle_aa x2000 under a clip path	5506.700
-fill_circle_aa x2000 under a clip rect	4847.144
-draw_canvas 800x600 opaque	469.729
-draw_canvas 800x600 translucent	707.754
-draw_canvas 800x600 at half opacity	841.256
-draw_canvas 200x200 1.7x rot 30 nearest	201.468
-draw_canvas 200x200 1.7x rot 30 bilinear	312.993
-measure_text one label (cached)	2.579
-measure_text_block 3 lines (cached)	21.429
+write_png 800x600 (deflate)	12381.246
+read_png 800x600 (inflate)	2191.498
+downsample 1600x1200 -> 2x	1309.465
+blur 800x600 r=4	1221.777
+blur 800x600 r=16	2334.970
+push_clip_path rect mask	725.486
+fill_circle_aa x2000 under a clip path	3574.736
+fill_circle_aa x2000 under a clip rect	3200.269
+draw_canvas 800x600 opaque	472.199
+draw_canvas 800x600 translucent	726.747
+draw_canvas 800x600 at half opacity	846.621
+draw_canvas 200x200 1.7x rot 30 nearest	189.798
+draw_canvas 200x200 1.7x rot 30 bilinear	316.935
+measure_text one label (cached)	2.528
+measure_text_block 3 lines (cached)	21.621

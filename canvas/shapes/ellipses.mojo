@@ -21,6 +21,10 @@ from canvas.path import (
 )
 from canvas.aa_crossing import _CoverageAlpha
 from canvas.shapes.arcs import _ellipse_fpoints
+from canvas.shapes.circles import (
+    _CLOSED_FORM_MAX_RADIUS,
+    _ellipse_pixel_coverage,
+)
 from canvas.shapes.polygon_fill import _fill_polygon_aa_device
 
 
@@ -355,20 +359,57 @@ def _fill_ellipse_aa_device(
     """`fill_ellipse_aa` for device-space arguments: the body every
     call lands in.
 
-    The ellipse goes to `fill_path_aa` under `FillRule.NONZERO`, which
-    is `canvas.aa_area`'s exact-area accumulation -- each pixel's real
-    covered fraction in 256 levels, where the sampled grid this used to
-    walk resolved 17 (#275). `supersample` is accepted and unused, as
-    it is on every other nonzero fill.
+    Every pixel gets the ellipse's exact covered area, 256 levels, by
+    the same two routes `fill_circle_aa` uses and for the same reason
+    (#281): a small ellipse from the closed form, which allocates
+    nothing, a large one through the general exact-area rasterizer,
+    which amortizes its edge table over more pixels. The threshold is
+    on the larger radius, since that is what sets how many pixels the
+    outline touches.
 
-    A single closed convex outline winds once, so nonzero and even-odd
-    describe the same region here; the rule only picks the rasterizer.
+    `supersample` is accepted and unused, as it is on every other
+    exact-area fill.
     """
     if rx <= 0.0 or ry <= 0.0:
         return
-    _fill_polygon_aa_device(
-        canvas, _ellipse_fpoints(cx, cy, rx, ry), color, FillRule.NONZERO
-    )
+    if max(rx, ry) > _CLOSED_FORM_MAX_RADIUS:
+        _fill_polygon_aa_device(
+            canvas, _ellipse_fpoints(cx, cy, rx, ry), color, FillRule.NONZERO
+        )
+        return
+    var alpha_scale = Float64(color.a)
+    var lo_x = Int(floor(cx - rx)) - 1
+    var hi_x = Int(ceil(cx + rx)) + 2
+    var lo_y = Int(floor(cy - ry)) - 1
+    var hi_y = Int(ceil(cy + ry)) + 2
+    for py in range(lo_y, hi_y):
+        var dy = abs(Float64(py) - cy)
+        var near_dy = max(0.0, dy - 0.5) / ry
+        var far_dy = (dy + 0.5) / ry
+        var near_dy2 = near_dy * near_dy
+        var far_dy2 = far_dy * far_dy
+        if near_dy2 > 1.0:
+            continue
+        for px in range(lo_x, hi_x):
+            # The same two cheap tests the disk takes, in the space
+            # where the ellipse is a unit circle: a pixel whose
+            # nearest corner is outside contributes nothing, and one
+            # whose farthest corner is inside is whole. Only what is
+            # left needs the closed form.
+            var dx = abs(Float64(px) - cx)
+            var near_dx = max(0.0, dx - 0.5) / rx
+            if near_dx * near_dx + near_dy2 > 1.0:
+                continue
+            var far_dx = (dx + 0.5) / rx
+            if far_dx * far_dx + far_dy2 <= 1.0:
+                canvas.set_pixel(px, py, color)
+                continue
+            var coverage = _ellipse_pixel_coverage(px, py, cx, cy, rx, ry)
+            if coverage <= 0.0:
+                continue
+            var alpha = Int(coverage * alpha_scale + 0.5)
+            if alpha > 0:
+                canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
 
 
 def draw_ellipse_aa(
