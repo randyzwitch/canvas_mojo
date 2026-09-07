@@ -44,6 +44,7 @@ from canvas.path import Path, fill_path_aa
 from canvas.shapes.lines import draw_line, draw_line_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.render import draw_text
 
 comptime W = 800
@@ -104,7 +105,9 @@ def _stats(rounds_ns: List[Float64]) -> _Stats:
     return _Stats(median, iqr / median if median > 0.0 else 0.0)
 
 
-def _time_round[C: MicroCase](mut subject: C, iters: Int, mut sink: Int) raises -> Float64:
+def _time_round[
+    C: MicroCase
+](mut subject: C, iters: Int, mut sink: Int) raises -> Float64:
     var t0 = perf_counter_ns()
     for _ in range(iters):
         subject.run(sink)
@@ -149,7 +152,9 @@ def _print_row(name: String, s: _Stats, rounds: Int, iters: Int):
 
 def measure[
     C: MicroCase
-](mut subject: C, mut sink: Int, rounds: Int = 9, iters: Int = 200) raises -> _Stats:
+](
+    mut subject: C, mut sink: Int, rounds: Int = 9, iters: Int = 200
+) raises -> _Stats:
     """Time `case` for `rounds` rounds of `iters` iterations, after one
     warm-up round, and print its median and spread.
 
@@ -207,7 +212,7 @@ def compare[
 # --- cases ----------------------------------------------------------
 
 
-struct FillRectOpaque(Movable, MicroCase):
+struct FillRectOpaque(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -221,7 +226,7 @@ struct FillRectOpaque(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(50, 50).r)
 
 
-struct FillRectMultiply(Movable, MicroCase):
+struct FillRectMultiply(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -236,7 +241,7 @@ struct FillRectMultiply(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(50, 50).r)
 
 
-struct LineHairline(Movable, MicroCase):
+struct LineHairline(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -250,7 +255,7 @@ struct LineHairline(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct LineAaDiagonal(Movable, MicroCase):
+struct LineAaDiagonal(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -264,7 +269,7 @@ struct LineAaDiagonal(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct LineAaHorizontal(Movable, MicroCase):
+struct LineAaHorizontal(MicroCase, Movable):
     """The same length as the diagonal, along one row band: if the
     sweep is sized to the bounding box, this is much cheaper.
     """
@@ -283,7 +288,7 @@ struct LineAaHorizontal(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct FillPathGlyphSized(Movable, MicroCase):
+struct FillPathGlyphSized(MicroCase, Movable):
     """A quadrilateral the size of a glyph, filled through the
     exact-area path: the small-shape end of the rasterizer, where
     per-call overhead is most of the cost.
@@ -309,7 +314,7 @@ struct FillPathGlyphSized(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(55, 55).r)
 
 
-struct TextCached(Movable, MicroCase):
+struct TextCached(MicroCase, Movable):
     var canvas: Canvas
     var cache: FontCache
 
@@ -327,7 +332,7 @@ struct TextCached(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(104, 96).r)
 
 
-struct TextScaled(Movable, MicroCase):
+struct TextScaled(MicroCase, Movable):
     """The same label under scale(3, 3), which today takes the direct
     outline fill rather than the glyph mask cache (#240).
     """
@@ -350,7 +355,7 @@ struct TextScaled(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(104, 96).r)
 
 
-struct TextLarge(Movable, MicroCase):
+struct TextLarge(MicroCase, Movable):
     """The scaled label's size drawn unscaled: what the cached path
     costs for the same ink, the target #240 aims at.
     """
@@ -370,6 +375,28 @@ struct TextLarge(Movable, MicroCase):
             self.canvas, 100, 100, "Revenue 2024", INK, 42.0, cache=self.cache
         )
         sink += Int(self.canvas.get_pixel(104, 96).r)
+
+
+struct FirstFontResolution(MicroCase, Movable):
+    """A new caller's first lookup, with the persisted file already warm.
+
+    Every iteration constructs a fresh cache, so this includes database
+    reading, validation, parsing, and matching rather than a dictionary
+    hit. The harness warm-up creates the file if it was absent.
+    """
+
+    def __init__(out self):
+        pass
+
+    def name(self) -> String:
+        return "FontCache first resolve (warm file)"
+
+    def run(mut self, mut sink: Int) raises:
+        var cache = FontCache()
+        var path = cache.resolve(
+            "sans-serif", FontSlant.NORMAL, FontWeight.NORMAL
+        )
+        sink += path.byte_length()
 
 
 def main() raises:
@@ -405,6 +432,9 @@ def main() raises:
 
     var text_l = TextLarge()
     _ = measure(text_l, sink, rounds=9, iters=100)
+
+    var first_font = FirstFontResolution()
+    _ = measure(first_font, sink, rounds=9, iters=200)
 
     print("")
     print("sink", sink)

@@ -99,6 +99,17 @@ def test_disabled_cache_writes_nothing() raises:
     assert_false(exists(path), "nothing is written when the cache is off")
 
 
+def test_unescape_preserves_unicode_and_incomplete_escape_semantics() raises:
+    # Literal Unicode on either side of an escape must remain whole
+    # codepoints. Unknown escapes discard the slash; a final slash is
+    # literal, matching existing cache files' decoding behavior.
+    assert_equal(_unescape_field("日本語\\tالعربية"), "日本語\tالعربية")
+    assert_equal(_unescape_field("é\\n😀"), "é\n😀")
+    assert_equal(_unescape_field("\\é"), "é")
+    assert_equal(_unescape_field("trailing\\"), "trailing\\")
+    assert_equal(_unescape_field("\\\\t"), "\\t")
+
+
 def test_round_trip_matches_a_scan() raises:
     var expected = _scanned_faces()
     var path = String("tests/_test_font_cache_round_trip.txt")
