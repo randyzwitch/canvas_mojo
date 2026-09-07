@@ -65,8 +65,15 @@ looks wrong.
 ## Performance notes for large drawings
 
 Anti-aliased fills, strokes, gradients, blur and compositing are
-banded across cores automatically. Reuse one `FontCache` across text
-calls; the first call on a fresh cache scans the system fonts. For
-thousands of small markers, `fill_circle_aa` is cheap; prefer it to a
-path per marker. Read PNG and JPEG with `read_png`/`read_jpeg`
-(baseline JPEG only).
+banded across cores automatically, by how much work there is rather
+than by the core count. An application rendering several canvases at
+once can cap one render with `canvas.set_max_workers(n)` so they share
+the machine instead of each taking it; output is identical at any
+count. Reuse one `FontCache` across text calls; the first call on a
+fresh cache scans the system fonts, and the cache bounds its glyph
+masks by bytes, releasing the least recently used generation rather
+than everything. For thousands of small markers, `fill_circle_aa` is
+cheap; prefer it to a path per marker. Read PNG and JPEG with
+`read_png`/`read_jpeg` (baseline JPEG only). `write_png` takes an
+optional `PngLevel`: `FAST` for export throughput, `SMALL` for a
+smaller file, and every level decodes to the same pixels.
