@@ -23,6 +23,8 @@ pixi run test        # every tests/test_*.mojo, serially; minutes, not seconds
 pixi run mojo run -I . tests/test_<name>.mojo   # one file, the usual loop
 pixi run example     # renders examples/*.mojo to examples/out_*.{png,bmp,svg,pdf}
 pixi run bench       # benchmarks/bench_canvas.mojo, one number per case
+pixi run bench-check # the survey twice against benchmarks/reference.txt; fails on a 1.5x slower row
+pixi run bench-record # rewrite that reference from this machine (quiet, on purpose, committed)
 pixi run micro       # interleaved micro-benchmarks, the gate for a perf change
 pixi run fmt         # mojo format over canvas/ tests/ examples/ scripts/
 pixi run docs        # rebuilds the site into docs/site/public (needs `example` first)
@@ -74,7 +76,9 @@ resolves.
   worth building.
 - CI formats every PR and commits the result; run `pixi run fmt` first
   anyway so the diff you review is the diff that lands.
-- Releases: bump the version in `pixi.toml`, then tag.
+- Releases: `pixi run bench-check` clean on a quiet machine, bump the
+  version in `pixi.toml`, then tag. A perf change that moved rows on
+  purpose re-records the reference in the same PR.
 
 ## Mojo 1.0 traps, each with its fix
 
@@ -152,4 +156,7 @@ resolves.
   `CANVAS_REGEN_GOLDEN=1` only when the new output is known correct,
   and say why in the PR.
 - The bench prints a checksum of everything it drew; unchanged means
-  pixel-identical output across the whole survey.
+  pixel-identical output across the whole survey. It has no memory
+  across runs on its own: `benchmarks/reference.txt` is that memory,
+  and `bench-check` is how a row that doubled gets noticed (#251 went
+  four releases unnoticed without it).

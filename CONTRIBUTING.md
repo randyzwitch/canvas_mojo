@@ -522,9 +522,16 @@ it's most useful when written while the reasoning is fresh.
 
 ## Releasing
 
-Bump the version in `pixi.toml` **first**, then tag — the tag should
-point at the commit that already carries the new version, not the other
-way around.
+Run `pixi run bench-check` on a quiet machine first: it runs the
+benchmark survey twice and compares each row's faster time against
+`benchmarks/reference.txt`, failing on any row more than 1.5x slower.
+The reference is keyed to the machine it was recorded on, so on other
+hardware it reports that and passes; `pixi run bench-record` rewrites
+it, which a change that moved rows on purpose does in its own PR.
+
+Then bump the version in `pixi.toml` **first**, then tag — the tag
+should point at the commit that already carries the new version, not
+the other way around.
 
 ## License
 
