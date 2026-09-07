@@ -40,6 +40,13 @@ bench = "mojo run -I . benchmarks/bench_canvas.mojo"
 bench-check = "CANVAS_BENCH_MODE=check mojo run -I . benchmarks/bench_canvas.mojo"
 # Rewrite the reference from this machine; commit the result.
 bench-record = "CANVAS_BENCH_MODE=record mojo run -I . benchmarks/bench_canvas.mojo"
+# Render every verification scene and compare a digest of every byte
+# against benchmarks/digests.txt. Nothing here is timed, so it runs on
+# a busy machine, and unlike the survey's checksum it sees a change
+# anywhere in the buffer. Font-dependent scenes are excluded.
+bench-verify = "CANVAS_BENCH_MODE=verify mojo run -I . benchmarks/bench_canvas.mojo"
+# Rewrite those digests; only when the new output is known correct.
+bench-record-digests = "CANVAS_BENCH_MODE=record-digests mojo run -I . benchmarks/bench_canvas.mojo"
 
 # One primitive at a time, in rounds, interleaved: the gate for a
 # change to a single primitive. See the file's docstring for how to
