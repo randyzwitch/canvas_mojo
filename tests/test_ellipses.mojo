@@ -27,6 +27,35 @@ def _assert_pixel(
     assert_equal(p.b, expected.b, label + " (b)")
 
 
+# How far a stroke or fill may sit from the shape's true covered area.
+# The rasterizer computes the exact area of the *flattened* outline,
+# and the 0.02 px chord tolerance biases a boundary pixel inward by a
+# couple of levels. Well under the six-to-eleven-level error a 4x4
+# sub-sample grid produced, so a regression to sampling fails these.
+comptime _AREA_TOLERANCE = 3
+
+
+def _assert_coverage(
+    c: Canvas, x: Int, y: Int, expected: Int, label: String
+) raises:
+    """White on black, so the gray value is the covered fraction in
+    255ths. `expected` is the true area, derived independently."""
+    var got = Int(c.get_pixel(x, y).r)
+    assert_true(
+        abs(got - expected) <= _AREA_TOLERANCE,
+        String(
+            label,
+            ": got ",
+            got,
+            ", true coverage ",
+            expected,
+            " (tolerance ",
+            _AREA_TOLERANCE,
+            ")",
+        ),
+    )
+
+
 def test_draw_ellipse_degenerate_radius_plots_center() raises:
     var c = Canvas(3, 3, BG)
     draw_ellipse(c, 1, 1, 0, 5, FG)
@@ -263,31 +292,44 @@ def test_draw_ellipse_aa_center_stays_background() raises:
 
 
 def test_draw_ellipse_aa_partial_coverage_matches_hand_computed_value() raises:
-    # Hand-summed for rx=5, ry=3 at cx=6, cy=4, each sample tested
-    # against the outer (rx+0.5, ry+0.5) and inner (rx-0.5, ry-0.5)
-    # ellipses in their own normalized space -- see draw_ellipse_aa for
-    # why one shared distance doesn't work here. Pixel (3,1) has 7/16
-    # sub-samples inside the ring; (6,1) above center and (11,4) at the
-    # major-axis extreme are both fully inside at 16/16, covering each
-    # axis.
+    # Since #275 this is a real stroke -- every point within half the
+    # width of the curve, measured along its normal -- not the band
+    # between the (rx+w/2, ry+w/2) and (rx-w/2, ry-w/2) ellipses that
+    # the sampler drew. The two differ on an eccentric ellipse, and
+    # `SvgCanvas` was already drawing the stroke.
+    #
+    # True coverage for rx=5, ry=3 at (6, 4), width 1, derived by
+    # measuring each sample's distance to the curve rather than by
+    # sampling a grid against two ellipse equations:
+    #
+    #   (3, 1):  43.6%   the ring crossing the pixel
+    #   (6, 1):  99.6%   above the center, on the minor axis
+    #   (11, 4): 98.2%   the end of the major axis
+    #
+    # The last two are the interesting ones: the 4x4 grid called both
+    # 16/16, but the stroke curves away inside each pixel, so neither
+    # is quite full.
     var c = Canvas(13, 9, BG)
     draw_ellipse_aa(c, 6, 4, 5, 3, FG)
 
-    var p = c.get_pixel(3, 1)  # 7/16 covered -> alpha 112
-    assert_equal(p.r, 112)
-    assert_equal(p.g, 112)
-    assert_equal(p.b, 112)
-
-    _assert_pixel(c, 6, 1, FG, "fully inside the ring, top of minor axis")
-    _assert_pixel(c, 11, 4, FG, "fully inside the ring, end of major axis")
+    _assert_coverage(c, 3, 1, 111, "ring crossing the pixel")
+    _assert_coverage(c, 6, 1, 254, "top of the minor axis")
+    _assert_coverage(c, 11, 4, 250, "end of the major axis")
     _assert_pixel(c, 0, 0, BG, "corner, well outside the ring")
 
 
 def test_draw_ellipse_aa_respects_translucent_input_color() raises:
+    # A ring pixel drawn with a translucent color shows the
+    # single-blend value, not the raw color and not a double blend.
+    # (6, 1) is 99.6% covered (see above), so over black the red
+    # channel is 200 * 128/255 * 0.996 = 100.
     var c = Canvas(13, 9, Color(0, 0, 0))
     draw_ellipse_aa(c, 6, 4, 5, 3, Color(200, 0, 0, 128))
-    var p = c.get_pixel(6, 1)  # fully inside the ring
-    assert_equal(p.r, 100)
+    var p = c.get_pixel(6, 1)
+    assert_true(
+        abs(Int(p.r) - 100) <= _AREA_TOLERANCE,
+        String("blended once, got ", Int(p.r), ", expected about 100"),
+    )
     assert_equal(p.g, 0)
     assert_equal(p.b, 0)
 

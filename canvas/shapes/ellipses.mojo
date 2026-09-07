@@ -513,64 +513,33 @@ def _draw_ellipse_aa_device(
     width: Float64 = 1.0,
 ):
     """`draw_ellipse_aa` for device-space arguments: the body every
-    call lands in. It has no transform check of its own, so its
-    loops compile with nothing ahead of them and it never calls
-    back into the public function.
+    call lands in.
+
+    The outline is a real stroke: `width` pixels wide measured along
+    the curve's normal, everywhere, which is what stroking means and
+    what `SvgCanvas.draw_ellipse_aa` emits (`<ellipse stroke-width>`).
+    `stroke_path_aa` builds that outline and fills it by exact area
+    (`canvas.aa_area`) whenever it is simple, giving 256 coverage
+    levels; `supersample` is accepted and used only where it is not
+    (a stroke wider than the shorter diameter, whose inner offset
+    crosses itself).
+
+    Until #275 this sampled a 4x4 grid against the band between the
+    concentric ellipses `(rx-w/2, ry-w/2)` and `(rx+w/2, ry+w/2)`.
+    That band is `width` wide only at the four axis extremes and
+    narrower everywhere else, so a thick outline on an eccentric
+    ellipse drew a different shape here than the same call drew
+    through `SvgCanvas` -- which the `DrawTarget` trait exists to
+    prevent. For a circle the two agree, offsetting along the normal
+    and scaling the radius being the same operation there.
     """
-    if rx <= 0.0 or ry <= 0.0:
-        canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
+    if rx <= 0.0 or ry <= 0.0 or width <= 0.0:
         return
-
-    var half = width / 2.0
-    var outer_rx = rx + half
-    var outer_ry = ry + half
-    var inner_rx = rx - half
-    var inner_ry = ry - half
-    var has_hole = inner_rx > 0.0 and inner_ry > 0.0
-    var n = supersample
-    var coverage_alpha = _CoverageAlpha(n * n, color.a)
-    var step = 1.0 / Float64(n)
-
-    for py in range(Int(floor(cy - outer_ry)), Int(ceil(cy + outer_ry)) + 1):
-        for px in range(
-            Int(floor(cx - outer_rx)), Int(ceil(cx + outer_rx)) + 1
-        ):
-            var dx = abs(Float64(px) - cx)
-            var dy = abs(Float64(py) - cy)
-
-            # draw_circle_aa's "provably fully outside the ring band"
-            # skip, generalized to the two independent normalized-space
-            # tests above: no shared distance here either, so each
-            # direction gets its own nearest/farthest check.
-            var near_onx = max(0.0, dx - 0.5) / outer_rx
-            var near_ony = max(0.0, dy - 0.5) / outer_ry
-            if near_onx * near_onx + near_ony * near_ony >= 1.0:
-                continue  # whole pixel square is outside the outer ellipse
-
-            if has_hole:
-                var far_inx = (dx + 0.5) / inner_rx
-                var far_iny = (dy + 0.5) / inner_ry
-                if far_inx * far_inx + far_iny * far_iny < 1.0:
-                    continue  # whole pixel square is inside the inner ellipse
-
-            var covered = 0
-            for sy in range(n):
-                var fy = Float64(py) - cy + (Float64(sy) + 0.5) * step - 0.5
-                for sx in range(n):
-                    var fx = Float64(px) - cx + (Float64(sx) + 0.5) * step - 0.5
-                    var onx = fx / outer_rx
-                    var ony = fy / outer_ry
-                    var inside_outer = onx * onx + ony * ony < 1.0
-                    var inside_inner = False
-                    if has_hole:
-                        var inx = fx / inner_rx
-                        var iny = fy / inner_ry
-                        inside_inner = inx * inx + iny * iny < 1.0
-                    if inside_outer and not inside_inner:
-                        covered += 1
-            if covered > 0:
-                canvas.set_pixel(
-                    px,
-                    py,
-                    color.with_alpha(coverage_alpha[covered]),
-                )
+    # `stroke_path_aa` is the public entry and re-applies the canvas
+    # transform; these arguments are already in device space, so the
+    # transform comes off for the call and goes back after.
+    var saved = canvas._take_transform()
+    stroke_path_aa(
+        canvas, _ellipse_path(cx, cy, rx, ry), color, width, supersample
+    )
+    canvas._set_transform(saved)

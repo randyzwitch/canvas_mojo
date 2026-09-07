@@ -473,6 +473,16 @@ def _draw_circle_aa_device(
     """
     if radius <= 0.0 or width <= 0.0:
         return
+    var half = width / 2.0
+    if half >= radius:
+        # Every point within `half` of the circle, the center
+        # included, so the stroked region is the solid disk out to
+        # `radius + half`. Stroking it would ask `stroke_path_aa` for
+        # an inner offset of negative radius, which turns itself
+        # inside out and punches a hole that should not be there
+        # (#279); the disk is both correct and cheaper.
+        _fill_circle_aa_device(canvas, cx, cy, radius + half, color)
+        return
     # `stroke_path_aa` is the public entry and re-applies the canvas
     # transform; these arguments are already in device space, so the
     # transform comes off for the call and goes back after.
