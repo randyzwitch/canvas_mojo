@@ -230,20 +230,45 @@ def write_png(canvas: Canvas, path: String) raises:
     # still reading straight from the buffer rather than walking
     # `get_pixel`, which would add w * h bounds checks and Color
     # constructions for no gain.
-    var raw = List[UInt8](capacity=h * (1 + w * channels))
+    var raw = List[UInt8](unsafe_uninit_length=h * (1 + w * channels))
+    var rp = raw.unsafe_ptr()
+    var o = 0
     for y in range(h):
-        raw.append(0)
+        rp[unsafe_offset=o] = 0
+        o += 1
         var row_start = y * w * BYTES_PER_PIXEL
         if has_alpha:
-            raw.extend(
-                canvas.pixels[row_start : row_start + w * BYTES_PER_PIXEL]
-            )
+            var row_len = w * BYTES_PER_PIXEL
+            var k = 0
+            while k + _UNFILTER_W <= row_len:
+                rp.unsafe_offset(o + k).unsafe_store(
+                    px.unsafe_offset(row_start + k).unsafe_load[
+                        width=_UNFILTER_W
+                    ]()
+                )
+                k += _UNFILTER_W
+            while k < row_len:
+                rp[unsafe_offset=o + k] = px[unsafe_offset=row_start + k]
+                k += 1
+            o += row_len
         else:
-            for x in range(w):
-                var i = row_start + x * BYTES_PER_PIXEL
-                raw.append(px[unsafe_offset=i])
-                raw.append(px[unsafe_offset=i + 1])
-                raw.append(px[unsafe_offset=i + 2])
+            # Four bytes read, four written, three kept: the fourth is
+            # the alpha, and the next pixel's store lands on it. The
+            # last pixel of the row is done by hand, since its fourth
+            # byte would be the next row's filter byte -- and on the
+            # last row, past the buffer.
+            for x in range(w - 1):
+                rp.unsafe_offset(o).unsafe_store(
+                    px.unsafe_offset(
+                        row_start + x * BYTES_PER_PIXEL
+                    ).unsafe_load[width=4]()
+                )
+                o += 3
+            var last = row_start + (w - 1) * BYTES_PER_PIXEL
+            rp[unsafe_offset=o] = px[unsafe_offset=last]
+            rp[unsafe_offset=o + 1] = px[unsafe_offset=last + 1]
+            rp[unsafe_offset=o + 2] = px[unsafe_offset=last + 2]
+            o += 3
 
     # Two candidate encodings, unfiltered and Sub-filtered, and the
     # one that compresses smaller is kept. The unfiltered rows win
@@ -304,14 +329,31 @@ def _sub_compresses_smaller(
     rows, which decode with no reconstruction pass.
     """
     var stride = 1 + row_bytes
-    var sample_raw = List[UInt8]()
-    var sample_sub = List[UInt8]()
+    var rows = (height + _FILTER_SAMPLE_STRIDE - 1) // _FILTER_SAMPLE_STRIDE
+    var sample_raw = List[UInt8](unsafe_uninit_length=rows * stride)
+    var sample_sub = List[UInt8](unsafe_uninit_length=rows * stride)
+    var rp = raw.unsafe_ptr()
+    var sp = sub.unsafe_ptr()
+    var dr = sample_raw.unsafe_ptr()
+    var ds = sample_sub.unsafe_ptr()
     var y = 0
+    var o = 0
     while y < height:
         var base = y * stride
-        for i in range(stride):
-            sample_raw.append(raw[base + i])
-            sample_sub.append(sub[base + i])
+        var i = 0
+        while i + _UNFILTER_W <= stride:
+            dr.unsafe_offset(o + i).unsafe_store(
+                rp.unsafe_offset(base + i).unsafe_load[width=_UNFILTER_W]()
+            )
+            ds.unsafe_offset(o + i).unsafe_store(
+                sp.unsafe_offset(base + i).unsafe_load[width=_UNFILTER_W]()
+            )
+            i += _UNFILTER_W
+        while i < stride:
+            dr[unsafe_offset=o + i] = rp[unsafe_offset=base + i]
+            ds[unsafe_offset=o + i] = sp[unsafe_offset=base + i]
+            i += 1
+        o += stride
         y += _FILTER_SAMPLE_STRIDE
     return len(deflate(sample_sub)) < len(deflate(sample_raw))
 
@@ -328,19 +370,34 @@ def _sub_filtered(
     Sub needs no row above, which is why it is the one filter worth a
     second pass: it reads `raw` once, sequentially.
     """
-    var out = List[UInt8](length=len(raw), fill=0)
+    var out = List[UInt8](unsafe_uninit_length=len(raw))
     var rp = raw.unsafe_ptr()
     var op = out.unsafe_ptr()
     var stride = 1 + row_bytes
     for y in range(height):
         var base = y * stride
         op[unsafe_offset=base] = 1
-        for i in range(row_bytes):
-            var cur = Int(rp[unsafe_offset=base + 1 + i])
-            var left = 0
-            if i >= bpp:
-                left = Int(rp[unsafe_offset=base + 1 + i - bpp])
-            op[unsafe_offset=base + 1 + i] = UInt8((cur - left) & 0xFF)
+        var src = base + 1
+        # The first pixel has nothing to its left, so it goes through
+        # unchanged; the rest is a subtraction between two buffers,
+        # which vectorizes once the `i >= bpp` test is out of the
+        # loop. The wrap at 256 is the encoding the spec asks for.
+        for i in range(bpp):
+            op[unsafe_offset=src + i] = rp[unsafe_offset=src + i]
+        var i = bpp
+        while i + _UNFILTER_W <= row_bytes:
+            op.unsafe_offset(src + i).unsafe_store(
+                rp.unsafe_offset(src + i).unsafe_load[width=_UNFILTER_W]()
+                - rp.unsafe_offset(src + i - bpp).unsafe_load[
+                    width=_UNFILTER_W
+                ]()
+            )
+            i += _UNFILTER_W
+        while i < row_bytes:
+            op[unsafe_offset=src + i] = (
+                rp[unsafe_offset=src + i] - rp[unsafe_offset=src + i - bpp]
+            )
+            i += 1
     return out^
 
 

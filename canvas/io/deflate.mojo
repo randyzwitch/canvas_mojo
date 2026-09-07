@@ -1046,11 +1046,47 @@ struct _Token(ImplicitlyCopyable, Movable):
         self.distance = distance
 
 
+@always_inline
+def _node_before(weight: List[Int], x: Int, y: Int) -> Bool:
+    """Heap order for `_tree_depths`: lighter first, and on a tie the
+    lower node index. Leaves are numbered before the internal nodes
+    built over them, so that tie-break prefers a leaf, and an earlier
+    leaf over a later one, which is what makes the tree deterministic.
+    """
+    if weight[x] != weight[y]:
+        return weight[x] < weight[y]
+    return x < y
+
+
+def _sift_down(mut heap: List[Int], weight: List[Int], start: Int, size: Int):
+    """Move `heap[start]` down until the heap order holds below it."""
+    var root = start
+    while True:
+        var child = 2 * root + 1
+        if child >= size:
+            return
+        if child + 1 < size and _node_before(
+            weight, heap[child + 1], heap[child]
+        ):
+            child += 1
+        if not _node_before(weight, heap[child], heap[root]):
+            return
+        var swap = heap[root]
+        heap[root] = heap[child]
+        heap[child] = swap
+        root = child
+
+
 def _tree_depths(weights: List[Int]) -> List[Int]:
     """Leaf depths of the Huffman tree over `weights`, of which there
     are at least two: repeatedly merges the two lightest parentless
     nodes, lowest index first on a tie, which makes the result
-    deterministic. Quadratic in the leaf count, which is at most 288.
+    deterministic.
+
+    The two lightest come off a binary heap. Scanning every parentless
+    node for them instead is quadratic in the leaf count, and with 286
+    literal/length symbols that scan was most of what deflate spent
+    after the LZ77 pass.
     """
     var m = len(weights)
     var weight = List[Int](capacity=2 * m - 1)
@@ -1059,24 +1095,29 @@ def _tree_depths(weights: List[Int]) -> List[Int]:
         weight.append(w)
         parent.append(-1)
 
-    var remaining = m
-    while remaining > 1:
-        var a = -1
-        var b = -1
-        for i in range(len(weight)):
-            if parent[i] != -1:
-                continue
-            if a == -1 or weight[i] < weight[a]:
-                b = a
-                a = i
-            elif b == -1 or weight[i] < weight[b]:
-                b = i
+    var heap = List[Int](capacity=m)
+    for i in range(m):
+        heap.append(i)
+    for start in range(m // 2 - 1, -1, -1):
+        _sift_down(heap, weight, start, m)
+
+    var size = m
+    while size > 1:
+        # The lightest comes off the heap; the second is then at its
+        # root, and the node merging them takes that root's place, so
+        # each round leaves the heap one shorter.
+        var a = heap[0]
+        heap[0] = heap[size - 1]
+        size -= 1
+        _sift_down(heap, weight, 0, size)
+        var b = heap[0]
         var node = len(weight)
         weight.append(weight[a] + weight[b])
         parent.append(-1)
         parent[a] = node
         parent[b] = node
-        remaining -= 1
+        heap[0] = node
+        _sift_down(heap, weight, 0, size)
 
     var depths = List[Int](capacity=m)
     for k in range(m):
