@@ -1638,7 +1638,7 @@ def _draw_cached_glyph(
     var key = (
         key_prefix + identity + "|" + String(step_x) + "|" + String(step_y)
     )
-    if key not in cache._glyph_masks:
+    if not cache._ensure_glyph_mask(key):
         cache._store_glyph_mask(
             key,
             _rasterize_glyph(
