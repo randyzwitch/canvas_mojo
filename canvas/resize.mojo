@@ -24,10 +24,11 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     caller sweeping `factor` across several values needn't branch
     around 1.
 
-    Each output pixel is the *rounded* mean (see the `+ n // 2` below)
-    of its `factor x factor` source block, per channel. Alpha is
-    averaged alongside r/g/b -- see the comment on `pixels` below for
-    what that does and does not hold for.
+    Alpha is the rounded mean of the source block. Color is averaged
+    with alpha weights and returned as straight RGBA, so transparent
+    samples do not darken a shape's edge or contribute hidden color.
+    A block whose alpha rounds to zero becomes transparent black.
+    Factor 1 copies every byte, including color under zero alpha.
 
     Supersampling with it: pixel (px, py) is centered at (px, py), and
     output pixel p averages source pixels `factor * p` through
@@ -88,24 +89,13 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
             + ")"
         )
 
+    if factor == 1:
+        return Canvas(source.width, source.height, source.pixels.copy())
+
     var out_width = source.width // factor
     var out_height = source.height // factor
     var n = factor * factor
 
-    # Alpha is averaged alongside the color channels. That is the
-    # right answer for the case this exists for -- supersample at 2x,
-    # downsample to 1x -- where a block straddling a shape's edge on a
-    # transparent background should come out partly transparent, in
-    # exactly the proportion of the block the shape covered.
-    #
-    # It is *not* correct in general: averaging straight (rather than
-    # premultiplied) color lets a fully transparent pixel's color
-    # bleed into the result. For a downsample of a rendered image that
-    # is harmless, since a transparent pixel here carries the
-    # background color it was initialized with rather than arbitrary
-    # data. Worth knowing before reusing this on an arbitrary RGBA
-    # image.
-    #
     # Sized up front and written by index rather than appended, because
     # appending is inherently sequential -- it is the order of the
     # calls that decides where a pixel lands. Indexing lets output rows
@@ -184,11 +174,9 @@ def _downsample_band(
     two ever touch the same byte -- which is the basis on which
     `pixels` is shared mutably between them.
     """
-    # `n` is fixed for the whole band, and a supersampling factor is
-    # usually a power of two, where the mean is a shift rather than
-    # four integer divisions per output pixel. The branch below goes
-    # the same way every time through, so it costs nothing the divide
-    # was not already costing.
+    # The sample count is fixed for the band. Power-of-two factors
+    # allow alpha averaging by a shift; color uses the unrounded alpha
+    # sum so rounding output alpha never changes the color weights.
     var half = n // 2
     var shift = 0
     var probe = n
@@ -208,18 +196,18 @@ def _downsample_band(
                     var p = source.read_pixel(
                         ox * factor + dx, oy * factor + dy
                     )
-                    r_sum += Int(p.r)
-                    g_sum += Int(p.g)
-                    b_sum += Int(p.b)
+                    r_sum += Int(p.r) * Int(p.a)
+                    g_sum += Int(p.g) * Int(p.a)
+                    b_sum += Int(p.b) * Int(p.a)
                     a_sum += Int(p.a)
-            if pow2:
-                pixels[out_idx] = UInt8((r_sum + half) >> shift)
-                pixels[out_idx + 1] = UInt8((g_sum + half) >> shift)
-                pixels[out_idx + 2] = UInt8((b_sum + half) >> shift)
-                pixels[out_idx + 3] = UInt8((a_sum + half) >> shift)
+            var alpha = (a_sum + half) >> shift if pow2 else (a_sum + half) // n
+            if alpha == 0:
+                pixels[out_idx] = 0
+                pixels[out_idx + 1] = 0
+                pixels[out_idx + 2] = 0
             else:
-                pixels[out_idx] = UInt8((r_sum + half) // n)
-                pixels[out_idx + 1] = UInt8((g_sum + half) // n)
-                pixels[out_idx + 2] = UInt8((b_sum + half) // n)
-                pixels[out_idx + 3] = UInt8((a_sum + half) // n)
+                pixels[out_idx] = UInt8((r_sum + a_sum // 2) // a_sum)
+                pixels[out_idx + 1] = UInt8((g_sum + a_sum // 2) // a_sum)
+                pixels[out_idx + 2] = UInt8((b_sum + a_sum // 2) // a_sum)
+            pixels[out_idx + 3] = UInt8(alpha)
             out_idx += BYTES_PER_PIXEL
