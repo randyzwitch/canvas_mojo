@@ -9,7 +9,7 @@ exact-area rasterizer (`canvas.aa_area`) as every other nonzero fill
 rather than carrying a sampler of their own (#275).
 """
 
-from std.math import ceil, floor, sqrt
+from std.math import asin, ceil, floor, sqrt
 
 from canvas.color import Color
 from canvas.buffer import Canvas
@@ -303,6 +303,163 @@ def fill_circle_aa(
     _fill_circle_aa_device(canvas, cx, cy, radius, color, supersample)
 
 
+# --- Exact pixel coverage for a disk -------------------------------------
+
+
+def _arc_integral(x: Float64, r: Float64) -> Float64:
+    """The antiderivative of `sqrt(r^2 - x^2)`, clamped to the disk's
+    own domain: `(x*sqrt(r^2-x^2) + r^2*asin(x/r)) / 2`.
+    """
+    var t = x
+    if t < -r:
+        t = -r
+    elif t > r:
+        t = r
+    var rem = r * r - t * t
+    if rem < 0.0:
+        rem = 0.0
+    return 0.5 * (t * sqrt(rem) + r * r * asin(t / r))
+
+
+def _upper_area(x0: Float64, x1: Float64, y: Float64, r: Float64) -> Float64:
+    """The integral over [x0, x1] of `min(y, sqrt(r^2 - x^2))`, the
+    area under the disk's upper arc capped at height `y >= 0`.
+
+    Split where the arc crosses that cap, at `|x| = sqrt(r^2 - y^2)`:
+    between those the slice is the flat `y`, outside them it is the
+    arc, which `_arc_integral` gives in closed form.
+    """
+    if x1 <= x0 or y <= 0.0:
+        return 0.0
+    var a = x0
+    var b = x1
+    if a < -r:
+        a = -r
+    if b > r:
+        b = r
+    if b <= a:
+        return 0.0
+    var rem = r * r - y * y
+    var xc = sqrt(rem) if rem > 0.0 else 0.0
+    var total = 0.0
+    var fa = max(a, -xc)
+    var fb = min(b, xc)
+    if fb > fa:
+        total += y * (fb - fa)
+    var la = a
+    var lb = min(b, -xc)
+    if lb > la:
+        total += _arc_integral(lb, r) - _arc_integral(la, r)
+    var ra = max(a, xc)
+    var rb = b
+    if rb > ra:
+        total += _arc_integral(rb, r) - _arc_integral(ra, r)
+    return total
+
+
+def _disk_rect_area(
+    x0: Float64, x1: Float64, y0: Float64, y1: Float64, r: Float64
+) -> Float64:
+    """The exact area shared by the disk of radius `r` centered at the
+    origin and the axis-aligned rectangle [x0, x1] x [y0, y1].
+
+    Each horizontal edge contributes the area under the arc down to
+    it, signed by which side of the center it falls on, so the four
+    terms leave exactly the band between y0 and y1. This is what makes
+    a circle's coverage exact without flattening it to a polygon
+    first: 256 levels from four `sqrt`/`asin` pairs rather than from
+    an edge table and an accumulator (#281).
+    """
+    var total = 0.0
+    if y1 > 0.0:
+        total += _upper_area(x0, x1, y1, r)
+    if y0 > 0.0:
+        total -= _upper_area(x0, x1, y0, r)
+    if y0 < 0.0:
+        total += _upper_area(x0, x1, -y0, r)
+    if y1 < 0.0:
+        total -= _upper_area(x0, x1, -y1, r)
+    return total
+
+
+def _ellipse_pixel_coverage(
+    px: Int, py: Int, cx: Float64, cy: Float64, rx: Float64, ry: Float64
+) -> Float64:
+    """How much of pixel (px, py) an axis-aligned ellipse covers, in
+    [0, 1].
+
+    Scaling x by 1/rx and y by 1/ry takes the ellipse to the unit disk
+    and the pixel -- axis-aligned, so still a rectangle -- to a
+    rectangle, and areas by `rx * ry`. So the disk's own closed form
+    answers this too.
+    """
+    if rx <= 0.0 or ry <= 0.0:
+        return 0.0
+    var x0 = (Float64(px) - 0.5 - cx) / rx
+    var y0 = (Float64(py) - 0.5 - cy) / ry
+    var area = (
+        _disk_rect_area(x0, x0 + 1.0 / rx, y0, y0 + 1.0 / ry, 1.0) * rx * ry
+    )
+    if area <= 0.0:
+        return 0.0
+    if area >= 1.0:
+        return 1.0
+    return area
+
+
+def _row_cumulative(
+    x: Float64, y0: Float64, y1: Float64, r: Float64
+) -> Float64:
+    """The disk's area to the left of `x` within the horizontal band
+    [y0, y1], all relative to the center.
+
+    A row's pixels partition that band, so pixel coverage is the
+    difference of this at the pixel's two vertical edges -- and
+    neighbours share an edge, so walking a row left to right costs one
+    evaluation per pixel rather than the two a per-pixel area needs.
+    """
+    var total = 0.0
+    if y1 > 0.0:
+        total += _upper_area(-r, x, y1, r)
+    if y0 > 0.0:
+        total -= _upper_area(-r, x, y0, r)
+    if y0 < 0.0:
+        total += _upper_area(-r, x, -y0, r)
+    if y1 < 0.0:
+        total -= _upper_area(-r, x, -y1, r)
+    return total
+
+
+def _disk_pixel_coverage(
+    px: Int, py: Int, cx: Float64, cy: Float64, r: Float64
+) -> Float64:
+    """How much of pixel (px, py) the disk covers, in [0, 1]. Pixel
+    (px, py) is the square [px - 0.5, px + 0.5] x [py - 0.5, py + 0.5],
+    the convention every rasterizer here shares.
+    """
+    var x0 = Float64(px) - 0.5 - cx
+    var y0 = Float64(py) - 0.5 - cy
+    var area = _disk_rect_area(x0, x0 + 1.0, y0, y0 + 1.0, r)
+    if area <= 0.0:
+        return 0.0
+    if area >= 1.0:
+        return 1.0
+    return area
+
+
+# Above this radius a circle goes back to the general exact-area
+# rasterizer. Both routes give the same 256 levels; they differ in
+# what they spend to get there. The closed form pays a `sqrt`/`asin`
+# pair per pixel edge and allocates nothing, which wins while the
+# shape is small; the polygon pays an edge table and an accumulator
+# once and then only arithmetic per pixel, which wins once there are
+# enough pixels to amortize it. Timed against each other over 8,000
+# calls (#281): the closed form is 0.91x the polygon's time at r=6,
+# 1.14x at r=8, 1.35x at r=10 and 1.94x at r=18, so they cross just
+# under seven.
+comptime _CLOSED_FORM_MAX_RADIUS = 7.0
+
+
 def _fill_circle_aa_device(
     mut canvas: Canvas,
     cx: Float64,
@@ -314,26 +471,56 @@ def _fill_circle_aa_device(
     """`fill_circle_aa` for device-space arguments: the body every
     call lands in.
 
-    The disk goes to `fill_path_aa` under `FillRule.NONZERO`, which is
-    `canvas.aa_area`'s exact-area accumulation -- each pixel's real
-    covered fraction in 256 levels. The sampled grid this used to walk
-    resolved 17, which measured as up to 15 levels of error against a
-    16x reference where the accumulation is within 6 (#275).
-    `supersample` is accepted and unused, as it is on every other
-    nonzero fill.
+    Every pixel gets the disk's exact covered area, 256 levels, by one
+    of two routes that agree to within a level. A circle up to
+    `_CLOSED_FORM_MAX_RADIUS` takes it from the circle's own equation
+    (`_disk_pixel_coverage`), which allocates nothing; a larger one
+    flattens to a polygon and takes the general rasterizer, which
+    allocates once and amortizes it over more pixels.
 
-    A single closed convex outline winds once, so nonzero and even-odd
-    describe the same region here; the rule only picks the rasterizer.
+    #276 sent every circle down the polygon route, which for a marker
+    a few pixels across cost about ten allocations and 4.8x the
+    sampler it replaced (#281). A small circle needs none of that.
+
+    `supersample` is accepted and unused, as it is on every other
+    exact-area fill.
     """
     if radius <= 0.0:
         canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
-    _fill_polygon_aa_device(
-        canvas,
-        _ellipse_fpoints(cx, cy, radius, radius),
-        color,
-        FillRule.NONZERO,
-    )
+    if radius > _CLOSED_FORM_MAX_RADIUS:
+        _fill_polygon_aa_device(
+            canvas,
+            _ellipse_fpoints(cx, cy, radius, radius),
+            color,
+            FillRule.NONZERO,
+        )
+        return
+    var r2 = radius * radius
+    var alpha_scale = Float64(color.a)
+    # Widened outward to whole pixels, so a pixel the disk only partly
+    # covers is still visited.
+    var lo_x = Int(floor(cx - radius)) - 1
+    var hi_x = Int(ceil(cx + radius)) + 2
+    var lo_y = Int(floor(cy - radius)) - 1
+    var hi_y = Int(ceil(cy + radius)) + 2
+    for py in range(lo_y, hi_y):
+        var dy = abs(Float64(py) - cy)
+        var near_dy = max(0.0, dy - 0.5)
+        var far_dy = dy + 0.5
+        for px in range(lo_x, hi_x):
+            var dx = abs(Float64(px) - cx)
+            var near_dx = max(0.0, dx - 0.5)
+            if near_dx * near_dx + near_dy * near_dy > r2:
+                continue  # whole pixel square is outside the disk
+            var far_dx = dx + 0.5
+            if far_dx * far_dx + far_dy * far_dy <= r2:
+                canvas.set_pixel(px, py, color)  # wholly inside
+                continue
+            var coverage = _disk_pixel_coverage(px, py, cx, cy, radius)
+            var alpha = Int(coverage * alpha_scale + 0.5)
+            if alpha > 0:
+                canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
 
 
 def draw_circle_aa(
