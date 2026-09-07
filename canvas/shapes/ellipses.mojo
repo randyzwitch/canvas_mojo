@@ -23,7 +23,7 @@ from canvas.aa_crossing import _CoverageAlpha
 from canvas.shapes.arcs import _ellipse_fpoints
 from canvas.shapes.circles import (
     _CLOSED_FORM_MAX_RADIUS,
-    _ellipse_pixel_coverage,
+    _unit_disk_rect_area,
 )
 from canvas.shapes.polygon_fill import _fill_polygon_aa_device
 
@@ -378,38 +378,61 @@ def _fill_ellipse_aa_device(
         )
         return
     var alpha_scale = Float64(color.a)
+    var inv_rx = 1.0 / rx
+    var inv_ry = 1.0 / ry
+    var area_scale = rx * ry
     var lo_x = Int(floor(cx - rx)) - 1
     var hi_x = Int(ceil(cx + rx)) + 2
     var lo_y = Int(floor(cy - ry)) - 1
     var hi_y = Int(ceil(cy + ry)) + 2
+    # Scaling x by 1/rx and y by 1/ry takes the ellipse to the unit
+    # disk and the pixel grid to a grid of `inv_rx` by `inv_ry`
+    # rectangles, so the loop walks that space directly: `ux` and `uy`
+    # step by a constant, the corner tests compare against 1, and the
+    # closed form gets the rectangle it wants without converting
+    # anything per pixel. Areas come back scaled by `rx * ry`.
+    var half_x = 0.5 * inv_rx
+    var half_y = 0.5 * inv_ry
+    var uy = (Float64(lo_y) - cy) * inv_ry
     for py in range(lo_y, hi_y):
-        var dy = abs(Float64(py) - cy)
-        var near_dy = max(0.0, dy - 0.5) / ry
-        var far_dy = (dy + 0.5) / ry
+        var ady = abs(uy)
+        var near_dy = max(0.0, ady - half_y)
+        var far_dy = ady + half_y
         var near_dy2 = near_dy * near_dy
         var far_dy2 = far_dy * far_dy
         if near_dy2 > 1.0:
+            uy += inv_ry
             continue
+        var y0 = uy - half_y
+        var y1 = uy + half_y
+        var ux = (Float64(lo_x) - cx) * inv_rx
         for px in range(lo_x, hi_x):
-            # The same two cheap tests the disk takes, in the space
-            # where the ellipse is a unit circle: a pixel whose
+            # The same two cheap tests the disk takes: a pixel whose
             # nearest corner is outside contributes nothing, and one
             # whose farthest corner is inside is whole. Only what is
             # left needs the closed form.
-            var dx = abs(Float64(px) - cx)
-            var near_dx = max(0.0, dx - 0.5) / rx
+            var adx = abs(ux)
+            var near_dx = max(0.0, adx - half_x)
             if near_dx * near_dx + near_dy2 > 1.0:
+                ux += inv_rx
                 continue
-            var far_dx = (dx + 0.5) / rx
+            var far_dx = adx + half_x
             if far_dx * far_dx + far_dy2 <= 1.0:
                 canvas.set_pixel(px, py, color)
+                ux += inv_rx
                 continue
-            var coverage = _ellipse_pixel_coverage(px, py, cx, cy, rx, ry)
-            if coverage <= 0.0:
-                continue
-            var alpha = Int(coverage * alpha_scale + 0.5)
-            if alpha > 0:
-                canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
+            var area = (
+                _unit_disk_rect_area(ux - half_x, ux + half_x, y0, y1)
+                * area_scale
+            )
+            if area > 0.0:
+                if area > 1.0:
+                    area = 1.0
+                var alpha = Int(area * alpha_scale + 0.5)
+                if alpha > 0:
+                    canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
+            ux += inv_rx
+        uy += inv_ry
 
 
 def draw_ellipse_aa(

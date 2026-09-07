@@ -25,6 +25,8 @@ directions, so a file round-trips through `read_png` -> `write_png`
 unchanged.
 """
 
+from std.math import iota
+
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color
 from canvas.io.deflate import deflate, inflate
@@ -84,28 +86,66 @@ def _adler32(data: List[UInt8]) -> UInt32:
     The modulo is deferred rather than taken per byte. `% BASE` is a
     ring homomorphism for addition, so reducing once at the end of a
     block gives the same value as reducing every step, provided the
-    accumulators cannot overflow in between. NMAX is the standard bound
-    for that in 32 bits: the largest n with
-    255*n*(n+1)/2 + (n+1)*(BASE-1) < 2^32, so a block of that length
-    cannot carry s2 past the end of the type.
+    accumulators cannot overflow in between.
+
+    Written a byte at a time the recurrence is `s1 += b; s2 += s1`,
+    two dependent adds, so it runs at one byte per cycle no matter how
+    wide the machine is. Closing the form over a block of `L` bytes
+    removes the dependency:
+
+        s1' = s1 + sum(b[i])
+        s2' = s2 + L*s1 + sum((L - i) * b[i])
+
+    and both sums come out of two vector accumulators. Stepping
+    `vs2 += vs1` before `vs1 += b` leaves `vs1` holding each lane's
+    byte total and `vs2` holding it weighted by how many chunks
+    followed, which is the position weight up to a per-lane ramp that
+    the closing arithmetic subtracts back off.
+
+    Blocks are shorter than the 5552 the byte-at-a-time form allows,
+    because these intermediates run larger than the values they add up
+    to; 4096 leaves the 32-bit accumulators about half their range
+    spare.
     """
     comptime BASE = UInt32(65521)
-    comptime NMAX = 5552
+    comptime W = 32
+    comptime BLOCK = 4096
+    comptime RAMP = iota[DType.uint32, W]()
     var s1 = UInt32(1)
     var s2 = UInt32(0)
     var n = len(data)
     var p = data.unsafe_ptr()
     var i = 0
     while i < n:
-        var block = NMAX
-        if n - i < block:
-            block = n - i
-        for j in range(i, i + block):
-            s1 += UInt32(p[unsafe_offset=j])
+        var block = min(BLOCK, n - i)
+        var chunks = block // W
+        if chunks > 0:
+            var vs1 = SIMD[DType.uint32, W](0)
+            var vs2 = SIMD[DType.uint32, W](0)
+            for c in range(chunks):
+                vs2 += vs1
+                vs1 += (
+                    p.unsafe_offset(i + c * W)
+                    .unsafe_load[width=W]()
+                    .cast[DType.uint32]()
+                )
+            var total = vs1.reduce_add()
+            var vec_len = UInt32(chunks * W)
+            s2 += vec_len * s1
+            s2 += (
+                UInt32(W) * (vs2.reduce_add() + total)
+                - (vs1 * RAMP).reduce_add()
+            )
+            s1 += total
+            var done = chunks * W
+            i += done
+            block -= done
+        for _ in range(block):
+            s1 += UInt32(p[unsafe_offset=i])
             s2 += s1
+            i += 1
         s1 %= BASE
         s2 %= BASE
-        i += block
     return (s2 << 16) | s1
 
 
@@ -190,20 +230,45 @@ def write_png(canvas: Canvas, path: String) raises:
     # still reading straight from the buffer rather than walking
     # `get_pixel`, which would add w * h bounds checks and Color
     # constructions for no gain.
-    var raw = List[UInt8](capacity=h * (1 + w * channels))
+    var raw = List[UInt8](unsafe_uninit_length=h * (1 + w * channels))
+    var rp = raw.unsafe_ptr()
+    var o = 0
     for y in range(h):
-        raw.append(0)
+        rp[unsafe_offset=o] = 0
+        o += 1
         var row_start = y * w * BYTES_PER_PIXEL
         if has_alpha:
-            raw.extend(
-                canvas.pixels[row_start : row_start + w * BYTES_PER_PIXEL]
-            )
+            var row_len = w * BYTES_PER_PIXEL
+            var k = 0
+            while k + _UNFILTER_W <= row_len:
+                rp.unsafe_offset(o + k).unsafe_store(
+                    px.unsafe_offset(row_start + k).unsafe_load[
+                        width=_UNFILTER_W
+                    ]()
+                )
+                k += _UNFILTER_W
+            while k < row_len:
+                rp[unsafe_offset=o + k] = px[unsafe_offset=row_start + k]
+                k += 1
+            o += row_len
         else:
-            for x in range(w):
-                var i = row_start + x * BYTES_PER_PIXEL
-                raw.append(px[unsafe_offset=i])
-                raw.append(px[unsafe_offset=i + 1])
-                raw.append(px[unsafe_offset=i + 2])
+            # Four bytes read, four written, three kept: the fourth is
+            # the alpha, and the next pixel's store lands on it. The
+            # last pixel of the row is done by hand, since its fourth
+            # byte would be the next row's filter byte -- and on the
+            # last row, past the buffer.
+            for x in range(w - 1):
+                rp.unsafe_offset(o).unsafe_store(
+                    px.unsafe_offset(
+                        row_start + x * BYTES_PER_PIXEL
+                    ).unsafe_load[width=4]()
+                )
+                o += 3
+            var last = row_start + (w - 1) * BYTES_PER_PIXEL
+            rp[unsafe_offset=o] = px[unsafe_offset=last]
+            rp[unsafe_offset=o + 1] = px[unsafe_offset=last + 1]
+            rp[unsafe_offset=o + 2] = px[unsafe_offset=last + 2]
+            o += 3
 
     # Two candidate encodings, unfiltered and Sub-filtered, and the
     # one that compresses smaller is kept. The unfiltered rows win
@@ -264,14 +329,31 @@ def _sub_compresses_smaller(
     rows, which decode with no reconstruction pass.
     """
     var stride = 1 + row_bytes
-    var sample_raw = List[UInt8]()
-    var sample_sub = List[UInt8]()
+    var rows = (height + _FILTER_SAMPLE_STRIDE - 1) // _FILTER_SAMPLE_STRIDE
+    var sample_raw = List[UInt8](unsafe_uninit_length=rows * stride)
+    var sample_sub = List[UInt8](unsafe_uninit_length=rows * stride)
+    var rp = raw.unsafe_ptr()
+    var sp = sub.unsafe_ptr()
+    var dr = sample_raw.unsafe_ptr()
+    var ds = sample_sub.unsafe_ptr()
     var y = 0
+    var o = 0
     while y < height:
         var base = y * stride
-        for i in range(stride):
-            sample_raw.append(raw[base + i])
-            sample_sub.append(sub[base + i])
+        var i = 0
+        while i + _UNFILTER_W <= stride:
+            dr.unsafe_offset(o + i).unsafe_store(
+                rp.unsafe_offset(base + i).unsafe_load[width=_UNFILTER_W]()
+            )
+            ds.unsafe_offset(o + i).unsafe_store(
+                sp.unsafe_offset(base + i).unsafe_load[width=_UNFILTER_W]()
+            )
+            i += _UNFILTER_W
+        while i < stride:
+            dr[unsafe_offset=o + i] = rp[unsafe_offset=base + i]
+            ds[unsafe_offset=o + i] = sp[unsafe_offset=base + i]
+            i += 1
+        o += stride
         y += _FILTER_SAMPLE_STRIDE
     return len(deflate(sample_sub)) < len(deflate(sample_raw))
 
@@ -288,19 +370,34 @@ def _sub_filtered(
     Sub needs no row above, which is why it is the one filter worth a
     second pass: it reads `raw` once, sequentially.
     """
-    var out = List[UInt8](length=len(raw), fill=0)
+    var out = List[UInt8](unsafe_uninit_length=len(raw))
     var rp = raw.unsafe_ptr()
     var op = out.unsafe_ptr()
     var stride = 1 + row_bytes
     for y in range(height):
         var base = y * stride
         op[unsafe_offset=base] = 1
-        for i in range(row_bytes):
-            var cur = Int(rp[unsafe_offset=base + 1 + i])
-            var left = 0
-            if i >= bpp:
-                left = Int(rp[unsafe_offset=base + 1 + i - bpp])
-            op[unsafe_offset=base + 1 + i] = UInt8((cur - left) & 0xFF)
+        var src = base + 1
+        # The first pixel has nothing to its left, so it goes through
+        # unchanged; the rest is a subtraction between two buffers,
+        # which vectorizes once the `i >= bpp` test is out of the
+        # loop. The wrap at 256 is the encoding the spec asks for.
+        for i in range(bpp):
+            op[unsafe_offset=src + i] = rp[unsafe_offset=src + i]
+        var i = bpp
+        while i + _UNFILTER_W <= row_bytes:
+            op.unsafe_offset(src + i).unsafe_store(
+                rp.unsafe_offset(src + i).unsafe_load[width=_UNFILTER_W]()
+                - rp.unsafe_offset(src + i - bpp).unsafe_load[
+                    width=_UNFILTER_W
+                ]()
+            )
+            i += _UNFILTER_W
+        while i < row_bytes:
+            op[unsafe_offset=src + i] = (
+                rp[unsafe_offset=src + i] - rp[unsafe_offset=src + i - bpp]
+            )
+            i += 1
     return out^
 
 
@@ -343,6 +440,12 @@ def _bytes_per_pixel(color_type: Int) raises -> Int:
             " (only 0/2/3/4/6 are supported)",
         )
     )
+
+
+# Bytes per step in the two filters that have no left-neighbour
+# dependency. Wide enough to fill a vector register on anything
+# current; a row shorter than this, or its tail, falls back to bytes.
+comptime _UNFILTER_W = 32
 
 
 def _unfilter_scanlines(
@@ -391,8 +494,19 @@ def _unfilter_rows(
         )
         var fp = rp.unsafe_offset(pos)
         if filter_type == 0:
-            for x in range(row_bytes):
+            # Nothing to reconstruct: the row is already its own
+            # bytes. A byte-at-a-time loop is what the compiler is
+            # left with, since it cannot know `raw` and `out` do not
+            # overlap; copying a vector at a time says so.
+            var x = 0
+            while x + _UNFILTER_W <= row_bytes:
+                cp.unsafe_offset(x).unsafe_store(
+                    fp.unsafe_offset(x).unsafe_load[width=_UNFILTER_W]()
+                )
+                x += _UNFILTER_W
+            while x < row_bytes:
                 cp[unsafe_offset=x] = fp[unsafe_offset=x]
+                x += 1
         elif filter_type == 1:
             for x in range(bpp):
                 cp[unsafe_offset=x] = fp[unsafe_offset=x]
@@ -401,8 +515,20 @@ def _unfilter_rows(
                     fp[unsafe_offset=x] + cp[unsafe_offset=x - bpp]
                 )
         elif filter_type == 2:
-            for x in range(row_bytes):
+            # Up: every byte depends only on the row above, never on
+            # its own neighbours, so the whole row goes a vector at a
+            # time. The adds wrap at 256, which is the reconstruction
+            # the spec asks for.
+            var x = 0
+            while x + _UNFILTER_W <= row_bytes:
+                cp.unsafe_offset(x).unsafe_store(
+                    fp.unsafe_offset(x).unsafe_load[width=_UNFILTER_W]()
+                    + pp.unsafe_offset(x).unsafe_load[width=_UNFILTER_W]()
+                )
+                x += _UNFILTER_W
+            while x < row_bytes:
                 cp[unsafe_offset=x] = fp[unsafe_offset=x] + pp[unsafe_offset=x]
+                x += 1
         elif filter_type == 3:
             for x in range(bpp):
                 cp[unsafe_offset=x] = UInt8(
@@ -456,32 +582,47 @@ def _canvas_from_scanlines(
     var sp = unfiltered.unsafe_ptr()
     var dp = pixels.unsafe_ptr()
     if color_type == 6:
-        for i in range(n * BYTES_PER_PIXEL):
+        # Already the canvas's own layout, so this is a copy. Taken a
+        # vector at a time: the compiler cannot know the two buffers
+        # do not overlap, and a byte loop is what it falls back to.
+        var i = 0
+        var total = n * BYTES_PER_PIXEL
+        while i + _UNFILTER_W <= total:
+            dp.unsafe_offset(i).unsafe_store(
+                sp.unsafe_offset(i).unsafe_load[width=_UNFILTER_W]()
+            )
+            i += _UNFILTER_W
+        while i < total:
             dp[unsafe_offset=i] = sp[unsafe_offset=i]
+            i += 1
     elif color_type == 2:
-        for i in range(n):
-            var px = i * 3
-            var d = i * BYTES_PER_PIXEL
-            dp[unsafe_offset=d] = sp[unsafe_offset=px]
-            dp[unsafe_offset=d + 1] = sp[unsafe_offset=px + 1]
-            dp[unsafe_offset=d + 2] = sp[unsafe_offset=px + 2]
-            dp[unsafe_offset=d + 3] = 255
+        # Three source bytes become four. Reading four and overwriting
+        # the fourth with the alpha turns a pixel into one load and
+        # one store; the last pixel is done by hand, since reading
+        # four bytes there would run one past the end.
+        for i in range(n - 1):
+            var v = sp.unsafe_offset(i * 3).unsafe_load[width=4]()
+            v[3] = 255
+            dp.unsafe_offset(i * BYTES_PER_PIXEL).unsafe_store(v)
+        var last = n - 1
+        var lp = last * 3
+        var ld = last * BYTES_PER_PIXEL
+        dp[unsafe_offset=ld] = sp[unsafe_offset=lp]
+        dp[unsafe_offset=ld + 1] = sp[unsafe_offset=lp + 1]
+        dp[unsafe_offset=ld + 2] = sp[unsafe_offset=lp + 2]
+        dp[unsafe_offset=ld + 3] = 255
     elif color_type == 0:
         for i in range(n):
             var gray = sp[unsafe_offset=i]
-            var d = i * BYTES_PER_PIXEL
-            dp[unsafe_offset=d] = gray
-            dp[unsafe_offset=d + 1] = gray
-            dp[unsafe_offset=d + 2] = gray
-            dp[unsafe_offset=d + 3] = 255
+            var v = SIMD[DType.uint8, 4](gray, gray, gray, 255)
+            dp.unsafe_offset(i * BYTES_PER_PIXEL).unsafe_store(v)
     else:  # 4 -- _bytes_per_pixel already rejected anything else
         for i in range(n):
             var gray = sp[unsafe_offset=i * 2]
-            var d = i * BYTES_PER_PIXEL
-            dp[unsafe_offset=d] = gray
-            dp[unsafe_offset=d + 1] = gray
-            dp[unsafe_offset=d + 2] = gray
-            dp[unsafe_offset=d + 3] = sp[unsafe_offset=i * 2 + 1]
+            var v = SIMD[DType.uint8, 4](
+                gray, gray, gray, sp[unsafe_offset=i * 2 + 1]
+            )
+            dp.unsafe_offset(i * BYTES_PER_PIXEL).unsafe_store(v)
     return Canvas(width, height, pixels^)
 
 

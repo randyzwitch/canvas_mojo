@@ -148,6 +148,12 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, mask: Mask):
     draw_canvas(dst, apply_mask(src, mask), x, y, 255)
 
 
+# Groups of eight source pixels skipped before `_draw_canvas_device`
+# tests again whether a group can be copied rather than blended. See
+# the loop for why the test is worth suppressing at all.
+comptime _COPY_RETRY = 15
+
+
 def _draw_canvas_device(
     mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8
 ):
@@ -211,67 +217,121 @@ def _draw_canvas_device(
     var dp = dst.pixels.unsafe_ptr()
     var dst_stride = dst.width * BYTES_PER_PIXEL
 
+    # Two kinds of run are worth taking eight pixels at a time, and a
+    # composited layer is mostly made of them. A run of opaque source
+    # pixels at full opacity is a copy: OR-ing in 255 everywhere but
+    # the alpha lanes leaves the vector all-255 exactly when all eight
+    # alphas are. A run of fully transparent ones writes nothing at
+    # all, whatever the opacity or the color space: masking to the
+    # alpha lanes leaves zero exactly when all eight are zero. Either
+    # way one compare replaces eight trips through the pixel loop,
+    # which is otherwise unchanged.
+    #
+    # The test is not free -- a branch waiting on a horizontal minimum
+    # is about six nanoseconds, and on a layer that is translucent
+    # throughout it would be paid on every group for nothing. So a
+    # failure suppresses it for the next `_COPY_RETRY` groups. A row
+    # that is entirely one kind or the other, which is what a
+    # composited layer usually is, pays it once either way, and the
+    # counter restarts on every row so a sprite's transparent border
+    # cannot switch off the rest of the image.
+    comptime GROUP = 8
+    comptime GROUP_BYTES = GROUP * BYTES_PER_PIXEL
+    var not_alpha = SIMD[DType.uint8, GROUP_BYTES](255)
+    var alpha_only = SIMD[DType.uint8, GROUP_BYTES](0)
+    for k in range(GROUP):
+        not_alpha[k * BYTES_PER_PIXEL + 3] = 0
+        alpha_only[k * BYTES_PER_PIXEL + 3] = 255
+    var fast = full and not linear
+
     for row in range(rh):
         var s_idx = (ry + row - y) * src_stride + (rx - x) * BYTES_PER_PIXEL
         var d_idx = (ry + row) * dst_stride + rx * BYTES_PER_PIXEL
-        for _ in range(rw):
-            var sa = sp[unsafe_offset=s_idx + 3]
-            if full and sa == 255:
-                # Opaque source pixel at full opacity: the destination
-                # is replaced outright, whatever its own alpha was.
-                dp[unsafe_offset=d_idx] = sp[unsafe_offset=s_idx]
-                dp[unsafe_offset=d_idx + 1] = sp[unsafe_offset=s_idx + 1]
-                dp[unsafe_offset=d_idx + 2] = sp[unsafe_offset=s_idx + 2]
-                dp[unsafe_offset=d_idx + 3] = 255
-            elif sa != 0 or not full:
-                var effective_a = sa
-                if not full:
-                    # Scaling by opacity/255 through the same exact
-                    # division the blend itself uses, rather than a
-                    # second approximation of it.
-                    effective_a = UInt8(_div255(Int(sa) * Int(opacity)))
-                if effective_a != 0:
-                    var source = Color(
-                        sp[unsafe_offset=s_idx],
-                        sp[unsafe_offset=s_idx + 1],
-                        sp[unsafe_offset=s_idx + 2],
-                        effective_a,
-                    )
-                    if linear:
-                        dst.write_pixel(
-                            (d_idx - (ry + row) * dst_stride)
-                            // BYTES_PER_PIXEL,
-                            ry + row,
-                            source,
+        var col = 0
+        var retry = 0
+        while col < rw:
+            var take = min(GROUP, rw - col)
+            if take == GROUP:
+                if retry > 0:
+                    retry -= 1
+                else:
+                    var v = sp.unsafe_offset(s_idx).unsafe_load[
+                        width=GROUP_BYTES
+                    ]()
+                    if fast and (v | not_alpha).reduce_min() == 255:
+                        dp.unsafe_offset(d_idx).unsafe_store(v)
+                        s_idx += GROUP_BYTES
+                        d_idx += GROUP_BYTES
+                        col += GROUP
+                        continue
+                    if (v & alpha_only).reduce_or() == 0:
+                        # Nothing to composite. A zero source alpha
+                        # writes nothing whatever the opacity or the
+                        # color space, so this one holds on every path.
+                        s_idx += GROUP_BYTES
+                        d_idx += GROUP_BYTES
+                        col += GROUP
+                        continue
+                    retry = _COPY_RETRY
+            col += take
+            for _ in range(take):
+                var sa = sp[unsafe_offset=s_idx + 3]
+                if full and sa == 255:
+                    # Opaque source pixel at full opacity: the destination
+                    # is replaced outright, whatever its own alpha was.
+                    dp[unsafe_offset=d_idx] = sp[unsafe_offset=s_idx]
+                    dp[unsafe_offset=d_idx + 1] = sp[unsafe_offset=s_idx + 1]
+                    dp[unsafe_offset=d_idx + 2] = sp[unsafe_offset=s_idx + 2]
+                    dp[unsafe_offset=d_idx + 3] = 255
+                elif sa != 0 or not full:
+                    var effective_a = sa
+                    if not full:
+                        # Scaling by opacity/255 through the same exact
+                        # division the blend itself uses, rather than a
+                        # second approximation of it.
+                        effective_a = UInt8(_div255(Int(sa) * Int(opacity)))
+                    if effective_a != 0:
+                        var source = Color(
+                            sp[unsafe_offset=s_idx],
+                            sp[unsafe_offset=s_idx + 1],
+                            sp[unsafe_offset=s_idx + 2],
+                            effective_a,
                         )
-                    elif dp[unsafe_offset=d_idx + 3] == 255:
-                        # Opaque destination, the common case: the
-                        # division-free form `write_pixel` uses.
-                        var over = source.blend_over_opaque(
-                            dp[unsafe_offset=d_idx],
-                            dp[unsafe_offset=d_idx + 1],
-                            dp[unsafe_offset=d_idx + 2],
-                        )
-                        dp[unsafe_offset=d_idx] = over.r
-                        dp[unsafe_offset=d_idx + 1] = over.g
-                        dp[unsafe_offset=d_idx + 2] = over.b
-                    else:
-                        var blended = source.blend_over(
-                            Color(
+                        if linear:
+                            dst.write_pixel(
+                                (d_idx - (ry + row) * dst_stride)
+                                // BYTES_PER_PIXEL,
+                                ry + row,
+                                source,
+                            )
+                        elif dp[unsafe_offset=d_idx + 3] == 255:
+                            # Opaque destination, the common case: the
+                            # division-free form `write_pixel` uses.
+                            var over = source.blend_over_opaque(
                                 dp[unsafe_offset=d_idx],
                                 dp[unsafe_offset=d_idx + 1],
                                 dp[unsafe_offset=d_idx + 2],
-                                dp[unsafe_offset=d_idx + 3],
                             )
-                        )
-                        dp[unsafe_offset=d_idx] = blended.r
-                        dp[unsafe_offset=d_idx + 1] = blended.g
-                        dp[unsafe_offset=d_idx + 2] = blended.b
-                        dp[unsafe_offset=d_idx + 3] = blended.a
-            # sa == 0 at full opacity: fully transparent source, the
-            # destination keeps whatever it had.
-            s_idx += BYTES_PER_PIXEL
-            d_idx += BYTES_PER_PIXEL
+                            dp[unsafe_offset=d_idx] = over.r
+                            dp[unsafe_offset=d_idx + 1] = over.g
+                            dp[unsafe_offset=d_idx + 2] = over.b
+                        else:
+                            var blended = source.blend_over(
+                                Color(
+                                    dp[unsafe_offset=d_idx],
+                                    dp[unsafe_offset=d_idx + 1],
+                                    dp[unsafe_offset=d_idx + 2],
+                                    dp[unsafe_offset=d_idx + 3],
+                                )
+                            )
+                            dp[unsafe_offset=d_idx] = blended.r
+                            dp[unsafe_offset=d_idx + 1] = blended.g
+                            dp[unsafe_offset=d_idx + 2] = blended.b
+                            dp[unsafe_offset=d_idx + 3] = blended.a
+                # sa == 0 at full opacity: fully transparent source, the
+                # destination keeps whatever it had.
+                s_idx += BYTES_PER_PIXEL
+                d_idx += BYTES_PER_PIXEL
 
 
 def draw_canvas(
