@@ -173,6 +173,329 @@ def _downsample_band(
     Bands write disjoint output rows and only read the source, so no
     two ever touch the same byte -- which is the basis on which
     `pixels` is shared mutably between them.
+
+    Factors 2 and 4 take kernels with the block size known at compile
+    time, which is what lets the sample loops unroll and the divisor
+    become a shift. Every other factor takes the general path below,
+    and factor 1 is an exact copy either way.
+    """
+    if factor == 2:
+        _downsample_band_fixed[2](
+            source, pixels, first_row, last_row, out_width
+        )
+        return
+    if factor == 4:
+        _downsample_band_fixed[4](
+            source, pixels, first_row, last_row, out_width
+        )
+        return
+    _downsample_band_general(
+        source, pixels, first_row, last_row, out_width, factor, n
+    )
+
+
+# Eight pixels' worth of alpha lanes: OR this in and an all-255 vector
+# means every one of the eight alphas was 255.
+# ...and the complement, for the opposite question: AND this in and a
+# zero vector means every one of the eight alphas was zero.
+comptime _ALPHA_ONLY32 = SIMD[DType.uint8, 32](
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+)
+comptime _NOT_ALPHA32 = SIMD[DType.uint8, 32](
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+)
+
+
+def _downsample_band_fixed[
+    factor: Int
+](
+    source: Canvas,
+    mut pixels: List[UInt8],
+    first_row: Int,
+    last_row: Int,
+    out_width: Int,
+):
+    """`_downsample_band` for a block size known at compile time.
+
+    A block whose samples are all opaque -- which is most of an opaque
+    image, and all of one with no alpha at all -- needs no alpha
+    weighting: with every alpha at 255 the weighted mean reduces to
+    the plain one, because `(255*S + 255*n/2) / (255*n)` is
+    `(S + n/2) / n` exactly, numerator and denominator sharing the
+    factor of 255. And `n` here is 4 or 16, so that division is a
+    shift. The three divisions by a varying alpha sum are a third of
+    what a factor-2 pass spends, and this takes them off every block
+    that does not straddle a shape's edge.
+
+    At factor 2 such a run also goes four output pixels at a time.
+    Mixed-alpha blocks fall back to the weighted form, which is the
+    arithmetic the general path does, so an edge pixel is unchanged.
+    """
+    comptime N = factor * factor
+    comptime HALF = N // 2
+    comptime SHIFT = 2 if factor == 2 else 4
+    var sp = source.pixels.unsafe_ptr()
+    var op = pixels.unsafe_ptr()
+    var src_stride = source.width * BYTES_PER_PIXEL
+    var block_bytes = factor * BYTES_PER_PIXEL
+    for oy in range(first_row, last_row):
+        var out_idx = oy * out_width * BYTES_PER_PIXEL
+        var row_base = oy * factor * src_stride
+        var ox = 0
+        while ox < out_width:
+            var take = 1
+
+            comptime if factor == 2:
+                # Four output pixels at a time: eight source pixels
+                # from each of two rows, thirty-two bytes each. Where
+                # all sixteen samples are opaque the group is a widen,
+                # a row add, a pairwise fold and a shift, and the
+                # sixteen result bytes go out in one store.
+                if ox + 4 <= out_width:
+                    var top = sp.unsafe_offset(
+                        row_base + ox * block_bytes
+                    ).unsafe_load[width=32]()
+                    var bot = sp.unsafe_offset(
+                        row_base + src_stride + ox * block_bytes
+                    ).unsafe_load[width=32]()
+                    if (top | _NOT_ALPHA32).reduce_min() == 255 and (
+                        bot | _NOT_ALPHA32
+                    ).reduce_min() == 255:
+                        var rows = (
+                            top.cast[DType.uint16]() + bot.cast[DType.uint16]()
+                        )
+                        var left = rows.shuffle[
+                            0,
+                            1,
+                            2,
+                            3,
+                            8,
+                            9,
+                            10,
+                            11,
+                            16,
+                            17,
+                            18,
+                            19,
+                            24,
+                            25,
+                            26,
+                            27,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                        ]().slice[16, offset=0]()
+                        var right = rows.shuffle[
+                            4,
+                            5,
+                            6,
+                            7,
+                            12,
+                            13,
+                            14,
+                            15,
+                            20,
+                            21,
+                            22,
+                            23,
+                            28,
+                            29,
+                            30,
+                            31,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                        ]().slice[16, offset=0]()
+                        var mean = (
+                            (left + right + SIMD[DType.uint16, 16](HALF))
+                            >> UInt16(SHIFT)
+                        ).cast[DType.uint8]()
+                        op.unsafe_offset(out_idx).unsafe_store(mean)
+                        ox += 4
+                        out_idx += 4 * BYTES_PER_PIXEL
+                        continue
+                    if (top & _ALPHA_ONLY32).reduce_or() == 0 and (
+                        bot & _ALPHA_ONLY32
+                    ).reduce_or() == 0:
+                        # Nothing to average. Every sample is
+                        # transparent, so the output alpha rounds to
+                        # zero and the four pixels are canonical
+                        # transparent black -- which a layer drawn on a
+                        # transparent ground is mostly made of.
+                        op.unsafe_offset(out_idx).unsafe_store(
+                            SIMD[DType.uint8, 16](0)
+                        )
+                        ox += 4
+                        out_idx += 4 * BYTES_PER_PIXEL
+                        continue
+                    # A group that is neither takes the pixel path
+                    # below, all four of it, rather than being tested
+                    # again once per pixel.
+                    take = 4
+
+            for _ in range(take):
+                var block = row_base + ox * block_bytes
+                var r_sum = 0
+                var g_sum = 0
+                var b_sum = 0
+                var a_sum = 0
+                var opaque = True
+                for dy in range(factor):
+                    var i = block + dy * src_stride
+                    for _ in range(factor):
+                        var a = Int(sp[unsafe_offset=i + 3])
+                        r_sum += Int(sp[unsafe_offset=i])
+                        g_sum += Int(sp[unsafe_offset=i + 1])
+                        b_sum += Int(sp[unsafe_offset=i + 2])
+                        a_sum += a
+                        if a != 255:
+                            opaque = False
+                        i += BYTES_PER_PIXEL
+                if opaque:
+                    op[unsafe_offset=out_idx] = UInt8((r_sum + HALF) >> SHIFT)
+                    op[unsafe_offset=out_idx + 1] = UInt8(
+                        (g_sum + HALF) >> SHIFT
+                    )
+                    op[unsafe_offset=out_idx + 2] = UInt8(
+                        (b_sum + HALF) >> SHIFT
+                    )
+                    op[unsafe_offset=out_idx + 3] = 255
+                else:
+                    var alpha = (a_sum + HALF) >> SHIFT
+                    # A block faint enough that the output alpha rounds
+                    # to zero is canonical transparent black, so
+                    # nothing divides by an alpha sum that rounded away.
+                    if alpha == 0:
+                        op[unsafe_offset=out_idx] = 0
+                        op[unsafe_offset=out_idx + 1] = 0
+                        op[unsafe_offset=out_idx + 2] = 0
+                    else:
+                        # Weighted again, by each sample's own alpha.
+                        var wr = 0
+                        var wg = 0
+                        var wb = 0
+                        for dy in range(factor):
+                            var i = block + dy * src_stride
+                            for _ in range(factor):
+                                var a = Int(sp[unsafe_offset=i + 3])
+                                wr += Int(sp[unsafe_offset=i]) * a
+                                wg += Int(sp[unsafe_offset=i + 1]) * a
+                                wb += Int(sp[unsafe_offset=i + 2]) * a
+                                i += BYTES_PER_PIXEL
+                        var half_a = a_sum // 2
+                        op[unsafe_offset=out_idx] = UInt8(
+                            (wr + half_a) // a_sum
+                        )
+                        op[unsafe_offset=out_idx + 1] = UInt8(
+                            (wg + half_a) // a_sum
+                        )
+                        op[unsafe_offset=out_idx + 2] = UInt8(
+                            (wb + half_a) // a_sum
+                        )
+                    op[unsafe_offset=out_idx + 3] = UInt8(alpha)
+                ox += 1
+                out_idx += BYTES_PER_PIXEL
+
+
+def _downsample_band_general(
+    source: Canvas,
+    mut pixels: List[UInt8],
+    first_row: Int,
+    last_row: Int,
+    out_width: Int,
+    factor: Int,
+    n: Int,
+):
+    """`_downsample_band` for any factor, with the block size known
+    only at run time.
     """
     # The sample count is fixed for the band. Power-of-two factors
     # allow alpha averaging by a shift; color uses the unrounded alpha
@@ -184,30 +507,37 @@ def _downsample_band(
         probe >>= 1
         shift += 1
     var pow2 = probe == 1
+    var sp = source.pixels.unsafe_ptr()
+    var op = pixels.unsafe_ptr()
+    var src_stride = source.width * BYTES_PER_PIXEL
+    var block_bytes = factor * BYTES_PER_PIXEL
     for oy in range(first_row, last_row):
         var out_idx = oy * out_width * BYTES_PER_PIXEL
+        var row_base = oy * factor * src_stride
         for ox in range(out_width):
             var r_sum = 0
             var g_sum = 0
             var b_sum = 0
             var a_sum = 0
+            var block = row_base + ox * block_bytes
             for dy in range(factor):
-                for dx in range(factor):
-                    var p = source.read_pixel(
-                        ox * factor + dx, oy * factor + dy
-                    )
-                    r_sum += Int(p.r) * Int(p.a)
-                    g_sum += Int(p.g) * Int(p.a)
-                    b_sum += Int(p.b) * Int(p.a)
-                    a_sum += Int(p.a)
+                var i = block + dy * src_stride
+                for _ in range(factor):
+                    var a = Int(sp[unsafe_offset=i + 3])
+                    r_sum += Int(sp[unsafe_offset=i]) * a
+                    g_sum += Int(sp[unsafe_offset=i + 1]) * a
+                    b_sum += Int(sp[unsafe_offset=i + 2]) * a
+                    a_sum += a
+                    i += BYTES_PER_PIXEL
             var alpha = (a_sum + half) >> shift if pow2 else (a_sum + half) // n
             if alpha == 0:
-                pixels[out_idx] = 0
-                pixels[out_idx + 1] = 0
-                pixels[out_idx + 2] = 0
+                op[unsafe_offset=out_idx] = 0
+                op[unsafe_offset=out_idx + 1] = 0
+                op[unsafe_offset=out_idx + 2] = 0
             else:
-                pixels[out_idx] = UInt8((r_sum + a_sum // 2) // a_sum)
-                pixels[out_idx + 1] = UInt8((g_sum + a_sum // 2) // a_sum)
-                pixels[out_idx + 2] = UInt8((b_sum + a_sum // 2) // a_sum)
-            pixels[out_idx + 3] = UInt8(alpha)
+                var half_a = a_sum // 2
+                op[unsafe_offset=out_idx] = UInt8((r_sum + half_a) // a_sum)
+                op[unsafe_offset=out_idx + 1] = UInt8((g_sum + half_a) // a_sum)
+                op[unsafe_offset=out_idx + 2] = UInt8((b_sum + half_a) // a_sum)
+            op[unsafe_offset=out_idx + 3] = UInt8(alpha)
             out_idx += BYTES_PER_PIXEL
