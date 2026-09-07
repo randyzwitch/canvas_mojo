@@ -177,8 +177,18 @@ resolves.
 - Golden tests fail on any pixel change. Regenerate with
   `CANVAS_REGEN_GOLDEN=1` only when the new output is known correct,
   and say why in the PR.
-- The bench prints a checksum of everything it drew; unchanged means
-  pixel-identical output across the whole survey. It has no memory
-  across runs on its own: `benchmarks/reference.txt` is that memory,
-  and `bench-check` is how a row that doubled gets noticed (#251 went
-  four releases unnoticed without it).
+- The checksum the bench prints is an anti-elimination sink, not a
+  correctness check. It folds a handful of sampled channels together
+  so the compiler cannot delete the work; almost every pixel never
+  reaches it. A single changed pixel at (318, 238) of a scene leaves
+  it identical.
+- `pixi run bench-verify` is the check that does see that: every
+  verification scene rendered outside any timed region and digested
+  over every byte, against `benchmarks/digests.txt`. Re-record with
+  `bench-record-digests` only when the new output is known correct,
+  and say why in the PR. Text is excluded, for the reason the golden
+  suite draws none: glyphs come from whatever fonts the machine has.
+- `benchmarks/reference.txt` is the timing memory across runs, and
+  `bench-check` is how a row that doubled gets noticed (#251 went four
+  releases unnoticed without it). It also names rows with no reference
+  and rows in the reference nobody measures any more.

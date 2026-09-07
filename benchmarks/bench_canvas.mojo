@@ -49,12 +49,13 @@ from std.time import perf_counter_ns
 
 from canvas.blend import BlendMode
 from canvas.blur import blur
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color
 from canvas.compose import Filter, draw_canvas
 from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Matrix2D, Point
 from canvas.gradient import ConicGradient, LinearGradient, RadialGradient
+from canvas.mask import Mask
 from canvas.path import (
     Path,
     fill_path_aa,
@@ -767,6 +768,25 @@ def _survey() raises -> List[_Row]:
         iters,
     )
 
+    # Through a mask, the overload a layer effect uses. Timed
+    # separately because it takes a different route entirely: the
+    # coverage multiplies into the source alpha as the composite runs.
+    var layer_mask = Mask(W, H)
+    var lmp = layer_mask.coverage.unsafe_ptr()
+    for i in range(W * H):
+        lmp[unsafe_offset=i] = UInt8((i * 7) & 0xFF)
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        draw_canvas(canvas, layer, 0, 0, layer_mask)
+        sink += Int(canvas.get_pixel(400, 300).r)
+    _report(
+        rows,
+        "draw_canvas 800x600 through a mask",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     # A tile drawn through a matrix: every destination pixel in the
     # mapped rectangle's bounding box is inverse-mapped and sampled,
     # so the work is per destination pixel and the filter decides how
@@ -898,6 +918,7 @@ def _record(rows: List[_Row]) raises:
         " runs.\n"
     )
     out += "# machine: " + _machine_id() + "\n"
+    out += "# workers: " + String(parallelism_level()) + "\n"
     out += "# version: " + _package_version() + "\n"
     out += (
         "# Written by `pixi run bench-record`; read by `pixi run"
@@ -921,11 +942,14 @@ def _check(rows: List[_Row]) raises:
     f.close()
     var machine = String("")
     var version = String("")
+    var workers = String("")
     var names = List[String]()
     var times = List[Float64]()
     for line in text.split("\n"):
         if line.startswith("# machine: "):
             machine = String(line[byte=11:].strip())
+        elif line.startswith("# workers: "):
+            workers = String(line[byte=11:].strip())
         elif line.startswith("# version: "):
             version = String(line[byte=11:].strip())
         elif line.startswith("#") or String(line.strip()) == "":
@@ -945,6 +969,16 @@ def _check(rows: List[_Row]) raises:
         return
     print("")
     print("bench-check against", _REFERENCE_PATH, "(version", version + ")")
+    var here_workers = String(parallelism_level())
+    if workers != "" and workers != here_workers:
+        # Banding decisions read the worker count, so a reference taken
+        # at a different one is comparing two different plans.
+        print(
+            "             recorded at",
+            workers,
+            "workers, running at",
+            here_workers,
+        )
     var name_w = 4
     for i in range(len(rows)):
         if rows[i].name.byte_length() > name_w:
@@ -997,6 +1031,28 @@ def _check(rows: List[_Row]) raises:
             _lpad(_fixed(ratio, 2), 8),
             "  " + verdict,
         )
+    var stale = 0
+    for k in range(len(names)):
+        var still = False
+        for i in range(len(rows)):
+            if rows[i].name == names[k]:
+                still = True
+                break
+        if not still:
+            print(
+                _pad(names[k], name_w),
+                _lpad(_fixed(times[k], 1), 12),
+                _lpad("-", 12),
+                _lpad("-", 8),
+                "  in the reference but no longer measured",
+            )
+            stale += 1
+    if stale > 0:
+        print(
+            "bench-check:",
+            stale,
+            "reference row(s) no longer measured; re-record to drop them",
+        )
     if regressions > 0:
         raise Error(
             String(
@@ -1014,8 +1070,417 @@ def _check(rows: List[_Row]) raises:
     )
 
 
+# --- complete-output verification ---------------------------------------
+#
+# The `sink` the survey prints is an anti-elimination device: a few
+# sampled channels folded together so the compiler cannot delete the
+# work that produced them. It cannot establish that output is
+# unchanged, because almost every pixel never reaches it. This section
+# is the check that can: a set of scenes rendered outside any timed
+# region, each digested over every byte of its buffer, against digests
+# recorded in `benchmarks/digests.txt`.
+#
+# A digest is a convenient way to persist the comparison, not a proof
+# of equality -- two different images can collide. What it does give is
+# detection of a change anywhere in the buffer rather than only where
+# the sink happened to sample.
+#
+# Every scene here is font-independent, for the reason the golden
+# suite draws no text: glyphs come from whatever fonts the machine has
+# installed, so a text scene's digest would differ between machines
+# without anything being wrong. Text keeps its timing rows and is
+# excluded from this check, which `_verify` says out loud rather than
+# leaving to be inferred.
+
+comptime _DIGEST_PATH = "benchmarks/digests.txt"
+comptime _FNV_OFFSET = UInt64(0xCBF29CE484222325)
+comptime _FNV_PRIME = UInt64(0x100000001B3)
+
+
+def _digest(canvas: Canvas) -> UInt64:
+    """FNV-1a over every byte of `canvas`, with its dimensions folded
+    in first so two differently shaped buffers cannot agree by holding
+    the same bytes.
+    """
+    var h = _FNV_OFFSET
+    var dims: List[Int] = [canvas.width, canvas.height]
+    for d in dims:
+        var v = d
+        for _ in range(4):
+            h = (h ^ UInt64(v & 0xFF)) * _FNV_PRIME
+            v >>= 8
+    var p = canvas.pixels.unsafe_ptr()
+    for i in range(canvas.width * canvas.height * BYTES_PER_PIXEL):
+        h = (h ^ UInt64(p[unsafe_offset=i])) * _FNV_PRIME
+    return h
+
+
+def _hex(value: UInt64) -> String:
+    comptime DIGITS = String("0123456789abcdef")
+    var out = String()
+    for shift in range(60, -4, -4):
+        var nibble = Int((value >> UInt64(shift)) & 0xF)
+        out += DIGITS[byte=nibble]
+    return out^
+
+
+struct _Scene(Copyable, Movable):
+    """One verified render: its name and the digest of every byte."""
+
+    var name: String
+    var digest: UInt64
+
+    def __init__(out self, name: String, digest: UInt64):
+        self.name = name
+        self.digest = digest
+
+
+def _lcg(seed: Int) -> Int:
+    return (seed * 1103515245 + 12345) & 0x7FFFFFFF
+
+
+def _wiggle(seed_in: Int) raises -> Path:
+    """A closed path of cubics, deterministic and self-overlapping, so
+    both fill rules and the stroke have something to disagree about.
+    """
+    var p = Path()
+    p.move_to(30.0, 150.0)
+    var seed = seed_in
+    for i in range(14):
+        seed = _lcg(seed)
+        var a = Float64(i) * 0.37 + Float64(seed % 100) * 0.004
+        p.cubic_curve_to(
+            40.0 + 22.0 * Float64(i),
+            150.0 + 110.0 * sin(a),
+            55.0 + 22.0 * Float64(i),
+            150.0 - 110.0 * cos(a * 1.3),
+            70.0 + 21.0 * Float64(i),
+            150.0 + 70.0 * sin(a * 1.9),
+        )
+    p.close()
+    return p^
+
+
+def _verify_scenes() raises -> List[_Scene]:
+    """Every scene, rendered and digested. Nothing here is timed."""
+    comptime VW = 320
+    comptime VH = 240
+    var scenes = List[_Scene]()
+    var path = _wiggle(7)
+
+    # Solid and blended rectangle fills, including a non-source-over
+    # mode, which the survey times but never samples away from (0, 0).
+    var c = Canvas(VW, VH, WHITE)
+    fill_rect(c, 20, 20, 200, 140, INK)
+    fill_rect(c, 90, 60, 180, 150, Color(220, 90, 60, 140))
+    c.set_blend_mode(BlendMode.MULTIPLY)
+    fill_rect(c, 40, 100, 160, 90, Color(90, 200, 120, 200))
+    c.set_blend_mode(BlendMode.SOURCE_OVER)
+    scenes.append(_Scene("rect fills and blend modes", _digest(c)))
+
+    # Anti-aliased primitives at fractional centers, both the
+    # closed-form sizes and the ones that flatten to polygons.
+    var c2 = Canvas(VW, VH, WHITE)
+    for i in range(60):
+        var fx = 12.0 + Float64((i * 37) % 300) + 0.25
+        var fy = 12.0 + Float64((i * 53) % 210) + 0.75
+        fill_circle_aa(c2, fx, fy, 1.5 + Float64(i % 9), INK)
+    fill_ellipse_aa(c2, 160.5, 120.25, 90.0, 55.0, Color(40, 80, 200, 170))
+    fill_arc_aa(c2, 100.0, 90.0, 60.0, -1.2, 1.4, Color(200, 60, 40, 200))
+    fill_ring_sector_aa(c2, 220.0, 160.0, 30.0, 70.0, 0.3, 2.9, INK)
+    scenes.append(_Scene("aa circles, ellipse, arc, ring", _digest(c2)))
+
+    # Both fill rules over a self-overlapping path, plus a stroke.
+    var c3 = Canvas(VW, VH, WHITE)
+    fill_path_aa(c3, path, Color(30, 90, 160, 200), FillRule.EVEN_ODD)
+    scenes.append(_Scene("path fill, even-odd", _digest(c3)))
+    var c4 = Canvas(VW, VH, WHITE)
+    fill_path_aa(c4, path, Color(30, 90, 160, 200), FillRule.NONZERO)
+    scenes.append(_Scene("path fill, nonzero", _digest(c4)))
+    var c5 = Canvas(VW, VH, WHITE)
+    stroke_path_aa(c5, path, INK, width=3.5)
+    scenes.append(_Scene("path stroke", _digest(c5)))
+
+    # Lines and polylines, solid and dashed, at sub-pixel positions.
+    var c6 = Canvas(VW, VH, WHITE)
+    var series = List[FPoint]()
+    for i in range(240):
+        series.append(
+            FPoint(
+                10.0 + Float64(i) * 1.25,
+                120.0 + 90.0 * sin(Float64(i) * 0.11),
+            )
+        )
+    draw_polyline_aa(c6, series, INK, width=2.5)
+    var dashes: List[Float64] = [6.0, 4.0]
+    draw_polyline_aa(
+        c6, series, Color(200, 40, 40, 200), width=1.5, dashes=dashes
+    )
+    draw_line_aa(c6, 0.0, 0.0, 320.0, 240.0, Color(20, 160, 90), width=2.0)
+    draw_line(c6, 0, 239, 319, 0, INK)
+    scenes.append(_Scene("lines and dashed polyline", _digest(c6)))
+
+    # A polygon under a rectangle clip and a path clip.
+    var c7 = Canvas(VW, VH, WHITE)
+    var poly = List[FPoint]()
+    for i in range(9):
+        var a = Float64(i) * 2.0 * pi / 9.0
+        poly.append(FPoint(160.0 + 120.0 * cos(a), 120.0 + 100.0 * sin(a)))
+    c7.push_clip(30, 25, 240, 180)
+    fill_polygon_aa(c7, poly, Color(120, 40, 200, 210), FillRule.NONZERO)
+    c7.pop_clip()
+    c7.push_clip_path(path)
+    fill_rect(c7, 0, 0, VW, VH, Color(240, 190, 40, 180))
+    c7.pop_clip()
+    scenes.append(_Scene("clip rect and clip path", _digest(c7)))
+
+    # All three gradients, with a duplicate stop and transparent stops.
+    var lin = LinearGradient(-20.0, 10.0, 340.0, 230.0)
+    lin.add_stop(0.0, Color(255, 0, 0, 255))
+    lin.add_stop(0.5, Color(0, 255, 128, 90))
+    lin.add_stop(0.5, Color(250, 240, 230, 255))
+    lin.add_stop(1.0, Color(0, 0, 255, 200))
+    var rad = RadialGradient(160.0, 120.0, 140.0)
+    rad.add_stop(0.0, Color(255, 200, 40, 255))
+    rad.add_stop(1.0, Color(20, 40, 160, 60))
+    var con = ConicGradient(160.0, 120.0, -0.7)
+    con.add_stop(0.0, Color(255, 60, 60, 255))
+    con.add_stop(1.0, Color(60, 60, 255, 255))
+    var c8 = Canvas(VW, VH, WHITE)
+    fill_path_gradient_aa(c8, path, lin, FillRule.NONZERO)
+    scenes.append(_Scene("linear gradient path", _digest(c8)))
+    var c9 = Canvas(VW, VH, WHITE)
+    fill_path_radial_gradient_aa(c9, path, rad, FillRule.NONZERO)
+    scenes.append(_Scene("radial gradient path", _digest(c9)))
+    var c10 = Canvas(VW, VH, WHITE)
+    fill_path_conic_gradient_aa(c10, path, con, FillRule.NONZERO)
+    scenes.append(_Scene("conic gradient path", _digest(c10)))
+
+    # Compositing: opaque, translucent, scaled opacity, and through a
+    # mask -- the four the compositor dispatches between.
+    var layer = Canvas(VW, VH, Color(0, 0, 0, 0))
+    fill_circle_aa(layer, 150.0, 110.0, 80.0, Color(60, 120, 200, 128))
+    fill_rect(layer, 30, 30, 90, 60, Color(240, 90, 30, 255))
+    var opaque_layer = Canvas(VW, VH, Color(30, 90, 160, 255))
+    var mask = Mask(VW, VH)
+    var mp = mask.coverage.unsafe_ptr()
+    var seed = 4242
+    for i in range(VW * VH):
+        seed = _lcg(seed)
+        mp[unsafe_offset=i] = UInt8((seed >> 11) & 0xFF)
+    var c11 = Canvas(VW, VH, WHITE)
+    draw_canvas(c11, opaque_layer, 5, 7)
+    draw_canvas(c11, layer, -12, 9)
+    draw_canvas(c11, layer, 40, 25, 128)
+    draw_canvas(c11, layer, 18, -6, mask)
+    scenes.append(_Scene("composited layers and mask", _digest(c11)))
+
+    # Transform state: the mapped path, rect and gradient paths.
+    var c12 = Canvas(VW, VH, WHITE)
+    c12.translate(17.5, 9.25)
+    c12.rotate(0.41)
+    c12.scale(1.3, 0.75)
+    fill_rect(c12, 10, 10, 180, 120, Color(200, 60, 120, 220))
+    fill_path_gradient_aa(c12, path, lin, FillRule.NONZERO)
+    fill_circle_aa(c12, 120.0, 80.0, 40.0, Color(20, 200, 160, 190))
+    scenes.append(_Scene("transformed shapes", _digest(c12)))
+
+    # Blur, and both a power-of-two and an odd downsample factor.
+    var c13 = Canvas(VW, VH, WHITE)
+    fill_circle_aa(c13, 160.0, 120.0, 90.0, INK)
+    fill_rect(c13, 20, 20, 80, 60, Color(220, 60, 60, 200))
+    blur(c13, 5)
+    scenes.append(_Scene("blur r=5", _digest(c13)))
+    var big = Canvas(VW * 2, VH * 2, Color(0, 0, 0, 0))
+    fill_circle_aa(big, 320.0, 240.0, 200.0, Color(240, 90, 30, 255))
+    fill_rect(big, 40, 40, 200, 160, Color(30, 90, 160, 110))
+    scenes.append(_Scene("downsample by 2", _digest(downsample(big, 2))))
+    var big3 = Canvas(VW * 3, VH * 3, Color(0, 0, 0, 0))
+    fill_circle_aa(big3, 480.0, 360.0, 300.0, Color(240, 90, 30, 255))
+    fill_rect(big3, 60, 60, 300, 240, Color(30, 90, 160, 110))
+    scenes.append(_Scene("downsample by 3", _digest(downsample(big3, 3))))
+
+    # A PNG round trip, which exercises both codecs end to end.
+    var png_path = String("benchmarks/_verify_out.png")
+    write_png(c2, png_path)
+    scenes.append(_Scene("png round trip", _digest(read_png(png_path))))
+
+    return scenes^
+
+
+def _digest_machine() -> String:
+    """The machine `benchmarks/digests.txt` was recorded on."""
+    try:
+        var f = open(_DIGEST_PATH, "r")
+        var text = f.read()
+        f.close()
+        for line in text.split("\n"):
+            if line.startswith("# machine: "):
+                return String(line[byte=11:].strip())
+    except:
+        pass
+    return "unknown"
+
+
+def _read_digests() -> List[_Scene]:
+    """`benchmarks/digests.txt`, or an empty list if it is not there."""
+    var out = List[_Scene]()
+    try:
+        var f = open(_DIGEST_PATH, "r")
+        var text = f.read()
+        f.close()
+        for line in text.split("\n"):
+            if line.startswith("#"):
+                continue
+            var cut = line.find("\t")
+            if cut < 0:
+                continue
+            var name = String(line[byte=0:cut])
+            var value = UInt64(0)
+            var digits = String(line[byte = cut + 1 :].strip())
+            for i in range(digits.byte_length()):
+                var c = Int(digits.as_bytes()[i])
+                var nibble: Int
+                if 48 <= c <= 57:
+                    nibble = c - 48
+                elif 97 <= c <= 102:
+                    nibble = c - 87
+                else:
+                    continue
+                value = (value << UInt64(4)) | UInt64(nibble)
+            out.append(_Scene(name, value))
+    except:
+        pass
+    return out^
+
+
+def _environment() -> String:
+    """What a digest or a timing was produced on, for the header."""
+    return String(
+        "# machine: ",
+        _machine_id(),
+        "\n# workers: ",
+        parallelism_level(),
+        "\n# version: ",
+        _package_version(),
+    )
+
+
+def _record_digests() raises:
+    """Write every scene's digest to `benchmarks/digests.txt`."""
+    var scenes = _verify_scenes()
+    var out = String(
+        "# canvas_mojo render digests: FNV-1a over every byte of each"
+        " scene.\n"
+        "# Font-dependent scenes are deliberately absent -- see"
+        " `_verify_scenes`.\n"
+    )
+    out += _environment()
+    out += "\n# Written by `pixi run bench-record-digests`; read by"
+    out += " `pixi run bench-verify`.\n"
+    for s in scenes:
+        out += s.name + "\t" + _hex(s.digest) + "\n"
+    var f = open(_DIGEST_PATH, "w")
+    f.write(out)
+    f.close()
+    print("wrote", len(scenes), "digests to", _DIGEST_PATH)
+
+
+def _verify() raises:
+    """Render every scene and compare its digest with the recorded
+    one. Exits non-zero on any mismatch, so a caller can gate on it.
+    """
+    var scenes = _verify_scenes()
+    var known = _read_digests()
+    var recorded_on = _digest_machine()
+    var here = _machine_id()
+    # A digest is exact, and the transcendentals a curve goes through
+    # are a platform's own libm. Two machines can render the same
+    # scene a level apart in a pixel or two without either being
+    # wrong, so a mismatch is only a failure where the digests were
+    # taken. Elsewhere it is reported and nothing is gated on it --
+    # the golden suite, with its tolerance, is the cross-platform
+    # check.
+    var same_machine = recorded_on == here
+    var bad = 0
+    var missing = 0
+    print("scene                                   digest            state")
+    print("-" * 68)
+    for s in scenes:
+        var found = False
+        var expected = UInt64(0)
+        for k in known:
+            if k.name == s.name:
+                found = True
+                expected = k.digest
+                break
+        var state = String("ok")
+        if not found:
+            state = "NOT RECORDED"
+            missing += 1
+        elif expected != s.digest:
+            state = String("CHANGED, expected ", _hex(expected))
+            bad += 1
+        var pad = String()
+        for _ in range(max(40 - s.name.byte_length(), 1)):
+            pad += " "
+        print(s.name, pad, _hex(s.digest), " ", state, sep="")
+    for k in known:
+        var still = False
+        for s in scenes:
+            if s.name == k.name:
+                still = True
+                break
+        if not still:
+            print("recorded but no longer rendered:", k.name)
+            missing += 1
+    print()
+    print(_environment())
+    print(
+        "# text scenes are excluded: glyphs come from the machine's own fonts."
+    )
+    if not same_machine:
+        print("digests were recorded on", recorded_on)
+        print("this machine is         ", here)
+        print(
+            "exact digests bind only on the machine that took them, so this"
+            " is a report, not a gate."
+        )
+        if bad != 0:
+            print(bad, "scene(s) differ, which may be this machine's libm.")
+        return
+    if bad != 0:
+        raise Error(
+            String(
+                bad,
+                (
+                    " scene(s) changed. Re-record with `pixi run"
+                    " bench-record-digests` only when the new output is known"
+                    " correct, and say why in the PR."
+                ),
+            )
+        )
+    if missing != 0:
+        raise Error(
+            String(
+                missing,
+                (
+                    " scene(s) have no recorded digest, or are recorded but no"
+                    " longer rendered. Run `pixi run bench-record-digests`."
+                ),
+            )
+        )
+    print("bench-verify:", len(scenes), "scenes match their digests")
+
+
 def main() raises:
     var mode = getenv("CANVAS_BENCH_MODE")
+    if mode == "verify":
+        _verify()
+        return
+    if mode == "record-digests":
+        _record_digests()
+        return
     if mode == "record":
         _record(_best_of_two())
         return
