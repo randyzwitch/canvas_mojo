@@ -1979,24 +1979,43 @@ def _fill_source_band[
     # `write_pixel`; a clip path still needs `set_pixel` per pixel.
     var masked = canvas.has_clip_mask()
     var mp = mask.unsafe_ptr()
+    # Without a canvas transform the source's space is the device's,
+    # so the map is the identity and mapping a pixel returns it
+    # unchanged. Saying that once per band takes six multiply-adds and
+    # a point off every painted pixel.
+    var direct = to_user.is_identity()
     for py in range(first_row, last_row):
         var region = canvas.effective_fill_rect(lo_x, py, hi_x - lo_x, 1)
         if region[2] == 0 or region[3] == 0:
             continue
         var row = (py - mask_origin_y) * mask_width
+        var fy = Float64(py)
         for px in range(region[0], region[0] + region[2]):
             var coverage = Int(mp[unsafe_offset=row + px - lo_x])
             if coverage == 0:
                 continue
-            var u = to_user.apply(Float64(px), Float64(py))
-            var c = source.color_at(u.x, u.y)
-            var alpha = _div255(Int(c.a) * coverage)
-            if alpha == 0:
+            var fx = Float64(px)
+            var ux = fx
+            var uy = fy
+            if not direct:
+                var u = to_user.apply(fx, fy)
+                ux = u.x
+                uy = u.y
+            var c = source.color_at(ux, uy)
+            # Full coverage is most of a filled shape, and there
+            # `_div255(a * 255)` is `a`, so the source color goes
+            # through untouched rather than being scaled and rebuilt.
+            if coverage != 255:
+                var alpha = _div255(Int(c.a) * coverage)
+                if alpha == 0:
+                    continue
+                c = c.with_alpha(UInt8(alpha))
+            elif c.a == 0:
                 continue
             if masked:
-                canvas.set_pixel(px, py, c.with_alpha(UInt8(alpha)))
+                canvas.set_pixel(px, py, c)
             else:
-                canvas.write_pixel(px, py, c.with_alpha(UInt8(alpha)))
+                canvas.write_pixel(px, py, c)
 
 
 def fill_path_gradient(

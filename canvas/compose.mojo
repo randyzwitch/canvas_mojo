@@ -39,9 +39,9 @@ from std.runtime.asyncrt import TaskGroup, parallelism_level
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
-from canvas.color import Color, _div255
+from canvas.color import Color, _DIV255_MUL, _DIV255_SHIFT, _div255
 from canvas.geometry import Matrix2D, round_to_int
-from canvas.mask import Mask, apply_mask
+from canvas.mask import Mask
 
 
 struct Filter(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
@@ -145,7 +145,14 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, mask: Mask):
         y: Destination row for `src`'s top edge.
         mask: Coverage over `src`, see `canvas.mask`.
     """
-    draw_canvas(dst, apply_mask(src, mask), x, y, 255)
+    if dst.has_transform():
+        var m = dst.current_transform()
+        var p = m.apply(Float64(x), Float64(y))
+        _draw_canvas_device[True](
+            dst, src, round_to_int(p.x), round_to_int(p.y), 255, mask
+        )
+        return
+    _draw_canvas_device[True](dst, src, x, y, 255, mask)
 
 
 # Groups of eight source pixels skipped before `_draw_canvas_device`
@@ -154,13 +161,186 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, mask: Mask):
 comptime _COPY_RETRY = 15
 
 
-def _draw_canvas_device(
-    mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8
+# Eight pixels' worth of lane masks, used to ask two questions of a
+# loaded group at once: OR-ing `_NOT_ALPHA` in leaves an all-255
+# vector exactly when every alpha is 255, and AND-ing `_ALPHA_ONLY`
+# leaves zero exactly when every alpha is zero.
+comptime _GROUP = 8
+comptime _GROUP_BYTES = _GROUP * BYTES_PER_PIXEL
+comptime _NOT_ALPHA = SIMD[DType.uint8, _GROUP_BYTES](
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+    255,
+    255,
+    255,
+    0,
+)
+comptime _ALPHA_ONLY = SIMD[DType.uint8, _GROUP_BYTES](
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+)
+
+
+@always_inline
+def _blend_group_opaque(
+    mut dst: Canvas, src: Canvas, d_idx: Int, s_idx: Int
+) -> Bool:
+    """Composite eight source pixels onto eight destination ones and
+    report whether it happened. It happens only where every
+    destination pixel is already opaque -- anything drawn on a canvas
+    with a background -- because source-over onto an opaque
+    destination is `src*a + dst*(255-a)` per channel with the output
+    alpha staying 255, and that has no per-pixel division.
+
+    The source alpha is broadcast across each pixel's four lanes; the
+    products peak at 130050, which `_div255`'s multiply keeps inside
+    32 bits. It is the arithmetic `Color.blend_over_opaque` does,
+    including at a = 0 and a = 255, where the formula reproduces that
+    function's two early exits exactly rather than approximating them.
+
+    Args:
+        dst: Canvas written to. Its eight pixels at `d_idx` must be
+            in bounds and inside the active clip.
+        src: Canvas read from.
+        d_idx: Byte offset of the first destination pixel.
+        s_idx: Byte offset of the first source pixel.
+
+    Returns:
+        True if the eight pixels were composited, False if the
+        destination was not opaque and the caller must fall back.
+    """
+    comptime W = _GROUP_BYTES
+    var dp = dst.pixels.unsafe_ptr()
+    var dv = dp.unsafe_offset(d_idx).unsafe_load[width=W]()
+    if (dv | _NOT_ALPHA).reduce_min() != 255:
+        return False
+    var v = src.pixels.unsafe_ptr().unsafe_offset(s_idx).unsafe_load[width=W]()
+    var a32 = v.shuffle[
+        3,
+        3,
+        3,
+        3,
+        7,
+        7,
+        7,
+        7,
+        11,
+        11,
+        11,
+        11,
+        15,
+        15,
+        15,
+        15,
+        19,
+        19,
+        19,
+        19,
+        23,
+        23,
+        23,
+        23,
+        27,
+        27,
+        27,
+        27,
+        31,
+        31,
+        31,
+        31,
+    ]().cast[DType.uint32]()
+    var num = v.cast[DType.uint32]() * a32 + dv.cast[DType.uint32]() * (
+        SIMD[DType.uint32, W](255) - a32
+    )
+    var outv = ((num * UInt32(_DIV255_MUL)) >> UInt32(_DIV255_SHIFT)).cast[
+        DType.uint8
+    ]()
+    dp.unsafe_offset(d_idx).unsafe_store(outv | _ALPHA_ONLY)
+    return True
+
+
+def _draw_canvas_device[
+    with_mask: Bool = False
+](
+    mut dst: Canvas,
+    src: Canvas,
+    x: Int,
+    y: Int,
+    opacity: UInt8,
+    mask: Mask = Mask(0, 0),
 ):
     """`draw_canvas` for device-space arguments: the body every
     call lands in. It has no transform check of its own, so its
     loops compile with nothing ahead of them and it never calls
     back into the public function.
+
+    `with_mask` says whether `mask` scales each source pixel's alpha
+    on the way through, the way `apply_mask` would have. It is a
+    compile-time parameter, so an unmasked call compiles with no mask
+    lookup in its loops at all. Masking the source into a copy first
+    instead costs a canvas-sized allocation and a whole pass over it,
+    most of which the clipped overlap never reads.
+
+    The mask is aligned with the source's top-left corner, not the
+    destination's, and a source pixel it does not reach draws nothing
+    -- so the region below is cut to the mask as well, and every
+    lookup inside the loops is then in range.
     """
     if opacity == 0:
         return
@@ -173,12 +353,28 @@ def _draw_canvas_device(
     var ry = region[1]
     var rw = region[2]
     var rh = region[3]
+
+    comptime if with_mask:
+        # The mask covers source pixels (0, 0) to (width, height),
+        # which in destination coordinates is the rectangle at (x, y).
+        # Outside it coverage is zero and nothing is drawn, so cutting
+        # the region to it now keeps every later lookup in range.
+        var mx0 = max(rx, x)
+        var my0 = max(ry, y)
+        var mx1 = min(rx + rw, x + mask.width)
+        var my1 = min(ry + rh, y + mask.height)
+        rx = mx0
+        ry = my0
+        rw = mx1 - mx0
+        rh = my1 - my0
     if rw <= 0 or rh <= 0:
         return
 
     var sp = src.pixels.unsafe_ptr()
     var src_stride = src.width * BYTES_PER_PIXEL
     var full = opacity == 255
+    var mcov = mask.coverage.unsafe_ptr()
+    var mask_w = mask.width
 
     # A clip path modulates each pixel individually, which the direct
     # pointer writes below cannot express: `effective_fill_rect` folds
@@ -189,12 +385,22 @@ def _draw_canvas_device(
     # for the contract. Nothing pays for this until a clip path exists.
     if dst.has_clip_mask():
         for row in range(rh):
-            var s_idx = (ry + row - y) * src_stride + (rx - x) * BYTES_PER_PIXEL
+            var sy = ry + row - y
+            var s_idx = sy * src_stride + (rx - x) * BYTES_PER_PIXEL
+            var m_idx = sy * mask_w + (rx - x)
             for col in range(rw):
                 var sa = sp[unsafe_offset=s_idx + 3]
                 var effective_a = sa
+
+                comptime if with_mask:
+                    var cov = Int(mcov[unsafe_offset=m_idx])
+                    if cov != 255:
+                        effective_a = UInt8(_div255(Int(sa) * cov))
+                    m_idx += 1
                 if not full:
-                    effective_a = UInt8(_div255(Int(sa) * Int(opacity)))
+                    effective_a = UInt8(
+                        _div255(Int(effective_a) * Int(opacity))
+                    )
                 if effective_a != 0:
                     dst.set_pixel(
                         rx + col,
@@ -225,7 +431,11 @@ def _draw_canvas_device(
     # all, whatever the opacity or the color space: masking to the
     # alpha lanes leaves zero exactly when all eight are zero. Either
     # way one compare replaces eight trips through the pixel loop,
-    # which is otherwise unchanged.
+    # which is otherwise unchanged. With a mask the same two questions
+    # are put to its eight coverage bytes, which sit contiguously, and
+    # the answers have to agree: a copy needs full coverage as well as
+    # an opaque source, and a skip takes either an all-transparent
+    # source or all-zero coverage.
     #
     # The test is not free -- a branch waiting on a horizontal minimum
     # is about six nanoseconds, and on a layer that is translucent
@@ -235,18 +445,17 @@ def _draw_canvas_device(
     # composited layer usually is, pays it once either way, and the
     # counter restarts on every row so a sprite's transparent border
     # cannot switch off the rest of the image.
-    comptime GROUP = 8
-    comptime GROUP_BYTES = GROUP * BYTES_PER_PIXEL
-    var not_alpha = SIMD[DType.uint8, GROUP_BYTES](255)
-    var alpha_only = SIMD[DType.uint8, GROUP_BYTES](0)
-    for k in range(GROUP):
-        not_alpha[k * BYTES_PER_PIXEL + 3] = 0
-        alpha_only[k * BYTES_PER_PIXEL + 3] = 255
+    comptime GROUP = _GROUP
+    comptime GROUP_BYTES = _GROUP_BYTES
+    comptime not_alpha = _NOT_ALPHA
+    comptime alpha_only = _ALPHA_ONLY
     var fast = full and not linear
 
     for row in range(rh):
-        var s_idx = (ry + row - y) * src_stride + (rx - x) * BYTES_PER_PIXEL
+        var sy = ry + row - y
+        var s_idx = sy * src_stride + (rx - x) * BYTES_PER_PIXEL
         var d_idx = (ry + row) * dst_stride + rx * BYTES_PER_PIXEL
+        var m_idx = sy * mask_w + (rx - x)
         var col = 0
         var retry = 0
         while col < rw:
@@ -258,24 +467,55 @@ def _draw_canvas_device(
                     var v = sp.unsafe_offset(s_idx).unsafe_load[
                         width=GROUP_BYTES
                     ]()
-                    if fast and (v | not_alpha).reduce_min() == 255:
+                    var cov_full = True
+                    var cov_none = False
+
+                    comptime if with_mask:
+                        var cv = mcov.unsafe_offset(m_idx).unsafe_load[
+                            width=GROUP
+                        ]()
+                        cov_full = cv.reduce_min() == 255
+                        cov_none = cv.reduce_max() == 0
+                    if (
+                        fast
+                        and cov_full
+                        and (v | not_alpha).reduce_min() == 255
+                    ):
                         dp.unsafe_offset(d_idx).unsafe_store(v)
                         s_idx += GROUP_BYTES
                         d_idx += GROUP_BYTES
+                        m_idx += GROUP
                         col += GROUP
                         continue
-                    if (v & alpha_only).reduce_or() == 0:
-                        # Nothing to composite. A zero source alpha
-                        # writes nothing whatever the opacity or the
-                        # color space, so this one holds on every path.
+                    if cov_none or (v & alpha_only).reduce_or() == 0:
+                        # Nothing to composite. A zero source alpha, or
+                        # zero coverage, writes nothing whatever the
+                        # opacity or the color space.
                         s_idx += GROUP_BYTES
                         d_idx += GROUP_BYTES
+                        m_idx += GROUP
                         col += GROUP
                         continue
+
+                    # Mixed alphas: eight at a time when the
+                    # destination is opaque, out of line so the copy
+                    # and skip tests above keep a small loop body.
+                    comptime if not with_mask:
+                        if fast and _blend_group_opaque(dst, src, d_idx, s_idx):
+                            s_idx += GROUP_BYTES
+                            d_idx += GROUP_BYTES
+                            col += GROUP
+                            continue
                     retry = _COPY_RETRY
             col += take
             for _ in range(take):
                 var sa = sp[unsafe_offset=s_idx + 3]
+
+                comptime if with_mask:
+                    var cov = Int(mcov[unsafe_offset=m_idx])
+                    if cov != 255:
+                        sa = UInt8(_div255(Int(sa) * cov))
+                    m_idx += 1
                 if full and sa == 255:
                     # Opaque source pixel at full opacity: the destination
                     # is replaced outright, whatever its own alpha was.

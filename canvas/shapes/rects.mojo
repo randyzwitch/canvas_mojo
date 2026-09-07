@@ -249,10 +249,19 @@ def _fill_source_rows[
     to_user: Matrix2D,
 ):
     """Rows [first_row, last_row) of `_fill_rect_source`'s sweep."""
+    # Without a canvas transform the source's space is the device's,
+    # so mapping a pixel returns it unchanged. Saying that once per
+    # band takes six multiply-adds and a point off every pixel.
+    var direct = to_user.is_identity()
     for yy in range(first_row, last_row):
+        var fy = Float64(yy)
         for xx in range(rx, rx + rw):
-            var p = to_user.apply(Float64(xx), Float64(yy))
-            canvas.write_pixel(xx, yy, source.color_at(p.x, p.y))
+            var fx = Float64(xx)
+            if direct:
+                canvas.write_pixel(xx, yy, source.color_at(fx, fy))
+            else:
+                var p = to_user.apply(fx, fy)
+                canvas.write_pixel(xx, yy, source.color_at(p.x, p.y))
 
 
 async def _fill_source_rows_async[
