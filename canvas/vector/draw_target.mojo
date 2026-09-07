@@ -89,8 +89,8 @@ this trait. A group spans however many a datum happens to need.
 
 Text is not on the trait. `Canvas` rasterizes glyph outlines through
 `fill_path_aa`, `SvgCanvas` emits `<text>` markup and `PdfCanvas`
-fills the outlines as paths, so there is no shared operation to
-declare. A generic caller collects text as plain
+writes `TJ` operators in an embedded font subset, so there is no
+shared operation to declare. A generic caller collects text as plain
 data (position, string, color, size, alignment) and lets each backend
 draw it. Keeping text off `Canvas`'s method surface also keeps
 `canvas.text`'s imports off every `Canvas` user, since Mojo resolves a

@@ -103,9 +103,10 @@ ways:
 - **`PdfCanvas`** (`canvas/vector/pdf.mojo`) owns a page content
   stream and appends PDF operators to it — `m`/`l`/`c` for a path,
   `f`/`f*` for the two fill rules, `cm` inside a `q`/`Q` pair for the
-  transform. Like SVG it does no coverage math; unlike SVG it has no
-  text element yet, so it draws glyphs as outlines through
-  `canvas.text.render.text_path`.
+  transform. Like SVG it does no coverage math. Text is real text:
+  each run of glyphs is a `TJ` in a font that `canvas/vector/
+  pdf_font.mojo` embeds as a subset with a `ToUnicode` map, so a
+  label is selectable and searchable in a viewer.
 
 A caller written against the trait — a chart library's rendering core,
 say — targets any of the three without knowing which it holds. That is
@@ -114,7 +115,8 @@ the whole payoff, and it constrains what may join the trait:
 **Only operations every backend can express belong in `DrawTarget`.**
 Text is the instructive exclusion. `Canvas` rasterizes glyph outlines
 through `fill_path_aa`; `SvgCanvas` emits a `<text>` element and never
-touches an outline; `PdfCanvas` fills the outlines as paths. There is
+touches an outline; `PdfCanvas` writes `TJ` operators in an embedded
+font subset. There is
 no shared operation to generalize, so `draw_text` is a free function
 for raster and a method on each vector backend, and a generic caller
 collects text as plain data (position, string, color, size, alignment)

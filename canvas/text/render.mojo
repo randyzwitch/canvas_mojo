@@ -306,11 +306,18 @@ struct _ShapedGlyph(ImplicitlyCopyable, Movable):
     var glyph: Int
     var codepoint: Int
     var kern_before: Float64
+    # The characters this glyph stands for, however many a ligature
+    # absorbed: what a PDF's ToUnicode map needs where `codepoint` has
+    # stopped naming the glyph.
+    var chars: String
 
-    def __init__(out self, glyph: Int, codepoint: Int):
+    def __init__(out self, glyph: Int, codepoint: Int, chars: String = ""):
         self.glyph = glyph
         self.codepoint = codepoint
         self.kern_before = 0.0
+        self.chars = chars
+        if chars == "" and codepoint >= 0:
+            self.chars = String(chr(codepoint))
 
 
 def _script_tag(codepoints: List[Int]) -> String:
@@ -392,11 +399,15 @@ def _shape_run(
     var source = 0
     for i in range(len(shaped.glyphs)):
         # An untouched glyph keeps its codepoint; anything the lookups
-        # rewrote or merged no longer has one.
+        # rewrote or merged no longer has one, but still stands for
+        # the characters of its cluster.
         if shaped.clusters[i] == 1 and shaped.glyphs[i] == glyphs[source]:
             out.append(_ShapedGlyph(shaped.glyphs[i], codepoints[source]))
         else:
-            out.append(_ShapedGlyph(shaped.glyphs[i], -1))
+            var chars = String()
+            for k in range(source, min(source + shaped.clusters[i], count)):
+                chars += String(chr(codepoints[k]))
+            out.append(_ShapedGlyph(shaped.glyphs[i], -1, chars))
         source += shaped.clusters[i]
     return out^
 

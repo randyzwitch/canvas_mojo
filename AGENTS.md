@@ -51,7 +51,7 @@ resolves.
   `blend.mojo`, `compose.mojo`, `blur.mojo`, `mask.mojo`, `resize.mojo`,
   `io/` (png, bmp, jpeg, deflate), `text/` (discovery, TrueType/CFF
   parsing, shaping, layout, rendering), `vector/` (the trait, svg,
-  pdf).
+  pdf, pdf_font).
 - `tests/` mirrors `canvas/` one file per module; `tests/golden/` holds
   reference PNGs; `tests/jpeg/` holds decoder fixtures.
 - `examples/` are the docs pages' sources; each writes one or more
