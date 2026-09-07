@@ -105,9 +105,7 @@ def _stats(rounds_ns: List[Float64]) -> _Stats:
     return _Stats(median, iqr / median if median > 0.0 else 0.0)
 
 
-def _time_round[
-    C: MicroCase
-](mut subject: C, iters: Int, mut sink: Int) raises -> Float64:
+def _time_round[C: MicroCase](mut subject: C, iters: Int, mut sink: Int) raises -> Float64:
     var t0 = perf_counter_ns()
     for _ in range(iters):
         subject.run(sink)
@@ -152,9 +150,7 @@ def _print_row(name: String, s: _Stats, rounds: Int, iters: Int):
 
 def measure[
     C: MicroCase
-](
-    mut subject: C, mut sink: Int, rounds: Int = 9, iters: Int = 200
-) raises -> _Stats:
+](mut subject: C, mut sink: Int, rounds: Int = 9, iters: Int = 200) raises -> _Stats:
     """Time `case` for `rounds` rounds of `iters` iterations, after one
     warm-up round, and print its median and spread.
 
@@ -212,7 +208,7 @@ def compare[
 # --- cases ----------------------------------------------------------
 
 
-struct FillRectOpaque(MicroCase, Movable):
+struct FillRectOpaque(Movable, MicroCase):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -226,7 +222,7 @@ struct FillRectOpaque(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(50, 50).r)
 
 
-struct FillRectMultiply(MicroCase, Movable):
+struct FillRectMultiply(Movable, MicroCase):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -241,7 +237,7 @@ struct FillRectMultiply(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(50, 50).r)
 
 
-struct LineHairline(MicroCase, Movable):
+struct LineHairline(Movable, MicroCase):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -255,7 +251,7 @@ struct LineHairline(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct LineAaDiagonal(MicroCase, Movable):
+struct LineAaDiagonal(Movable, MicroCase):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -269,7 +265,7 @@ struct LineAaDiagonal(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct LineAaHorizontal(MicroCase, Movable):
+struct LineAaHorizontal(Movable, MicroCase):
     """The same length as the diagonal, along one row band: if the
     sweep is sized to the bounding box, this is much cheaper.
     """
@@ -288,7 +284,7 @@ struct LineAaHorizontal(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct FillPathGlyphSized(MicroCase, Movable):
+struct FillPathGlyphSized(Movable, MicroCase):
     """A quadrilateral the size of a glyph, filled through the
     exact-area path: the small-shape end of the rasterizer, where
     per-call overhead is most of the cost.
@@ -314,7 +310,7 @@ struct FillPathGlyphSized(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(55, 55).r)
 
 
-struct TextCached(MicroCase, Movable):
+struct TextCached(Movable, MicroCase):
     var canvas: Canvas
     var cache: FontCache
 
@@ -332,7 +328,7 @@ struct TextCached(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(104, 96).r)
 
 
-struct TextScaled(MicroCase, Movable):
+struct TextScaled(Movable, MicroCase):
     """The same label under scale(3, 3), which today takes the direct
     outline fill rather than the glyph mask cache (#240).
     """
@@ -355,7 +351,7 @@ struct TextScaled(MicroCase, Movable):
         sink += Int(self.canvas.get_pixel(104, 96).r)
 
 
-struct TextLarge(MicroCase, Movable):
+struct TextLarge(Movable, MicroCase):
     """The scaled label's size drawn unscaled: what the cached path
     costs for the same ink, the target #240 aims at.
     """
