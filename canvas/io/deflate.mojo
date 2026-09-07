@@ -942,7 +942,32 @@ def _find_match(chains: _HashChains, data: List[UInt8], pos: Int) -> _Match:
         var distance = pos - candidate
         if distance > _WINDOW:
             break  # earlier links are only further still
+        # A candidate can only win by running past the best so far, so
+        # the byte at that offset has to match. Testing it first
+        # rejects almost every candidate in one compare instead of
+        # walking it from the start -- zlib's own first move, and the
+        # reason its chain walk is affordable.
+        if best_length > 0 and (
+            d[unsafe_offset=candidate + best_length]
+            != d[unsafe_offset=pos + best_length]
+        ):
+            var skip = Int(pp[unsafe_offset=candidate & _WINDOW_MASK])
+            if skip >= candidate:
+                break
+            candidate = skip
+            continue
+        # Eight bytes at a time while there is room, then one at a
+        # time. A run at distance 1 -- flat color, which most of an
+        # image is -- matches to the cap, so this is the loop that
+        # decides what a large fill costs.
         var length = 0
+        comptime W = 8
+        while length + W <= max_possible:
+            var a = d.unsafe_offset(candidate + length).unsafe_load[width=W]()
+            var b = d.unsafe_offset(pos + length).unsafe_load[width=W]()
+            if a != b:
+                break
+            length += W
         while (
             length < max_possible
             and d[unsafe_offset=candidate + length]
