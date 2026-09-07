@@ -128,14 +128,6 @@ comptime _Lane = Scalar[_PLANE]
 comptime _Pixel = SIMD[_PLANE, _LANES]
 
 
-# Pixels worth one blur task. An 800x600 blur at radius 8 improves
-# through 32 bands and beyond (5252 us at one worker, 1005 at
-# sixty-four). A band
-# also has to be at least a halo tall, which often binds first; see
-# `_bands_for`.
-comptime _BLUR_PIXELS_PER_BAND = 8000
-
-
 def _sigma_from_radius(radius: Float64) -> Float64:
     """Gaussian standard deviation for a `blur()`/`draw_shadowed` radius,
     half of `radius` -- see the module docstring's citation.
@@ -542,12 +534,18 @@ async def _blur_band_async(
 
 def _bands_for(w: Int, h: Int, halo: Int, max_workers: Int = 0) -> Int:
     """How many row bands to blur a `w x h` canvas in: one below
-    `_MIN_PARALLEL_PIXELS`, otherwise the core count, capped so that
-    a band is at least `halo` rows -- the rows a band computes over
-    again for its neighbors are then at most twice its own, which
-    measured as the point past which more bands stopped paying.
+    `_MIN_PARALLEL_WORK`, otherwise what the worker limit allows,
+    capped so that a band is at least `halo` rows -- the rows a band
+    computes over again for its neighbors are then at most twice its
+    own, which measured as the point past which more bands stopped
+    paying.
+
+    That halo cap is the radius-dependent one, and it is the only one
+    blur needs. A second cap on pixels per band was tried and removed:
+    fitted at radius 8 it held radius 16 to sixteen bands where the
+    halo allows twenty-five, and cost 55% there.
     """
-    var bands = _shared_bands_for(w * h, h, _BLUR_PIXELS_PER_BAND, max_workers)
+    var bands = _shared_bands_for(w * h, h, max_workers)
     var by_halo = h // max(halo, 1)
     if bands > by_halo:
         bands = by_halo

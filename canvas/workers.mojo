@@ -4,18 +4,27 @@ Every banded pass in this package writes disjoint rows and reads
 shared input, so the only questions are how much work is worth a task
 and how many tasks a caller will allow.
 
-Both answers used to be implicit. A pass either ran inline or fanned
-out to `parallelism_level()`, which on a 64-thread machine means 64
-tasks for a fill barely over the threshold; and an application
-rendering several canvases at once had no way to say that each should
-take a share rather than all of it.
+The second used to have no answer at all: an application rendering
+several canvases at once had each of them fan out to every thread.
+`Canvas.set_max_workers` is that answer, and it is what `_bands_for`
+respects. The cap is a per-render ceiling rather than a budget across
+renders: two canvases each capped at 8 may use 16 threads between
+them, which is the point -- a knob for keeping one render from taking
+the machine, not an allocator.
 
-`_bands_for` answers the first from a per-kernel figure for how much
-work is worth a task, and `Canvas.set_max_workers` answers the second.
-The cap is a per-render ceiling rather than a budget across renders:
-two canvases each capped at 8 may use 16 threads between them, which
-is the point -- it is a knob for keeping one render from taking the
-machine, not an allocator.
+The first mostly answers itself. Measured band by band on a 64-thread
+machine, the sweep, the source fills and the transformed composite go
+on improving to the core count and past the sizes anyone renders: an
+800x600 even-odd fill runs 4669 us on one band and 760 on sixty-four,
+a gradient rectangle 5567 and 486. So the default is the count the
+limit allows, and the floor below which a pass runs inline is what
+keeps a glyph off the task queue.
+
+`_bands_for_work` is for the exception. Blur is one: its bands
+recompute a halo of rows for their neighbours, so past sixteen the
+duplicated work costs more than the split saves (1123 us at sixteen,
+1306 at sixty-four). A kernel only takes it with a figure measured for
+that kernel.
 """
 
 from std.runtime.asyncrt import parallelism_level
@@ -43,13 +52,35 @@ def _worker_limit(requested: Int) -> Int:
     return requested
 
 
-def _bands_for(work: Int, rows: Int, work_per_band: Int, cap: Int) -> Int:
+def _bands_for(work: Int, rows: Int, cap: Int) -> Int:
     """How many row bands to split `work` over.
 
     One band below `_MIN_PARALLEL_WORK`, where dispatching costs more
-    than the work does. Above it, enough bands to give each about
-    `work_per_band`, never more than the worker limit and never more
-    than there are rows to divide.
+    than the work does. Above it, as many as the worker limit and the
+    rows allow, which is what the measurements support for every
+    kernel here but blur.
+
+    Args:
+        work: The pass's own measure of how much there is to do.
+        rows: Rows available to divide, which bounds the band count.
+        cap: The caller's worker cap, from `Canvas.max_workers`.
+
+    Returns:
+        The band count, at least 1.
+    """
+    if work < _MIN_PARALLEL_WORK:
+        return 1
+    var bands = _worker_limit(cap)
+    if bands > rows:
+        bands = rows
+    if bands < 1:
+        bands = 1
+    return bands
+
+
+def _bands_for_work(work: Int, rows: Int, work_per_band: Int, cap: Int) -> Int:
+    """`_bands_for` for a kernel measured to want fewer bands than the
+    limit -- one whose bands duplicate work, as blur's halo does.
 
     Args:
         work: The pass's own measure of how much there is to do, in
@@ -62,14 +93,10 @@ def _bands_for(work: Int, rows: Int, work_per_band: Int, cap: Int) -> Int:
     Returns:
         The band count, at least 1.
     """
-    if work < _MIN_PARALLEL_WORK:
-        return 1
-    var bands = work // max(work_per_band, 1)
-    var limit = _worker_limit(cap)
-    if bands > limit:
-        bands = limit
-    if bands > rows:
-        bands = rows
+    var bands = _bands_for(work, rows, cap)
+    var by_work = work // max(work_per_band, 1)
+    if by_work < bands:
+        bands = by_work
     if bands < 1:
         bands = 1
     return bands

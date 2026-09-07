@@ -56,7 +56,7 @@ from std.math import ceil, floor
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.aa_crossing import _EdgeTable, _MIN_PARALLEL_PIXELS
-from canvas.workers import _bands_for as _shared_bands_for
+from canvas.workers import _bands_for_work
 from canvas.buffer import Canvas
 from canvas.color import Color
 
@@ -311,7 +311,7 @@ def _bands_for(work: Int, row_count: Int, max_workers: Int = 0) -> Int:
     `_MIN_PARALLEL_WORK`, otherwise `_CELLS_PER_BAND` cells each,
     never more than the caller's worker cap or the row count.
     """
-    return _shared_bands_for(work, row_count, _CELLS_PER_BAND, max_workers)
+    return _bands_for_work(work, row_count, _CELLS_PER_BAND, max_workers)
 
 
 @always_inline

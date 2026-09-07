@@ -447,12 +447,6 @@ struct _EdgeTable(Movable):
 # benchmark (#92) -- re-benchmark before changing it.
 comptime _MIN_PARALLEL_PIXELS = _MIN_PARALLEL_WORK
 
-# Pixels of a fill's bounding box worth one sweep task. An 800x600
-# even-odd fill stops improving at 8 bands (4710 us at one worker,
-# 1949 at eight, 1991 at sixty-four), which is where 60,000 puts it.
-# See `canvas.workers`.
-comptime _SWEEP_PIXELS_PER_BAND = 60000
-
 
 struct _CoverageAlpha(Movable):
     """The alpha a covered-sample count maps to, tabulated once per
@@ -674,7 +668,6 @@ def _sweep_edges_sampled_aa(
     var bands = _bands_for(
         row_count * row_width,
         row_count,
-        _SWEEP_PIXELS_PER_BAND,
         canvas.max_workers(),
     )
 
@@ -902,9 +895,7 @@ def _sweep_edges_to_mask(
     if row_count <= 0 or row_width <= 0:
         return
 
-    var bands = _bands_for(
-        row_count * row_width, row_count, _SWEEP_PIXELS_PER_BAND, max_workers
-    )
+    var bands = _bands_for(row_count * row_width, row_count, max_workers)
 
     edges.sort_by_top()
 
