@@ -8,14 +8,17 @@ call resolves its font twice, measuring then rendering, unless a
 FontCache threads through both passes.
 
 Behind both halves sits one `FontDatabase`, built on the first lookup
-that misses the path dictionaries, which is where the directory walk
-and per-file table reads are paid. That cost scales with how many
-fonts are installed, not with what is being drawn: on a machine with a
-few hundred font files it is tens of milliseconds, against tens of
-*micro*seconds for a cached label. Construct one per run of many
-labels, never one per label. Constructing it costs nothing, so a cache
-shared across code that may or may not draw text pays the scan only if
-some of it does (#199).
+that misses the path dictionaries. That build reads
+`font_discovery.mojo`'s cache file when one is valid, a millisecond or
+two; when none is (first run on a machine, or a font installed since)
+it walks the font directories and reads every file's tables, tens of
+milliseconds, and writes the file for next time. Either way it is paid
+once per `FontDatabase` and scales with how many fonts are installed
+rather than with what is being drawn -- against tens of *micro*seconds
+for a cached label. Construct one per run of many labels, never one
+per label. Constructing it costs nothing, so a cache shared across
+code that may or may not draw text pays it only if some of it does
+(#199).
 
 The overloads that take no `cache=` build one of these per call, so they
 carry that whole scan every time. See `canvas.text.render`, whose
