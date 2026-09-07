@@ -75,12 +75,6 @@ from canvas.workers import _bands_for
 comptime _KAPPA = 0.5522847498307936
 
 
-# Mask pixels worth one task when painting a swept coverage mask
-# through a color source -- the same work per pixel as the rectangle
-# source fill, and the same figure. See `canvas.workers`.
-comptime _SOURCE_PIXELS_PER_BAND = 15000
-
-
 struct PathOp(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """Which builder call a `PathCommand` records: one of `MOVE_TO`,
     `LINE_TO`, `QUAD_TO`, `CUBIC_TO`, `CLOSE`, `ARC_TO`. Prints as its
@@ -1879,7 +1873,6 @@ def _fill_path_source_aa[
     var bands = _bands_for(
         mask_width * mask_height,
         mask_height,
-        _SOURCE_PIXELS_PER_BAND,
         canvas.max_workers(),
     )
 

@@ -18,14 +18,6 @@ from canvas.workers import _bands_for
 comptime _MIN_PARALLEL_PIXELS = 40000
 
 
-# Source samples read worth one downsampling task -- samples, not
-# output pixels, since a factor-8 pass writes little and reads 64
-# pixels for each of them. A 1600x1200 factor-2 pass improves through
-# 32 bands (7527 us at one worker, 769 at thirty-two, 813 at
-# sixty-four). See `canvas.workers`.
-comptime _RESIZE_SAMPLES_PER_BAND = 60000
-
-
 def downsample(source: Canvas, factor: Int) raises -> Canvas:
     """Shrink `source` by `factor`, which must evenly divide both
     `source.width` and `source.height` -- raises rather than truncating
@@ -126,7 +118,6 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     var bands = _bands_for(
         out_width * out_height * n,
         out_height,
-        _RESIZE_SAMPLES_PER_BAND,
         source.max_workers(),
     )
 

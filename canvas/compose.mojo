@@ -45,13 +45,6 @@ from canvas.mask import Mask
 from canvas.workers import _bands_for
 
 
-# Destination pixels worth one task when compositing through a
-# transform. An 800x600 bilinear draw stops improving at 16 bands
-# (7548 us at one worker, 1889 at sixteen, 2140 at sixty-four). The
-# untransformed composite is not banded at all. See `canvas.workers`.
-comptime _COMPOSE_PIXELS_PER_BAND = 30000
-
-
 struct Filter(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     """How a transformed `draw_canvas` reads the source between its
     pixels: `NEAREST` takes the one the sample point lands in, giving
@@ -870,9 +863,7 @@ def _draw_canvas_mapped(
     # Bands write disjoint destination rows and only read the source,
     # the basis the fill sweep bands on, and the same threshold: below
     # it the tasks cost more than the rows do.
-    var bands = _bands_for(
-        rw * rh, rh, _COMPOSE_PIXELS_PER_BAND, dst.max_workers()
-    )
+    var bands = _bands_for(rw * rh, rh, dst.max_workers())
 
     if bands == 1:
         _mapped_band(dst, src, job, rx, rw, ry, ry + rh)

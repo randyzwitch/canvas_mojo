@@ -30,12 +30,6 @@ from canvas.shapes.lines import draw_line, draw_polygon, _draw_line_device
 from canvas.workers import _bands_for
 
 
-# Pixels worth one task when filling a rectangle from a color
-# source. An 800x600 gradient improves through 32 bands (5633 us at
-# one worker, 834 at thirty-two). See `canvas.workers`.
-comptime _SOURCE_RECT_PIXELS_PER_BAND = 15000
-
-
 def draw_rect(
     mut canvas: Canvas, x: Int, y: Int, width: Int, height: Int, color: Color
 ):
@@ -219,9 +213,7 @@ def _fill_rect_source[
     # Rows are independent, each writing only its own pixels, so a
     # large fill is banded across cores as the fill sweep is; `source`
     # and `canvas` are shared by reference (#97 applies).
-    var bands = _bands_for(
-        rw * rh, rh, _SOURCE_RECT_PIXELS_PER_BAND, canvas.max_workers()
-    )
+    var bands = _bands_for(rw * rh, rh, canvas.max_workers())
     if bands == 1:
         _fill_source_rows(canvas, rx, rw, ry, ry + rh, source, to_user)
         return

@@ -22,7 +22,7 @@ from canvas.path import Path, fill_path_aa, fill_path_gradient_aa
 from canvas.resize import downsample
 from canvas.shapes.circles import fill_circle_aa
 from canvas.shapes.rects import fill_rect
-from canvas.workers import _bands_for, _worker_limit
+from canvas.workers import _bands_for, _bands_for_work, _worker_limit
 
 comptime W = 160
 comptime H = 120
@@ -121,25 +121,35 @@ def test_the_cap_does_not_survive_save_and_restore() raises:
 def test_small_work_stays_on_one_band() raises:
     # Below the floor a pass runs inline however many workers exist,
     # because dispatching costs more than the work does.
-    assert_equal(_bands_for(1000, 100, 5000, 0), 1)
-    assert_equal(_bands_for(39999, 1000, 5000, 0), 1)
+    assert_equal(_bands_for(1000, 100, 0), 1)
+    assert_equal(_bands_for(39999, 1000, 0), 1)
     if _worker_limit(0) > 1:
-        assert_true(_bands_for(400000, 1000, 5000, 0) > 1)
+        assert_true(_bands_for(400000, 1000, 0) > 1)
 
 
-def test_bands_follow_the_work_and_respect_every_bound() raises:
-    # One band per `work_per_band`, then the caller's cap, then the
-    # rows there are to divide. Every expectation is written against
-    # the runtime's own worker count: a two-core runner is meant to
-    # come out at two bands where a workstation comes out at eight,
-    # and hard-coding the larger answer only says which machine wrote
-    # the test.
+def test_bands_take_the_limit_and_the_rows() raises:
+    # Above the floor the default is what the worker limit allows,
+    # then the rows there are to divide. Every expectation is written
+    # against the runtime's own worker count: a two-core runner is
+    # meant to come out at two bands where a workstation comes out at
+    # sixty-four, and hard-coding the larger answer only says which
+    # machine wrote the test.
     var available = _worker_limit(0)
-    assert_equal(_bands_for(400000, 1000, 50000, 0), min(8, available))
-    assert_equal(_bands_for(400000, 1000, 50000, 4), min(4, available))
-    assert_equal(_bands_for(400000, 3, 50000, 0), min(3, available))
-    # Nothing divides work smaller than one band's worth of it.
-    assert_equal(_bands_for(400000, 1000, 10000000, 0), 1)
+    assert_equal(_bands_for(400000, 1000, 0), available)
+    assert_equal(_bands_for(400000, 1000, 4), min(4, available))
+    assert_equal(_bands_for(400000, 3, 0), min(3, available))
+
+
+def test_a_work_aware_kernel_can_ask_for_fewer() raises:
+    # Blur's bands recompute a halo for their neighbours, so past a
+    # point the duplicated work costs more than the split saves. Such
+    # a kernel takes `_bands_for_work` and never gets more than the
+    # plain policy would have given it.
+    var available = _worker_limit(0)
+    assert_equal(_bands_for_work(400000, 1000, 50000, 0), min(8, available))
+    assert_equal(_bands_for_work(400000, 1000, 50000, 4), min(4, available))
+    assert_equal(_bands_for_work(400000, 1000, 10000000, 0), 1)
+    assert_equal(_bands_for_work(1000, 100, 10, 0), 1, "the floor still wins")
 
 
 def test_the_worker_limit_falls_back_to_the_runtime() raises:

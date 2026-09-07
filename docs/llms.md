@@ -61,6 +61,19 @@ importable package is named `canvas`; the project is `canvas_mojo`.
   share. Code written against it draws to any backend; text, clipping
   and gradient path fills are backend methods rather than trait
   methods, so call them once you know which backend you hold.
+- `write_png(canvas, path, level)` takes a `PngLevel`: `FAST` is about
+  a fifth quicker on flat content at the same bytes, `SMALL` trades
+  roughly 1.7x the time for a smaller file, `DEFAULT` is the default.
+  Every level decodes to the same pixels.
+- `canvas.set_max_workers(n)` caps how many threads one render's
+  banded passes may use, for an application drawing several canvases
+  at once. It is a per-render ceiling, not a budget across renders,
+  and `save`/`restore` do not carry it. The output is identical at any
+  worker count.
+- `FontCache` bounds its rasterized glyphs by bytes and releases the
+  older of two generations when it fills. `glyph_mask_bytes()` reports
+  what it holds and `clear_glyph_masks()` releases them all, keeping
+  the resolved fonts.
 
 ## Recipes
 
