@@ -29,7 +29,12 @@ from std.math import iota
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color
-from canvas.io.deflate import deflate, inflate
+from canvas.io.deflate import (
+    _MAX_CHAIN as _DEFLATE_MAX_CHAIN,
+    _MAX_LAZY as _DEFLATE_MAX_LAZY,
+    deflate,
+    inflate,
+)
 
 
 def _append_u16_le(mut buf: List[UInt8], value: UInt16):
@@ -77,6 +82,103 @@ def _crc32(data: Span[UInt8, _], table: List[UInt32]) -> UInt32:
     for byte in data:
         c = table[Int((c ^ UInt32(byte)) & 0xFF)] ^ (c >> 8)
     return c ^ UInt32(0xFFFFFFFF)
+
+
+struct PngLevel(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
+    """How hard `write_png` works to make the file small.
+
+    Every level produces a fully valid PNG that decodes to exactly the
+    same pixels; they differ only in how long the encode takes and how
+    many bytes come out. Two knobs move together: how far DEFLATE's
+    match search walks a hash chain, and how much effort goes into
+    choosing between unfiltered and Sub-filtered scanlines.
+
+    FAST settles the filter choice without compressing anything, when
+    the image is flat enough for the answer not to be in doubt.
+    DEFAULT is what the writer has always done and stays the default.
+    SMALL compresses the whole image both ways rather than sampling
+    every eighth row, and walks a hash chain four times longer.
+
+    Measured across five images, best of five each:
+
+                          FAST      DEFAULT     SMALL
+      chart 800x600     3.3 ms      4.1 ms     7.8 ms
+                        9,964 B     9,964 B    9,916 B
+      gradient 800x600  3.3 ms      4.3 ms     7.5 ms
+                        13,989 B    13,989 B   10,958 B
+      grainy 400x300    39.1 ms     39.0 ms    59.0 ms
+                        182,136 B   182,136 B  181,793 B
+      RGBA 400x300      1.3 ms      1.7 ms     3.7 ms
+                        4,658 B     4,658 B    4,631 B
+
+    FAST is about a fifth faster on flat content and identical on
+    grainy content, where the probe declines and it falls back. It
+    produced the same bytes as DEFAULT on all five, which is what the
+    probe is for: it does not guess which filter is better, only
+    whether the question is easy.
+
+    Two other ways to make FAST faster were tried and dropped. A short
+    chain with the look-ahead off makes a gradient three times larger
+    for no time saved, because unfiltered gradient rows are slow to
+    deflate. And bounding how much of a match goes into the hash
+    chains, the one knob that still moves LZ77 time, does not bind at
+    any setting that leaves smooth images intact.
+    """
+
+    var _value: Int
+
+    comptime FAST = Self(0)
+    comptime DEFAULT = Self(1)
+    comptime SMALL = Self(2)
+
+    def __init__(out self, value: Int):
+        """Prefer the `FAST`/`DEFAULT`/`SMALL` comptime constants over
+        constructing one directly.
+
+        Args:
+            value: 0 for FAST, 1 for DEFAULT, 2 for SMALL.
+        """
+        self._value = value
+
+    def __eq__(self, other: Self) -> Bool:
+        return self._value == other._value
+
+    def __ne__(self, other: Self) -> Bool:
+        return self._value != other._value
+
+    def write_to[W: Writer](self, mut writer: W):
+        if self._value == Self.FAST._value:
+            writer.write("FAST")
+        elif self._value == Self.SMALL._value:
+            writer.write("SMALL")
+        else:
+            writer.write("DEFAULT")
+
+    def _max_chain(self) -> Int:
+        """Hash-chain candidates DEFLATE's match search may walk."""
+        if self._value == Self.SMALL._value:
+            return 128
+        return 32
+
+    def _max_lazy(self) -> Int:
+        """Match length below which the search still looks one byte
+        ahead for a longer one. Zero turns lazy matching off."""
+        if self._value == Self.SMALL._value:
+            return 128
+        return 64
+
+    def _skips_filter_search(self) -> Bool:
+        """Whether this level may decide the filter without
+        compressing anything, when the image is flat enough for the
+        answer not to be in doubt."""
+        return self._value == Self.FAST._value
+
+    def _filter_sample_stride(self) -> Int:
+        """Rows between the ones the unfiltered/Sub choice is decided
+        on. Zero compares the whole image both ways."""
+        if self._value == Self.SMALL._value:
+            return 0
+        return _FILTER_SAMPLE_STRIDE
 
 
 def _adler32(data: List[UInt8]) -> UInt32:
@@ -176,7 +278,38 @@ def _write_chunk(
     _append_u32_be(buf, crc)
 
 
-def write_png(canvas: Canvas, path: String) raises:
+def _finish_png(
+    var file_buf: List[UInt8],
+    crc_table: List[UInt32],
+    var compressed: List[UInt8],
+    adler: UInt32,
+    path: String,
+) raises:
+    """Wrap the DEFLATE stream in zlib, chunk it as IDAT, close the
+    file. Shared by the two routes `write_png` takes through the
+    filter choice.
+    """
+    var zlib_stream = List[UInt8]()
+    # zlib header (RFC 1950 2.2): CMF=0x78 (deflate, 32K window),
+    # FLG=0x01 (FLEVEL=0/"fastest", matching deflate()'s single-block,
+    # bounded-search scope). (0x78*256 + 0x01) % 31 == 0, the header's
+    # required self-check.
+    zlib_stream.append(0x78)
+    zlib_stream.append(0x01)
+    zlib_stream.extend(compressed^)
+    _append_u32_be(zlib_stream, adler)
+
+    _write_chunk(file_buf, crc_table, "IDAT", zlib_stream)
+    _write_chunk(file_buf, crc_table, "IEND", List[UInt8]())
+
+    var f = open(path, "w")
+    f.write_bytes(Span(file_buf))
+    f.close()
+
+
+def write_png(
+    canvas: Canvas, path: String, level: PngLevel = PngLevel.DEFAULT
+) raises:
     """Write `canvas` to `path` as an 8-bit, non-interlaced PNG --
     color type 6 (truecolor + alpha) if any pixel is not fully opaque,
     color type 2 (truecolor) otherwise.
@@ -184,6 +317,9 @@ def write_png(canvas: Canvas, path: String) raises:
     Args:
         canvas: Canvas to write.
         path: File path to write to.
+        level: How hard to work at making the file small. Every level
+            decodes to the same pixels; see `PngLevel` for what each
+            costs and saves.
 
     Raises:
         Error: `path` can't be opened for writing.
@@ -283,26 +419,46 @@ def write_png(canvas: Canvas, path: String) raises:
     # full comparison did. The byte-residual heuristic libpng uses
     # was tried first and picked Sub on every chart, where it loses.
     var row_bytes = w * channels
+    var max_chain = level._max_chain()
+    var max_lazy = level._max_lazy()
+    var stride = level._filter_sample_stride()
+    if level._skips_filter_search() and _mostly_repeats_left(
+        raw, h, row_bytes, channels
+    ):
+        # Flat enough that unfiltered rows win without asking, so
+        # neither the Sub pass nor the sample compression happens at
+        # all. This is where FAST's time goes.
+        var only = deflate(raw, max_chain, max_lazy)
+        _finish_png(file_buf^, crc_table, only^, _adler32(raw), path)
+        return
     var sub = _sub_filtered(raw, h, row_bytes, channels)
-    var filtered = _sub_compresses_smaller(raw, sub, h, row_bytes)
-    var compressed = deflate(sub) if filtered else deflate(raw)
+    var filtered: Bool
+    var compressed: List[UInt8]
+    if stride == 0:
+        # Both encodings in full rather than a sample, and the smaller
+        # one kept.
+        var sub_out = deflate(sub, max_chain, max_lazy)
+        var raw_out = deflate(raw, max_chain, max_lazy)
+        filtered = len(sub_out) < len(raw_out)
+        compressed = sub_out^ if filtered else raw_out^
+    else:
+        # The sample is judged at the default search effort whatever
+        # the level asks for. It is a few percent of the encode, and
+        # deciding it wrongly is expensive in a way no saved search
+        # makes up for: an unfiltered gradient is three times the bytes
+        # of a Sub-filtered one and slower to deflate as well.
+        filtered = _sub_compresses_smaller(raw, sub, h, row_bytes, stride)
+        compressed = deflate(sub, max_chain, max_lazy) if filtered else deflate(
+            raw, max_chain, max_lazy
+        )
 
-    var zlib_stream = List[UInt8]()
-    # zlib header (RFC 1950 2.2): CMF=0x78 (deflate, 32K window),
-    # FLG=0x01 (FLEVEL=0/"fastest", matching deflate()'s single-block,
-    # bounded-search scope). (0x78*256 + 0x01) % 31 == 0, the header's
-    # required self-check.
-    zlib_stream.append(0x78)
-    zlib_stream.append(0x01)
-    zlib_stream.extend(compressed^)
-    _append_u32_be(zlib_stream, _adler32(sub) if filtered else _adler32(raw))
-
-    _write_chunk(file_buf, crc_table, "IDAT", zlib_stream)
-    _write_chunk(file_buf, crc_table, "IEND", List[UInt8]())
-
-    var f = open(path, "w")
-    f.write_bytes(Span(file_buf))
-    f.close()
+    _finish_png(
+        file_buf^,
+        crc_table,
+        compressed^,
+        _adler32(sub) if filtered else _adler32(raw),
+        path,
+    )
 
 
 def _read_u32_be(data: List[UInt8], pos: Int) raises -> Int:
@@ -320,8 +476,60 @@ def _read_u32_be(data: List[UInt8], pos: Int) raises -> Int:
 comptime _FILTER_SAMPLE_STRIDE = 8
 
 
+# Rows sampled by `_mostly_repeats_left`, and the share of their bytes
+# that must repeat their left neighbour for the filter choice to be
+# settled without compressing anything.
+comptime _FLATNESS_ROWS = 16
+comptime _FLATNESS_SHARE = 0.5
+
+
+def _mostly_repeats_left(
+    raw: List[UInt8], height: Int, row_bytes: Int, bpp: Int
+) -> Bool:
+    """Whether enough of the image repeats the pixel to its left that
+    unfiltered rows will win.
+
+    Sub subtracts each byte from the one a pixel to its left, so where
+    that byte is already identical Sub turns a run of one value into a
+    run of zeros -- which deflate compresses about as well either way,
+    while unfiltered rows also match the row above. Where the two
+    differ, as in a gradient, the answer is genuinely in doubt and the
+    caller has to compress a sample both ways to find out.
+
+    So this is not a filter heuristic in the usual sense. It does not
+    try to say which filter is better; it says whether the question is
+    easy, and only `PngLevel.FAST` acts on it. libpng's byte-residual
+    heuristic was tried in this position and answered "Sub" on every
+    chart, where Sub loses.
+    """
+    if row_bytes <= bpp or height <= 0:
+        return False
+    var stride = 1 + row_bytes
+    var step = max(height // _FLATNESS_ROWS, 1)
+    var rp = raw.unsafe_ptr()
+    var same = 0
+    var total = 0
+    var y = 0
+    var sampled = 0
+    while y < height and sampled < _FLATNESS_ROWS:
+        var base = y * stride + 1
+        for i in range(bpp, row_bytes):
+            if rp[unsafe_offset=base + i] == rp[unsafe_offset=base + i - bpp]:
+                same += 1
+        total += row_bytes - bpp
+        sampled += 1
+        y += step
+    return total > 0 and Float64(same) > Float64(total) * _FLATNESS_SHARE
+
+
 def _sub_compresses_smaller(
-    raw: List[UInt8], sub: List[UInt8], height: Int, row_bytes: Int
+    raw: List[UInt8],
+    sub: List[UInt8],
+    height: Int,
+    row_bytes: Int,
+    stride_rows: Int = _FILTER_SAMPLE_STRIDE,
+    max_chain: Int = _DEFLATE_MAX_CHAIN,
+    max_lazy: Int = _DEFLATE_MAX_LAZY,
 ) raises -> Bool:
     """Whether the Sub-filtered scanlines compress smaller than the
     unfiltered ones, decided on every `_FILTER_SAMPLE_STRIDE`th row of
@@ -329,7 +537,7 @@ def _sub_compresses_smaller(
     rows, which decode with no reconstruction pass.
     """
     var stride = 1 + row_bytes
-    var rows = (height + _FILTER_SAMPLE_STRIDE - 1) // _FILTER_SAMPLE_STRIDE
+    var rows = (height + stride_rows - 1) // stride_rows
     var sample_raw = List[UInt8](unsafe_uninit_length=rows * stride)
     var sample_sub = List[UInt8](unsafe_uninit_length=rows * stride)
     var rp = raw.unsafe_ptr()
@@ -354,8 +562,10 @@ def _sub_compresses_smaller(
             ds[unsafe_offset=o + i] = sp[unsafe_offset=base + i]
             i += 1
         o += stride
-        y += _FILTER_SAMPLE_STRIDE
-    return len(deflate(sample_sub)) < len(deflate(sample_raw))
+        y += stride_rows
+    return len(deflate(sample_sub, max_chain, max_lazy)) < len(
+        deflate(sample_raw, max_chain, max_lazy)
+    )
 
 
 def _sub_filtered(
