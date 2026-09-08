@@ -74,10 +74,13 @@ from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
 from canvas.text.render import (
+    draw_layout,
     draw_text,
     draw_text_on_path,
+    measure_layout,
     measure_text,
     measure_text_block,
+    prepare_text,
 )
 
 comptime W = 800
@@ -844,6 +847,35 @@ def _survey() raises -> List[_Row]:
     _report(
         rows,
         "measure_text_block 3 lines (cached)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    # The measure-then-draw pair a chart makes for every label, laid
+    # out twice and then once (#294). The two rows are the same work;
+    # the difference is the duplicated layout.
+    iters = 100
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var b = measure_text_block(paragraph, 13.0, cache=cache)
+        draw_text(canvas, 40.0, 500.0, paragraph, INK, 13.0, cache=cache)
+        sink += Int(b.height)
+    _report(
+        rows,
+        "measure then draw 3 lines (laid out twice)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var lay = prepare_text(paragraph, 13.0, cache=cache)
+        var b = measure_layout(lay)
+        draw_layout(canvas, 40.0, 500.0, lay, INK, cache=cache)
+        sink += Int(b.height)
+    _report(
+        rows,
+        "measure then draw 3 lines (prepared once)",
         perf_counter_ns() - t0,
         iters,
     )

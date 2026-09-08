@@ -76,12 +76,16 @@ from canvas.shapes.arcs import (
     fill_ring_sector_aa,
 )
 from canvas.text.render import (
+    draw_layout,
     draw_text,
     draw_text_on_path,
+    measure_layout,
     measure_text,
     measure_text_block,
+    prepare_text,
     stroke_text,
     TextAlign,
+    TextLayout,
     TextMetrics,
     TextBlockBounds,
 )

@@ -116,6 +116,12 @@ shape.
   `visual_order`: right-to-left and mixed-direction text layout.
 - [`text.text_align`](../canvas/text/text_align/) — `TextAlign`,
   the alignment enum `draw_text` takes.
+- `prepare_text` / `measure_layout` / `draw_layout` (in
+  [`text.render`](../canvas/text/render/)) — lay a string out once
+  into a `TextLayout` and share it between measuring and drawing,
+  instead of laying it out inside each call. The layout is
+  anchor-relative, so one prepared layout draws wherever you decide
+  to put it.
 
 ## Compositing, effects & masks
 

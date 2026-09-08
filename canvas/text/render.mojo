@@ -963,6 +963,239 @@ def measure_text_block(
     )
 
 
+struct TextLayout(Movable):
+    """Text already shaped, kerned, line-broken and aligned, ready to
+    be measured or drawn without doing that work again.
+
+    `measure_text_block` and `draw_text` each lay a string out from
+    scratch, so a caller that measures a label to decide where it goes
+    and then draws it pays for the layout twice -- about a fifth of
+    the pair on a three-line block. Prepare it once, then hand the
+    result to `measure_layout` and `draw_layout`.
+
+    Reuse is caller-managed on purpose: no hidden cache, and so no
+    invalidation to get wrong. A layout pins every input that shaped
+    it -- the string, size, family, slant, weight, rotation,
+    alignment, kerning and ligature settings -- and changing any of
+    them means preparing a new one. The anchor is deliberately not
+    pinned: the layout is anchor-relative, so the same one draws at
+    any (x, y), which is what makes it worth keeping for a label whose
+    position is still being decided.
+
+    The `FontCache` it was prepared against must be the one it is
+    drawn with. The layout holds glyph indices resolved through that
+    cache's faces, not the outlines themselves.
+    """
+
+    var _block: _BlockLayout
+    var text: String
+    var size: Float64
+    var family: String
+    var slant: FontSlant
+    var weight: FontWeight
+    var rotation: Float64
+    var align: TextAlign
+    var kerning: Bool
+    var ligatures: Bool
+
+    def __init__(
+        out self,
+        var block: _BlockLayout,
+        var text: String,
+        size: Float64,
+        var family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        rotation: Float64,
+        align: TextAlign,
+        kerning: Bool,
+        ligatures: Bool,
+    ):
+        self._block = block^
+        self.text = text^
+        self.size = size
+        self.family = family^
+        self.slant = slant
+        self.weight = weight
+        self.rotation = rotation
+        self.align = align
+        self.kerning = kerning
+        self.ligatures = ligatures
+
+    def has_ink(self) -> Bool:
+        """Whether anything would actually be drawn. False for an empty
+        string, and for one that is only whitespace.
+        """
+        return self._block.any_ink
+
+
+def prepare_text(
+    text: String,
+    size: Float64,
+    family: String = "Sans",
+    slant: FontSlant = FontSlant.NORMAL,
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    kerning: Bool = True,
+    ligatures: Bool = True,
+    *,
+    mut cache: FontCache,
+) raises -> TextLayout:
+    """Shape and lay `text` out once, for `measure_layout` and
+    `draw_layout` to share.
+
+    Args:
+        text: Text to lay out, "\\n"-separated lines.
+        size: Font size in pixels.
+        family: Font family name or generic alias.
+        slant: Requested upright/italic slant.
+        weight: Requested normal/bold weight.
+        rotation: Radians, rotating the whole block around the anchor.
+        align: Horizontal alignment of each line.
+        kerning: Apply the font's pair kerning between adjacent glyphs.
+        ligatures: Apply the font's `GSUB` shaping -- ligatures and
+            Arabic contextual forms. False lays out one glyph per
+            character.
+        cache: Shared cache for font resolution and parsed faces. The
+            same cache has to be passed to `draw_layout` later.
+
+    Returns:
+        The prepared layout.
+    """
+    var block = _layout_block(
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        ligatures,
+        cache,
+    )
+    return TextLayout(
+        block^,
+        text,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        align,
+        kerning,
+        ligatures,
+    )
+
+
+def measure_layout(layout: TextLayout) -> TextBlockBounds:
+    """The prepared layout's anchor-relative bounding box: what
+    `measure_text_block` returns for the same arguments, without
+    laying the text out again.
+
+    Args:
+        layout: A layout from `prepare_text`.
+
+    Returns:
+        The block's anchor-relative bounding box.
+    """
+    if not layout._block.any_ink:
+        return TextBlockBounds(0.0, 0.0, 0.0, 0.0)
+    return TextBlockBounds(
+        layout._block.rot_min_x,
+        layout._block.rot_min_y,
+        layout._block.rot_max_x - layout._block.rot_min_x,
+        layout._block.rot_max_y - layout._block.rot_min_y,
+    )
+
+
+def draw_layout(
+    mut canvas: Canvas,
+    x: Float64,
+    y: Float64,
+    layout: TextLayout,
+    color: Color,
+    *,
+    mut cache: FontCache,
+) raises:
+    """Draw a prepared layout with its anchor at (x, y): what
+    `draw_text` draws for the same arguments, without laying the text
+    out again.
+
+    Under a canvas transform that is more than a translation the
+    layout cannot be reused -- the glyphs are placed through the
+    matrix, which changes the placement the layout fixed -- so this
+    falls back to laying out through `draw_text`. The result is
+    identical either way; only the saving is lost.
+
+    Args:
+        canvas: Canvas to draw into.
+        x: Anchor x -- baseline left end for LEFT alignment.
+        y: Anchor y -- the first line's baseline.
+        layout: A layout from `prepare_text`.
+        color: Text color.
+        cache: The same cache `prepare_text` was given.
+    """
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if not m.is_translation():
+            draw_text(
+                canvas,
+                x,
+                y,
+                layout.text,
+                color,
+                layout.size,
+                layout.family,
+                layout.slant,
+                layout.weight,
+                layout.rotation,
+                layout.align,
+                layout.kerning,
+                layout.ligatures,
+                cache=cache,
+            )
+            return
+        # A pure translation moves the anchor and leaves every glyph
+        # at its size and orientation, so the layout still holds. The
+        # transform comes off first, exactly as `draw_text` does it,
+        # or the glyph writes below would apply it a second time.
+        var saved = canvas._take_transform()
+        try:
+            _draw_prepared_block(
+                canvas,
+                x + m.e,
+                y + m.f,
+                layout._block,
+                color,
+                layout.size,
+                layout.family,
+                layout.slant,
+                layout.weight,
+                layout.rotation,
+                cache,
+            )
+        except e:
+            canvas._set_transform(saved)
+            raise e
+        canvas._set_transform(saved)
+        return
+    _draw_prepared_block(
+        canvas,
+        x,
+        y,
+        layout._block,
+        color,
+        layout.size,
+        layout.family,
+        layout.slant,
+        layout.weight,
+        layout.rotation,
+        cache,
+    )
+
+
 def _rotate_translate_x(
     x: Float64, y: Float64, c: Float64, s: Float64, tx: Float64
 ) -> Float64:
@@ -1783,6 +2016,42 @@ def draw_text(
         ligatures,
         cache,
     )
+    _draw_prepared_block(
+        canvas,
+        x,
+        y,
+        block,
+        color,
+        size,
+        family,
+        slant,
+        weight,
+        rotation,
+        cache,
+    )
+
+
+def _draw_prepared_block(
+    mut canvas: Canvas,
+    x: Float64,
+    y: Float64,
+    block: _BlockLayout,
+    color: Color,
+    size: Float64,
+    family: String,
+    slant: FontSlant,
+    weight: FontWeight,
+    rotation: Float64,
+    mut cache: FontCache,
+) raises:
+    """Render an already-laid-out block at (x, y). Everything
+    `draw_text` does after `_layout_block`, split out so a prepared
+    layout can be drawn without laying it out again (#294).
+
+    The block is anchor-relative, so the anchor is a parameter here
+    rather than something the layout pinned: the same layout draws at
+    any position.
+    """
     if not block.any_ink:
         # Every line whitespace-only/empty -- nothing to draw.
         return

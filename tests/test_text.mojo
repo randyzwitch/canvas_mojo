@@ -39,9 +39,12 @@ from canvas.path import Path
 from canvas.text.font_cache import _GLYPH_MASK_BUDGET, FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.render import (
+    draw_layout,
     draw_text,
+    measure_layout,
     measure_text,
     measure_text_block,
+    prepare_text,
     stroke_text,
     TextAlign,
     _apply_run_kerning,
@@ -1253,6 +1256,209 @@ def test_clear_glyph_masks_releases_them_and_keeps_faces() raises:
         again, 10.0, 60.0, "Release", Color(20, 30, 40), 16.0, cache=cache
     )
     assert_true(cache.glyph_mask_count() > 0, "re-rasterized after the clear")
+
+
+# --- prepared layouts (#294) ---------------------------------------
+# A prepared layout has to be indistinguishable from laying the text
+# out inside the call. Every test below renders or measures the same
+# thing both ways and asserts they agree exactly -- there is no
+# tolerance here, because the two paths share `_layout_block` and any
+# difference would be a placement bug rather than a rounding one.
+
+
+def _same_pixels(a: Canvas, b: Canvas, label: String) raises:
+    assert_equal(a.width, b.width, label + " width")
+    assert_equal(a.height, b.height, label + " height")
+    var differing = 0
+    for y in range(a.height):
+        for x in range(a.width):
+            var p = a.get_pixel(x, y)
+            var q = b.get_pixel(x, y)
+            if p.r != q.r or p.g != q.g or p.b != q.b or p.a != q.a:
+                differing += 1
+    assert_equal(differing, 0, label + ": differing pixels")
+
+
+def _inked(c: Canvas) -> Int:
+    var n = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            var p = c.get_pixel(x, y)
+            if p.r != 255 or p.g != 255 or p.b != 255:
+                n += 1
+    return n
+
+
+def test_measure_layout_matches_measure_text_block() raises:
+    var cache = FontCache()
+    var texts: List[String] = [
+        "Revenue by region",
+        "Revenue by region\nQ3 2026\nsource: internal",
+        "",
+        "   ",
+    ]
+    var aligns: List[TextAlign] = [
+        TextAlign.LEFT,
+        TextAlign.CENTER,
+        TextAlign.RIGHT,
+    ]
+    for ti in range(len(texts)):
+        for ai in range(len(aligns)):
+            for ri in range(2):
+                var rot = 0.0 if ri == 0 else 0.4
+                ref t = texts[ti]
+                var want = measure_text_block(
+                    t, 14.0, rotation=rot, align=aligns[ai], cache=cache
+                )
+                var layout = prepare_text(
+                    t, 14.0, rotation=rot, align=aligns[ai], cache=cache
+                )
+                var got = measure_layout(layout)
+                var at = String("text ", ti, " align ", ai, " rot ", ri)
+                assert_equal(got.x, want.x, at + " x")
+                assert_equal(got.y, want.y, at + " y")
+                assert_equal(got.width, want.width, at + " width")
+                assert_equal(got.height, want.height, at + " height")
+
+
+def test_draw_layout_matches_draw_text() raises:
+    var cache = FontCache()
+    var ink = Color(20, 30, 40)
+    var text = String("Revenue by region\nQ3 2026 preliminary")
+    var aligns: List[TextAlign] = [
+        TextAlign.LEFT,
+        TextAlign.CENTER,
+        TextAlign.RIGHT,
+    ]
+    for ai in range(len(aligns)):
+        for ri in range(2):
+            var rot = 0.0 if ri == 0 else 0.35
+            var direct = Canvas(320, 180, Color(255, 255, 255))
+            draw_text(
+                direct,
+                60.0,
+                80.0,
+                text,
+                ink,
+                15.0,
+                rotation=rot,
+                align=aligns[ai],
+                cache=cache,
+            )
+            var prepared = Canvas(320, 180, Color(255, 255, 255))
+            var layout = prepare_text(
+                text, 15.0, rotation=rot, align=aligns[ai], cache=cache
+            )
+            draw_layout(prepared, 60.0, 80.0, layout, ink, cache=cache)
+            _same_pixels(prepared, direct, String("align ", ai, " rot ", ri))
+            assert_true(_inked(direct) > 40, "the scene must draw ink")
+
+
+def test_one_layout_draws_at_several_anchors() raises:
+    """The layout is anchor-relative, which is the property that makes
+    it worth keeping while a label's position is still being decided.
+    """
+    var cache = FontCache()
+    var ink = Color(10, 10, 10)
+    var text = String("Northwest 1,284")
+    var xs: List[Float64] = [20.0, 90.5, 160.25]
+    var ys: List[Float64] = [40.0, 90.0, 140.75]
+    var direct = Canvas(320, 180, Color(255, 255, 255))
+    for i in range(3):
+        draw_text(direct, xs[i], ys[i], text, ink, 13.0, cache=cache)
+    var prepared = Canvas(320, 180, Color(255, 255, 255))
+    var layout = prepare_text(text, 13.0, cache=cache)
+    for i in range(3):
+        draw_layout(prepared, xs[i], ys[i], layout, ink, cache=cache)
+    _same_pixels(prepared, direct, "three anchors")
+    assert_true(_inked(direct) > 100, "three labels must draw ink")
+
+
+def test_draw_layout_under_a_translated_canvas() raises:
+    """A pure translation moves the anchor and keeps the layout, so
+    the transform has to come off before the glyphs are written or it
+    lands twice.
+    """
+    var cache = FontCache()
+    var ink = Color(0, 0, 0)
+    var text = String("Baseline")
+    var direct = Canvas(320, 180, Color(255, 255, 255))
+    direct.save()
+    direct.translate(37.0, 21.0)
+    draw_text(direct, 40.0, 60.0, text, ink, 14.0, cache=cache)
+    direct.restore()
+    var prepared = Canvas(320, 180, Color(255, 255, 255))
+    prepared.save()
+    prepared.translate(37.0, 21.0)
+    var layout = prepare_text(text, 14.0, cache=cache)
+    draw_layout(prepared, 40.0, 60.0, layout, ink, cache=cache)
+    prepared.restore()
+    _same_pixels(prepared, direct, "translated")
+    assert_true(_inked(direct) > 20, "the label must draw ink")
+
+
+def test_draw_layout_falls_back_under_a_rotated_canvas() raises:
+    """A transform beyond a translation places glyphs through the
+    matrix, so the prepared placement no longer applies and the call
+    lays out again. The output still has to match exactly.
+    """
+    var cache = FontCache()
+    var ink = Color(0, 0, 0)
+    var text = String("Rotated")
+    var direct = Canvas(320, 180, Color(255, 255, 255))
+    direct.save()
+    direct.rotate(0.25)
+    direct.translate(30.0, 20.0)
+    draw_text(direct, 40.0, 60.0, text, ink, 14.0, cache=cache)
+    direct.restore()
+    var prepared = Canvas(320, 180, Color(255, 255, 255))
+    prepared.save()
+    prepared.rotate(0.25)
+    prepared.translate(30.0, 20.0)
+    var layout = prepare_text(text, 14.0, cache=cache)
+    draw_layout(prepared, 40.0, 60.0, layout, ink, cache=cache)
+    prepared.restore()
+    _same_pixels(prepared, direct, "rotated canvas")
+    assert_true(_inked(direct) > 20, "the label must draw ink")
+
+
+def test_empty_and_whitespace_layouts_draw_nothing() raises:
+    var cache = FontCache()
+    var blanks: List[String] = ["", "   ", "\n\n"]
+    for i in range(len(blanks)):
+        var layout = prepare_text(blanks[i], 14.0, cache=cache)
+        assert_true(not layout.has_ink(), String("blank ", i, " has_ink"))
+        var c = Canvas(80, 40, Color(255, 255, 255))
+        draw_layout(c, 10.0, 20.0, layout, Color(0, 0, 0), cache=cache)
+        assert_equal(_inked(c), 0, String("blank ", i, " drew ink"))
+        var m = measure_layout(layout)
+        assert_equal(m.width, 0.0, String("blank ", i, " width"))
+        assert_equal(m.height, 0.0, String("blank ", i, " height"))
+
+
+def test_layout_pins_the_inputs_that_shaped_it() raises:
+    """The pinned fields are what a caller checks a cached layout
+    against before reusing it, so they have to read back."""
+    var cache = FontCache()
+    var layout = prepare_text(
+        "Sales",
+        17.0,
+        family="Sans",
+        weight=FontWeight.BOLD,
+        rotation=0.5,
+        align=TextAlign.CENTER,
+        kerning=False,
+        ligatures=False,
+        cache=cache,
+    )
+    assert_equal(layout.text, "Sales")
+    assert_equal(layout.size, 17.0)
+    assert_equal(layout.family, "Sans")
+    assert_true(layout.weight == FontWeight.BOLD, "weight")
+    assert_equal(layout.rotation, 0.5)
+    assert_true(layout.align == TextAlign.CENTER, "align")
+    assert_true(not layout.kerning, "kerning")
+    assert_true(not layout.ligatures, "ligatures")
 
 
 def main() raises:
