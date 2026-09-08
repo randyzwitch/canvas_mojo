@@ -1433,7 +1433,7 @@ struct PdfCanvas(DrawTarget, Movable):
                 var advance: Float64
                 if gid != 0:
                     advance = glyph_index_metrics(primary[], gid).advance
-                    self._efonts[primary_index].mark(gid, shaped.chars)
+                    self._efonts[primary_index].mark(gid, shaped.text())
                 else:
                     var fpath = self._fonts.resolve_for_char(
                         family, slant, weight, shaped.codepoint
@@ -1444,7 +1444,7 @@ struct PdfCanvas(DrawTarget, Movable):
                     gid = fface[].glyph_index_for_codepoint(shaped.codepoint)
                     advance = glyph_index_metrics(fface[], gid).advance
                     font_index = self._font_index(fpath, fface)
-                    self._efonts[font_index].mark(gid, shaped.chars)
+                    self._efonts[font_index].mark(gid, shaped.text())
                 if font_index != run_font:
                     if run_font >= 0:
                         self._content += run + "] TJ "
