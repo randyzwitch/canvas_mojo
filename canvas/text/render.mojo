@@ -101,6 +101,8 @@ from std.math import ceil, cos, floor, sin
 from canvas.text.bidi import (
     detect_base_level,
     visual_runs,
+    _is_combining_mark,
+    _is_explicit_control,
     _mirror_codepoint,
 )
 from canvas.text.joining import (
@@ -474,7 +476,13 @@ def _shape_line(
     # strongly right-to-left character in it. Shaping it in place skips
     # copying the codepoints into a run buffer.
     if len(runs) == 1 and not runs[0].is_rtl():
-        var only = _shape_run(face, codepoints, ligatures)
+        var visible = List[Int](capacity=len(codepoints))
+        for i in range(len(codepoints)):
+            # Formatting characters are structure, not text: shaping
+            # them produces a .notdef box.
+            if not _is_explicit_control(codepoints[i]):
+                visible.append(codepoints[i])
+        var only = _shape_run(face, visible, ligatures)
         if kerning:
             _apply_run_kerning(face, only, False)
         return only^
@@ -483,6 +491,8 @@ def _shape_line(
     for run in runs:
         var run_codepoints = List[Int](capacity=run.length)
         for i in range(run.start, run.start + run.length):
+            if _is_explicit_control(codepoints[i]):
+                continue
             # bidi rule L4: a paired character inside an RTL run draws
             # its mirror image.
             if run.is_rtl():
@@ -493,8 +503,18 @@ def _shape_line(
         if kerning:
             _apply_run_kerning(face, shaped, run.is_rtl())
         if run.is_rtl():
-            for i in range(len(shaped) - 1, -1, -1):
-                out.append(shaped[i])
+            # Reversed by cluster. A combining mark follows its base
+            # logically and has to keep following it here, or a
+            # Hebrew word with niqqud renders with every point moved
+            # one letter along.
+            var i = len(shaped) - 1
+            while i >= 0:
+                var base = i
+                while base > 0 and _is_combining_mark(shaped[base].codepoint):
+                    base -= 1
+                for k in range(base, i + 1):
+                    out.append(shaped[k])
+                i = base - 1
         else:
             out.extend(shaped^)
     return out^
