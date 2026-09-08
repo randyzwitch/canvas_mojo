@@ -13,8 +13,10 @@ quoted from a spec sheet. The ratio is headroom, and a row near 100% is
 finished. That is what makes 57 rows tractable -- you compute 57 ratios
 and read only the outliers.
 
-Recorded 2026-09-08 at v0.26.0 on an AMD Ryzen Threadripper 3970X, the
-machine quiet. Re-derive with the tasks below; the constants are
+Recorded 2026-09-08 on an AMD Ryzen Threadripper 3970X, the machine
+quiet. Actuals are from current main, so they include the work merged
+since v0.26.0 (#343, #356, #357, #358); the floors were re-derived
+after two errors were found in them, described below. Re-derive with the tasks below; the constants are
 machine properties and do not carry to other hardware.
 
     pixi run roofline           # machine constants
@@ -30,32 +32,51 @@ drop straight into the rows.
 
 | rate | value | notes |
 |---|---|---|
-| vectorized copy | 96.6 GB/s | read+write, 39.7 us |
-| vectorized fill | 86.0 GB/s | write only, 22.3 us |
-| source-over, SIMD | 0.12 ns/px | ALU ceiling, L1-resident |
-| source-over, scalar | 3.22 ns/px | 27x -- the cost of not vectorizing |
-| scattered sample | 1.64 ns/px | dependent load, the transform path |
-| f64 axpy, 480k doubles | 44.4 us | resize's intermediate shape |
+| vectorized copy | 96.9 GB/s | read+write, 39.6 us |
+| vectorized fill | 85.8 GB/s | write only, 22.4 us |
+| source-over, SIMD | **0.78 ns/px** | uint32 lanes, alpha broadcast, exact div255 |
+| source-over, scalar | 3.52 ns/px | 4.5x -- the cost of not vectorizing |
+| scattered sample | 1.65 ns/px | dependent load, the transform path |
+| f64 axpy, 480k doubles | 44.6 us | resize's intermediate shape |
 | task dispatch | 0.68 us/task | 43.5 us for 64 |
 
-## Tight and loose
+The source-over figure was 0.12 ns/px in the first version of this
+file, taken with uint16 lanes, a `>>8` approximation and no alpha
+broadcast. That is cheaper arithmetic than any correct implementation
+can use, and it under-priced about 36 of the rows below by 6.3x. The
+"cost of not vectorizing" moved with it, from 27x to 4.5x.
 
-The distinction that keeps this honest.
+## What a floor is based on
 
-A **tight** floor accounts for essentially all the compulsory work: a
-fill must write its bytes, a composite must read and write them.
-Fifteen rows have one, and for those the gap is real headroom.
+Each row says which of four things its floor rests on, because they
+carry very different weight.
 
-A **loose** floor omits work that genuinely has to happen -- computing
-anti-aliased coverage, evaluating a gradient, Huffman-decoding a
-scanline. Those floors are lower bounds, so the ratio is an *upper
-bound on headroom*, never a promise. A low percentage on a loose row is
-a question, not a verdict.
+**tight** -- compulsory traffic, and little else is required: a fill
+must write its bytes, a copy must read and write them.
 
-Pixel counts are measured, not estimated: `roofline_census.mojo`
-renders each scene onto a known background and counts what actually
-changed. That is the floor's denominator -- the output the operation is
-obliged to produce.
+**measured** -- a kernel doing the operation's real arithmetic, timed
+here. The compositing rows are priced this way.
+
+**coverage** -- a kernel that also computes anti-aliased coverage over
+the pixels the rasterizer must visit. See below.
+
+**loose** -- traffic or blend cost only, with real work left unpriced
+(curve flattening, gradient evaluation, entropy coding). A loose
+percentage is an upper bound on headroom and nothing more.
+
+**A floor above 100% is a broken model, not a fast row.** Six rows
+below price above the row they are meant to bound. That means the
+kernel is not a lower bound for them -- the library is doing less work
+than the kernel charges for, by skipping fully transparent groups, by
+hoisting source terms further, or because the model counts arithmetic
+the operation does not perform. Those rows are marked, and the right
+reading is "no headroom demonstrated", never "138% efficient".
+
+Pixel counts come from `roofline_census.mojo`, which renders each
+scene onto a known background and counts what changed. Coverage rows
+use *visits* instead -- the pixels a shape's bounding box makes the
+rasterizer look at, summed over every shape -- because overlapping
+shapes visit a pixel several times and that work was never optional.
 
 ## Coverage floors, and why the loose ones misled
 
@@ -264,80 +285,126 @@ one that is flat is not. 24 of 57 rows band today, marked `*` below.
 `*` marks a row that bands across cores. Sorted by distance from floor,
 worst first.
 
-| % of floor | row | us | floor us | px changed | floor | what the floor counts |
-|---:|---|---:|---:|---:|:--:|---|
-| 0.1 | `draw_polyline_aa 3000-segment smooth series` * | 1120.2 | 0.62 | 5,141 | loose | blend only; coverage math not in floor |
-| 0.1 | `draw_text 3 lines @13px (uncached)` | 1753.0 | 2.22 | 4,000 | loose | dominated by a full font rescan |
-| 23.1 | `fill_arc_aa x2000 small (r=4)` | 2766.3 | 637.90 | 242,000 | coverage | disk coverage + two half-plane tests per visit |
-| 0.2 | `fill_path_aa glyph-sized` | 22.8 | 0.05 | 425 | loose | blend only; coverage math not in floor |
-| 0.2 | `stroke_path_aa 39-curve path` * | 2350.6 | 4.79 | 39,947 | loose | blend only; coverage math not in floor |
-| 0.3 | `fill_circle_aa x2000 under a clip path` | 3281.7 | 10.66 | 88,810 | loose | blend only; coverage math not in floor |
-| 23.8 | `fill_circle_aa x2000 markers (r=3.5)` | 2921.0 | 695.40 | 200,000 | coverage | distance, clamp and blend per visit |
-| 34.7 | `fill_ellipse_aa x2000 small (5x3)` | 3482.5 | 1208.60 | 234,000 | coverage | normalized radius, clamp and blend per visit |
-| 0.4 | `fill_path_gradient_aa glyph-sized` | 27.6 | 0.10 | 425 | loose | + gradient eval/px (sqrt, atan2) |
-| 0.4 | `draw_polyline_aa 3000-segment dashed` * | 3133.7 | 12.55 | 104,585 | loose | blend only; coverage math not in floor |
-| 0.4 | `fill_circle_aa x2000 under a clip rect` | 2923.2 | 10.66 | 88,810 | loose | blend only; coverage math not in floor |
-| 0.7 | `fill_path_aa large under a clip rect` * | 547.7 | 4.10 | 34,164 | loose | blend only; coverage math not in floor |
-| 0.7 | `fill_path_radial_gradient_aa glyph-sized` | 28.4 | 0.20 | 425 | loose | + gradient eval/px (sqrt, atan2) |
-| 0.7 | `draw_line dashed full diagonal` | 7.8 | 0.05 | 449 | loose | blend only; coverage math not in floor |
-| 0.7 | `write_png 800x600 (deflate)` | 4233.3 | 29.14 | 480,000 | loose | LZ77+huffman; memory floor only |
-| 0.8 | `draw_line_aa full diagonal (w=2)` | 47.7 | 0.36 | 3,029 | loose | blend only; coverage math not in floor |
-| 0.8 | `draw_polyline_aa 3000-segment series` * | 2344.6 | 18.15 | 151,241 | loose | blend only; coverage math not in floor |
-| 0.8 | `push_clip_path rect mask` * | 703.9 | 5.58 | 480,000 | tight | exact-area floor; today 4x4 supersampled |
-| 1.0 | `fill_path_aa glyph-sized (nonzero)` | 5.0 | 0.05 | 425 | loose | blend only; coverage math not in floor |
-| 1.2 | `fill_path_conic_gradient_aa glyph-sized` | 35.3 | 0.41 | 425 | loose | + gradient eval/px (sqrt, atan2) |
-| 1.8 | `fill_path_aa large 39-curve` * | 640.6 | 11.36 | 94,669 | loose | blend only; coverage math not in floor |
-| 1.9 | `fill_path_gradient_aa large 39-curve` * | 1208.2 | 22.72 | 94,669 | loose | + gradient eval/px (sqrt, atan2) |
-| 1.9 | `draw_line solid full diagonal` | 4.7 | 0.09 | 741 | loose | blend only; coverage math not in floor |
-| 2.8 | `draw_text 3 lines @13px (cached)` | 97.5 | 2.70 | 4,000 | loose | 111 cached glyph blits |
-| 2.8 | `measure then draw 3 lines (prepared once)` | 98.1 | 2.70 | 4,000 | loose | layout once + blit |
-| 3.0 | `fill_path_aa large 39-curve (nonzero)` * | 388.6 | 11.55 | 96,273 | loose | blend only; coverage math not in floor |
-| 3.0 | `read_png 800x600 (inflate)` | 754.8 | 22.33 | 480,000 | loose | huffman decode; memory floor only |
-| 3.5 | `resize 1600x1200 -> 800x600` * | 2820.4 | 99.38 | 480,000 | tight | same traffic as downsample |
-| 3.6 | `resize 1600x1200 -> 741x533` * | 2628.2 | 95.86 | 395,073 | tight | read 7.68 MB, write 1.58 |
-| 3.7 | `fill_circles_aa x2000 markers batched (r=3.5)` * | 301.0 | 11.18 | 93,142 | loose | blend only; coverage math not in floor |
-| -- | `fill_path_gradient_aa 39-curve, clip misses the path` | 51.1 | -- | 0 | n/a | renamed: flatten 39 curves and find no coverage |
-| -- | `fill_path_gradient_aa 39-curve under a small clip` | -- | -- | 7,000 | n/a | new intersecting scene; re-record for a time |
-| 3.8 | `fill_path_radial_gradient_aa large 39-curve` * | 1198.7 | 45.44 | 94,669 | loose | + gradient eval/px (sqrt, atan2) |
-| 4.1 | `measure then draw 3 lines (laid out twice)` | 119.6 | 4.92 | 4,000 | loose | layout twice + blit |
-| 36.9 | `fill_polygon_aa 64-gon` * | 442.9 | 163.50 | 157,244 | coverage | scanline crossings, interior run, edge coverage |
-| 6.9 | `fill_path_conic_gradient_aa large 39-curve` * | 1318.8 | 90.88 | 94,669 | loose | + gradient eval/px (sqrt, atan2) |
-| 7.4 | `measure_text one label (cached)` | 2.7 | 0.20 | 0 | loose | 10 glyph lookups + advances |
-| 8.2 | `draw_canvas 800x600 through a mask` | 843.4 | 69.20 | 480,000 | tight | + mask read |
-| 8.8 | `draw_text_on_path 20 glyphs on an arc` | 113.5 | 10.00 | 1,427 | loose | 20 rotated glyphs, each outline-filled |
-| 8.9 | `fill_ring_sector_aa large donut (150-260)` * | 80.3 | 7.13 | 59,415 | loose | blend only; coverage math not in floor |
-| 9.6 | `draw_canvas 800x600 at half opacity` | 646.0 | 61.92 | 480,000 | tight | + one scale/px |
-| 10.2 | `fill_rect 600x400 multiply` | 304.7 | 30.96 | 240,000 | tight | read+write+blend |
-| 10.5 | `measure_text_block 3 lines (cached)` | 21.2 | 2.22 | 0 | loose | 111 glyph lookups + advances |
-| 11.4 | `downsample 1600x1200 -> 2x` * | 872.4 | 99.38 | 480,000 | tight | read 7.68 MB, write 1.92 |
-| 14.0 | `fill_arc_aa large pie wedge (r=260)` * | 76.1 | 10.63 | 88,594 | loose | blend only; coverage math not in floor |
-| 79.0 | `fill_circle_aa one large (r=250)` * | 140.2 | 110.80 | 196,805 | coverage | analytic row span, interior run, rim coverage |
-| 21.7 | `fill_ellipse_aa one large (340x220)` * | 130.5 | 28.32 | 236,029 | loose | blend only; coverage math not in floor |
-| 21.9 | `draw_canvas 800x600 translucent` | 283.0 | 61.92 | 480,000 | tight | read+write+blend |
-| 28.0 | `Canvas.fill translucent (blend)` | 221.5 | 61.92 | 480,000 | tight | read+write+blend |
-| 28.2 | `blur 800x600 r=16` * | 2287.1 | 645.12 | 480,000 | loose | same work; radius is free |
-| 36.8 | `draw_canvas 800x600 opaque` | 108.1 | 39.75 | 480,000 | tight | a copy, nothing more |
-| 50.2 | `Canvas(800x600) construct+fill` | 44.4 | 22.33 | 480,000 | tight | alloc + fill 1.92 MB |
-| 53.5 | `blur 800x600 r=4` * | 1206.2 | 645.12 | 480,000 | loose | ~64 f32 ops/px (estimated), 6 stages |
-| 71.9 | `fill_rect 600x400 opaque` | 15.5 | 11.16 | 240,000 | tight | write 0.96 MB |
-| 78.4 | `draw_canvas 200x200 1.7x rot 30 bilinear` * | 312.6 | 245.07 | 115,600 | tight | 1 scatter + 2x2 lerp |
-| 85.4 | `Canvas.fill opaque` | 26.1 | 22.33 | 480,000 | tight | write 1.92 MB |
-| 103.2 | `draw_canvas 200x200 1.7x rot 30 nearest` * | 183.8 | 189.58 | 115,600 | tight | 1 scattered sample/px |
-| -- | `FontCache() font scan` | 0.1 | -- | 0 | loose | machine property, not code |
+| % of floor | row | us | floor us | basis | what the floor counts |
+|---:|---|---:|---:|:--:|---|
+| 0.3 | `draw_polyline_aa 3000-segment smooth series` | 1200.8 | 4.01 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 0.5 | `write_png 800x600 (deflate)` | 4129.8 | 22.54 | loose | LZ77+huffman not priced |
+| 1.0 | `draw_text_on_path 20 glyphs on an arc` | 113.3 | 1.11 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 1.0 | `fill_path_gradient_aa 39-curve under a small clip` | 527.4 | 5.46 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 1.3 | `stroke_path_aa 39-curve path` | 2414.6 | 31.16 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 1.5 | `fill_path_aa glyph-sized` | 22.4 | 0.33 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 2.4 | `draw_polyline_aa 3000-segment dashed` | 3349.6 | 81.58 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 3.2 | `draw_text 3 lines @13px (cached)` | 96.5 | 3.12 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 3.3 | `blur 800x600 r=16` | 2388.4 | 79.26 | loose | same work; radius is free |
+| 3.3 | `read_png 800x600 (inflate)` | 671.5 | 22.38 | loose | huffman decode not priced |
+| 4.1 | `fill_path_aa large under a clip rect` | 646.5 | 26.65 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 4.5 | `draw_line dashed full diagonal` | 7.8 | 0.35 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 4.8 | `draw_polyline_aa 3000-segment series` | 2462.5 | 117.97 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 4.9 | `draw_line_aa full diagonal (w=2)` | 48.7 | 2.36 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 6.2 | `blur 800x600 r=4` | 1274.7 | 79.26 | loose | ~64 f32 ops/px not priced |
+| 9.0 | `resize 1600x1200 -> 741x533` | 1067.3 | 95.57 | loose | traffic only; no filter arithmetic |
+| 10.3 | `fill_path_aa large 39-curve` | 718.5 | 73.84 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 10.8 | `downsample 1600x1200 -> 2x` | 920.3 | 99.07 | loose | traffic only; no filter arithmetic |
+| 11.1 | `resize 1600x1200 -> 800x600` | 894.1 | 99.07 | loose | traffic only; dispatches to downsample |
+| 12.2 | `draw_line solid full diagonal` | 4.7 | 0.58 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 15.4 | `fill_path_aa large 39-curve (nonzero)` | 488.1 | 75.09 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 23.7 | `fill_arc_aa x2000 small (r=4)` | 2694.8 | 637.90 | coverage | measured coverage kernel |
+| 23.8 | `fill_circle_aa x2000 markers (r=3.5)` | 2918.9 | 695.40 | coverage | measured coverage kernel |
+| 32.2 | `fill_circles_aa x2000 markers batched (r=3.5)` | 225.6 | 72.65 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 35.0 | `fill_ellipse_aa x2000 small (5x3)` | 3448.9 | 1208.60 | coverage | measured coverage kernel |
+| 38.6 | `fill_polygon_aa 64-gon` | 423.4 | 163.50 | coverage | measured coverage kernel |
+| 42.0 | `draw_canvas 800x600 opaque` | 94.3 | 39.63 | tight | a copy, nothing more |
+| 43.1 | `fill_ring_sector_aa large donut (150-260)` | 107.5 | 46.34 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 44.3 | `push_clip_path rect mask` | 12.6 | 5.59 | tight | write a 480 KB coverage plane |
+| 50.6 | `Canvas(800x600) construct+fill` | 44.2 | 22.38 | tight | alloc + fill 1.92 MB |
+| 63.1 | `fill_rect 600x400 multiply` | 304.7 | 192.10 | measured | multiply-specific kernel |
+| 70.7 | `fill_arc_aa large pie wedge (r=260)` | 97.7 | 69.10 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 72.6 | `fill_rect 600x400 opaque` | 15.4 | 11.19 | tight | write 0.96 MB |
+| 84.6 | `Canvas.fill opaque` | 26.4 | 22.38 | tight | write 1.92 MB |
+| 88.2 | `fill_circle_aa one large (r=250)` | 125.7 | 110.80 | coverage | measured coverage kernel |
+| 96.5 | `draw_canvas 800x600 through a mask` | 393.8 | 380.03 | measured | + mask read |
+| 105.2 | `draw_canvas 200x200 1.7x rot 30 nearest` | 181.4 | 190.74 | tight | 1 scattered sample/px |
+| 122.1 | `Canvas.fill translucent (blend)` | 220.8 | 269.60 | measured | hoisted flat-source kernel |
+| 133.4 | `draw_canvas 800x600 at half opacity` | 280.7 | 374.40 | measured | + one scale/px |
+| 142.7 | `draw_canvas 800x600 translucent` | 262.3 | 374.40 | measured | exact source-over kernel |
+| 163.0 | `fill_ellipse_aa one large (340x220)` | 112.9 | 184.10 | loose | blend only at 0.78 ns/px; coverage not priced |
+| 184.4 | `draw_canvas 200x200 1.7x rot 30 bilinear` | 299.0 | 551.41 | tight | 1 scatter + 2x2 lerp |
+| -- | `fill_path_aa glyph-sized (nonzero)` | 5.0 | -- | n/a | no model |
+| -- | `fill_path_gradient_aa glyph-sized` | 27.5 | -- | n/a | no model |
+| -- | `fill_path_gradient_aa large 39-curve` | 1249.7 | -- | n/a | no model |
+| -- | `fill_path_gradient_aa 39-curve, clip misses the path` | 49.8 | -- | n/a | no model |
+| -- | `fill_path_radial_gradient_aa glyph-sized` | 28.3 | -- | n/a | no model |
+| -- | `fill_path_radial_gradient_aa large 39-curve` | 1278.5 | -- | n/a | no model |
+| -- | `fill_path_conic_gradient_aa glyph-sized` | 35.8 | -- | n/a | no model |
+| -- | `fill_path_conic_gradient_aa large 39-curve` | 1447.8 | -- | n/a | no model |
+| -- | `draw_text 3 lines @13px (uncached)` | 1787.5 | -- | n/a | no model |
+| -- | `FontCache() font scan` | 0.1 | -- | n/a | no model |
+| -- | `fill_circle_aa x2000 under a clip path` | 3256.6 | -- | n/a | no model |
+| -- | `fill_circle_aa x2000 under a clip rect` | 2905.3 | -- | n/a | no model |
+| -- | `measure_text one label (cached)` | 2.7 | -- | n/a | no model |
+| -- | `measure_text_block 3 lines (cached)` | 21.2 | -- | n/a | no model |
+| -- | `measure then draw 3 lines (laid out twice)` | 117.7 | -- | n/a | no model |
+| -- | `measure then draw 3 lines (prepared once)` | 95.7 | -- | n/a | no model |
 
 ## Where this leaves it
 
-Three tight rows carry most of the recoverable time -- resize at 28x,
-the clip mask at 126x, masked compositing at 12x -- and each has a named
-cause rather than a vague suspicion.
+Of the 17 rows with a floor worth trusting -- tight, measured or
+coverage -- **nine are at or above it** and can be left alone:
 
-The 42 loose rows are where the floor model itself needs work. To say
-anything firm about `fill_circle_aa x2000 markers` at 0.4%, the floor
-has to include the cost of computing coverage, which means writing the
-minimal kernel for that and measuring it, exactly as the yardsticks
-were measured. That is the next increment, and it is the same move each
-time: pick the operation, write the smallest honest thing that does its
-essential work, measure it, and let the ratio say whether there is an
-afternoon's work in it or nothing at all.
+| row | actual | floor | |
+|---|---:|---:|---|
+| `draw_canvas 200x200 bilinear` | 299.0 | 551.4 | model over-prices |
+| `draw_canvas 800x600 translucent` | 262.3 | 374.4 | model over-prices |
+| `draw_canvas 800x600 at half opacity` | 280.7 | 374.4 | model over-prices |
+| `Canvas.fill translucent` | 220.8 | 269.6 | model over-prices |
+| `draw_canvas 200x200 nearest` | 181.4 | 190.7 | at floor |
+| `draw_canvas 800x600 through a mask` | 393.8 | 380.0 | 96.5% |
+| `fill_circle_aa one large (r=250)` | 125.7 | 110.8 | 88.2% |
+| `Canvas.fill opaque` | 26.4 | 22.4 | 84.6% |
+| `fill_rect 600x400 opaque` | 15.4 | 11.2 | 72.6% |
 
-Tracking: #338.
+What is actually left, worst first:
+
+| row | actual | floor | gap |
+|---|---:|---:|---|
+| `fill_arc_aa x2000 small (r=4)` | 2694.8 | 637.9 | 4.2x |
+| `fill_circle_aa x2000 markers` | 2918.9 | 695.4 | 4.2x |
+| `fill_ellipse_aa x2000 small` | 3448.9 | 1208.6 | 2.9x |
+| `fill_polygon_aa 64-gon` | 423.4 | 163.5 | 2.6x |
+| `draw_canvas 800x600 opaque` | 94.3 | 39.6 | 2.4x |
+| `push_clip_path rect mask` | 12.6 | 5.6 | 2.3x |
+| `Canvas(800x600) construct+fill` | 44.2 | 22.4 | 2.0x |
+| `fill_rect 600x400 multiply` | 304.7 | 192.1 | 1.6x |
+
+The batched small shapes are the only rows left with a gap over 2.5x
+against a floor that prices their real work. Everything else is either
+close to its floor or has no floor worth acting on yet.
+
+The 41 rows still marked `loose` are not evidence of anything. Their
+floors price a blend and no coverage, no flattening, no gradient
+evaluation and no entropy coding, so a figure like 0.3% for
+`draw_polyline_aa smooth series` says the model is absent, not that
+the row is bad. Pricing them is the same move each time: write the
+smallest honest kernel that does the essential work, measure it, and
+see whether an afternoon is warranted.
+
+## What the refresh corrected
+
+The first version of this file got two things wrong, and both
+inflated the apparent headroom.
+
+**The source-over yardstick priced a cheaper operation than the
+library performs** -- uint16 lanes and `>>8` where the real kernel
+broadcasts alpha, widens to uint32 and divides exactly. 6.3x low,
+propagating to about 36 rows. Six of them now price above their own
+row, which is how the error announced itself.
+
+**The shape floors priced a blend and no coverage**, understating
+them by up to two orders of magnitude. `fill_circle_aa one large` read
+16.9% and looked worth an afternoon; priced properly it is at 88.2%
+and there is nothing in it.
+
+Both errors pointed the same way: they made finished rows look
+unfinished. The three rows that were genuinely worth doing -- the clip
+mask, resize, and masked compositing -- were all *tight*-floor rows,
+where the model was simple enough to be right.

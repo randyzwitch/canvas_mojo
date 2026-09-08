@@ -70,22 +70,62 @@ def _read(src: List[UInt8], n: Int) -> Int:
 
 
 # --- per-pixel arithmetic ----------------------------------------
-# One widening multiply, one subtract, one shift, one add per byte:
-# the essential arithmetic of source-over, without the alpha
-# broadcast an implementation would also pay.
+# Source-over as the library performs it: each pixel's alpha
+# broadcast across its four lanes, widened to uint32, and an exact
+# division by 255.
+#
+# An earlier version of this kernel used uint16 lanes, a `>>8`
+# approximation and no broadcast. That is cheaper arithmetic than any
+# correct implementation can use, and it under-priced every floor
+# built on it by 6.3x (#350). Measure what the code must do, not the
+# nearest convenient thing.
 def _blend(src: List[UInt8], mut dst: List[UInt8], n: Int):
     var s = src.unsafe_ptr()
     var d = dst.unsafe_ptr()
     var i = 0
     while i + W <= n:
-        var sv = s.unsafe_offset(i).unsafe_load[width=W]().cast[
-            DType.uint16
-        ]()
-        var dv = d.unsafe_offset(i).unsafe_load[width=W]().cast[
-            DType.uint16
-        ]()
-        var out = sv + ((dv * (255 - sv)) >> 8)
-        d.unsafe_offset(i).unsafe_store(out.cast[DType.uint8]())
+        var v = s.unsafe_offset(i).unsafe_load[width=W]()
+        var dv = d.unsafe_offset(i).unsafe_load[width=W]()
+        var a32 = v.shuffle[
+            3,
+            3,
+            3,
+            3,
+            7,
+            7,
+            7,
+            7,
+            11,
+            11,
+            11,
+            11,
+            15,
+            15,
+            15,
+            15,
+            19,
+            19,
+            19,
+            19,
+            23,
+            23,
+            23,
+            23,
+            27,
+            27,
+            27,
+            27,
+            31,
+            31,
+            31,
+            31,
+        ]().cast[DType.uint32]()
+        var num = v.cast[DType.uint32]() * a32 + dv.cast[DType.uint32]() * (
+            SIMD[DType.uint32, W](255) - a32
+        )
+        d.unsafe_offset(i).unsafe_store(
+            ((num * UInt32(32897)) >> UInt32(23)).cast[DType.uint8]()
+        )
         i += W
 
 
@@ -95,10 +135,13 @@ def _blend_scalar(src: List[UInt8], mut dst: List[UInt8], n: Int):
     var s = src.unsafe_ptr()
     var d = dst.unsafe_ptr()
     for i in range(n):
-        var sv = UInt16(s[unsafe_offset=i])
-        var dv = UInt16(d[unsafe_offset=i])
+        var sv = UInt32(s[unsafe_offset=i])
+        var dv = UInt32(d[unsafe_offset=i])
+        var sa = UInt32(s[unsafe_offset=(i & ~3) + 3])
         if sv != 0:
-            d[unsafe_offset=i] = UInt8(sv + ((dv * (255 - sv)) >> 8))
+            d[unsafe_offset=i] = UInt8(
+                ((sv * sa + dv * (255 - sa)) * 32897) >> 23
+            )
 
 
 # --- Float64, the shape resize's two passes run in ---------------
@@ -255,7 +298,9 @@ def main() raises:
         ts.append(Float64(perf_counter_ns() - t0) / 1000.0 / 20.0)
     var g = _median(ts^)
     print(
-        "   scattered 1px sample x", PX, "  ",
+        "   scattered 1px sample x",
+        PX,
+        "  ",
         String(round(g, 1)),
         "us =",
         String(round(g * 1000.0 / Float64(PX), 2)),
@@ -273,12 +318,13 @@ def main() raises:
                 for _ in range(bands):
                     tg.create_task(_nop_task())
                 tg.wait()
-            ts.append(
-                Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters)
-            )
+            ts.append(Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters))
         print(
-            "  ", _pad(String(bands), 4, True), "tasks ",
-            _pad(String(round(_median(ts^), 1)), 7, True), "us",
+            "  ",
+            _pad(String(bands), 4, True),
+            "tasks ",
+            _pad(String(round(_median(ts^), 1)), 7, True),
+            "us",
         )
 
     # Banded fill: dispatch plus real work, the shape a banded op runs.
@@ -297,13 +343,15 @@ def main() raises:
                         tg.create_task(_fill_band_async(dst, lo, hi))
                 tg.wait()
                 _ = len(dst)
-            ts.append(
-                Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters)
-            )
+            ts.append(Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters))
         var v = _median(ts^)
         print(
-            "  ", _pad(String(bands), 4, True), "bands ",
-            _pad(String(round(v, 1)), 7, True), "us  =",
-            _pad(String(round(mb / v * 1000.0, 1)), 7, True), "GB/s",
+            "  ",
+            _pad(String(bands), 4, True),
+            "bands ",
+            _pad(String(round(v, 1)), 7, True),
+            "us  =",
+            _pad(String(round(mb / v * 1000.0, 1)), 7, True),
+            "GB/s",
         )
     print("\nsink", sink != 0, sink0 != 0)
