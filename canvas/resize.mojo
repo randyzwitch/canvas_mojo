@@ -888,11 +888,13 @@ def resize(source: Canvas, width: Int, height: Int) raises -> Canvas:
     so transparent source pixels neither darken an edge nor
     contribute hidden color, and an output pixel whose alpha rounds
     to zero is transparent black. These are `downsample`'s rules, and
-    at an integer ratio dividing both dimensions this returns exactly
-    what `downsample` returns.
+    at an integer ratio dividing both dimensions this *is*
+    `downsample` -- the same bytes, through the same fixed-factor
+    kernels, at the same cost.
 
     Extra memory is one intermediate of `width * source.height * 4`
-    doubles, from resampling horizontally before vertically.
+    doubles, from resampling horizontally before vertically. The
+    integer-ratio path above allocates none of it.
 
     Args:
         source: Canvas to resample.
@@ -918,6 +920,38 @@ def resize(source: Canvas, width: Int, height: Int) raises -> Canvas:
         # Every byte preserved, including color under zero alpha,
         # which a filtered round trip would flatten.
         return Canvas(width, height, source.pixels.copy())
+
+    # A shrink by one integer factor on both axes is exactly what
+    # downsample computes: every weight is 1 and the count is the
+    # factor, so the weighted mean reduces to the block mean. Taking
+    # its fixed-factor kernels rather than the general path saves a
+    # Float64 intermediate of `width * source.height * 4` doubles --
+    # 30.7 MB at 1600x1200 -> 2x -- and 3.2x the time, for bytes that
+    # were already identical. The equivalence is checked past this
+    # dispatch by test_the_general_filter_still_agrees_with_downsample.
+    if source.width % width == 0 and source.height % height == 0:
+        var factor = source.width // width
+        if factor == source.height // height:
+            return downsample(source, factor)
+
+    return _resize_general(source, width, height)
+
+
+def _resize_general(source: Canvas, width: Int, height: Int) raises -> Canvas:
+    """`resize`'s two-pass filter, without the fast paths in front of
+    it. Separate so a test can still reach it at an integer ratio and
+    check it agrees with `downsample` there -- the property the
+    dispatch above rests on, which is otherwise unobservable once the
+    dispatch takes that case.
+
+    Args:
+        source: Canvas to resample.
+        width: Target width in pixels, at least 1.
+        height: Target height in pixels, at least 1.
+
+    Returns:
+        A new `width` x `height` Canvas.
+    """
     var wx = _axis_weights(source.width, width)
     var wy = _axis_weights(source.height, height)
     var mid = _resize_horizontal(source, width, wx)

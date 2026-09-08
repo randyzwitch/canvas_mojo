@@ -12,7 +12,7 @@ from std.testing import (
 
 from canvas.buffer import Canvas
 from canvas.color import Color
-from canvas.resize import downsample, resize
+from canvas.resize import _resize_general, downsample, resize
 
 comptime BG = Color(0, 0, 0)
 
@@ -362,6 +362,38 @@ def test_resize_matches_downsample_at_integer_ratios() raises:
         var want = downsample(src, f)
         var got = resize(src, 60 // f, 60 // f)
         _assert_same(got, want, String("factor ", f))
+
+
+def test_the_general_filter_still_agrees_with_downsample() raises:
+    """`resize` dispatches an integer ratio straight to `downsample`,
+    so the row above now compares downsample against itself. This
+    reaches past the dispatch and checks the two-pass filter still
+    computes the same bytes -- if it ever stops, the dispatch is
+    changing output rather than just saving time."""
+    var factors: List[Int] = [2, 3, 4, 5, 6, 10]
+    for fi in range(len(factors)):
+        var f = factors[fi]
+        var src = _scene(60, 60)
+        var want = downsample(src, f)
+        var got = _resize_general(src, 60 // f, 60 // f)
+        _assert_same(got, want, String("general filter, factor ", f))
+
+
+def test_integer_ratio_dispatch_is_not_taken_off_the_grid() raises:
+    """Only a single factor shared by both axes may dispatch. An
+    anisotropic or non-dividing ratio has to stay on the general
+    filter, where downsample would raise or answer a different
+    question."""
+    var src = _scene(60, 60)
+    # 60 % 40 != 0 on either axis.
+    var odd = resize(src, 40, 40)
+    _assert_same(odd, _resize_general(src, 40, 40), "non-dividing")
+    # Divides on both axes, but by different factors.
+    var aniso = resize(src, 30, 20)
+    _assert_same(aniso, _resize_general(src, 30, 20), "anisotropic")
+    # Divides on one axis only.
+    var one = resize(src, 30, 41)
+    _assert_same(one, _resize_general(src, 30, 41), "one axis")
 
 
 def test_resize_to_the_same_size_copies_every_byte() raises:
