@@ -57,6 +57,15 @@ importable package is named `canvas`; the project is `canvas_mojo`.
   anchors at the baseline; `align` is `TextAlign.LEFT/CENTER/RIGHT`.
   Fonts come from the system; `FontCache()` shared across calls avoids
   re-resolving. `measure_text` gives the ink box before drawing.
+- Measuring a label and then drawing it lays it out twice. To pay
+  once, `prepare_text(text, size, ..., cache=cache)` returns a
+  `TextLayout` that `measure_layout(layout)` and
+  `draw_layout(canvas, x, y, layout, color, cache=cache)` share --
+  about 1.25x on the pair. The layout is anchor-relative, so one
+  prepared layout draws at any position; it pins the string, size,
+  family, slant, weight, rotation, alignment, kerning and ligature
+  settings, and changing any of them needs a new one. Reuse is
+  caller-managed: there is no hidden cache.
 - `DrawTarget` is the trait `Canvas`, `SvgCanvas` and `PdfCanvas`
   share. Code written against it draws to any backend; text, clipping
   and gradient path fills are backend methods rather than trait
