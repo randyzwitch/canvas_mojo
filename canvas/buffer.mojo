@@ -1446,6 +1446,45 @@ struct Canvas(Copyable, DrawTarget, Movable):
     ):
         fill_circle_aa(self, cx, cy, radius, color)
 
+    def fill_ellipses_aa(
+        mut self,
+        centers: List[FPoint],
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+    ) raises:
+        """`DrawTarget`'s batched ellipses: the canvas is split across
+        cores rather than the markers. See `canvas.shapes.ellipses`.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            rx: Horizontal radius shared by every marker, in pixels.
+            ry: Vertical radius shared by every marker, in pixels.
+            color: Fill color shared by every marker.
+        """
+        from canvas.shapes.ellipses import fill_ellipses_aa as _batch
+
+        _batch(self, centers, rx, ry, color)
+
+    def fill_ellipses_aa(
+        mut self,
+        centers: List[FPoint],
+        rx: Float64,
+        ry: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_ellipses_aa` with a color per marker.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            rx: Horizontal radius shared by every marker, in pixels.
+            ry: Vertical radius shared by every marker, in pixels.
+            colors: One color per centre, same length as `centers`.
+        """
+        from canvas.shapes.ellipses import fill_ellipses_aa as _batch
+
+        _batch(self, centers, rx, ry, colors)
+
     def draw_circle_aa(
         mut self,
         cx: Float64,

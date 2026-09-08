@@ -3,15 +3,17 @@ known inputs, verified against hand-traced runs of the same
 algorithms.
 """
 
-from std.testing import assert_equal, TestSuite, assert_true
+from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas.color import Color
 from canvas.buffer import Canvas
+from canvas.geometry import FPoint
 from canvas.shapes.ellipses import (
     draw_ellipse,
     fill_ellipse,
     fill_ellipse_aa,
     draw_ellipse_aa,
+    fill_ellipses_aa,
 )
 
 comptime BG = Color(0, 0, 0)
@@ -374,3 +376,150 @@ def test_draw_ellipse_aa_sub_pixel_center_moves_the_ring() raises:
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+# `fill_ellipses_aa` splits the canvas into row bands and hands each
+# band the whole batch. Its contract is that the result is
+# indistinguishable from calling `fill_ellipse_aa` once per center in
+# the same order, so every test here renders both ways and compares
+# every byte. Nothing is asserted about speed: that is the benchmark's
+# job, and correctness here is what makes the speed worth having.
+
+
+def _scatter(n: Int, seedx: Int, seedy: Int) -> List[FPoint]:
+    """Fractional positions on purpose. Integer centers would give
+    every marker the same sub-pixel phase, which is the one case a
+    coverage shortcut cannot get wrong."""
+    var pts = List[FPoint](capacity=n)
+    for i in range(n):
+        var x = 12.0 + Float64((i * seedx) % 2600) * 0.1
+        var y = 9.0 + Float64((i * seedy) % 1700) * 0.1
+        pts.append(FPoint(x, y))
+    return pts^
+
+
+def _same_canvas(a: Canvas, b: Canvas, label: String) raises:
+    assert_equal(a.width, b.width, label + " width")
+    assert_equal(a.height, b.height, label + " height")
+    var differing = 0
+    for y in range(a.height):
+        for x in range(a.width):
+            var p = a.get_pixel(x, y)
+            var q = b.get_pixel(x, y)
+            if p.r != q.r or p.g != q.g or p.b != q.b or p.a != q.a:
+                differing += 1
+    assert_equal(differing, 0, label + ": differing pixels")
+
+
+def _ink_count(c: Canvas) -> Int:
+    var n = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            var p = c.get_pixel(x, y)
+            if p.r != 0 or p.g != 0 or p.b != 0:
+                n += 1
+    return n
+
+
+def test_batched_ellipses_match_individual_calls() raises:
+    var pts = _scatter(1200, 37, 53)
+    var ink = Color(220, 90, 40)
+    var batched = Canvas(280, 190, Color(0, 0, 0))
+    fill_ellipses_aa(batched, pts, 5.0, 3.0, ink)
+    var one_by_one = Canvas(280, 190, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_ellipse_aa(one_by_one, pts[i].x, pts[i].y, 5.0, 3.0, ink)
+    _same_canvas(batched, one_by_one, "opaque batch")
+    assert_true(_ink_count(one_by_one) > 5000, "the scatter must draw ink")
+
+
+def test_overlapping_translucent_ellipses_keep_submission_order() raises:
+    """The case that fails if a band draws the batch out of order, or
+    if two bands both write a pixel. Opaque markers would hide it."""
+    var pts = List[FPoint]()
+    for i in range(400):
+        pts.append(
+            FPoint(40.0 + Float64(i % 20) * 2.3, 30.0 + Float64(i // 20) * 2.7)
+        )
+    var ink = Color(30, 140, 220, 70)
+    var batched = Canvas(160, 120, Color(0, 0, 0))
+    fill_ellipses_aa(batched, pts, 6.0, 4.0, ink)
+    var one_by_one = Canvas(160, 120, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_ellipse_aa(one_by_one, pts[i].x, pts[i].y, 6.0, 4.0, ink)
+    _same_canvas(batched, one_by_one, "translucent pile")
+
+
+def test_batched_ellipses_with_a_colour_each() raises:
+    var pts = _scatter(500, 41, 59)
+    var colors = List[Color](capacity=len(pts))
+    for i in range(len(pts)):
+        colors.append(
+            Color(UInt8(30 + i % 200), UInt8(90 + i % 120), UInt8(i % 255), 180)
+        )
+    var batched = Canvas(280, 190, Color(0, 0, 0))
+    fill_ellipses_aa(batched, pts, 4.0, 2.5, colors)
+    var one_by_one = Canvas(280, 190, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_ellipse_aa(one_by_one, pts[i].x, pts[i].y, 4.0, 2.5, colors[i])
+    _same_canvas(batched, one_by_one, "per-marker colour")
+
+
+def test_batched_ellipses_reject_a_mismatched_colour_list() raises:
+    var pts = _scatter(4, 37, 53)
+    var colors: List[Color] = [Color(1, 2, 3)]
+    var c = Canvas(40, 40, Color(0, 0, 0))
+    with assert_raises():
+        fill_ellipses_aa(c, pts, 3.0, 2.0, colors)
+
+
+def test_batched_ellipses_past_the_closed_form_limit() raises:
+    """A radius over the closed-form threshold falls back to one call
+    per centre; the bytes must still agree."""
+    var pts = _scatter(60, 37, 53)
+    var ink = Color(200, 80, 50)
+    var batched = Canvas(280, 190, Color(0, 0, 0))
+    fill_ellipses_aa(batched, pts, 14.0, 9.0, ink)
+    var one_by_one = Canvas(280, 190, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_ellipse_aa(one_by_one, pts[i].x, pts[i].y, 14.0, 9.0, ink)
+    _same_canvas(batched, one_by_one, "past the closed form")
+
+
+def test_batched_ellipses_under_a_transform() raises:
+    """A similarity maps the centres and scales both radii; anything
+    else falls back per marker. Both must match the sequential loop
+    drawn under the same transform."""
+    var pts = _scatter(200, 37, 53)
+    var ink = Color(90, 200, 120)
+
+    var batched = Canvas(280, 190, Color(0, 0, 0))
+    batched.save()
+    batched.translate(12.0, 7.0)
+    batched.scale(1.4, 1.4)
+    fill_ellipses_aa(batched, pts, 4.0, 2.0, ink)
+    batched.restore()
+
+    var one_by_one = Canvas(280, 190, Color(0, 0, 0))
+    one_by_one.save()
+    one_by_one.translate(12.0, 7.0)
+    one_by_one.scale(1.4, 1.4)
+    for i in range(len(pts)):
+        fill_ellipse_aa(one_by_one, pts[i].x, pts[i].y, 4.0, 2.0, ink)
+    one_by_one.restore()
+    _same_canvas(batched, one_by_one, "under a similarity")
+
+
+def test_batched_ellipses_at_every_worker_count() raises:
+    """Band count must not change the bytes."""
+    var pts = _scatter(600, 37, 53)
+    var ink = Color(210, 100, 60, 150)
+    var reference = Canvas(240, 160, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_ellipse_aa(reference, pts[i].x, pts[i].y, 4.0, 3.0, ink)
+    var counts: List[Int] = [1, 2, 3, 8, 64]
+    for wi in range(len(counts)):
+        var c = Canvas(240, 160, Color(0, 0, 0))
+        c.set_max_workers(counts[wi])
+        fill_ellipses_aa(c, pts, 4.0, 3.0, ink)
+        _same_canvas(c, reference, String("workers=", counts[wi]))

@@ -818,6 +818,59 @@ struct PdfCanvas(DrawTarget, Movable):
         self._content += "f "
         self._end()
 
+    def fill_ellipses_aa(
+        mut self,
+        centers: List[FPoint],
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+    ) raises:
+        """`DrawTarget`'s batched ellipses. This backend emits a filled path per
+        marker whichever entry point is used, so the batch is the loop
+        and the output is unchanged by construction.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            rx: Horizontal radius shared by every marker, in pixels.
+            ry: Vertical radius shared by every marker, in pixels.
+            color: Fill color shared by every marker.
+        """
+        for i in range(len(centers)):
+            ref p = centers[i]
+            self.fill_ellipse_aa(p.x, p.y, rx, ry, color)
+
+    def fill_ellipses_aa(
+        mut self,
+        centers: List[FPoint],
+        rx: Float64,
+        ry: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_ellipses_aa` with a color per marker.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            rx: Horizontal radius shared by every marker, in pixels.
+            ry: Vertical radius shared by every marker, in pixels.
+            colors: One color per centre, same length as `centers`.
+
+        Raises:
+            Error: If `colors` is not the same length as `centers`.
+        """
+        if len(colors) != len(centers):
+            raise Error(
+                String(
+                    "fill_ellipses_aa: colors has ",
+                    len(colors),
+                    " entries for ",
+                    len(centers),
+                    " centers",
+                )
+            )
+        for i in range(len(centers)):
+            ref p = centers[i]
+            self.fill_ellipse_aa(p.x, p.y, rx, ry, colors[i])
+
     def draw_circle_aa(
         mut self,
         cx: Float64,
