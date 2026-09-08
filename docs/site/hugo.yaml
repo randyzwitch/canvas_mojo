@@ -17,21 +17,27 @@ module:
 
 menu:
   main:
-    - name: Examples
+    - name: Getting Started
       weight: 1
+      url: "/getting-started/"
+    - name: Guides
+      weight: 2
+      url: "/guides/"
+    - name: Examples
+      weight: 3
       url: "/examples/"
     - name: API Reference
-      weight: 2
+      weight: 4
       url: "/api-guide/"
     - name: Search
-      weight: 3
+      weight: 5
       params:
         type: search
     - name: Wiki
-      weight: 4
+      weight: 6
       url: "https://github.com/randyzwitch/canvas_mojo/wiki"
     - name: GitHub
-      weight: 5
+      weight: 7
       url: "https://github.com/randyzwitch/canvas_mojo"
       params:
         icon: github
