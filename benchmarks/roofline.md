@@ -21,6 +21,7 @@ machine properties and do not carry to other hardware.
     pixi run roofline-census    # pixels each row must change
     pixi run roofline-locality  # async task placement
     pixi run roofline-shapes    # coverage-inclusive floors for shapes
+    pixi run roofline-compositing  # what source-over and multiply really cost
 
 ## The yardsticks
 
@@ -99,6 +100,51 @@ the work must be organized, not just how many pixels it lands on.
 Rows priced this way are marked `coverage` rather than `tight` or
 `loose`: the floor now includes the coverage arithmetic, but not
 per-call setup, curve flattening, or clipping.
+
+## The source-over yardstick prices a cheaper operation
+
+The yardstick below, 0.12 ns/px, was measured with uint16 lanes, a
+`>>8` approximation and no alpha broadcast. `_blend_group_opaque`
+widens to uint32, broadcasts each pixel's alpha across its four lanes
+with a shuffle, and divides by 255 exactly. Measured side by side over
+the same 480,000 pixels:
+
+| | us | ns/px |
+|---|---:|---:|
+| published yardstick | 59.8 | 0.125 |
+| the kernel's real arithmetic | 374.4 | 0.780 |
+
+**The yardstick is low by 6.26x**, and every compositing floor built on
+it is understated by that factor. Re-priced:
+
+| row | actual | old floor | corrected floor | |
+|---|---:|---:|---:|---|
+| `fill_rect 600x400 multiply` | 304.7 | 30.96 | **192.1** | 63% |
+| `Canvas.fill translucent` | 221.5 | 61.92 | **269.6** | *above* |
+| `draw_canvas 800x600 translucent` | 283.0 | 61.92 | **374.4** | *above* |
+
+Two of the three now price *above* the row they were meant to bound,
+which means the kernel is not a floor for them: the library is beating
+a straightforward vectorization. `Canvas.fill translucent` hoists its
+source terms further than the kernel does, and `draw_canvas` skips
+whole eight-pixel groups that are fully transparent, so it never does
+the arithmetic the floor charges for. What these figures establish is
+not headroom but its absence: the 3.6x and 4.6x in the original table
+were artifacts of pricing the wrong arithmetic.
+
+Multiply keeps a real gap, 1.6x rather than 9.8x. A multiply blend
+computes `div255(dst*src)` and then composites it -- about twice
+source-over's multiplies per channel -- so the source-over kernel was
+never the right price for it. Vector width does not move it: 4, 8 and
+16 pixels per iteration measure 192.6, 192.1 and 198.6 us.
+
+One attempt at the remaining gap made it worse and is recorded here so
+it is not tried again. The span checks four destination alphas with
+scalar byte loads before deciding to load the group; replacing that
+with a vector load plus a `reduce_min` horizontal test ran **2.3x
+slower** (309 -> 722 us). The horizontal reduction sits on the
+critical path ahead of the branch, where four short-circuiting scalar
+compares do not.
 
 ## Floors that were called tight and are not
 
