@@ -1592,6 +1592,49 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         fill_arc_aa(self, cx, cy, radius, start_angle, end_angle, color)
 
+    def fill_arcs_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        start_angle: Float64,
+        end_angle: Float64,
+        color: Color,
+    ) raises:
+        """`DrawTarget`'s batched wedges: the canvas is split across
+        cores rather than the wedges. See `canvas.shapes.arcs`.
+
+        Args:
+            centers: Sub-pixel centre of each wedge, in draw order.
+            radius: Radius shared by every wedge, in pixels.
+            start_angle: Start of the sweep, radians, shared.
+            end_angle: End of the sweep, radians, shared.
+            color: Fill color shared by every wedge.
+        """
+        from canvas.shapes.arcs import fill_arcs_aa as _batch
+
+        _batch(self, centers, radius, start_angle, end_angle, color)
+
+    def fill_arcs_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        start_angle: Float64,
+        end_angle: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_arcs_aa` with a color per wedge.
+
+        Args:
+            centers: Sub-pixel centre of each wedge, in draw order.
+            radius: Radius shared by every wedge, in pixels.
+            start_angle: Start of the sweep, radians, shared.
+            end_angle: End of the sweep, radians, shared.
+            colors: One color per centre, same length as `centers`.
+        """
+        from canvas.shapes.arcs import fill_arcs_aa as _batch
+
+        _batch(self, centers, radius, start_angle, end_angle, colors)
+
     def fill_ring_sector_aa(
         mut self,
         cx: Float64,

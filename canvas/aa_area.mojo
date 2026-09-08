@@ -390,6 +390,8 @@ def _area_edges_aa(
     max_x: Int,
     max_y: Int,
     color: Color,
+    clamp_lo: Int = 0,
+    clamp_hi: Int = -1,
 ):
     """`_sweep_edges_aa` for `FillRule.NONZERO`, rasterized by area.
     Rows outside the canvas are dropped before any work is done on
@@ -402,10 +404,24 @@ def _area_edges_aa(
     fanned a thin diagonal out over every core for a few thousand
     cells of work.
     """
+    # `clamp_lo`/`clamp_hi` bound the rows written, past the outward
+    # padding above. A batch that bands the canvas needs that: the
+    # padding would otherwise carry a shape one row below and two
+    # above its band, so two bands would write the same pixels and a
+    # translucent marker would be composited twice. Defaults leave the
+    # whole canvas, which is every existing caller.
+    #
+    # Safe because the area sweep carries no state between rows: each
+    # row's winding prefix sum starts at zero at the shape's left
+    # edge, so the rows written are the same whether the sweep is
+    # given all of them or a slice.
+    var hi_bound = canvas.height if clamp_hi < 0 else min(
+        clamp_hi, canvas.height
+    )
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px
-    var first_row = max(min_y - 1, 0)
-    var last_row = min(max_y + 2, canvas.height)
+    var first_row = max(max(min_y - 1, 0), clamp_lo)
+    var last_row = min(min(max_y + 2, canvas.height), hi_bound)
     var row_count = last_row - first_row
     if row_count <= 0 or row_width <= 0:
         return

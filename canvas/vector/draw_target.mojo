@@ -469,6 +469,50 @@ trait DrawTarget:
         """
         ...
 
+    def fill_arcs_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        start_angle: Float64,
+        end_angle: Float64,
+        color: Color,
+    ) raises:
+        """Many equal-size wedges in one call, in draw order.
+
+        `fill_circles_aa` for pie and donut segments: the same pixels
+        as `fill_arc_aa` per centre, with the canvas split across
+        cores rather than the wedges. The sweep is shared by the
+        batch, so this draws one shape repeated at many centres, not
+        many different shapes.
+
+        Args:
+            centers: Sub-pixel centre of each wedge, in draw order.
+            radius: Radius shared by every wedge, in pixels.
+            start_angle: Start of the sweep, radians, shared.
+            end_angle: End of the sweep, radians, shared.
+            color: Fill color shared by every wedge.
+        """
+        ...
+
+    def fill_arcs_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        start_angle: Float64,
+        end_angle: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_arcs_aa` with a color per wedge.
+
+        Args:
+            centers: Sub-pixel centre of each wedge, in draw order.
+            radius: Radius shared by every wedge, in pixels.
+            start_angle: Start of the sweep, radians, shared.
+            end_angle: End of the sweep, radians, shared.
+            colors: One color per centre, same length as `centers`.
+        """
+        ...
+
     def fill_ring_sector_aa(
         mut self,
         cx: Float64,

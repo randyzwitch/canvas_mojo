@@ -2,10 +2,11 @@
 inputs, verified against hand-traced runs of the same algorithms.
 """
 
-from std.testing import assert_equal, assert_true, TestSuite
+from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 from std.math import atan2, cos, pi, sin
 
 from canvas.color import Color
+from canvas.geometry import FPoint
 from canvas.buffer import Canvas
 from canvas.shapes.arcs import (
     _AngleSpan,
@@ -17,6 +18,7 @@ from canvas.shapes.arcs import (
     fill_arc_aa,
     fill_ring_sector,
     fill_ring_sector_aa,
+    fill_arcs_aa,
 )
 
 comptime BG = Color(0, 0, 0)
@@ -468,3 +470,136 @@ def test_angle_span_matches_the_atan2_form_everywhere() raises:
             ):
                 mismatches += 1
     assert_equal(mismatches, 0)
+
+
+# `fill_arcs_aa` splits the canvas into row bands and hands each band
+# the whole batch. Its contract is that the result is
+# indistinguishable from calling `fill_arc_aa` once per centre in the
+# same order, so every test here renders both ways and compares every
+# byte. The row clamp on the area sweep is what makes the bands
+# disjoint: without it the rasterizer's outward padding would carry a
+# wedge one row below and two above its band, and two bands would
+# composite the same translucent pixel twice.
+
+
+def _wedge_scatter(n: Int) -> List[FPoint]:
+    var pts = List[FPoint](capacity=n)
+    for i in range(n):
+        pts.append(
+            FPoint(
+                12.0 + Float64((i * 37) % 2600) * 0.1,
+                9.0 + Float64((i * 53) % 1700) * 0.1,
+            )
+        )
+    return pts^
+
+
+def _arc_same(a: Canvas, b: Canvas, label: String) raises:
+    assert_equal(a.width, b.width, label + " width")
+    var differing = 0
+    for y in range(a.height):
+        for x in range(a.width):
+            var p = a.get_pixel(x, y)
+            var q = b.get_pixel(x, y)
+            if p.r != q.r or p.g != q.g or p.b != q.b or p.a != q.a:
+                differing += 1
+    assert_equal(differing, 0, label + ": differing pixels")
+
+
+def test_batched_wedges_match_individual_calls() raises:
+    var pts = _wedge_scatter(1200)
+    var ink = Color(220, 90, 40)
+    var batched = Canvas(280, 190, Color(0, 0, 0))
+    fill_arcs_aa(batched, pts, 4.0, -0.6, 1.1, ink)
+    var one_by_one = Canvas(280, 190, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_arc_aa(one_by_one, pts[i].x, pts[i].y, 4.0, -0.6, 1.1, ink)
+    _arc_same(batched, one_by_one, "opaque wedges")
+
+
+def test_overlapping_translucent_wedges_keep_submission_order() raises:
+    """Fails if a band draws out of order, or if the sweep's outward
+    row padding lets two bands write the same pixel."""
+    var pts = List[FPoint]()
+    for i in range(400):
+        pts.append(
+            FPoint(40.0 + Float64(i % 20) * 2.3, 30.0 + Float64(i // 20) * 2.7)
+        )
+    var ink = Color(30, 140, 220, 70)
+    var batched = Canvas(160, 120, Color(0, 0, 0))
+    fill_arcs_aa(batched, pts, 6.0, -0.6, 1.1, ink)
+    var one_by_one = Canvas(160, 120, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_arc_aa(one_by_one, pts[i].x, pts[i].y, 6.0, -0.6, 1.1, ink)
+    _arc_same(batched, one_by_one, "translucent pile")
+
+
+def test_batched_wedges_with_a_colour_each() raises:
+    var pts = _wedge_scatter(500)
+    var colors = List[Color](capacity=len(pts))
+    for i in range(len(pts)):
+        colors.append(
+            Color(UInt8(30 + i % 200), UInt8(90 + i % 120), UInt8(i % 255), 180)
+        )
+    var batched = Canvas(280, 190, Color(0, 0, 0))
+    fill_arcs_aa(batched, pts, 5.0, 0.2, 2.4, colors)
+    var one_by_one = Canvas(280, 190, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_arc_aa(one_by_one, pts[i].x, pts[i].y, 5.0, 0.2, 2.4, colors[i])
+    _arc_same(batched, one_by_one, "per-wedge colour")
+
+
+def test_batched_wedges_reject_a_mismatched_colour_list() raises:
+    var pts = _wedge_scatter(4)
+    var colors: List[Color] = [Color(1, 2, 3)]
+    var c = Canvas(40, 40, Color(0, 0, 0))
+    with assert_raises():
+        fill_arcs_aa(c, pts, 3.0, 0.0, 1.0, colors)
+
+
+def test_batched_wedges_at_every_worker_count() raises:
+    """Band count must not change the bytes. This is the row clamp's
+    test: more bands means more band boundaries for a wedge to
+    straddle."""
+    var pts = _wedge_scatter(600)
+    var ink = Color(210, 100, 60, 150)
+    var reference = Canvas(240, 160, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_arc_aa(reference, pts[i].x, pts[i].y, 5.0, -0.6, 1.1, ink)
+    var counts: List[Int] = [1, 2, 3, 8, 64]
+    for wi in range(len(counts)):
+        var c = Canvas(240, 160, Color(0, 0, 0))
+        c.set_max_workers(counts[wi])
+        fill_arcs_aa(c, pts, 5.0, -0.6, 1.1, ink)
+        _arc_same(c, reference, String("workers=", counts[wi]))
+
+
+def test_batched_wedges_with_a_full_sweep() raises:
+    """A sweep past 2*pi is a whole disk; the batch must still agree."""
+    var pts = _wedge_scatter(300)
+    var ink = Color(120, 200, 90)
+    var batched = Canvas(240, 160, Color(0, 0, 0))
+    fill_arcs_aa(batched, pts, 4.0, 0.0, 7.0, ink)
+    var one_by_one = Canvas(240, 160, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_arc_aa(one_by_one, pts[i].x, pts[i].y, 4.0, 0.0, 7.0, ink)
+    _arc_same(batched, one_by_one, "full sweep")
+
+
+def test_batched_wedges_under_a_rotation_fall_back() raises:
+    """A rotation moves the sweep, which the batch shares, so it goes
+    back to one call per centre. The bytes must still match."""
+    var pts = _wedge_scatter(200)
+    var ink = Color(90, 200, 120)
+    var batched = Canvas(240, 160, Color(0, 0, 0))
+    batched.save()
+    batched.rotate(0.4)
+    fill_arcs_aa(batched, pts, 4.0, -0.6, 1.1, ink)
+    batched.restore()
+    var one_by_one = Canvas(240, 160, Color(0, 0, 0))
+    one_by_one.save()
+    one_by_one.rotate(0.4)
+    for i in range(len(pts)):
+        fill_arc_aa(one_by_one, pts[i].x, pts[i].y, 4.0, -0.6, 1.1, ink)
+    one_by_one.restore()
+    _arc_same(batched, one_by_one, "under a rotation")
