@@ -648,3 +648,100 @@ def _area_edges_to_mask(
         )
     tg.wait()
     _ = len(spans.lo)  # last use past the tasks; see `_area_edges_aa`
+
+
+def _rect_coverage_to_mask(
+    mut mask: List[UInt8],
+    mask_width: Int,
+    mask_height: Int,
+    origin_x: Int,
+    origin_y: Int,
+    x0: Float64,
+    y0: Float64,
+    x1: Float64,
+    y1: Float64,
+    full_coverage: Int,
+):
+    """Coverage of the axis-aligned rectangle `[x0, x1] x [y0, y1]`,
+    written straight into `mask` without an edge sweep.
+
+    A rectangle's coverage separates: a pixel's covered area is its
+    overlap on x times its overlap on y, so the x overlaps are computed
+    once for the row and every row reuses them. Only the two columns
+    the vertical edges cut through are partial, so a row is two pixels
+    and a run of one value -- which is what makes this closed form
+    rather than a sweep over the interior.
+
+    Pixel `(px, py)` spans `[px - 0.5, px + 0.5]`, this module's
+    convention, and coverage rounds exactly as `_resolve_to_mask` does
+    so a rectangle clip lands where the sweep would put it.
+
+    `mask` is `mask_width * mask_height` bytes covering canvas pixels
+    from (`origin_x`, `origin_y`), already zeroed; pixels the rectangle
+    misses keep their zero.
+    """
+    if x1 <= x0 or y1 <= y0:
+        return
+
+    # Columns with any overlap: px + 0.5 > x0 and px - 0.5 < x1.
+    var col_lo = max(Int(floor(x0 + 0.5)), origin_x)
+    var col_hi = min(Int(ceil(x1 + 0.5)), origin_x + mask_width)
+    if col_hi <= col_lo:
+        return
+
+    # The run whose columns lie wholly inside: px - 0.5 >= x0 and
+    # px + 0.5 <= x1.
+    var run_lo = max(Int(ceil(x0 + 0.5)), col_lo)
+    var run_hi = min(Int(floor(x1 - 0.5)) + 1, col_hi)
+    if run_hi < run_lo:
+        run_hi = run_lo
+
+    var scale = Float32(full_coverage)
+    var mp = mask.unsafe_ptr()
+
+    var row_lo = max(Int(floor(y0 + 0.5)), origin_y)
+    var row_hi = min(Int(ceil(y1 + 0.5)), origin_y + mask_height)
+
+    for py in range(row_lo, row_hi):
+        var top = max(y0, Float64(py) - 0.5)
+        var bottom = min(y1, Float64(py) + 0.5)
+        var yov = bottom - top
+        if yov <= 0.0:
+            continue
+        if yov > 1.0:
+            yov = 1.0
+        var yf = Float32(yov)
+        var row_base = (py - origin_y) * mask_width
+
+        for px in range(col_lo, run_lo):
+            var left = max(x0, Float64(px) - 0.5)
+            var right = min(x1, Float64(px) + 0.5)
+            var xov = right - left
+            if xov <= 0.0:
+                continue
+            var cov = Float32(xov) * yf
+            if cov > 1.0:
+                cov = 1.0
+            var value = Int(cov * scale + 0.5)
+            if value != 0:
+                mp[unsafe_offset=row_base + px - origin_x] = UInt8(value)
+
+        if run_hi > run_lo:
+            var full = Int(yf * scale + 0.5)
+            if full != 0:
+                var v = UInt8(full)
+                for px in range(run_lo, run_hi):
+                    mp[unsafe_offset=row_base + px - origin_x] = v
+
+        for px in range(run_hi, col_hi):
+            var left = max(x0, Float64(px) - 0.5)
+            var right = min(x1, Float64(px) + 0.5)
+            var xov = right - left
+            if xov <= 0.0:
+                continue
+            var cov = Float32(xov) * yf
+            if cov > 1.0:
+                cov = 1.0
+            var value = Int(cov * scale + 0.5)
+            if value != 0:
+                mp[unsafe_offset=row_base + px - origin_x] = UInt8(value)

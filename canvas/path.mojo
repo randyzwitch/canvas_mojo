@@ -55,6 +55,7 @@ from canvas.aa_crossing import (
     _sweep_edges_aa,
     _sweep_edges_to_mask,
 )
+from canvas.aa_area import _rect_coverage_to_mask
 from canvas.shapes.lines import (
     draw_polyline,
     draw_polygon,
@@ -1735,6 +1736,83 @@ def _path_coverage_counts(
     )
 
 
+struct _AxisRect(Movable):
+    """An axis-aligned rectangle recovered from a flattened path."""
+
+    var ok: Bool
+    var x0: Float64
+    var y0: Float64
+    var x1: Float64
+    var y1: Float64
+
+    def __init__(
+        out self,
+        ok: Bool,
+        x0: Float64 = 0.0,
+        y0: Float64 = 0.0,
+        x1: Float64 = 0.0,
+        y1: Float64 = 0.0,
+    ):
+        self.ok = ok
+        self.x0 = x0
+        self.y0 = y0
+        self.x1 = x1
+        self.y1 = y1
+
+
+def _as_axis_rect(subpaths: List[_Subpath]) -> _AxisRect:
+    """The rectangle `subpaths` describes, if it is exactly one closed
+    axis-aligned rectangle.
+
+    Only this shape is recognized, and only in device space: a path
+    that has been through a rotation or skew arrives here as a general
+    quadrilateral and is rejected, because its coverage no longer
+    separates into an x overlap times a y overlap.
+
+    A rectangle cannot self-intersect, so its even-odd and nonzero
+    coverage are the same and the caller need not consult the fill
+    rule -- which is what makes one fast path serve both.
+    """
+    if len(subpaths) != 1:
+        return _AxisRect(False)
+    ref sp = subpaths[0]
+    if not sp.closed:
+        return _AxisRect(False)
+
+    var n = len(sp.points)
+    # close() may repeat the first point; a rectangle is 4 corners.
+    if n == 5:
+        if sp.points[4].x != sp.points[0].x or sp.points[4].y != sp.points[0].y:
+            return _AxisRect(False)
+        n = 4
+    if n != 4:
+        return _AxisRect(False)
+
+    var p0 = sp.points[0]
+    var p1 = sp.points[1]
+    var p2 = sp.points[2]
+    var p3 = sp.points[3]
+
+    # Corners in order, every edge axis-aligned: either the first edge
+    # is horizontal and they alternate, or it is vertical and they do.
+    var horizontal_first = (
+        p0.y == p1.y and p1.x == p2.x and p2.y == p3.y and p3.x == p0.x
+    )
+    var vertical_first = (
+        p0.x == p1.x and p1.y == p2.y and p2.x == p3.x and p3.y == p0.y
+    )
+    if not (horizontal_first or vertical_first):
+        return _AxisRect(False)
+
+    var lo_x = min(min(p0.x, p1.x), min(p2.x, p3.x))
+    var hi_x = max(max(p0.x, p1.x), max(p2.x, p3.x))
+    var lo_y = min(min(p0.y, p1.y), min(p2.y, p3.y))
+    var hi_y = max(max(p0.y, p1.y), max(p2.y, p3.y))
+    if hi_x <= lo_x or hi_y <= lo_y:
+        return _AxisRect(False)
+    return _AxisRect(True, lo_x, lo_y, hi_x, hi_y)
+
+
 def _path_coverage_mask(
     path: Path,
     width: Int,
@@ -1755,6 +1833,17 @@ def _path_coverage_mask(
     var mask = List[UInt8](length=width * height, fill=0)
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
+        return mask^
+
+    # A clip to a plot area is a rectangle, and a rectangle's coverage
+    # is closed-form: no edge table, no sweep, and no 4x4 sampling for
+    # the even-odd rule. Both rules agree on a shape that cannot
+    # self-intersect, so this runs whichever was asked for.
+    var r = _as_axis_rect(subpaths)
+    if r.ok:
+        _rect_coverage_to_mask(
+            mask, width, height, 0, 0, r.x0, r.y0, r.x1, r.y1, 255
+        )
         return mask^
 
     var fe = _FillEdges(subpaths)
