@@ -6,29 +6,38 @@ visual (left-to-right-drawable) order by the run-reversal technique of
 UAX #9's rule L2, and paired characters (parens, brackets, comparisons)
 that land inside a right-to-left run are mirrored.
 
-Character classes follow Unicode 15.0. Combining marks are recognized
-(rule W1: a mark takes the direction of the character it attaches to)
-and reordering is done by cluster, so a base and its marks stay
-together. The invisible strong marks LRM/RLM/ALM set direction as
-they should, and the structural formatting characters
-(LRE/RLE/LRO/RLO/PDF and the LRI/RLI/FSI/PDI isolates) are recognized
-and dropped before rendering rather than shaped into `.notdef` boxes.
+Character classes follow Unicode 15.0.
+
+The explicit controls are implemented, not merely recognized: X1-X8's
+directional status stack gives every character its embedding level and
+override, so LRE/RLE raise the level of what they enclose, LRO/RLO
+force its direction, PDF pops, and an LRI/RLI/FSI isolate gives its
+contents a level of their own while itself belonging to the text
+outside. FSI reads its direction from its first strong content (P2/P3
+over the isolate). Overflow past BD2's depth limit of 125, and a PDF
+with nothing to pop or one trapped inside an isolate, are counted
+rather than applied, so a malformed run of controls cannot corrupt the
+levels of the text after it. The controls are then dropped before
+rendering rather than shaped into `.notdef` boxes.
+
+Combining marks are recognized (rule W1: a mark takes the direction of
+the character it attaches to) and reordering is done by cluster, so a
+base and its marks stay together. The invisible strong marks
+LRM/RLM/ALM set direction as they should.
+
+A line with no explicit control in it skips X1-X8 entirely -- with
+none, the algorithm can only return the paragraph level -- so an
+ordinary label pays one comparison per codepoint and nothing else.
 
 Not implemented here:
 
 - UAX #9's full weak/neutral-type resolution (W1-W7, N0-N2), which
   collapses into two rules here: a mark takes its base's level (W1),
   and a neutral/weak run takes the level of the strong text next to
-  it, or the paragraph's base level. Correct for digits, punctuation
+  it, or the level it is embedded in. Correct for digits, punctuation
   and spaces between words, not for every adjacency UAX #9 enumerates.
-- Embedding *levels* for the explicit controls. An isolate is opaque
-  to the paragraph direction, which rule P2 honours here, but the
-  text inside one is not given its own embedding level: it resolves
-  against the surrounding text as if the isolate were not there.
-  LRE/RLE/LRO/RLO and PDF are likewise recognized and removed without
-  raising or lowering the level of what they enclose. Text that
-  depends on a control to come out right -- an RTL phrase whose
-  direction cannot be inferred from its own characters -- will not.
+  The isolating run sequences of BD13 are not built either; neutral
+  resolution runs over the line rather than per sequence.
 - The full `Mn`/`Me` set: `_is_combining_mark` covers the scripts this
   package shapes (Latin, Hebrew, Arabic, Syriac, Thaana, NKo,
   Samaritan, Mandaic, and the general combining blocks), not the
@@ -213,6 +222,187 @@ def _codepoint_class(cp: Int) -> Int:
     return _STRONG_L
 
 
+# UAX #9's cap on explicit depth (BD2). Past it the controls are
+# overflow and take no effect, which is what the two overflow counters
+# below track.
+comptime _MAX_DEPTH = 125
+
+# Directional override status carried on the explicit stack (X1).
+comptime _OVERRIDE_NEUTRAL = 0
+comptime _OVERRIDE_L = 1
+comptime _OVERRIDE_R = 2
+
+
+def _matching_pdi(codepoints: List[Int], start: Int) -> Int:
+    """BD9: the PDI that matches the isolate initiator at `start`, or
+    `len(codepoints)` if the initiator is unmatched.
+
+    Scans forward counting nested initiators, so an inner isolate's
+    PDI does not close the outer one.
+    """
+    var depth = 1
+    for i in range(start + 1, len(codepoints)):
+        var cp = codepoints[i]
+        if _is_isolate_initiator(cp):
+            depth += 1
+        elif cp == _PDI:
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(codepoints)
+
+
+def _first_strong_level(codepoints: List[Int], start: Int, end: Int) -> Int:
+    """P2/P3 over `[start, end)`: 1 if the first strong character is
+    right-to-left, 0 otherwise, skipping anything inside a nested
+    isolate. What FSI uses to decide which of LRI/RLI it stands for.
+    """
+    var i = start
+    while i < end:
+        var cp = codepoints[i]
+        if _is_isolate_initiator(cp):
+            i = _matching_pdi(codepoints, i)
+            if i < end:
+                i += 1
+            continue
+        var cls = _codepoint_class(cp)
+        if cls == _STRONG_R:
+            return 1
+        if cls == _STRONG_L:
+            return 0
+        i += 1
+    return 0
+
+
+def _explicit_levels(
+    codepoints: List[Int],
+    base_level: Int,
+    mut levels: List[Int],
+    mut overrides: List[Int],
+):
+    """UAX #9 X1-X8: the embedding level and directional override each
+    character sits at, once the explicit controls have been applied.
+
+    A directional status stack holds (level, override, is_isolate).
+    An embedding or override control pushes the next level of its
+    direction; PDF pops one; an isolate initiator pushes and is itself
+    left at the *outer* level, since it belongs to the text around it
+    rather than the text it encloses; PDI pops back to that initiator's
+    level and takes it too. Overflow past `_MAX_DEPTH`, or a PDF with
+    nothing to pop, is counted rather than applied, so a malformed run
+    of controls cannot corrupt the levels of the text after it.
+
+    An override makes every character inside it strong in that
+    direction regardless of its own class, which is the difference
+    between LRE/RLE and LRO/RLO.
+    """
+    var n = len(codepoints)
+    var stack_level = List[Int]()
+    var stack_override = List[Int]()
+    var stack_isolate = List[Bool]()
+    stack_level.append(base_level)
+    stack_override.append(_OVERRIDE_NEUTRAL)
+    stack_isolate.append(False)
+    var overflow_isolate = 0
+    var overflow_embedding = 0
+    var valid_isolate = 0
+
+    for i in range(n):
+        var cp = codepoints[i]
+        var top = len(stack_level) - 1
+        var cur = stack_level[top]
+
+        if cp == _RLE or cp == _LRE or cp == _RLO or cp == _LRO:
+            # X2-X5. The control itself sits at the level outside it.
+            levels[i] = cur
+            overrides[i] = stack_override[top]
+            var rtl = cp == _RLE or cp == _RLO
+            var next = (cur + 1) | 1 if rtl else (cur + 2) & ~1
+            if (
+                next <= _MAX_DEPTH
+                and overflow_isolate == 0
+                and overflow_embedding == 0
+            ):
+                stack_level.append(next)
+                if cp == _RLO:
+                    stack_override.append(_OVERRIDE_R)
+                elif cp == _LRO:
+                    stack_override.append(_OVERRIDE_L)
+                else:
+                    stack_override.append(_OVERRIDE_NEUTRAL)
+                stack_isolate.append(False)
+            elif overflow_isolate == 0:
+                overflow_embedding += 1
+            continue
+
+        if _is_isolate_initiator(cp):
+            # X5a-X5c. The initiator belongs to the text around it.
+            levels[i] = cur
+            overrides[i] = stack_override[top]
+            var rtl = cp == _RLI
+            if cp == _FSI:
+                var close = _matching_pdi(codepoints, i)
+                rtl = _first_strong_level(codepoints, i + 1, close) == 1
+            var next = (cur + 1) | 1 if rtl else (cur + 2) & ~1
+            if (
+                next <= _MAX_DEPTH
+                and overflow_isolate == 0
+                and overflow_embedding == 0
+            ):
+                valid_isolate += 1
+                stack_level.append(next)
+                stack_override.append(_OVERRIDE_NEUTRAL)
+                stack_isolate.append(True)
+            else:
+                overflow_isolate += 1
+            continue
+
+        if cp == _PDI:
+            # X6a. Unwind to the matching initiator, then take its
+            # level -- the PDI closes the isolate from outside it.
+            if overflow_isolate > 0:
+                overflow_isolate -= 1
+            elif valid_isolate > 0:
+                overflow_embedding = 0
+                while not stack_isolate[len(stack_isolate) - 1]:
+                    _ = stack_level.pop()
+                    _ = stack_override.pop()
+                    _ = stack_isolate.pop()
+                _ = stack_level.pop()
+                _ = stack_override.pop()
+                _ = stack_isolate.pop()
+                valid_isolate -= 1
+            var t2 = len(stack_level) - 1
+            levels[i] = stack_level[t2]
+            overrides[i] = stack_override[t2]
+            continue
+
+        if cp == _PDF:
+            # X7. A PDF inside an isolate, or with nothing to pop, is
+            # ignored rather than escaping its isolate.
+            levels[i] = cur
+            overrides[i] = stack_override[top]
+            if overflow_isolate > 0:
+                pass
+            elif overflow_embedding > 0:
+                overflow_embedding -= 1
+            elif (
+                not stack_isolate[len(stack_isolate) - 1]
+                and len(stack_level) >= 2
+            ):
+                _ = stack_level.pop()
+                _ = stack_override.pop()
+                _ = stack_isolate.pop()
+                var t3 = len(stack_level) - 1
+                levels[i] = stack_level[t3]
+                overrides[i] = stack_override[t3]
+            continue
+
+        # X6: everything else takes the current level and override.
+        levels[i] = cur
+        overrides[i] = stack_override[top]
+
+
 def detect_base_level(codepoints: List[Int]) -> Int:
     """UAX #9 rules P2/P3, simplified to their common-case outcome:
     the paragraph's base embedding level is RTL (1) if the first
@@ -275,12 +465,57 @@ def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
     for _ in range(n):
         levels.append(-1)
 
+    # X1-X8 give every character its embedding level and override,
+    # and the passes below then resolve *within* those rather than
+    # against the paragraph level.
+    #
+    # A line with no explicit control cannot come out of X1-X8 as
+    # anything but the paragraph level, so it skips the whole thing --
+    # no stacks, no per-character arrays, and no reads of them below.
+    # That is every ordinary label, and the check costs one comparison
+    # per codepoint.
+    var has_control = False
     for i in range(n):
-        var cls = _codepoint_class(codepoints[i])
-        if cls == _STRONG_L:
-            levels[i] = base_level if base_level % 2 == 0 else base_level + 1
-        elif cls == _STRONG_R:
-            levels[i] = base_level if base_level % 2 == 1 else base_level + 1
+        var cp = codepoints[i]
+        if cp >= _LRE and cp <= _PDI and _is_explicit_control(cp):
+            has_control = True
+            break
+    var explicit = List[Int]()
+    var overrides = List[Int]()
+    if has_control:
+        explicit = List[Int](length=n, fill=base_level)
+        overrides = List[Int](length=n, fill=_OVERRIDE_NEUTRAL)
+        _explicit_levels(codepoints, base_level, explicit, overrides)
+
+    # Two loops rather than one with a test in it: the no-control
+    # case is every ordinary label, and it should not pay a branch per
+    # character for a feature it is not using.
+    if not has_control:
+        var even = base_level % 2 == 0
+        var l_level = base_level if even else base_level + 1
+        var r_level = base_level + 1 if even else base_level
+        for i in range(n):
+            var cls = _codepoint_class(codepoints[i])
+            if cls == _STRONG_L:
+                levels[i] = l_level
+            elif cls == _STRONG_R:
+                levels[i] = r_level
+    else:
+        for i in range(n):
+            var cls = _codepoint_class(codepoints[i])
+            if overrides[i] == _OVERRIDE_L:
+                cls = _STRONG_L
+            elif overrides[i] == _OVERRIDE_R:
+                cls = _STRONG_R
+            var e = explicit[i]
+            if cls == _STRONG_L:
+                levels[i] = e if e % 2 == 0 else e + 1
+            elif cls == _STRONG_R:
+                levels[i] = e if e % 2 == 1 else e + 1
+            elif _is_explicit_control(codepoints[i]):
+                # Removed before rendering, but it must not split a
+                # run: give it the level of the text it sits in.
+                levels[i] = e
 
     var last_level = base_level
     for i in range(n):
@@ -309,9 +544,15 @@ def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
                 j += 1
             var before = levels[i - 1] if i > 0 else -1
             var after = levels[j] if j < n else -1
+            # A neutral run with no strong neighbour agreeing on a
+            # side falls back to the level it is *embedded* in, not
+            # the paragraph's -- inside an isolate those differ, and
+            # using the paragraph level would pull the run out of the
+            # isolate it belongs to.
+            var own = explicit[i] if has_control else base_level
             var resolved: Int
             if before == -1 and after == -1:
-                resolved = base_level
+                resolved = own
             elif before == -1:
                 resolved = after
             elif after == -1:
@@ -319,7 +560,7 @@ def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
             elif before == after:
                 resolved = before
             else:
-                resolved = base_level
+                resolved = own
             for k in range(i, j):
                 levels[k] = resolved
             i = j
