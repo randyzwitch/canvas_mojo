@@ -54,6 +54,8 @@ prefer them for normal rendered output.
 
 ## Where to go next
 
+- **[Getting Started](getting-started/)** walks from installation to PNG, SVG, and PDF output.
+- **[Guides](guides/)** explains coordinates, shapes, state, transforms, and text.
 - **[Examples](examples/)** shows complete programs beside their rendered output.
 - **[API reference](api-guide/)** groups the public package by task and links to generated symbol documentation.
 - **[Full package reference](canvas/)** contains every generated module and signature.
