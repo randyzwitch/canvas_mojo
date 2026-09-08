@@ -172,6 +172,14 @@ resolves.
   load put every row 15-40% high, which raises the floor `bench-check`
   compares against for good. The tell is rows the branch never touched
   moving, so diff a new recording against the old and read those first.
+- Compare two implementations inside one process, not across two runs
+  of different builds. `resize 1600x1200 -> 741x533` swings 2487-2858
+  us across fresh processes on an idle machine, so alternating builds
+  "showed" a 6-9% regression that did not exist -- and 218 us of it
+  looked exactly like an extra `Canvas` copy, which is the kind of
+  story that survives scrutiny. Keeping both paths reachable and
+  interleaving them in one process put the real figure at 0.983x. If a
+  refactor leaves both sides callable, that is the measurement to make.
 - A leaf function timed in a loop of its own can point the wrong way,
   because the loop vectorizes and the call site does not. A polynomial
   `asin` measured 2.7x faster than the library's that way and 1.75x
