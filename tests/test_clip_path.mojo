@@ -12,6 +12,8 @@ from std.testing import assert_equal, assert_true, TestSuite
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
+from canvas.geometry import Matrix2D
+from canvas.mask import Mask
 from canvas.path import Path
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.shapes.rects import (
@@ -40,6 +42,211 @@ def _ink(c: Canvas) -> Int:
         for x in range(c.width):
             total += Int(c.get_pixel(x, y).r)
     return total
+
+
+def _square_with_midpoint(
+    mut p: Path, x0: Float64, y0: Float64, x1: Float64, y1: Float64
+) raises:
+    """The same rectangle as `_square`, with a collinear vertex added
+    on the top edge.
+
+    Identical geometry, five corners, so it does not match the
+    rectangle fast path and goes through the general edge sweep. That
+    makes it the control: whatever the fast path computes has to equal
+    what the sweep computes for the same region.
+    """
+    p.move_to(x0, y0)
+    p.line_to((x0 + x1) / 2.0, y0)
+    p.line_to(x1, y0)
+    p.line_to(x1, y1)
+    p.line_to(x0, y1)
+    p.close()
+
+
+def _assert_same_coverage(a: Mask, b: Mask, what: String) raises:
+    assert_equal(len(a.coverage), len(b.coverage), what + ": sizes")
+    var differing = 0
+    var first = -1
+    for i in range(len(a.coverage)):
+        if a.coverage[i] != b.coverage[i]:
+            differing += 1
+            if first < 0:
+                first = i
+    assert_equal(
+        differing,
+        0,
+        String(
+            what,
+            ": ",
+            differing,
+            " bytes differ, first at ",
+            first,
+        ),
+    )
+
+
+def test_a_rectangle_clip_matches_the_general_sweep() raises:
+    """The fast path is only legitimate if it computes what the sweep
+    computes. Fractional edges included -- those are the pixels a
+    closed form could get wrong.
+    """
+    var cases: List[List[Float64]] = [
+        [10.0, 10.0, 50.0, 40.0],
+        [10.5, 10.0, 50.0, 40.0],
+        [10.25, 10.75, 50.5, 40.5],
+        [3.7, 4.9, 55.6, 45.3],
+        [-5.0, -5.0, 25.0, 25.0],
+    ]
+    for ci in range(len(cases)):
+        ref c = cases[ci]
+        var fast = Path()
+        _square(fast, c[0], c[1], c[2], c[3])
+        var control = Path()
+        _square_with_midpoint(control, c[0], c[1], c[2], c[3])
+        _assert_same_coverage(
+            Mask.from_path(fast, 70, 60, FillRule.NONZERO),
+            Mask.from_path(control, 70, 60, FillRule.NONZERO),
+            String("case ", ci),
+        )
+
+
+def test_a_rectangle_clip_is_the_same_under_both_fill_rules() raises:
+    """A rectangle cannot self-intersect, so even-odd and nonzero
+    describe the same region and must produce the same coverage. This
+    is what lets one fast path serve both rules.
+    """
+    var cases: List[List[Float64]] = [
+        [10.0, 10.0, 50.0, 40.0],
+        [10.25, 10.75, 50.5, 40.5],
+        [3.7, 4.9, 55.6, 45.3],
+    ]
+    for ci in range(len(cases)):
+        ref c = cases[ci]
+        var p = Path()
+        _square(p, c[0], c[1], c[2], c[3])
+        _assert_same_coverage(
+            Mask.from_path(p, 70, 60),
+            Mask.from_path(p, 70, 60, FillRule.NONZERO),
+            String("case ", ci),
+        )
+
+
+def test_overlapping_subpaths_still_separate_the_fill_rules() raises:
+    """Two rectangles wound the same way overlap with winding 2: even-odd
+    leaves that a hole, nonzero fills it. Guards that a shape made of
+    rectangles does not get routed through the single-rectangle fast
+    path, where the rule would stop mattering.
+    """
+    var two = Path()
+    _square(two, 10.0, 10.0, 40.0, 35.0)
+    _square(two, 25.0, 20.0, 55.0, 45.0)
+    var eo = Mask.from_path(two, 70, 60)
+    var nz = Mask.from_path(two, 70, 60, FillRule.NONZERO)
+    # A pixel inside both rectangles.
+    var idx = 27 * 70 + 32
+    assert_equal(Int(eo.coverage[idx]), 0, "even-odd leaves the overlap open")
+    assert_equal(Int(nz.coverage[idx]), 255, "nonzero fills the overlap")
+
+
+def test_a_bowtie_is_not_taken_for_a_rectangle() raises:
+    """A bowtie is four points and closed, like a rectangle, but its
+    edges do not alternate axis-aligned. If it were mistaken for one
+    its coverage would be the filled bounding box; it is not.
+    """
+    var bow = Path()
+    bow.move_to(10.0, 10.0)
+    bow.line_to(50.0, 10.0)
+    bow.line_to(10.0, 40.0)
+    bow.line_to(50.0, 40.0)
+    bow.close()
+    var m = Mask.from_path(bow, 70, 60, FillRule.NONZERO)
+    # Dead centre of the bounding box is on the crossing, covered; the
+    # left edge midway down is outside both triangles, and a filled
+    # bounding box would have covered it.
+    assert_equal(Int(m.coverage[25 * 70 + 11]), 0, "outside the bowtie")
+
+    var box = Path()
+    _square(box, 10.0, 10.0, 50.0, 40.0)
+    var b = Mask.from_path(box, 70, 60, FillRule.NONZERO)
+    assert_equal(Int(b.coverage[25 * 70 + 11]), 255, "inside the box")
+
+
+def test_a_fractional_rectangle_edge_gets_its_exact_area() raises:
+    """An edge at x.5 covers exactly half of that column, so the
+    boundary pixel reads 128 -- not a multiple of 1/16, which is all a
+    4x4 sample grid could report.
+    """
+    var p = Path()
+    _square(p, 10.5, 10.0, 50.0, 40.0)
+    var m = Mask.from_path(p, 70, 60, FillRule.NONZERO)
+    # Pixel 10 spans [9.5, 10.5] and the rectangle starts at 10.5, so
+    # it is untouched; pixel 11 spans [10.5, 11.5] and is full.
+    assert_equal(Int(m.coverage[20 * 70 + 10]), 0, "column 10 outside")
+    assert_equal(Int(m.coverage[20 * 70 + 11]), 255, "column 11 inside")
+    # Shift by a quarter pixel and the boundary column is a quarter.
+    var q = Path()
+    _square(q, 10.25, 10.0, 50.0, 40.0)
+    var mq = Mask.from_path(q, 70, 60, FillRule.NONZERO)
+    assert_equal(Int(mq.coverage[20 * 70 + 10]), 64, "quarter column")
+
+
+def test_a_rectangle_clip_outside_the_canvas() raises:
+    """Wholly outside clips everything; straddling an edge clips only
+    what hangs over.
+    """
+    var outside = Path()
+    _square(outside, 200.0, 200.0, 260.0, 260.0)
+    var m = Mask.from_path(outside, 70, 60, FillRule.NONZERO)
+    var total = 0
+    for i in range(len(m.coverage)):
+        total += Int(m.coverage[i])
+    assert_equal(total, 0, "a rectangle off the canvas covers nothing")
+
+    var straddle = Path()
+    _square(straddle, -10.0, -10.0, 20.0, 20.0)
+    var ms = Mask.from_path(straddle, 70, 60, FillRule.NONZERO)
+    assert_equal(Int(ms.coverage[0]), 255, "inside the overlap")
+    assert_equal(Int(ms.coverage[30 * 70 + 40]), 0, "past the rectangle")
+
+
+def test_a_rotated_rectangle_clip_keeps_the_transform() raises:
+    """Under a rotation the path is no longer axis-aligned in device
+    space, so it must fall to the general sweep -- and land exactly
+    where the same rotated path drawn without a transform lands.
+    """
+    var rotated = Canvas(70, 60, BG)
+    rotated.save()
+    rotated.rotate(0.4)
+    var p = Path()
+    _square(p, 10.0, 10.0, 40.0, 30.0)
+    rotated.push_clip_path(p)
+    fill_rect(rotated, 0, 0, 70, 60, FG)
+    rotated.pop_clip_path()
+    rotated.restore()
+
+    var manual = Canvas(70, 60, BG)
+    var m = Matrix2D.rotation(0.4)
+    var q = Path()
+    var c0 = m.apply(10.0, 10.0)
+    var c1 = m.apply(40.0, 10.0)
+    var c2 = m.apply(40.0, 30.0)
+    var c3 = m.apply(10.0, 30.0)
+    q.move_to(c0.x, c0.y)
+    q.line_to(c1.x, c1.y)
+    q.line_to(c2.x, c2.y)
+    q.line_to(c3.x, c3.y)
+    q.close()
+    manual.push_clip_path(q)
+    fill_rect(manual, 0, 0, 70, 60, FG)
+    manual.pop_clip_path()
+
+    for y in range(60):
+        for x in range(70):
+            assert_equal(
+                Int(rotated.get_pixel(x, y).r),
+                Int(manual.get_pixel(x, y).r),
+                String("rotated clip at ", x, ",", y),
+            )
 
 
 def test_no_clip_path_lets_everything_through() raises:
