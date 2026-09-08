@@ -10,10 +10,11 @@ rather than carrying a sampler of their own (#275).
 """
 
 from std.math import asin, ceil, floor, sqrt
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import round_to_int
+from canvas.geometry import FPoint, round_to_int
 from canvas.fill_rule import FillRule
 from canvas.path import (
     fill_path,
@@ -25,6 +26,7 @@ from canvas.path import (
 from canvas.aa_crossing import _CoverageAlpha
 from canvas.shapes.arcs import _ellipse_fpoints
 from canvas.shapes.polygon_fill import _fill_polygon_aa_device
+from canvas.workers import _bands_for
 
 
 def draw_circle(
@@ -496,6 +498,284 @@ def _fill_circle_aa_device(
                     canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
             ux += inv_r
         uy += inv_r
+
+
+def _fill_circle_aa_rows(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_fill_circle_aa_device`'s closed-form body, restricted to rows
+    [row_lo, row_hi).
+
+    The row clamp is what lets a batch of markers split across cores:
+    each band owns a disjoint set of rows, so two bands never write
+    the same pixel, and a marker straddling a boundary is visited by
+    both -- each doing only its own rows. `uy` is derived from the
+    clamped first row, so the unit-space walk starts in the right
+    place rather than being stepped into it.
+
+    Only the closed-form route is here. A radius past
+    `_CLOSED_FORM_MAX_RADIUS` goes through the polygon rasterizer,
+    which bands internally and has no row-restricted entry point, so
+    `fill_circles_aa` keeps those on the per-marker path.
+    """
+    var r2 = radius * radius
+    var inv_r = 1.0 / radius
+    var alpha_scale = Float64(color.a)
+    var lo_x = Int(floor(cx - radius)) - 1
+    var hi_x = Int(ceil(cx + radius)) + 2
+    var lo_y = max(Int(floor(cy - radius)) - 1, row_lo)
+    var hi_y = min(Int(ceil(cy + radius)) + 2, row_hi)
+    if lo_y >= hi_y:
+        return
+    var half = 0.5 * inv_r
+    var uy = (Float64(lo_y) - cy) * inv_r
+    for py in range(lo_y, hi_y):
+        var ady = abs(uy)
+        var near_dy = max(0.0, ady - half)
+        var far_dy = ady + half
+        var near_dy2 = near_dy * near_dy
+        var far_dy2 = far_dy * far_dy
+        var ux = (Float64(lo_x) - cx) * inv_r
+        for px in range(lo_x, hi_x):
+            var adx = abs(ux)
+            var near_dx = max(0.0, adx - half)
+            if near_dx * near_dx + near_dy2 > 1.0:
+                ux += inv_r
+                continue
+            var far_dx = adx + half
+            if far_dx * far_dx + far_dy2 <= 1.0:
+                canvas.set_pixel(px, py, color)
+                ux += inv_r
+                continue
+            var area = (
+                _unit_disk_rect_area(ux - half, ux + half, uy - half, uy + half)
+                * r2
+            )
+            if area > 0.0:
+                if area > 1.0:
+                    area = 1.0
+                var alpha = Int(area * alpha_scale + 0.5)
+                if alpha > 0:
+                    canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
+            ux += inv_r
+        uy += inv_r
+
+
+def _circles_band(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """Every marker reaching rows [row_lo, row_hi), in submission
+    order.
+
+    Order is the whole correctness argument for overlapping
+    translucent markers: a pixel's value depends on the marker being
+    drawn and on what is already under it, so walking the batch in
+    order within each band reproduces exactly what drawing them one at
+    a time produces. Bands own disjoint rows, so they never race and
+    need no ordering between them.
+    """
+    var uniform = len(colors) == 0
+    for i in range(len(centers)):
+        ref p = centers[i]
+        # Cheap reject, before the fill re-derives the same bounds.
+        if p.y + radius + 2.0 < Float64(row_lo):
+            continue
+        if p.y - radius - 1.0 >= Float64(row_hi):
+            continue
+        _fill_circle_aa_rows(
+            canvas,
+            p.x,
+            p.y,
+            radius,
+            color if uniform else colors[i],
+            row_lo,
+            row_hi,
+        )
+
+
+async def _circles_band_async(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_circles_band` as a task. `centers` and `colors` are borrowed,
+    never owned: a heap-backed aggregate handed to `create_task` by
+    value is canvas_mojo#97.
+    """
+    _circles_band(canvas, centers, colors, radius, color, row_lo, row_hi)
+
+
+def _fill_circles_sequential(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    color: Color,
+) raises:
+    """One `fill_circle_aa` per center, the definition every batched
+    path has to agree with."""
+    var uniform = len(colors) == 0
+    for i in range(len(centers)):
+        ref p = centers[i]
+        fill_circle_aa(
+            canvas, p.x, p.y, radius, color if uniform else colors[i]
+        )
+
+
+def _fill_circles_aa_impl(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    color: Color,
+) raises:
+    """The body both `fill_circles_aa` overloads land in. An empty
+    `colors` means every marker takes `color`."""
+    if len(centers) == 0:
+        return
+    if radius <= 0.0:
+        _fill_circles_sequential(canvas, centers, colors, radius, color)
+        return
+
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if not m.is_similarity():
+            # A non-similarity turns each disk into an ellipse, so
+            # there is nothing uniform left to batch.
+            _fill_circles_sequential(canvas, centers, colors, radius, color)
+            return
+        # A similarity keeps every disk a disk, so mapping the centers
+        # and scaling the radius once leaves a device-space batch.
+        var mapped = List[FPoint](capacity=len(centers))
+        for i in range(len(centers)):
+            ref p = centers[i]
+            var q = m.apply(p.x, p.y)
+            mapped.append(FPoint(q.x, q.y))
+        var scaled = radius * m.scale_factor()
+        var saved = canvas._take_transform()
+        try:
+            _fill_circles_aa_impl(canvas, mapped, colors, scaled, color)
+        except e:
+            canvas._set_transform(saved)
+            raise e
+        canvas._set_transform(saved)
+        return
+
+    if radius > _CLOSED_FORM_MAX_RADIUS:
+        # The polygon route has no row-restricted entry point and
+        # already bands each disk across cores; batching would take
+        # that away rather than add to it.
+        _fill_circles_sequential(canvas, centers, colors, radius, color)
+        return
+
+    # Roughly the covered area, the figure `_bands_for` weighs against
+    # its parallel threshold.
+    var per_marker = Int(3.15 * (radius + 1.0) * (radius + 1.0)) + 1
+    var bands = _bands_for(
+        len(centers) * per_marker, canvas.height, canvas.max_workers()
+    )
+    if bands <= 1:
+        _circles_band(canvas, centers, colors, radius, color, 0, canvas.height)
+        return
+
+    var per_band = (canvas.height + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var row_lo = b * per_band
+        var row_hi = min(row_lo + per_band, canvas.height)
+        if row_lo >= row_hi:
+            continue
+        tg.create_task(
+            _circles_band_async(
+                canvas, centers, colors, radius, color, row_lo, row_hi
+            )
+        )
+    tg.wait()
+    # Named past the tasks: a task's borrow is not a use the compiler
+    # counts, so without this the lists are freed while bands still
+    # read them (#263).
+    _ = len(centers)
+    _ = len(colors)
+
+
+def fill_circles_aa(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    radius: Float64,
+    color: Color,
+) raises:
+    """Fill many equal-radius anti-aliased disks in one call.
+
+    The scatter-plot shape. Each marker is far too small to be worth a
+    task of its own, so splitting per marker cannot pay, and drawing
+    them one at a time leaves every core but one idle. This splits the
+    *canvas* into row bands instead and hands each band the whole
+    batch, so the work is shared out by where markers land rather than
+    by which marker they are.
+
+    Output is identical to calling `fill_circle_aa` once per center in
+    the same order, including where translucent markers overlap: each
+    band walks the batch in submission order, and bands own disjoint
+    rows.
+
+    A radius past the closed-form limit, a canvas transform that is
+    not a similarity, or too little total work each fall back to
+    per-marker calls, which produce the same pixels more slowly.
+
+    Args:
+        canvas: Canvas to fill into.
+        centers: Sub-pixel center of each marker, in draw order.
+        radius: Radius shared by every marker, in pixels.
+        color: Fill color shared by every marker.
+    """
+    _fill_circles_aa_impl(canvas, centers, List[Color](), radius, color)
+
+
+def fill_circles_aa(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    radius: Float64,
+    colors: List[Color],
+) raises:
+    """`fill_circles_aa` with a color per marker -- a scatter whose
+    points carry a color scale.
+
+    Args:
+        canvas: Canvas to fill into.
+        centers: Sub-pixel center of each marker, in draw order.
+        radius: Radius shared by every marker, in pixels.
+        colors: One color per center, same length as `centers`.
+
+    Raises:
+        Error: If `colors` is not the same length as `centers`.
+    """
+    if len(colors) != len(centers):
+        raise Error(
+            String(
+                "fill_circles_aa: ",
+                len(colors),
+                " colors for ",
+                len(centers),
+                " centers",
+            )
+        )
+    _fill_circles_aa_impl(canvas, centers, colors, radius, Color(0, 0, 0))
 
 
 def draw_circle_aa(

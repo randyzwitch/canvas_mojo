@@ -74,6 +74,13 @@ importable package is named `canvas`; the project is `canvas_mojo`.
   a fifth quicker on flat content at the same bytes, `SMALL` trades
   roughly 1.7x the time for a smaller file, `DEFAULT` is the default.
   Every level decodes to the same pixels.
+- `fill_circles_aa(canvas, centers, radius, color)` draws a whole
+  scatter in one call, banding the canvas across cores instead of
+  drawing one marker at a time -- around 10x on 2,000 small markers.
+  `centers` is a `List[FPoint]` in draw order; a `List[Color]` in
+  place of the single color gives one color per marker. The result is
+  identical to `fill_circle_aa` per center, overlapping translucent
+  markers included.
 - `canvas.set_max_workers(n)` caps how many threads one render's
   banded passes may use, for an application drawing several canvases
   at once. It is a per-render ceiling, not a budget across renders,

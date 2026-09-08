@@ -7,10 +7,12 @@ from std.testing import assert_equal, TestSuite, assert_true
 
 from canvas.color import Color
 from canvas.buffer import Canvas
+from canvas.geometry import FPoint
 from canvas.shapes.circles import (
     draw_circle,
     fill_circle,
     fill_circle_aa,
+    fill_circles_aa,
     draw_circle_aa,
 )
 
@@ -159,7 +161,7 @@ def test_fill_circle_aa_center_is_fully_opaque() raises:
     # Pixel (px, py) spans [px - 0.5, px + 0.5] in both axes, so for a
     # radius-2 disk at (3, 3) the pixels sharing an edge with the
     # center are wholly inside -- their farthest corner is at distance
-    # sqrt(0.5^2 + 1.5^2) = 1.58 -- while the four diagonal neighbours
+    # sqrt(0.5^2 + 1.5^2) = 1.58 -- while the four diagonal neighbors
     # are not: (2, 2)'s far corner (1.5, 1.5) is at sqrt(4.5) = 2.12,
     # outside the disk, so a sliver of that pixel is uncovered and its
     # true coverage is 98.5%, not 100%.
@@ -170,10 +172,10 @@ def test_fill_circle_aa_center_is_fully_opaque() raises:
     var c = Canvas(7, 7, BG)
     fill_circle_aa(c, 3, 3, 2, FG)
     _assert_pixel(c, 3, 3, FG, "center")
-    _assert_pixel(c, 3, 2, FG, "edge neighbour")
-    _assert_pixel(c, 2, 3, FG, "edge neighbour")
-    _assert_coverage(c, 2, 2, 251, "diagonal neighbour, corner outside")
-    _assert_coverage(c, 4, 4, 251, "diagonal neighbour, corner outside")
+    _assert_pixel(c, 3, 2, FG, "edge neighbor")
+    _assert_pixel(c, 2, 3, FG, "edge neighbor")
+    _assert_coverage(c, 2, 2, 251, "diagonal neighbor, corner outside")
+    _assert_coverage(c, 4, 4, 251, "diagonal neighbor, corner outside")
 
 
 def test_fill_circle_aa_far_pixel_is_untouched() raises:
@@ -215,17 +217,17 @@ def test_fill_circle_aa_agrees_with_hard_edged_on_interior_pixels() raises:
     var c = Canvas(7, 7, BG)
     fill_circle_aa(c, 3, 3, 2, FG)
     # Only the pixels sharing an edge with the center are wholly
-    # inside; the four diagonal neighbours each have one corner
+    # inside; the four diagonal neighbors each have one corner
     # outside the disk (see the fully-opaque test above), so they are
     # 98.5% covered rather than 100%.
     _assert_pixel(c, 3, 3, FG, "center")
-    _assert_pixel(c, 3, 2, FG, "edge neighbour")
-    _assert_pixel(c, 2, 3, FG, "edge neighbour")
-    _assert_pixel(c, 4, 3, FG, "edge neighbour")
-    _assert_pixel(c, 3, 4, FG, "edge neighbour")
-    _assert_coverage(c, 4, 2, 251, "diagonal neighbour")
-    _assert_coverage(c, 2, 4, 251, "diagonal neighbour")
-    _assert_coverage(c, 4, 4, 251, "diagonal neighbour")
+    _assert_pixel(c, 3, 2, FG, "edge neighbor")
+    _assert_pixel(c, 2, 3, FG, "edge neighbor")
+    _assert_pixel(c, 4, 3, FG, "edge neighbor")
+    _assert_pixel(c, 3, 4, FG, "edge neighbor")
+    _assert_coverage(c, 4, 2, 251, "diagonal neighbor")
+    _assert_coverage(c, 2, 4, 251, "diagonal neighbor")
+    _assert_coverage(c, 4, 4, 251, "diagonal neighbor")
 
 
 def test_fill_circle_aa_respects_translucent_input_color() raises:
@@ -345,6 +347,225 @@ def test_draw_circle_aa_sub_pixel_center_moves_the_ring() raises:
             if a.get_pixel(x, y).r != b.get_pixel(x, y).r:
                 differing += 1
     assert_true(differing > 20, "half a pixel of center shifts the ring")
+
+
+# --- batched markers (#290) ----------------------------------------
+# `fill_circles_aa` splits the canvas into row bands and hands each
+# band the whole batch. Its contract is that the result is
+# indistinguishable from calling `fill_circle_aa` once per center in
+# the same order, so every test here renders both ways and compares
+# every byte. Nothing is asserted about speed: that is the benchmark's
+# job, and correctness here is what makes the speed worth having.
+
+
+def _scatter(n: Int, seedx: Int, seedy: Int) -> List[FPoint]:
+    """Fractional positions on purpose. Integer centers would give
+    every marker the same sub-pixel phase, which is the one case a
+    coverage shortcut cannot get wrong."""
+    var pts = List[FPoint](capacity=n)
+    for i in range(n):
+        var x = 12.0 + Float64((i * seedx) % 2600) * 0.1
+        var y = 9.0 + Float64((i * seedy) % 1700) * 0.1
+        pts.append(FPoint(x, y))
+    return pts^
+
+
+def _assert_same_canvas(a: Canvas, b: Canvas, label: String) raises:
+    assert_equal(a.width, b.width, label + " width")
+    assert_equal(a.height, b.height, label + " height")
+    var differing = 0
+    for y in range(a.height):
+        for x in range(a.width):
+            var p = a.get_pixel(x, y)
+            var q = b.get_pixel(x, y)
+            if p.r != q.r or p.g != q.g or p.b != q.b or p.a != q.a:
+                differing += 1
+    assert_equal(differing, 0, label + ": differing pixels")
+
+
+def _inked(c: Canvas) -> Int:
+    var n = 0
+    for y in range(c.height):
+        for x in range(c.width):
+            var p = c.get_pixel(x, y)
+            if p.r != 0 or p.g != 0 or p.b != 0:
+                n += 1
+    return n
+
+
+def test_batched_markers_match_individual_calls() raises:
+    var pts = _scatter(1200, 37, 53)
+    var ink = Color(220, 90, 40)
+    var batched = Canvas(280, 190, BG)
+    fill_circles_aa(batched, pts, 3.5, ink)
+    var one_by_one = Canvas(280, 190, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 3.5, ink)
+    _assert_same_canvas(batched, one_by_one, "opaque batch")
+    assert_true(_inked(one_by_one) > 5000, "the scatter must draw ink")
+
+
+def test_overlapping_translucent_markers_keep_submission_order() raises:
+    """The case that fails if a band draws the batch out of order, or
+    if two bands both write a pixel. Opaque markers would hide it."""
+    var pts = List[FPoint]()
+    for i in range(400):
+        # Deliberately piled up, so almost every marker overlaps
+        # several others and order decides the result.
+        pts.append(
+            FPoint(40.0 + Float64(i % 20) * 2.3, 30.0 + Float64(i // 20) * 2.7)
+        )
+    var ink = Color(30, 140, 220, 70)
+    var batched = Canvas(160, 120, BG)
+    fill_circles_aa(batched, pts, 5.0, ink)
+    var one_by_one = Canvas(160, 120, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 5.0, ink)
+    _assert_same_canvas(batched, one_by_one, "translucent pile")
+    assert_true(_inked(one_by_one) > 2000, "the pile must draw ink")
+
+
+def test_per_marker_colors_match_individual_calls() raises:
+    var pts = _scatter(600, 41, 29)
+    var colors = List[Color](capacity=len(pts))
+    for i in range(len(pts)):
+        colors.append(
+            Color(
+                UInt8(20 + i % 200),
+                UInt8(90 + i % 120),
+                200,
+                UInt8(120 + i % 130),
+            )
+        )
+    var batched = Canvas(280, 190, BG)
+    fill_circles_aa(batched, pts, 4.0, colors)
+    var one_by_one = Canvas(280, 190, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 4.0, colors[i])
+    _assert_same_canvas(batched, one_by_one, "per-marker colors")
+
+
+def test_markers_straddling_band_boundaries_are_drawn_once() raises:
+    """Every marker sits on a row a band boundary is likely to fall
+    on. Drawn twice, a translucent marker composites twice and shows
+    up immediately."""
+    var pts = List[FPoint]()
+    var h = 256
+    for b in range(1, 64):
+        var y = Float64(b * h) / 64.0
+        for k in range(6):
+            pts.append(FPoint(10.0 + Float64(k) * 30.0 + Float64(b), y))
+    var ink = Color(255, 255, 255, 90)
+    var batched = Canvas(200, h, BG)
+    fill_circles_aa(batched, pts, 4.0, ink)
+    var one_by_one = Canvas(200, h, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 4.0, ink)
+    _assert_same_canvas(batched, one_by_one, "band boundaries")
+
+
+def test_batched_markers_under_a_similarity_transform() raises:
+    var pts = _scatter(500, 23, 61)
+    var ink = Color(200, 60, 120, 180)
+    var batched = Canvas(280, 190, BG)
+    batched.save()
+    batched.translate(18.0, 7.0)
+    batched.rotate(0.4)
+    batched.scale(1.3, 1.3)
+    fill_circles_aa(batched, pts, 3.0, ink)
+    batched.restore()
+    var one_by_one = Canvas(280, 190, BG)
+    one_by_one.save()
+    one_by_one.translate(18.0, 7.0)
+    one_by_one.rotate(0.4)
+    one_by_one.scale(1.3, 1.3)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 3.0, ink)
+    one_by_one.restore()
+    _assert_same_canvas(batched, one_by_one, "similarity")
+    assert_true(_inked(one_by_one) > 1000, "the transformed scatter must ink")
+
+
+def test_batched_markers_under_a_non_similarity_transform() raises:
+    """A non-uniform scale makes each disk an ellipse, so the batch
+    falls back to per-marker calls. Same pixels either way."""
+    var pts = _scatter(300, 17, 43)
+    var ink = Color(90, 190, 90)
+    var batched = Canvas(280, 190, BG)
+    batched.save()
+    batched.scale(1.6, 0.7)
+    fill_circles_aa(batched, pts, 3.5, ink)
+    batched.restore()
+    var one_by_one = Canvas(280, 190, BG)
+    one_by_one.save()
+    one_by_one.scale(1.6, 0.7)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 3.5, ink)
+    one_by_one.restore()
+    _assert_same_canvas(batched, one_by_one, "non-similarity")
+
+
+def test_large_radius_markers_fall_back_and_still_match() raises:
+    """Past the closed-form limit the polygon rasterizer takes over,
+    which bands each disk itself."""
+    var pts = _scatter(60, 31, 47)
+    var ink = Color(240, 200, 60, 150)
+    var batched = Canvas(280, 190, BG)
+    fill_circles_aa(batched, pts, 14.0, ink)
+    var one_by_one = Canvas(280, 190, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 14.0, ink)
+    _assert_same_canvas(batched, one_by_one, "large radius")
+
+
+def test_batched_markers_under_a_clip() raises:
+    var pts = _scatter(800, 37, 53)
+    var ink = Color(120, 180, 255, 200)
+    var batched = Canvas(280, 190, BG)
+    batched.save()
+    batched.push_clip(60, 40, 90, 70)
+    fill_circles_aa(batched, pts, 3.5, ink)
+    batched.restore()
+    var one_by_one = Canvas(280, 190, BG)
+    one_by_one.save()
+    one_by_one.push_clip(60, 40, 90, 70)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 3.5, ink)
+    one_by_one.restore()
+    _assert_same_canvas(batched, one_by_one, "clipped batch")
+
+
+def test_batched_markers_are_identical_at_every_worker_count() raises:
+    """Banding must not change the picture, whatever it is banded
+    into -- including one band, which takes the serial path."""
+    var pts = _scatter(900, 37, 53)
+    var ink = Color(255, 120, 60, 140)
+    var caps: List[Int] = [1, 2, 3, 8, 64]
+    var reference = Canvas(240, 170, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(reference, pts[i].x, pts[i].y, 3.5, ink)
+    for ci in range(len(caps)):
+        var c = Canvas(240, 170, BG)
+        c.set_max_workers(caps[ci])
+        fill_circles_aa(c, pts, 3.5, ink)
+        _assert_same_canvas(c, reference, String("workers ", caps[ci]))
+
+
+def test_empty_batch_and_mismatched_colors() raises:
+    var c = Canvas(60, 40, BG)
+    var none = List[FPoint]()
+    fill_circles_aa(c, none, 3.0, Color(255, 255, 255))
+    assert_equal(_inked(c), 0, "an empty batch draws nothing")
+
+    var pts = _scatter(4, 13, 19)
+    var too_few = List[Color]()
+    too_few.append(Color(255, 0, 0))
+    var raised = False
+    try:
+        fill_circles_aa(c, pts, 3.0, too_few)
+    except:
+        raised = True
+    assert_true(raised, "a color per marker is required")
 
 
 def main() raises:
