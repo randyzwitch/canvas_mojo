@@ -22,12 +22,16 @@ compressed once in the encoding that sample picked. `PngLevel` sets
 how much of that search happens -- `FAST` skips it outright on an
 image flat enough for the answer not to be in doubt, `SMALL`
 compresses both encodings in full rather than sampling.
-`read_png` accepts color types 0/2/4/6 at 8-bit depth and indexed
+`read_png` accepts color types 0/2/4/6 at 8 or 16 bits and indexed
 color (type 3, `PLTE` with an optional `tRNS`) at 1/2/4/8 bits,
-non-interlaced; other bit depths and Adam7 interlacing
-raise rather than misreading pixels. Alpha is preserved in both
-directions, so a file round-trips through `read_png` -> `write_png`
-unchanged.
+Adam7-interlaced or not. A 16-bit sample reduces to 8 by
+`round(v * 255 / 65535)`, and a `tRNS` color key is compared against
+the sample before that reduction, since two 16-bit values a level
+apart can share an 8-bit result. Grayscale below 8 bits is the one
+combination the spec allows and this does not; it raises, as an
+unknown bit depth, color type or interlace method does, rather than
+misreading pixels. Alpha is preserved in both directions, so an 8-bit
+file round-trips through `read_png` -> `write_png` unchanged.
 """
 
 from std.math import iota
@@ -657,25 +661,61 @@ def _bytes_per_pixel(color_type: Int) raises -> Int:
     )
 
 
+def _channels(color_type: Int) raises -> Int:
+    """Samples per pixel by color type, whatever the bit depth."""
+    if color_type == 0:
+        return 1  # grayscale
+    if color_type == 2:
+        return 3  # truecolor (RGB)
+    if color_type == 3:
+        return 1  # a palette index
+    if color_type == 4:
+        return 2  # grayscale + alpha
+    if color_type == 6:
+        return 4  # truecolor + alpha (RGBA)
+    raise Error(
+        String(
+            "png: unsupported color type ",
+            color_type,
+            " (only 0/2/3/4/6 are supported)",
+        )
+    )
+
+
+def _row_bytes(width: Int, color_type: Int, bit_depth: Int) raises -> Int:
+    """Bytes one scanline of `width` pixels occupies, rounded up: a
+    row of sub-byte samples is padded to a whole byte, never packed
+    across the row boundary (spec section 7.2).
+    """
+    return (width * _channels(color_type) * bit_depth + 7) // 8
+
+
+def _filter_bpp(color_type: Int, bit_depth: Int) raises -> Int:
+    """The filters' `bpp`: bytes per complete pixel, rounded *down*
+    but never below one (spec section 9.2). Sub-byte pixels therefore
+    filter against the byte to their left, whole-byte ones against the
+    sample of the same channel in the pixel to their left.
+    """
+    var bits = _channels(color_type) * bit_depth
+    if bits < 8:
+        return 1
+    return bits // 8
+
+
 # Bytes per step in the two filters that have no left-neighbour
 # dependency. Wide enough to fill a vector register on anything
 # current; a row shorter than this, or its tail, falls back to bytes.
 comptime _UNFILTER_W = 32
 
 
-def _unfilter_scanlines(
-    raw: List[UInt8], width: Int, height: Int, bpp: Int
-) raises -> List[UInt8]:
-    """`_unfilter_rows` for rows of `width` whole-byte pixels."""
-    return _unfilter_rows(raw, width * bpp, height, bpp)
-
-
 def _unfilter_rows(
-    raw: List[UInt8], row_bytes: Int, height: Int, bpp: Int
+    raw: List[UInt8], row_bytes: Int, height: Int, bpp: Int, offset: Int = 0
 ) raises -> List[UInt8]:
     """Reverses PNG's per-scanline filtering (spec section 9). `raw` is
-    `inflate`'s output: a filter-type byte plus `width * bpp` filtered
-    bytes, repeated `height` times. Each row reconstructs from the
+    `inflate`'s output from `offset` on: a filter-type byte plus
+    `row_bytes` filtered bytes, repeated `height` times. An interlaced
+    image passes the offset of each Adam7 pass, since the passes share
+    one stream but filter independently. Each row reconstructs from the
     already-reconstructed row above it and its own already-
     reconstructed bytes to the left, the dependency order the spec's
     formulas assume. Bytes left of the first pixel, and the row above
@@ -692,7 +732,7 @@ def _unfilter_rows(
     var zero_row = List[UInt8](length=row_bytes, fill=0)
     var rp = raw.unsafe_ptr()
     var op = out.unsafe_ptr()
-    var pos = 0
+    var pos = offset
     for y in range(height):
         if pos >= len(raw):
             raise Error(
@@ -841,9 +881,226 @@ def _canvas_from_scanlines(
     return Canvas(width, height, pixels^)
 
 
+def _canvas_from_scanlines16(
+    unfiltered: List[UInt8],
+    width: Int,
+    height: Int,
+    color_type: Int,
+    trns: List[UInt8],
+) raises -> Canvas:
+    """16-bit samples to the Canvas's 8-bit RGBA. Each sample is two
+    bytes, big-endian (spec section 7.1).
+
+    The reduction is `round(v * 255 / 65535)`, written
+    `(v + 128) // 257` -- exact, because 65535 is 255 * 257, so the
+    scale is a division by 257 and adding half the divisor rounds it.
+    Keeping the high byte instead is the other common choice and is
+    not the same: it maps both 65535 and 65280 to 255 and sits up to
+    half a level low across the rest of the range.
+
+    `tRNS` is compared against the samples *before* they are reduced.
+    Two 16-bit values one level apart reduce to the same 8-bit value
+    and only one of them is the transparent color, so comparing after
+    would punch holes in pixels the file meant to be opaque.
+    """
+    var ch = _channels(color_type)
+    var n = width * height
+    if len(unfiltered) < n * ch * 2:
+        raise Error("png: scanline data shorter than the image")
+    var pixels = List[UInt8](unsafe_uninit_length=n * BYTES_PER_PIXEL)
+    var sp = unfiltered.unsafe_ptr()
+    var dp = pixels.unsafe_ptr()
+    var keyed = len(trns) > 0 and (color_type == 0 or color_type == 2)
+    var key_r = -1
+    var key_g = -1
+    var key_b = -1
+    if keyed:
+        if color_type == 0:
+            if len(trns) < 2:
+                raise Error("png: tRNS chunk too short for grayscale")
+            key_r = (Int(trns[0]) << 8) | Int(trns[1])
+            key_g = key_r
+            key_b = key_r
+        else:
+            if len(trns) < 6:
+                raise Error("png: tRNS chunk too short for truecolor")
+            key_r = (Int(trns[0]) << 8) | Int(trns[1])
+            key_g = (Int(trns[2]) << 8) | Int(trns[3])
+            key_b = (Int(trns[4]) << 8) | Int(trns[5])
+    for i in range(n):
+        # Bounded by the length check above: `base` runs to
+        # (n - 1) * ch * 2 and each read stays inside that pixel.
+        var base = i * ch * 2
+        var first = (Int(sp[unsafe_offset=base]) << 8) | Int(
+            sp[unsafe_offset=base + 1]
+        )
+        var r16 = first
+        var g16 = first
+        var b16 = first
+        var a16 = 65535
+        if color_type == 2 or color_type == 6:
+            g16 = (Int(sp[unsafe_offset=base + 2]) << 8) | Int(
+                sp[unsafe_offset=base + 3]
+            )
+            b16 = (Int(sp[unsafe_offset=base + 4]) << 8) | Int(
+                sp[unsafe_offset=base + 5]
+            )
+            if color_type == 6:
+                a16 = (Int(sp[unsafe_offset=base + 6]) << 8) | Int(
+                    sp[unsafe_offset=base + 7]
+                )
+        elif color_type == 4:
+            a16 = (Int(sp[unsafe_offset=base + 2]) << 8) | Int(
+                sp[unsafe_offset=base + 3]
+            )
+        if keyed and r16 == key_r and g16 == key_g and b16 == key_b:
+            a16 = 0
+        var d = i * BYTES_PER_PIXEL
+        dp[unsafe_offset=d] = UInt8((r16 + 128) // 257)
+        dp[unsafe_offset=d + 1] = UInt8((g16 + 128) // 257)
+        dp[unsafe_offset=d + 2] = UInt8((b16 + 128) // 257)
+        dp[unsafe_offset=d + 3] = UInt8((a16 + 128) // 257)
+    return Canvas(width, height, pixels^)
+
+
+def _apply_trns8(mut canvas: Canvas, color_type: Int, trns: List[UInt8]) raises:
+    """Zero the alpha of every pixel matching `tRNS`'s color key, for
+    8-bit grayscale and truecolor.
+
+    Run over the finished RGBA rather than folded into the conversion,
+    so the vectorized path above stays as it is. It is exact at this
+    depth: the bytes compared are the file's own samples, copied
+    through unchanged. The key is stored as 16-bit samples whatever
+    the depth (spec section 11.3.2), so only the low byte of each
+    carries the 8-bit value.
+    """
+    var need = 2 if color_type == 0 else 6
+    if len(trns) < need:
+        raise Error("png: tRNS chunk too short for the color type")
+    var key_r = trns[1]
+    var key_g = trns[1] if color_type == 0 else trns[3]
+    var key_b = trns[1] if color_type == 0 else trns[5]
+    var n = canvas.width * canvas.height
+    var p = canvas.pixels.unsafe_ptr()
+    for i in range(n):
+        var d = i * BYTES_PER_PIXEL
+        if (
+            p[unsafe_offset=d] == key_r
+            and p[unsafe_offset=d + 1] == key_g
+            and p[unsafe_offset=d + 2] == key_b
+        ):
+            p[unsafe_offset=d + 3] = 0
+
+
+def _rows_to_canvas(
+    unfiltered: List[UInt8],
+    width: Int,
+    height: Int,
+    color_type: Int,
+    bit_depth: Int,
+    palette: List[UInt8],
+    trns: List[UInt8],
+) raises -> Canvas:
+    """One rectangle of already-unfiltered rows to a Canvas, by color
+    type and depth. The whole image for a non-interlaced file, one
+    Adam7 pass for an interlaced one -- the two differ in how the rows
+    are found, not in what the samples mean.
+    """
+    if color_type == 3:
+        var row_bytes = _row_bytes(width, color_type, bit_depth)
+        return _canvas_from_indexed(
+            unfiltered, row_bytes, width, height, bit_depth, palette, trns
+        )
+    if bit_depth == 16:
+        return _canvas_from_scanlines16(
+            unfiltered, width, height, color_type, trns
+        )
+    var canvas = _canvas_from_scanlines(unfiltered, width, height, color_type)
+    if len(trns) > 0 and (color_type == 0 or color_type == 2):
+        _apply_trns8(canvas, color_type, trns)
+    return canvas^
+
+
+def _deinterlace_adam7(
+    raw: List[UInt8],
+    width: Int,
+    height: Int,
+    color_type: Int,
+    bit_depth: Int,
+    palette: List[UInt8],
+    trns: List[UInt8],
+) raises -> Canvas:
+    """Adam7 (spec section 8.2): seven passes, each a subsampled grid
+    with its own origin and stride, concatenated in one stream.
+
+    A pass filters against its *own* neighbours, not the final image's,
+    so each is unfiltered separately with the row geometry its own
+    width gives it -- which is why `_unfilter_rows` takes an offset
+    rather than the stream being split up front. A pass whose width or
+    height rounds to zero contributes no bytes at all and is skipped;
+    that is the usual case for the later passes of a tiny image, and
+    reading a filter byte for one would desynchronize everything after
+    it.
+
+    The output starts zeroed so that a pixel no pass reaches stays
+    transparent black. Every pixel of the image is covered by exactly
+    one pass, so nothing is written twice.
+    """
+    var xstart: List[Int] = [0, 4, 0, 2, 0, 1, 0]
+    var ystart: List[Int] = [0, 0, 4, 0, 2, 0, 1]
+    var xstep: List[Int] = [8, 8, 4, 4, 2, 2, 1]
+    var ystep: List[Int] = [8, 8, 8, 4, 4, 2, 2]
+    var pixels = List[UInt8](length=width * height * BYTES_PER_PIXEL, fill=0)
+    var dp = pixels.unsafe_ptr()
+    var filter_bpp = _filter_bpp(color_type, bit_depth)
+    var pos = 0
+    for p in range(7):
+        var x0 = xstart[p]
+        var y0 = ystart[p]
+        var dx = xstep[p]
+        var dy = ystep[p]
+        var pw = 0
+        if width > x0:
+            pw = (width - x0 + dx - 1) // dx
+        var ph = 0
+        if height > y0:
+            ph = (height - y0 + dy - 1) // dy
+        if pw == 0 or ph == 0:
+            continue
+        var row_bytes = _row_bytes(pw, color_type, bit_depth)
+        var consumed = ph * (row_bytes + 1)
+        if pos + consumed > len(raw):
+            raise Error(
+                String(
+                    "png: truncated Adam7 stream -- pass ",
+                    p + 1,
+                    " of 7 needs ",
+                    consumed,
+                    " more bytes",
+                )
+            )
+        var unfiltered = _unfilter_rows(raw, row_bytes, ph, filter_bpp, pos)
+        pos += consumed
+        var sub = _rows_to_canvas(
+            unfiltered, pw, ph, color_type, bit_depth, palette, trns
+        )
+        var subp = sub.pixels.unsafe_ptr()
+        for y in range(ph):
+            var dest_row = (y0 + y * dy) * width
+            var src_row = y * pw
+            for x in range(pw):
+                var s = (src_row + x) * BYTES_PER_PIXEL
+                var d = (dest_row + x0 + x * dx) * BYTES_PER_PIXEL
+                dp.unsafe_offset(d).unsafe_store(
+                    subp.unsafe_offset(s).unsafe_load[width=BYTES_PER_PIXEL]()
+                )
+    return Canvas(width, height, pixels^)
+
+
 def read_png(path: String) raises -> Canvas:
     """Read a PNG file into a Canvas. Handles 8-bit depth, color types
-    0/2/4/6, non-interlaced; anything else raises (see this module's
+    0/2/4/6 at 8 or 16 bits, interlaced or not; anything else raises
+    (see this module's
     docstring).
 
     Every chunk's CRC-32 is checked against its trailing 4 bytes, and
@@ -896,6 +1153,7 @@ def decode_png(var data: List[UInt8]) raises -> Canvas:
     var height = 0
     var color_type = -1
     var bit_depth = 8
+    var interlaced = False
     var have_ihdr = False
     var idat = List[UInt8]()
     var palette = List[UInt8]()
@@ -952,17 +1210,30 @@ def decode_png(var data: List[UInt8]) raises -> Canvas:
                     "png: unsupported filter method (only method 0 is"
                     " supported)"
                 )
-            if interlace_method != 0:
-                raise Error("png: Adam7 interlacing is not supported")
+            if interlace_method != 0 and interlace_method != 1:
+                raise Error(
+                    String(
+                        "png: unknown interlace method ",
+                        interlace_method,
+                        " (the spec defines only 0/none and 1/Adam7)",
+                    )
+                )
+            interlaced = interlace_method == 1
             var packed_ok = color_type == 3 and (
                 bit_depth == 1 or bit_depth == 2 or bit_depth == 4
             )
-            if bit_depth != 8 and not packed_ok:
+            # 16 bits is defined for every color type but indexed,
+            # whose samples are palette indices.
+            var deep_ok = bit_depth == 16 and color_type != 3
+            if bit_depth != 8 and not packed_ok and not deep_ok:
                 raise Error(
                     String(
                         "png: unsupported bit depth ",
                         bit_depth,
-                        " (8-bit, or 1/2/4-bit indexed color)",
+                        " for color type ",
+                        color_type,
+                        " (8-bit for any type, 16-bit for any but indexed,",
+                        " 1/2/4-bit for indexed)",
                     )
                 )
             if width <= 0 or height <= 0:
@@ -1006,17 +1277,19 @@ def decode_png(var data: List[UInt8]) raises -> Canvas:
             "png: Adler-32 mismatch after decompression -- corrupted file"
         )
 
-    var bpp = _bytes_per_pixel(color_type)
-    if color_type == 3:
-        if len(palette) < 3:
-            raise Error("png: indexed color without a PLTE chunk")
-        var row_bytes = (width * bit_depth + 7) // 8
-        var unfiltered = _unfilter_rows(raw, row_bytes, height, 1)
-        return _canvas_from_indexed(
-            unfiltered, row_bytes, width, height, bit_depth, palette, trns
+    if color_type == 3 and len(palette) < 3:
+        raise Error("png: indexed color without a PLTE chunk")
+    if interlaced:
+        return _deinterlace_adam7(
+            raw, width, height, color_type, bit_depth, palette, trns
         )
-    var unfiltered = _unfilter_scanlines(raw, width, height, bpp)
-    return _canvas_from_scanlines(unfiltered, width, height, color_type)
+    var row_bytes = _row_bytes(width, color_type, bit_depth)
+    var unfiltered = _unfilter_rows(
+        raw, row_bytes, height, _filter_bpp(color_type, bit_depth)
+    )
+    return _rows_to_canvas(
+        unfiltered, width, height, color_type, bit_depth, palette, trns
+    )
 
 
 def _canvas_from_indexed(

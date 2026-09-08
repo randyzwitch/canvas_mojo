@@ -167,7 +167,10 @@ it oversized for extra anti-aliasing.
 
 - [`io.png`](../canvas/io/png/) — `write_png`/`read_png`, this
   package's own DEFLATE-compressed PNG encoder/decoder, plus
-  `PngLevel` to trade encode time against file size.
+  `PngLevel` to trade encode time against file size. Reading covers
+  8- and 16-bit grayscale/truecolor/alpha, 1/2/4/8-bit indexed color,
+  color-key transparency and Adam7 interlacing; writing is always
+  8-bit and non-interlaced.
 - [`io.bmp`](../canvas/io/bmp/) — `read_bmp`/`write_bmp`, for the
   simpler uncompressed format.
 - [`io.jpeg`](../canvas/io/jpeg/) — `read_jpeg`/`decode_jpeg`:
