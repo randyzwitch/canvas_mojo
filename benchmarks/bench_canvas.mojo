@@ -65,7 +65,7 @@ from canvas.path import (
     stroke_path_aa,
 )
 from canvas.io.png import write_png, read_png
-from canvas.resize import downsample
+from canvas.resize import downsample, resize
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa, fill_circles_aa
 from canvas.shapes.ellipses import fill_ellipse_aa
@@ -703,6 +703,27 @@ def _survey() raises -> List[_Row]:
         var small = downsample(supersampled, 2)
         sink += Int(small.get_pixel(10, 10).r)
     _report(rows, "downsample 1600x1200 -> 2x", perf_counter_ns() - t0, iters)
+
+    # The same reduction through the arbitrary-size path, which cannot
+    # use the fixed-factor kernels and carries a Float64 intermediate
+    # (#298), and then one no integer factor can express. The pair
+    # says what the generality costs.
+    iters = 5
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var same = resize(supersampled, 800, 600)
+        sink += Int(same.get_pixel(10, 10).r)
+    _report(
+        rows, "resize 1600x1200 -> 800x600", perf_counter_ns() - t0, iters
+    )
+
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var odd = resize(supersampled, 741, 533)
+        sink += Int(odd.get_pixel(10, 10).r)
+    _report(
+        rows, "resize 1600x1200 -> 741x533", perf_counter_ns() - t0, iters
+    )
 
     # --- blur ------------------------------------------------------
     # blur() runs the same three box-blur passes whatever the radius --
