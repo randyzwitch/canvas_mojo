@@ -6,18 +6,33 @@ visual (left-to-right-drawable) order by the run-reversal technique of
 UAX #9's rule L2, and paired characters (parens, brackets, comparisons)
 that land inside a right-to-left run are mirrored.
 
+Character classes follow Unicode 15.0. Combining marks are recognized
+(rule W1: a mark takes the direction of the character it attaches to)
+and reordering is done by cluster, so a base and its marks stay
+together. The invisible strong marks LRM/RLM/ALM set direction as
+they should, and the structural formatting characters
+(LRE/RLE/LRO/RLO/PDF and the LRI/RLI/FSI/PDI isolates) are recognized
+and dropped before rendering rather than shaped into `.notdef` boxes.
+
 Not implemented here:
 
 - UAX #9's full weak/neutral-type resolution (W1-W7, N0-N2), which
-  collapses into one rule here: a neutral/weak run takes the level of the
-  strong text next to it, or the paragraph's base level. Correct for
-  digits, punctuation and spaces between words, not for every adjacency
-  UAX #9 enumerates.
-- Explicit directional formatting characters
-  (LRE/RLE/PDF/LRI/RLI/FSI/PDI/LRM/RLM), not recognized at all.
-- Keeping combining marks attached to their base during reordering, so a
-  base+diacritic pair in an RTL script (Hebrew niqqud, Arabic tashkeel)
-  has its mark repositioned by the per-codepoint reversal.
+  collapses into two rules here: a mark takes its base's level (W1),
+  and a neutral/weak run takes the level of the strong text next to
+  it, or the paragraph's base level. Correct for digits, punctuation
+  and spaces between words, not for every adjacency UAX #9 enumerates.
+- Embedding *levels* for the explicit controls. An isolate is opaque
+  to the paragraph direction, which rule P2 honours here, but the
+  text inside one is not given its own embedding level: it resolves
+  against the surrounding text as if the isolate were not there.
+  LRE/RLE/LRO/RLO and PDF are likewise recognized and removed without
+  raising or lowering the level of what they enclose. Text that
+  depends on a control to come out right -- an RTL phrase whose
+  direction cannot be inferred from its own characters -- will not.
+- The full `Mn`/`Me` set: `_is_combining_mark` covers the scripts this
+  package shapes (Latin, Hebrew, Arabic, Syriac, Thaana, NKo,
+  Samaritan, Mandaic, and the general combining blocks), not the
+  several hundred ranges UnicodeData.txt lists.
 - Arabic contextual letter-shaping: this module reorders and mirrors
   existing codepoints only. `joining.mojo` picks each Arabic letter's
   contextual form, and `render.mojo` shapes each run `visual_runs`
@@ -33,6 +48,111 @@ comptime _STRONG_L = 0
 comptime _STRONG_R = 1
 comptime _WEAK_NEUTRAL = 2
 comptime _WEAK_NUMBER = 3
+# An explicit directional formatting character: invisible, and not
+# text. It takes the level of what surrounds it and is dropped before
+# rendering.
+comptime _EXPLICIT = 4
+# A non-spacing combining mark (UAX #9's NSM). It takes the direction
+# of the character it attaches to, and must never be separated from it.
+comptime _MARK = 5
+
+# The explicit formatting characters (UAX #9 table 2). LRE/RLE/LRO/RLO
+# and PDF are the deprecated embedding controls; LRI/RLI/FSI and PDI
+# are the isolates that replaced them.
+comptime _LRE = 0x202A
+comptime _RLE = 0x202B
+comptime _PDF = 0x202C
+comptime _LRO = 0x202D
+comptime _RLO = 0x202E
+comptime _LRI = 0x2066
+comptime _RLI = 0x2067
+comptime _FSI = 0x2068
+comptime _PDI = 0x2069
+# The invisible *strong* marks, which are text-like rather than
+# structural: they carry a direction and nothing else.
+comptime _LRM = 0x200E
+comptime _RLM = 0x200F
+comptime _ALM = 0x061C
+
+
+def _is_isolate_initiator(cp: Int) -> Bool:
+    return cp == _LRI or cp == _RLI or cp == _FSI
+
+
+def _is_explicit_control(cp: Int) -> Bool:
+    """The structural formatting characters, which have no glyph.
+    LRM/RLM/ALM are deliberately not here: they are strong characters
+    that happen to be invisible, and dropping them would lose the
+    direction they exist to supply.
+    """
+    if cp >= _LRE and cp <= _RLO:
+        return True
+    return cp >= _LRI and cp <= _PDI
+
+
+def _is_combining_mark(cp: Int) -> Bool:
+    """Non-spacing marks, over the scripts this package shapes:
+    Latin diacritics, Hebrew niqqud and cantillation, Arabic harakat
+    and Quranic annotation, Syriac, Thaana, Samaritan, plus the
+    general combining blocks. Unicode 15.1 ranges.
+
+    Not the full `Mn`/`Me` set from UnicodeData.txt -- an exhaustive
+    table would be several hundred ranges, and the scripts outside
+    this list are ones nothing here shapes yet. A mark outside it is
+    treated as an ordinary character, which is what happened to every
+    mark before this function existed.
+    """
+    if cp < 0x0300:
+        return False
+    if cp <= 0x036F:  # Combining Diacritical Marks
+        return True
+    if cp >= 0x0483 and cp <= 0x0489:  # Cyrillic
+        return True
+    if cp >= 0x0591 and cp <= 0x05BD:  # Hebrew cantillation, niqqud
+        return True
+    if cp == 0x05BF or cp == 0x05C7:
+        return True
+    if cp >= 0x05C1 and cp <= 0x05C2:
+        return True
+    if cp >= 0x05C4 and cp <= 0x05C5:
+        return True
+    if cp >= 0x0610 and cp <= 0x061A:  # Arabic
+        return True
+    if cp >= 0x064B and cp <= 0x065F:
+        return True
+    if cp == 0x0670:
+        return True
+    if cp >= 0x06D6 and cp <= 0x06DC:
+        return True
+    if cp >= 0x06DF and cp <= 0x06E4:
+        return True
+    if cp >= 0x06E7 and cp <= 0x06E8:
+        return True
+    if cp >= 0x06EA and cp <= 0x06ED:
+        return True
+    if cp == 0x0711:  # Syriac
+        return True
+    if cp >= 0x0730 and cp <= 0x074A:
+        return True
+    if cp >= 0x07A6 and cp <= 0x07B0:  # Thaana
+        return True
+    if cp >= 0x07EB and cp <= 0x07F3:  # NKo
+        return True
+    if cp >= 0x0816 and cp <= 0x082D:  # Samaritan
+        return True
+    if cp >= 0x0859 and cp <= 0x085B:  # Mandaic
+        return True
+    if cp >= 0x08D3 and cp <= 0x08FF:  # Arabic Extended-A marks
+        return True
+    if cp >= 0x1AB0 and cp <= 0x1AFF:  # Combining Diacriticals Extended
+        return True
+    if cp >= 0x1DC0 and cp <= 0x1DFF:  # Combining Diacriticals Supplement
+        return True
+    if cp >= 0x20D0 and cp <= 0x20F0:  # Combining Diacriticals for Symbols
+        return True
+    if cp >= 0xFE20 and cp <= 0xFE2F:  # Combining Half Marks
+        return True
+    return False
 
 
 def _codepoint_class(cp: Int) -> Int:
@@ -53,6 +173,17 @@ def _codepoint_class(cp: Int) -> Int:
         return _WEAK_NUMBER
     if cp == 0x20 or cp == 0x09 or cp == 0x0A or cp == 0x0D:
         return _WEAK_NEUTRAL
+    # Before the script ranges below: ALM sits inside the Arabic block
+    # and the marks sit inside Hebrew and Arabic, so testing the
+    # blocks first would swallow them.
+    if cp == _LRM:
+        return _STRONG_L
+    if cp == _RLM or cp == _ALM:
+        return _STRONG_R
+    if _is_explicit_control(cp):
+        return _EXPLICIT
+    if _is_combining_mark(cp):
+        return _MARK
     if (cp >= 0x21 and cp <= 0x2F) or (cp >= 0x3A and cp <= 0x40):
         return _WEAK_NEUTRAL
 
@@ -87,7 +218,20 @@ def detect_base_level(codepoints: List[Int]) -> Int:
     Returns:
         0 for LTR, 1 for RTL.
     """
+    # P2 skips everything between an isolate initiator and its
+    # matching PDI: an isolate is opaque to the paragraph's direction,
+    # which is the whole reason it is called one.
+    var depth = 0
     for cp in codepoints:
+        if _is_isolate_initiator(cp):
+            depth += 1
+            continue
+        if cp == _PDI:
+            if depth > 0:
+                depth -= 1
+            continue
+        if depth > 0:
+            continue
         var cls = _codepoint_class(cp)
         if cls == _STRONG_R:
             return 1
@@ -138,6 +282,16 @@ def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
             var level = last_level if last_level % 2 == 0 else last_level + 1
             levels[i] = level
             last_level = level
+
+    # UAX #9 rule W1: a combining mark takes the direction of what it
+    # attaches to. Run after the number pass so a mark on a digit
+    # follows the digit. A mark whose predecessor is still unresolved
+    # is left unresolved too, joining the neutral run around it, which
+    # is what W1 gives once that run resolves.
+    for i in range(n):
+        if levels[i] == -1 and _codepoint_class(codepoints[i]) == _MARK:
+            if i > 0 and levels[i - 1] != -1:
+                levels[i] = levels[i - 1]
 
     var i = 0
     while i < n:
@@ -340,16 +494,35 @@ def visual_order(codepoints: List[Int], base_level: Int) -> List[Int]:
         base_level: The paragraph's base embedding level -- 0 for LTR,
             1 for RTL, typically from detect_base_level.
 
+    Explicit formatting characters (LRE/RLE/LRO/RLO/PDF and the
+    isolates) are dropped: they are structure, not text, and have no
+    glyph. LRM/RLM/ALM are dropped for the same reason by the caller
+    that renders, but are kept here because they are strong characters
+    whose direction has already been used.
+
     Returns:
         The codepoints in visual order, mirrored where an RTL level
-        requires it.
+        requires it, with the explicit formatting characters removed.
     """
     var result = List[Int](capacity=len(codepoints))
     for run in visual_runs(codepoints, base_level):
         if run.is_rtl():
-            for i in range(run.start + run.length - 1, run.start - 1, -1):
-                result.append(_mirror_codepoint(codepoints[i]))
+            # Reversed by cluster, not by codepoint. A combining mark
+            # follows its base in logical order and has to keep
+            # following it after the reversal, or the mark lands on
+            # the previous letter -- a Hebrew word with niqqud comes
+            # out with every point one letter to the right.
+            var i = run.start + run.length - 1
+            while i >= run.start:
+                var base = i
+                while base > run.start and _is_combining_mark(codepoints[base]):
+                    base -= 1
+                for k in range(base, i + 1):
+                    if _codepoint_class(codepoints[k]) != _EXPLICIT:
+                        result.append(_mirror_codepoint(codepoints[k]))
+                i = base - 1
         else:
             for i in range(run.start, run.start + run.length):
-                result.append(codepoints[i])
+                if _codepoint_class(codepoints[i]) != _EXPLICIT:
+                    result.append(codepoints[i])
     return result^
