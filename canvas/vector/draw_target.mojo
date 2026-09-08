@@ -4,11 +4,14 @@ layer renders through, so a plot/scale/theme layer can target a raster
 which it holds. Neither vector backend has a fixed pixel resolution,
 so nothing rendered through the trait deals in supersampling.
 
-Eleven drawing primitives are declared -- `fill_rect`,
-`fill_rect_gradient`, `draw_line_aa`, `fill_circle_aa`, `draw_circle_aa`,
-`fill_ellipse_aa`, `draw_ellipse_aa`, `fill_arc_aa`,
-`fill_ring_sector_aa`, `stroke_path_aa` and `fill_path_aa` -- a subset
-of `canvas.shapes`. `fill_polygon`, clipping, radial gradients and
+Twelve drawing primitives are declared -- `fill_rect`,
+`fill_rect_gradient`, `draw_line_aa`, `fill_circle_aa`,
+`fill_circles_aa`, `draw_circle_aa`, `fill_ellipse_aa`,
+`draw_ellipse_aa`, `fill_arc_aa`, `fill_ring_sector_aa`,
+`stroke_path_aa` and `fill_path_aa` -- a subset of `canvas.shapes`.
+`fill_circles_aa` is the one that is not a distinct shape: it is
+`fill_circle_aa` in bulk, on the trait because a generic caller has no
+other way to reach the raster backend's batched path. `fill_polygon`, clipping, radial gradients and
 path-shaped gradients are not on the trait; each exists as a free
 function or a `Canvas` method instead. The two strokes, `draw_line_aa`
 and `stroke_path_aa`, take the full stroke style -- `dashes`,
@@ -80,7 +83,7 @@ declaration.
 from canvas.blend import BlendMode
 from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
-from canvas.geometry import Matrix2D
+from canvas.geometry import FPoint, Matrix2D
 from canvas.path import Path
 from canvas.gradient import LinearGradient
 from canvas.shapes.lines import LineCap, LineJoin
@@ -254,6 +257,55 @@ trait DrawTarget:
             cy: Center y, sub-pixel.
             radius: Circle radius in pixels.
             color: Fill color.
+        """
+        ...
+
+    def fill_circles_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        color: Color,
+    ) raises:
+        """Many equal-radius disks in one call, in draw order.
+
+        The same pixels as `fill_circle_aa` per centre, and on the
+        raster backend a great deal faster: it splits the canvas
+        across cores rather than the markers, which are individually
+        far too small to be worth a thread. A vector backend emits one
+        element per marker either way, so there the batch is the loop
+        and nothing changes but the call.
+
+        On the trait because a caller drawing a scatter through it
+        cannot otherwise reach the batched path: Mojo has no way to
+        specialize a `[T: DrawTarget]` function on the concrete type,
+        so the alternative is a second copy of the marker loop that
+        drifts from the first.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            radius: Radius shared by every marker, in pixels.
+            color: Fill color shared by every marker.
+        """
+        ...
+
+    def fill_circles_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_circles_aa` with a color per marker -- a scatter
+        whose points carry a color scale.
+
+        The only method on this trait that raises, because it is the
+        only one with an argument that can disagree with another:
+        `colors` has to be the same length as `centers`, and silently
+        drawing the shorter of the two would lose markers.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            radius: Radius shared by every marker, in pixels.
+            colors: One color per centre, same length as `centers`.
         """
         ...
 

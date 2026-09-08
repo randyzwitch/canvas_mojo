@@ -165,7 +165,9 @@ which it holds.
   so a label is selectable, searchable and copyable while sitting
   exactly where the raster backend puts it.
 - [`vector.draw_target`](../canvas/vector/draw_target/) —
-  `DrawTarget`: the trait all three implement. Write against this
+  `DrawTarget`: the trait all three implement, including
+  `fill_circles_aa` so a generic routine gets the raster backend's
+  batched scatter without knowing which backend it holds. Write against this
   instead of `Canvas` directly and your code works against any of
   them.
 
