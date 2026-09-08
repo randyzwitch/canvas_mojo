@@ -6,42 +6,33 @@ visual (left-to-right-drawable) order by the run-reversal technique of
 UAX #9's rule L2, and paired characters (parens, brackets, comparisons)
 that land inside a right-to-left run are mirrored.
 
-Character classes follow Unicode 15.0.
+Character classes come from `bidi_data.mojo`, generated from Unicode
+15.0 and exact for every codepoint.
 
-The explicit controls are implemented, not merely recognized: X1-X8's
-directional status stack gives every character its embedding level and
-override, so LRE/RLE raise the level of what they enclose, LRO/RLO
-force its direction, PDF pops, and an LRI/RLI/FSI isolate gives its
-contents a level of their own while itself belonging to the text
-outside. FSI reads its direction from its first strong content (P2/P3
-over the isolate). Overflow past BD2's depth limit of 125, and a PDF
-with nothing to pop or one trapped inside an isolate, are counted
-rather than applied, so a malformed run of controls cannot corrupt the
-levels of the text after it. The controls are then dropped before
-rendering rather than shaped into `.notdef` boxes.
+The algorithm is implemented in full: X1-X8 assign explicit levels
+from the directional controls, X9 sets the controls aside, BD13 groups
+the level runs into isolating run sequences, W1-W7 resolve the weak
+types, N0 the bracket pairs, N1-N2 the neutrals, I1-I2 turn the
+resolved types into levels, and L1 returns separators and trailing
+whitespace to the paragraph level. Reordering (L2) is by cluster, so a
+base and its combining marks move together and a mark never lands on
+the letter beside its own.
 
-Combining marks are recognized (rule W1: a mark takes the direction of
-the character it attaches to) and reordering is done by cluster, so a
-base and its marks stay together. The invisible strong marks
-LRM/RLM/ALM set direction as they should.
+It passes all 91,707 cases of Unicode's `BidiCharacterTest.txt` for
+15.0. A sampled subset is committed under `tests/bidi/` and checked by
+`tests/test_bidi.mojo`, including every case that caught a bug while
+this was written.
 
-A line with no explicit control in it skips X1-X8 entirely -- with
-none, the algorithm can only return the paragraph level -- so an
-ordinary label pays one comparison per codepoint and nothing else.
+Two fast paths keep that off the common line. Text with no
+right-to-left character and no control in it resolves to the
+paragraph level by definition, and returns immediately. Latin-1 --
+nearly all the text this package draws -- reads its class from a
+direct 256-entry table rather than searching the range table. Together
+they hold the cost of full conformance to about 2% on an ordinary
+label; without them it was three times slower.
 
 Not implemented here:
 
-- UAX #9's full weak/neutral-type resolution (W1-W7, N0-N2), which
-  collapses into two rules here: a mark takes its base's level (W1),
-  and a neutral/weak run takes the level of the strong text next to
-  it, or the level it is embedded in. Correct for digits, punctuation
-  and spaces between words, not for every adjacency UAX #9 enumerates.
-  The isolating run sequences of BD13 are not built either; neutral
-  resolution runs over the line rather than per sequence.
-- The full `Mn`/`Me` set: `_is_combining_mark` covers the scripts this
-  package shapes (Latin, Hebrew, Arabic, Syriac, Thaana, NKo,
-  Samaritan, Mandaic, and the general combining blocks), not the
-  several hundred ranges UnicodeData.txt lists.
 - Arabic contextual letter-shaping: this module reorders and mirrors
   existing codepoints only. `joining.mojo` picks each Arabic letter's
   contextual form, and `render.mojo` shapes each run `visual_runs`
@@ -53,17 +44,35 @@ module renders fully.
 """
 
 
-comptime _STRONG_L = 0
-comptime _STRONG_R = 1
-comptime _WEAK_NEUTRAL = 2
-comptime _WEAK_NUMBER = 3
-# An explicit directional formatting character: invisible, and not
-# text. It takes the level of what surrounds it and is dropped before
-# rendering.
-comptime _EXPLICIT = 4
-# A non-spacing combining mark (UAX #9's NSM). It takes the direction
-# of the character it attaches to, and must never be separated from it.
-comptime _MARK = 5
+from canvas.text.bidi_data import (
+    bidi_class,
+    bracket_is_open,
+    bracket_partner,
+    canonical_bracket,
+    _BC_AL,
+    _BC_AN,
+    _BC_B,
+    _BC_BN,
+    _BC_CS,
+    _BC_EN,
+    _BC_ES,
+    _BC_ET,
+    _BC_FSI,
+    _BC_L,
+    _BC_LRE,
+    _BC_LRI,
+    _BC_LRO,
+    _BC_NSM,
+    _BC_ON,
+    _BC_PDF,
+    _BC_PDI,
+    _BC_R,
+    _BC_RLE,
+    _BC_RLI,
+    _BC_RLO,
+    _BC_S,
+    _BC_WS,
+)
 
 # The explicit formatting characters (UAX #9 table 2). LRE/RLE/LRO/RLO
 # and PDF are the deprecated embedding controls; LRI/RLI/FSI and PDI
@@ -85,146 +94,58 @@ comptime _ALM = 0x061C
 
 
 def _is_isolate_initiator(cp: Int) -> Bool:
-    return cp == _LRI or cp == _RLI or cp == _FSI
+    var t = bidi_class(cp)
+    return t == _BC_LRI or t == _BC_RLI or t == _BC_FSI
 
 
-def _is_explicit_control(cp: Int) -> Bool:
-    """The structural formatting characters, which have no glyph.
-    LRM/RLM/ALM are deliberately not here: they are strong characters
-    that happen to be invisible, and dropping them would lose the
-    direction they exist to supply.
+def is_formatting_control(cp: Int) -> Bool:
+    """Whether the codepoint is one of the structural directional
+    formatting characters -- the embeddings, the overrides, PDF, the
+    isolates and PDI.
+
+    These carry no glyph, so a renderer drops them rather than shaping
+    them into `.notdef` boxes. LRM/RLM/ALM are deliberately excluded:
+    they are strong characters that happen to be invisible, and their
+    direction has already been used by the time this is asked.
+
+    Args:
+        cp: The codepoint to test.
+
+    Returns:
+        True if the codepoint is a directional formatting control.
     """
-    if cp >= _LRE and cp <= _RLO:
-        return True
-    return cp >= _LRI and cp <= _PDI
+    var t = bidi_class(cp)
+    return (
+        t == _BC_RLE
+        or t == _BC_LRE
+        or t == _BC_RLO
+        or t == _BC_LRO
+        or t == _BC_PDF
+        or t == _BC_LRI
+        or t == _BC_RLI
+        or t == _BC_FSI
+        or t == _BC_PDI
+    )
 
 
-def _is_combining_mark(cp: Int) -> Bool:
-    """Non-spacing marks, over the scripts this package shapes:
-    Latin diacritics, Hebrew niqqud and cantillation, Arabic harakat
-    and Quranic annotation, Syriac, Thaana, Samaritan, plus the
-    general combining blocks. Unicode 15.1 ranges.
+def is_combining_mark(cp: Int) -> Bool:
+    """Whether the codepoint is a non-spacing mark (UAX #9's NSM).
 
-    Not the full `Mn`/`Me` set from UnicodeData.txt -- an exhaustive
-    table would be several hundred ranges, and the scripts outside
-    this list are ones nothing here shapes yet. A mark outside it is
-    treated as an ordinary character, which is what happened to every
-    mark before this function existed.
+    Exact for every codepoint, read from the generated table rather
+    than a hand-kept list of ranges: a mark that reordering separates
+    from its base renders on the wrong letter, and the scripts that
+    would show it are not ones this package can enumerate with any
+    confidence.
+
+    Args:
+        cp: The codepoint to test.
+
+    Returns:
+        True if the codepoint is a non-spacing mark.
     """
-    if cp < 0x0300:
-        return False
-    if cp <= 0x036F:  # Combining Diacritical Marks
-        return True
-    if cp >= 0x0483 and cp <= 0x0489:  # Cyrillic
-        return True
-    if cp >= 0x0591 and cp <= 0x05BD:  # Hebrew cantillation, niqqud
-        return True
-    if cp == 0x05BF or cp == 0x05C7:
-        return True
-    if cp >= 0x05C1 and cp <= 0x05C2:
-        return True
-    if cp >= 0x05C4 and cp <= 0x05C5:
-        return True
-    if cp >= 0x0610 and cp <= 0x061A:  # Arabic
-        return True
-    if cp >= 0x064B and cp <= 0x065F:
-        return True
-    if cp == 0x0670:
-        return True
-    if cp >= 0x06D6 and cp <= 0x06DC:
-        return True
-    if cp >= 0x06DF and cp <= 0x06E4:
-        return True
-    if cp >= 0x06E7 and cp <= 0x06E8:
-        return True
-    if cp >= 0x06EA and cp <= 0x06ED:
-        return True
-    if cp == 0x0711:  # Syriac
-        return True
-    if cp >= 0x0730 and cp <= 0x074A:
-        return True
-    if cp >= 0x07A6 and cp <= 0x07B0:  # Thaana
-        return True
-    if cp >= 0x07EB and cp <= 0x07F3:  # NKo
-        return True
-    if cp >= 0x0816 and cp <= 0x082D:  # Samaritan
-        return True
-    if cp >= 0x0859 and cp <= 0x085B:  # Mandaic
-        return True
-    if cp >= 0x08D3 and cp <= 0x08FF:  # Arabic Extended-A marks
-        return True
-    if cp >= 0x1AB0 and cp <= 0x1AFF:  # Combining Diacriticals Extended
-        return True
-    if cp >= 0x1DC0 and cp <= 0x1DFF:  # Combining Diacriticals Supplement
-        return True
-    if cp >= 0x20D0 and cp <= 0x20F0:  # Combining Diacriticals for Symbols
-        return True
-    if cp >= 0xFE20 and cp <= 0xFE2F:  # Combining Half Marks
-        return True
-    return False
+    return bidi_class(cp) == _BC_NSM
 
 
-def _codepoint_class(cp: Int) -> Int:
-    """Simplified strong-L / strong-R / weak classification.
-    Whitespace and common punctuation are WEAK_NEUTRAL, resolving to
-    the surrounding strong run's level. Digits are WEAK_NUMBER, UAX
-    #9's "European Number" category, which needs separate treatment: a
-    digit run inside RTL text still displays left-to-right ("123" reads
-    one-two-three even in a Hebrew sentence), so _resolve_levels gives
-    it an even (LTR) level rather than an inherited odd one.
-
-    Hebrew/Arabic and their presentation-form blocks are STRONG_R;
-    everything else defaults to STRONG_L, since most scripts (Latin,
-    Cyrillic, Greek, CJK, ...) are left-to-right and enumerating them
-    isn't the point.
-    """
-    if cp >= 0x30 and cp <= 0x39:
-        return _WEAK_NUMBER
-    if cp == 0x20 or cp == 0x09 or cp == 0x0A or cp == 0x0D:
-        return _WEAK_NEUTRAL
-    # Before the script ranges below: ALM sits inside the Arabic block
-    # and the marks sit inside Hebrew and Arabic, so testing the
-    # blocks first would swallow them.
-    if cp == _LRM:
-        return _STRONG_L
-    if cp == _RLM or cp == _ALM:
-        return _STRONG_R
-    if _is_explicit_control(cp):
-        return _EXPLICIT
-    if _is_combining_mark(cp):
-        return _MARK
-    if (cp >= 0x21 and cp <= 0x2F) or (cp >= 0x3A and cp <= 0x40):
-        return _WEAK_NEUTRAL
-    # Latin and the blocks beside it are most of most text, and none
-    # of what follows can match below U+0300: the combining marks
-    # start there, Hebrew at U+0590, Arabic at U+0600, and every
-    # formatting character including ALM is higher still. Answering
-    # here saves that whole chain of range tests per codepoint on the
-    # common line.
-    if cp >= 0x41 and cp < 0x0300:
-        return _STRONG_L
-
-    # Hebrew, Hebrew presentation forms.
-    if cp >= 0x0590 and cp <= 0x05FF:
-        return _STRONG_R
-    if cp >= 0xFB1D and cp <= 0xFB4F:
-        return _STRONG_R
-
-    # Arabic, Arabic Supplement, Arabic Extended-A, Syriac, Thaana,
-    # NKo, and the Arabic presentation-form compatibility blocks.
-    if cp >= 0x0600 and cp <= 0x08FF:
-        return _STRONG_R
-    if cp >= 0xFB50 and cp <= 0xFDFF:
-        return _STRONG_R
-    if cp >= 0xFE70 and cp <= 0xFEFF:
-        return _STRONG_R
-
-    return _STRONG_L
-
-
-# UAX #9's cap on explicit depth (BD2). Past it the controls are
-# overflow and take no effect, which is what the two overflow counters
-# below track.
 comptime _MAX_DEPTH = 125
 
 # Directional override status carried on the explicit stack (X1).
@@ -265,10 +186,10 @@ def _first_strong_level(codepoints: List[Int], start: Int, end: Int) -> Int:
             if i < end:
                 i += 1
             continue
-        var cls = _codepoint_class(cp)
-        if cls == _STRONG_R:
+        var t = bidi_class(cp)
+        if t == _BC_R or t == _BC_AL:
             return 1
-        if cls == _STRONG_L:
+        if t == _BC_L:
             return 0
         i += 1
     return 0
@@ -430,144 +351,486 @@ def detect_base_level(codepoints: List[Int]) -> Int:
             continue
         if depth > 0:
             continue
-        var cls = _codepoint_class(cp)
-        if cls == _STRONG_R:
+        var t = bidi_class(cp)
+        if t == _BC_R or t == _BC_AL:
             return 1
-        if cls == _STRONG_L:
+        if t == _BC_L:
             return 0
     return 0
 
 
 def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
-    """One level per codepoint, in three passes -- the simplification
-    of UAX #9's W1-W7/N0-N2 this module's docstring describes.
+    """One embedding level per codepoint: the whole of UAX #9's
+    resolution, in the order the spec sets out.
 
-    Pass 1: strong characters get their natural level (base_level if
-    they match the paragraph direction, base_level+1 if they oppose
-    it); everything else is left unresolved (-1).
+    X1-X8 assign explicit levels from the directional controls. X9
+    marks the controls themselves as taking no further part. BD13
+    groups the level runs into isolating run sequences, so text inside
+    an isolate resolves as one piece with the text around it. W1-W7
+    then resolve the weak types within each sequence, N0 the bracket
+    pairs, N1-N2 the neutrals, and I1-I2 turn the resolved types into
+    the levels the reordering reads. L1 finally returns separators and
+    trailing whitespace to the paragraph level.
 
-    Pass 2: WEAK_NUMBER (digits) resolve against the nearest preceding
-    resolved level, bumped to the next even level if that one is odd
-    (RTL), since a digit run displays left-to-right even inside RTL
-    text. Without the bump, "123" in Hebrew text comes out "321".
-
-    Pass 3: remaining WEAK_NEUTRAL runs (whitespace/punctuation)
-    resolve against *both* neighbors: matching levels win, differing
-    levels (a real direction boundary) fall back to base_level, and at
-    either end of the line whichever neighbor exists wins. The
-    two-sided rule matters -- inheriting only from the preceding level
-    pulls the space between an RTL word and a following LTR word into
-    the RTL run's reversal, so "Hello שלום World" renders with a
-    doubled gap after "Hello" and none before "World".
+    A line with no explicit control skips X1-X8: with none, they can
+    only return the paragraph level.
     """
     var n = len(codepoints)
-    var levels = List[Int](capacity=n)
-    for _ in range(n):
-        levels.append(-1)
+    var levels = List[Int](length=n, fill=base_level)
+    if n == 0:
+        return levels^
 
-    # X1-X8 give every character its embedding level and override,
-    # and the passes below then resolve *within* those rather than
-    # against the paragraph level.
-    #
-    # A line with no explicit control cannot come out of X1-X8 as
-    # anything but the paragraph level, so it skips the whole thing --
-    # no stacks, no per-character arrays, and no reads of them below.
-    # That is every ordinary label, and the check costs one comparison
-    # per codepoint.
+    var types = List[Int](capacity=n)
+    for i in range(n):
+        types.append(bidi_class(codepoints[i]))
+
+    # The common line: left-to-right text with no right-to-left
+    # character and no control in it. Everything then resolves to the
+    # paragraph level, so the whole of X1-X8, BD13, W, N and I can be
+    # skipped. This is every ordinary Latin label, and it is the
+    # difference between the full algorithm costing nothing on them
+    # and costing half again as much per character.
+    if base_level == 0:
+        var plain = True
+        for i in range(n):
+            var t = types[i]
+            if (
+                t == _BC_R
+                or t == _BC_AL
+                or t == _BC_AN
+                or t == _BC_RLE
+                or t == _BC_LRE
+                or t == _BC_RLO
+                or t == _BC_LRO
+                or t == _BC_PDF
+                or t == _BC_LRI
+                or t == _BC_RLI
+                or t == _BC_FSI
+                or t == _BC_PDI
+            ):
+                plain = False
+                break
+        if plain:
+            return levels^
+
     var has_control = False
     for i in range(n):
-        var cp = codepoints[i]
-        if cp >= _LRE and cp <= _PDI and _is_explicit_control(cp):
+        var t = types[i]
+        if (
+            t == _BC_RLE
+            or t == _BC_LRE
+            or t == _BC_RLO
+            or t == _BC_LRO
+            or t == _BC_PDF
+            or t == _BC_LRI
+            or t == _BC_RLI
+            or t == _BC_FSI
+            or t == _BC_PDI
+        ):
             has_control = True
             break
-    var explicit = List[Int]()
-    var overrides = List[Int]()
+
     if has_control:
-        explicit = List[Int](length=n, fill=base_level)
-        overrides = List[Int](length=n, fill=_OVERRIDE_NEUTRAL)
-        _explicit_levels(codepoints, base_level, explicit, overrides)
-
-    # Two loops rather than one with a test in it: the no-control
-    # case is every ordinary label, and it should not pay a branch per
-    # character for a feature it is not using.
-    if not has_control:
-        var even = base_level % 2 == 0
-        var l_level = base_level if even else base_level + 1
-        var r_level = base_level + 1 if even else base_level
+        var overrides = List[Int](length=n, fill=_OVERRIDE_NEUTRAL)
+        _explicit_levels(codepoints, base_level, levels, overrides)
+        # X6: an override makes every character inside it strong in
+        # that direction, whatever its own class says.
         for i in range(n):
-            var cls = _codepoint_class(codepoints[i])
-            if cls == _STRONG_L:
-                levels[i] = l_level
-            elif cls == _STRONG_R:
-                levels[i] = r_level
-    else:
-        for i in range(n):
-            var cls = _codepoint_class(codepoints[i])
             if overrides[i] == _OVERRIDE_L:
-                cls = _STRONG_L
+                types[i] = _BC_L
             elif overrides[i] == _OVERRIDE_R:
-                cls = _STRONG_R
-            var e = explicit[i]
-            if cls == _STRONG_L:
-                levels[i] = e if e % 2 == 0 else e + 1
-            elif cls == _STRONG_R:
-                levels[i] = e if e % 2 == 1 else e + 1
-            elif _is_explicit_control(codepoints[i]):
-                # Removed before rendering, but it must not split a
-                # run: give it the level of the text it sits in.
-                levels[i] = e
+                types[i] = _BC_R
 
-    var last_level = base_level
+    var original = types.copy()
+    # X1-X8's levels, kept apart from the ones I1/I2 will write. The
+    # run boundaries and every sos/eos are defined against these: read
+    # them from `levels` instead and a sequence resolved earlier has
+    # already moved the level its neighbour is compared with.
+
+    # Level runs over the characters X9 leaves in play.
+    var explicit = levels.copy()
+
+    var kept = List[Int]()
     for i in range(n):
-        if levels[i] != -1:
-            last_level = levels[i]
-        elif _codepoint_class(codepoints[i]) == _WEAK_NUMBER:
-            var level = last_level if last_level % 2 == 0 else last_level + 1
-            levels[i] = level
-            last_level = level
+        if not _is_removed_by_x9(types[i]):
+            kept.append(i)
+    if len(kept) == 0:
+        return levels^
 
-    # UAX #9 rule W1: a combining mark takes the direction of what it
-    # attaches to. Run after the number pass so a mark on a digit
-    # follows the digit. A mark whose predecessor is still unresolved
-    # is left unresolved too, joining the neutral run around it, which
-    # is what W1 gives once that run resolves.
-    for i in range(n):
-        if levels[i] == -1 and _codepoint_class(codepoints[i]) == _MARK:
-            if i > 0 and levels[i - 1] != -1:
-                levels[i] = levels[i - 1]
+    var run_start = List[Int]()
+    var run_end = List[Int]()  # exclusive, indices into `kept`
+    var k = 0
+    while k < len(kept):
+        var j = k + 1
+        while j < len(kept) and explicit[kept[j]] == explicit[kept[k]]:
+            j += 1
+        run_start.append(k)
+        run_end.append(j)
+        k = j
 
-    var i = 0
-    while i < n:
-        if levels[i] == -1:
-            var j = i
-            while j < n and levels[j] == -1:
-                j += 1
-            var before = levels[i - 1] if i > 0 else -1
-            var after = levels[j] if j < n else -1
-            # A neutral run with no strong neighbour agreeing on a
-            # side falls back to the level it is *embedded* in, not
-            # the paragraph's -- inside an isolate those differ, and
-            # using the paragraph level would pull the run out of the
-            # isolate it belongs to.
-            var own = explicit[i] if has_control else base_level
-            var resolved: Int
-            if before == -1 and after == -1:
-                resolved = own
-            elif before == -1:
-                resolved = after
-            elif after == -1:
-                resolved = before
-            elif before == after:
-                resolved = before
+    # BD13: a run ending in an isolate initiator with a matching PDI
+    # continues into the run that PDI starts.
+    var consumed = List[Bool](length=len(run_start), fill=False)
+    for r in range(len(run_start)):
+        if consumed[r]:
+            continue
+        var seq = List[Int]()
+        var cur = r
+        while True:
+            consumed[cur] = True
+            for x in range(run_start[cur], run_end[cur]):
+                seq.append(kept[x])
+            var last = kept[run_end[cur] - 1]
+            var lt = types[last]
+            if lt != _BC_LRI and lt != _BC_RLI and lt != _BC_FSI:
+                break
+            var close = _matching_pdi(codepoints, last)
+            if close >= n:
+                break
+            var nxt = -1
+            for r2 in range(len(run_start)):
+                if not consumed[r2] and kept[run_start[r2]] == close:
+                    nxt = r2
+                    break
+            if nxt < 0:
+                break
+            cur = nxt
+
+        var level = explicit[seq[0]]
+        # X10's sos/eos: compare against the level on each side, the
+        # paragraph level standing in past the ends.
+        var before_level = base_level
+        var first = seq[0]
+        for i in range(first - 1, -1, -1):
+            if not _is_removed_by_x9(types[i]):
+                before_level = explicit[i]
+                break
+        var last_i = seq[len(seq) - 1]
+        var after_level = base_level
+        var lt2 = types[last_i]
+        var unmatched = (
+            lt2 == _BC_LRI or lt2 == _BC_RLI or lt2 == _BC_FSI
+        ) and _matching_pdi(codepoints, last_i) >= n
+        if not unmatched:
+            for i in range(last_i + 1, n):
+                if not _is_removed_by_x9(types[i]):
+                    after_level = explicit[i]
+                    break
+        var sos = _dir_of_level(max(level, before_level))
+        var eos = _dir_of_level(max(level, after_level))
+
+        _resolve_weak(types, seq, sos)
+        _resolve_brackets(codepoints, original, types, seq, sos, level)
+        _resolve_neutrals(types, seq, sos, eos, level)
+
+        # I1/I2: the resolved types become levels.
+        for x in range(len(seq)):
+            var i = seq[x]
+            var t = types[i]
+            if level % 2 == 0:
+                if t == _BC_R:
+                    levels[i] = level + 1
+                elif t == _BC_AN or t == _BC_EN:
+                    levels[i] = level + 2
             else:
-                resolved = own
-            for k in range(i, j):
-                levels[k] = resolved
-            i = j
+                if t == _BC_L or t == _BC_EN or t == _BC_AN:
+                    levels[i] = level + 1
+
+    # X9 leftovers take the level of what precedes them, so they never
+    # split a run when the reordering walks it.
+    for i in range(n):
+        if _is_removed_by_x9(types[i]):
+            levels[i] = levels[i - 1] if i > 0 else base_level
+
+    # L1: separators, and any whitespace or isolate formatting run
+    # before one or at the end of the line, return to the paragraph
+    # level. Judged on the *original* types, not the resolved ones.
+    var i = n - 1
+    var trailing = True
+    while i >= 0:
+        var ot = original[i]
+        if ot == _BC_B or ot == _BC_S:
+            levels[i] = base_level
+            trailing = True
+        elif (
+            ot == _BC_WS
+            or ot == _BC_LRI
+            or ot == _BC_RLI
+            or ot == _BC_FSI
+            or ot == _BC_PDI
+            or _is_removed_by_x9(ot)
+        ):
+            if trailing:
+                levels[i] = base_level
         else:
-            i += 1
+            trailing = False
+        i -= 1
 
     return levels^
+
+
+def _is_removed_by_x9(t: Int) -> Bool:
+    """X9: the embedding and override controls, and BN, take no part
+    in the rules below. They keep a level so they never split a run,
+    and are skipped when the isolating run sequences are built. The
+    isolates and PDI are *not* removed -- they are neutrals the later
+    rules read.
+    """
+    return (
+        t == _BC_RLE
+        or t == _BC_LRE
+        or t == _BC_RLO
+        or t == _BC_LRO
+        or t == _BC_PDF
+        or t == _BC_BN
+    )
+
+
+@always_inline
+def _is_ni(t: Int) -> Bool:
+    """UAX #9's NI: the neutrals plus the isolate formatting
+    characters, which N0-N2 resolve together."""
+    return (
+        t == _BC_B
+        or t == _BC_S
+        or t == _BC_WS
+        or t == _BC_ON
+        or t == _BC_FSI
+        or t == _BC_LRI
+        or t == _BC_RLI
+        or t == _BC_PDI
+    )
+
+
+@always_inline
+def _dir_of_level(level: Int) -> Int:
+    return _BC_R if level % 2 == 1 else _BC_L
+
+
+@always_inline
+def _strong_of(t: Int) -> Int:
+    """The direction a resolved type counts as for N0/N1. Numbers
+    count as R, which is what keeps a digit run from splitting the
+    right-to-left text around it."""
+    if t == _BC_EN or t == _BC_AN or t == _BC_R:
+        return _BC_R
+    if t == _BC_L:
+        return _BC_L
+    return -1
+
+
+def _resolve_weak(mut types: List[Int], seq: List[Int], sos: Int):
+    """W1-W7 over one isolating run sequence, in order. Each rule
+    reads what the one before it left, so they cannot be merged."""
+    var m = len(seq)
+
+    # W1: NSM takes the type of the character it follows, or sos at
+    # the start. After an isolate initiator or PDI it becomes ON
+    # instead -- a mark cannot attach across an isolate boundary.
+    var prev = sos
+    for k in range(m):
+        var t = types[seq[k]]
+        if t == _BC_NSM:
+            var repl = _BC_ON if (
+                prev == _BC_LRI
+                or prev == _BC_RLI
+                or prev == _BC_FSI
+                or prev == _BC_PDI
+            ) else prev
+            types[seq[k]] = repl
+            prev = repl
+        else:
+            prev = t
+
+    # W2: EN becomes AN when the last strong type before it was AL.
+    # Digits in Arabic text run with the Arabic, not against it.
+    var last_strong = sos
+    for k in range(m):
+        var t = types[seq[k]]
+        if t == _BC_L or t == _BC_R or t == _BC_AL:
+            last_strong = t
+        elif t == _BC_EN and last_strong == _BC_AL:
+            types[seq[k]] = _BC_AN
+
+    # W3: AL is R from here; distinguishing it was W2's job alone.
+    for k in range(m):
+        if types[seq[k]] == _BC_AL:
+            types[seq[k]] = _BC_R
+
+    # W4: a single ES between two EN, or a single CS between two of
+    # the same numeric type, joins them -- "1.234", "12,345".
+    for k in range(1, m - 1):
+        var t = types[seq[k]]
+        var before = types[seq[k - 1]]
+        var after = types[seq[k + 1]]
+        if t == _BC_ES and before == _BC_EN and after == _BC_EN:
+            types[seq[k]] = _BC_EN
+        elif t == _BC_CS and before == after:
+            if before == _BC_EN or before == _BC_AN:
+                types[seq[k]] = before
+
+    # W5: a run of ET adjacent to EN becomes EN -- "$123", "45%".
+    var k5 = 0
+    while k5 < m:
+        if types[seq[k5]] != _BC_ET:
+            k5 += 1
+            continue
+        var j = k5
+        while j < m and types[seq[j]] == _BC_ET:
+            j += 1
+        var before = types[seq[k5 - 1]] if k5 > 0 else sos
+        var after = types[seq[j]] if j < m else -1
+        if before == _BC_EN or after == _BC_EN:
+            for x in range(k5, j):
+                types[seq[x]] = _BC_EN
+        k5 = j
+
+    # W6: separators and terminators still unattached are neutral.
+    for k in range(m):
+        var t = types[seq[k]]
+        if t == _BC_ET or t == _BC_ES or t == _BC_CS:
+            types[seq[k]] = _BC_ON
+
+    # W7: EN becomes L when the last strong type before it was L, so
+    # digits in Latin text are simply Latin.
+    last_strong = sos
+    for k in range(m):
+        var t = types[seq[k]]
+        if t == _BC_L or t == _BC_R:
+            last_strong = t
+        elif t == _BC_EN and last_strong == _BC_L:
+            types[seq[k]] = _BC_L
+
+
+def _resolve_brackets(
+    codepoints: List[Int],
+    original: List[Int],
+    mut types: List[Int],
+    seq: List[Int],
+    sos: Int,
+    level: Int,
+):
+    """N0: a bracket pair resolves to one direction, so "(שלום)" keeps
+    its parentheses around the word rather than splitting them off.
+
+    A pair containing a strong type matching the embedding takes the
+    embedding direction. A pair containing only the opposite direction
+    takes that instead, unless the text before the pair disagrees, in
+    which case the embedding wins. BD16 caps the open stack at 63.
+    """
+    var e = _dir_of_level(level)
+    var o = _BC_L if e == _BC_R else _BC_R
+    var m = len(seq)
+    var open_at = List[Int]()
+    var open_partner = List[Int]()
+    var pair_a = List[Int]()
+    var pair_b = List[Int]()
+    for k in range(m):
+        var i = seq[k]
+        if types[i] != _BC_ON:
+            continue
+        var cp = codepoints[i]
+        var partner = bracket_partner(cp)
+        if partner == 0:
+            continue
+        if bracket_is_open(cp):
+            if len(open_at) >= 63:
+                break
+            open_at.append(k)
+            open_partner.append(partner)
+        else:
+            var cc = canonical_bracket(cp)
+            for s in range(len(open_at) - 1, -1, -1):
+                if open_partner[s] == cc:
+                    pair_a.append(open_at[s])
+                    pair_b.append(k)
+                    while len(open_at) > s:
+                        _ = open_at.pop()
+                        _ = open_partner.pop()
+                    break
+
+    # N0 takes the pairs in order of their *opening* bracket, not the
+    # order they close in. It matters because each pair reads the
+    # types the pairs before it resolved: with "a ( ( b ) )" the outer
+    # pair has to settle before the inner one looks back for context,
+    # and closing order gets that backwards. Insertion sort -- BD16
+    # caps the list at 63.
+    for x in range(1, len(pair_a)):
+        var ka = pair_a[x]
+        var kb = pair_b[x]
+        var y = x - 1
+        while y >= 0 and pair_a[y] > ka:
+            pair_a[y + 1] = pair_a[y]
+            pair_b[y + 1] = pair_b[y]
+            y -= 1
+        pair_a[y + 1] = ka
+        pair_b[y + 1] = kb
+
+    for p in range(len(pair_a)):
+        var a = pair_a[p]
+        var b = pair_b[p]
+        var found_e = False
+        var found_o = False
+        for k in range(a + 1, b):
+            var d = _strong_of(types[seq[k]])
+            if d == e:
+                found_e = True
+            elif d == o:
+                found_o = True
+        var chosen = -1
+        if found_e:
+            chosen = e
+        elif found_o:
+            var context = sos
+            for k in range(a - 1, -1, -1):
+                var d = _strong_of(types[seq[k]])
+                if d >= 0:
+                    context = d
+                    break
+            chosen = o if context == o else e
+        if chosen >= 0:
+            types[seq[a]] = chosen
+            types[seq[b]] = chosen
+            # N0's last clause: characters that were NSM before W1
+            # and immediately follow a bracket this rule changed take
+            # the bracket's direction too, or the mark detaches from
+            # the bracket it belongs to.
+            for start in [a, b]:
+                var x = start + 1
+                while x < m and original[seq[x]] == _BC_NSM:
+                    types[seq[x]] = chosen
+                    x += 1
+
+
+def _resolve_neutrals(
+    mut types: List[Int], seq: List[Int], sos: Int, eos: Int, level: Int
+):
+    """N1: a run of neutrals between two of the same direction takes
+    it. N2: anything left takes the embedding direction."""
+    var e = _dir_of_level(level)
+    var m = len(seq)
+    var k = 0
+    while k < m:
+        if not _is_ni(types[seq[k]]):
+            k += 1
+            continue
+        var j = k
+        while j < m and _is_ni(types[seq[j]]):
+            j += 1
+        var before = sos
+        if k > 0:
+            var d = _strong_of(types[seq[k - 1]])
+            if d >= 0:
+                before = d
+        var after = eos
+        if j < m:
+            var d2 = _strong_of(types[seq[j]])
+            if d2 >= 0:
+                after = d2
+        var resolved = before if before == after else e
+        for x in range(k, j):
+            types[seq[x]] = resolved
+        k = j
 
 
 def _reorder_indices(levels: List[Int]) -> List[Int]:
@@ -764,14 +1027,14 @@ def visual_order(codepoints: List[Int], base_level: Int) -> List[Int]:
             var i = run.start + run.length - 1
             while i >= run.start:
                 var base = i
-                while base > run.start and _is_combining_mark(codepoints[base]):
+                while base > run.start and is_combining_mark(codepoints[base]):
                     base -= 1
                 for k in range(base, i + 1):
-                    if _codepoint_class(codepoints[k]) != _EXPLICIT:
+                    if not is_formatting_control(codepoints[k]):
                         result.append(_mirror_codepoint(codepoints[k]))
                 i = base - 1
         else:
             for i in range(run.start, run.start + run.length):
-                if _codepoint_class(codepoints[i]) != _EXPLICIT:
+                if not is_formatting_control(codepoints[i]):
                     result.append(codepoints[i])
     return result^

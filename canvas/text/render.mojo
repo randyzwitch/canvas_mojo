@@ -101,8 +101,8 @@ from std.math import ceil, cos, floor, sin
 from canvas.text.bidi import (
     detect_base_level,
     visual_runs,
-    _is_combining_mark,
-    _is_explicit_control,
+    is_combining_mark,
+    is_formatting_control,
     _mirror_codepoint,
 )
 from canvas.text.joining import (
@@ -492,7 +492,7 @@ def _shape_line(
         for i in range(len(codepoints)):
             # Formatting characters are structure, not text: shaping
             # them produces a .notdef box.
-            if not _is_explicit_control(codepoints[i]):
+            if not is_formatting_control(codepoints[i]):
                 visible.append(codepoints[i])
         var only = _shape_run(face, visible, ligatures)
         if kerning:
@@ -503,7 +503,7 @@ def _shape_line(
     for run in runs:
         var run_codepoints = List[Int](capacity=run.length)
         for i in range(run.start, run.start + run.length):
-            if _is_explicit_control(codepoints[i]):
+            if is_formatting_control(codepoints[i]):
                 continue
             # bidi rule L4: a paired character inside an RTL run draws
             # its mirror image.
@@ -522,7 +522,7 @@ def _shape_line(
             var i = len(shaped) - 1
             while i >= 0:
                 var base = i
-                while base > 0 and _is_combining_mark(shaped[base].codepoint):
+                while base > 0 and is_combining_mark(shaped[base].codepoint):
                     base -= 1
                 for k in range(base, i + 1):
                     out.append(shaped[k])
