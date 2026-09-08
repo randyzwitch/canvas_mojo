@@ -376,16 +376,18 @@ translucent color, since opaque colors hide it completely.
 The package does not grow speculative API surface. Several modules
 document a deliberate limit — `ttf.mojo` implements no hinting and does
 not read `CFF2`, `png.mojo` rejects grayscale below 8 bits,
-`jpeg.mojo` rejects progressive JPEG, `bidi.mojo` implements a
-documented subset of UAX #9, gradients support "pad" extend only. Each
-raises a clear, specific error rather than silently misreading input.
+`jpeg.mojo` rejects lossless and arithmetic-coded files, `bidi.mojo`
+implements a documented subset of UAX #9, gradients support "pad"
+extend only. Each raises a clear, specific error rather than silently
+misreading input.
 
 Widening one of these is welcome when something concrete needs it;
 widening it speculatively is the thing to avoid. Several limits this
 section used to list have been widened exactly that way: `cff.mojo`
-now reads OpenType CFF outlines, and `png.mojo` reads indexed color at
-1/2/4/8 bits, Adam7 interlacing and 16-bit samples. Each arrived with
-a caller and a fixture, not on principle.
+now reads OpenType CFF outlines, `png.mojo` reads indexed color at
+1/2/4/8 bits, Adam7 interlacing and 16-bit samples, and `jpeg.mojo`
+decodes progressive files. Each arrived with a caller and a fixture,
+not on principle.
 
 ### Comments and docstrings
 

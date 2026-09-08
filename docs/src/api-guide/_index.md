@@ -183,8 +183,10 @@ it oversized for extra anti-aliasing.
 - [`io.bmp`](../canvas/io/bmp/) — `read_bmp`/`write_bmp`, for the
   simpler uncompressed format.
 - [`io.jpeg`](../canvas/io/jpeg/) — `read_jpeg`/`decode_jpeg`:
-  baseline JPEG decoding into a `Canvas`. Read-only, and progressive
-  JPEG raises rather than being approximated.
+  baseline and progressive JPEG decoding into a `Canvas`. Read-only;
+  lossless, hierarchical, arithmetic-coded and 12-bit files raise
+  rather than being approximated, as does one that ends without an
+  EOI marker.
 - [`io.deflate`](../canvas/io/deflate/) — `deflate`/`inflate`,
   the compression `io.png` runs on; only worth using directly if you
   need DEFLATE bytes for something other than a PNG.

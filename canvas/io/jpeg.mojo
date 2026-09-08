@@ -1,5 +1,5 @@
-"""Read baseline JPEG files (ITU T.81), stdlib-only, with no libjpeg
-dependency.
+"""Read baseline and progressive JPEG files (ITU T.81), stdlib-only,
+with no libjpeg dependency.
 
 A JPEG file is a sequence of marker segments -- quantization tables
 (DQT), Huffman tables (DHT), the frame header (SOF), an optional
@@ -19,13 +19,30 @@ with libjpeg's rounding, so a file decodes to the same pixels here
 as through libjpeg to within the inverse DCT's rounding. Other
 ratios take the nearest sample.
 
-Scope: baseline and extended sequential Huffman processes (SOF0 and
-SOF1) at 8-bit precision, 1 or 3 components, any sampling factors,
-with or without restart intervals. Progressive (SOF2), lossless,
+A progressive file (SOF2) is built the other way round. Its scans
+each carry part of every block -- a band of the spectrum
+(`Ss..Se`), at a bit position (`Ah`/`Al`) -- so no block is complete
+until the last scan, and the inverse DCT waits for all of them
+(`_finish_progressive`). Until then the coefficients live in each
+component's `coeffs`. A DC scan may interleave components and is read
+in MCU order; an AC scan names one component and is read in that
+component's own block raster, which for a subsampled component is
+narrower than the MCU-padded array the coefficients sit in. The
+refinement scans are T.81 G.1.2.3: every coefficient already non-zero
+in the band spends a correction bit whether or not the scan has
+anything new for it, so a run counts only the still-zero ones and the
+corrections are interleaved with it.
+
+Scope: baseline, extended sequential and progressive Huffman
+processes (SOF0, SOF1, SOF2) at 8-bit precision, 1 or 3 components,
+any sampling factors, with or without restart intervals. Lossless,
 hierarchical, arithmetic-coded and 12-bit files raise with the
-reason, as does a four-component (CMYK) file. An Adobe APP14 segment
-declaring the three components as RGB rather than YCbCr is honored;
-EXIF orientation is not applied.
+reason, as does a four-component (CMYK) file. A file that ends
+without an EOI marker raises too: a truncated progressive stream
+otherwise decodes to a coarse but valid-looking image, which is a
+worse failure than an error. An Adobe APP14 segment declaring the
+three components as RGB rather than YCbCr is honored; EXIF
+orientation is not applied.
 
 The Huffman decode is T.81 Annex F.2.2.3, with a nine-bit lookup
 ahead of it for the codes short enough to fit, the same shape as
@@ -283,7 +300,14 @@ def _extend(v: Int, s: Int) -> Int:
 struct _Component(Movable):
     """One image component: its sampling factors, quantization table
     index, Huffman table indices from the scan header, DC predictor,
-    and sample plane (`pw x ph`, a whole number of MCUs)."""
+    and sample plane (`pw x ph`, a whole number of MCUs).
+
+    A progressive file also fills `coeffs`: `bw x bh` blocks of 64
+    coefficients in natural order, still quantized. Its scans each
+    refine part of that array, so it has to outlive them all, where a
+    baseline scan can put a block through the inverse DCT and forget
+    it.
+    """
 
     var id: Int
     var h: Int
@@ -295,6 +319,9 @@ struct _Component(Movable):
     var pw: Int
     var ph: Int
     var plane: List[UInt8]
+    var bw: Int
+    var bh: Int
+    var coeffs: List[Int]
 
     def __init__(out self, id: Int, h: Int, v: Int, tq: Int):
         self.id = id
@@ -307,6 +334,9 @@ struct _Component(Movable):
         self.pw = 0
         self.ph = 0
         self.plane = List[UInt8]()
+        self.bw = 0
+        self.bh = 0
+        self.coeffs = List[Int]()
 
 
 def _idct_table() -> List[Float32]:
@@ -390,7 +420,7 @@ def _u16(data: List[UInt8], pos: Int) raises -> Int:
 
 
 def read_jpeg(path: String) raises -> Canvas:
-    """Read a baseline JPEG file into an opaque Canvas. See the module
+    """Read a JPEG file into an opaque Canvas. See the module
     docstring for what is and is not supported.
 
     Args:
@@ -411,8 +441,8 @@ def read_jpeg(path: String) raises -> Canvas:
 
 
 def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
-    """Decode a baseline JPEG held in memory into a Canvas: `read_jpeg`
-    after the file is read. Same scope and errors.
+    """Decode a JPEG held in memory into a Canvas: `read_jpeg` after
+    the file is read. Same scope and errors.
 
     Args:
         data: The complete JPEG file contents.
@@ -444,8 +474,10 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
     var vmax = 1
     var restart_interval = 0
     var adobe_transform = -1
+    var progressive = False
     var have_frame = False
     var have_scan = False
+    var seen_eoi = False
 
     var pos = 2
     while pos < len(data):
@@ -465,6 +497,7 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
         ):
             continue
         if marker == 0xD9:
+            seen_eoi = True
             break
         var length = _u16(data, pos)
         var seg = pos + 2
@@ -515,9 +548,10 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
                     dc_tables[th] = _HuffTable(counts, symbols^)
                 else:
                     ac_tables[th] = _HuffTable(counts, symbols^)
-        elif marker == 0xC0 or marker == 0xC1:
+        elif marker == 0xC0 or marker == 0xC1 or marker == 0xC2:
             if have_frame:
                 raise Error("jpeg: more than one frame header")
+            progressive = marker == 0xC2
             var precision = Int(data[seg])
             if precision != 8:
                 raise Error(
@@ -555,10 +589,8 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
                 if v > vmax:
                     vmax = v
             have_frame = True
-        elif marker == 0xC2:
-            raise Error(
-                "jpeg: progressive JPEG is not supported (baseline only)"
-            )
+            if progressive:
+                _alloc_coeffs(comps, hmax, vmax, width, height)
         elif (
             marker == 0xC3
             or (marker >= 0xC5 and marker <= 0xC7)
@@ -586,14 +618,24 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
         elif marker == 0xDA:
             if not have_frame:
                 raise Error("jpeg: scan before frame header")
-            if have_scan:
-                raise Error("jpeg: more than one scan (baseline only)")
+            if have_scan and not progressive:
+                raise Error("jpeg: more than one scan in a sequential file")
             var ns = Int(data[seg])
-            if ns != len(comps):
+            if ns < 1 or ns > len(comps):
+                raise Error(
+                    String(
+                        "jpeg: a scan naming ",
+                        ns,
+                        " components in a frame of ",
+                        len(comps),
+                    )
+                )
+            if ns != len(comps) and not progressive:
                 raise Error(
                     "jpeg: a scan covering fewer components than the frame"
                     " is not supported"
                 )
+            var scan = List[Int]()
             for i in range(ns):
                 var cid = Int(data[seg + 1 + i * 2])
                 var t = Int(data[seg + 2 + i * 2])
@@ -602,29 +644,67 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
                     if comps[c].id == cid:
                         comps[c].td = t >> 4
                         comps[c].ta = t & 15
+                        scan.append(c)
                         found = True
                 if not found:
                     raise Error("jpeg: scan names a component the frame lacks")
             have_scan = True
-            pos = _decode_scan(
-                data,
-                seg_end,
-                comps,
-                hmax,
-                vmax,
-                width,
-                height,
-                qt,
-                qt_present,
-                dc_tables,
-                ac_tables,
-                zz,
-                restart_interval,
-            )
+            if progressive:
+                # Spectral selection and successive approximation
+                # follow the component list (T.81 B.2.3).
+                var sp = seg + 1 + ns * 2
+                var ss = Int(data[sp])
+                var se = Int(data[sp + 1])
+                var a = Int(data[sp + 2])
+                if ss > 63 or se > 63 or ss > se:
+                    raise Error("jpeg: invalid spectral selection in a scan")
+                pos = _decode_progressive_scan(
+                    data,
+                    seg_end,
+                    comps,
+                    scan,
+                    hmax,
+                    vmax,
+                    width,
+                    height,
+                    dc_tables,
+                    ac_tables,
+                    zz,
+                    restart_interval,
+                    ss,
+                    se,
+                    a >> 4,
+                    a & 15,
+                )
+            else:
+                pos = _decode_scan(
+                    data,
+                    seg_end,
+                    comps,
+                    hmax,
+                    vmax,
+                    width,
+                    height,
+                    qt,
+                    qt_present,
+                    dc_tables,
+                    ac_tables,
+                    zz,
+                    restart_interval,
+                )
         # Every other segment (APPn, COM, DNL, ...) is skipped.
 
     if not have_scan:
         raise Error("jpeg: no scan data")
+    if not seen_eoi:
+        # A complete file ends with EOI. Without it the data ran out
+        # mid-stream, and for a progressive file that is invisible
+        # otherwise: the scans that did arrive decode to a coarse but
+        # perfectly valid image, which is a worse failure than an
+        # error because it looks like a successful decode.
+        raise Error("jpeg: truncated file -- no EOI marker")
+    if progressive:
+        _finish_progressive(comps, qt, qt_present, zz)
     return _to_canvas(comps, hmax, vmax, width, height, adobe_transform)
 
 
@@ -711,6 +791,353 @@ def _decode_scan(
                             )
             mcu_count += 1
     return bits.end()
+
+
+def _alloc_coeffs(
+    mut comps: List[_Component],
+    hmax: Int,
+    vmax: Int,
+    width: Int,
+    height: Int,
+):
+    """Size every component's coefficient array to the MCU-padded
+    block grid and zero it. Done once for the frame, not per scan: a
+    progressive scan refines what earlier scans wrote, so the array
+    has to survive all of them.
+    """
+    var mcus_x = (width + 8 * hmax - 1) // (8 * hmax)
+    var mcus_y = (height + 8 * vmax - 1) // (8 * vmax)
+    for c in range(len(comps)):
+        comps[c].bw = mcus_x * comps[c].h
+        comps[c].bh = mcus_y * comps[c].v
+        comps[c].pw = comps[c].bw * 8
+        comps[c].ph = comps[c].bh * 8
+        comps[c].coeffs = List[Int](
+            length=comps[c].bw * comps[c].bh * 64, fill=0
+        )
+
+
+def _prog_dc_first(
+    mut bits: _BitReader,
+    dc: _HuffTable,
+    mut coeffs: List[Int],
+    base: Int,
+    al: Int,
+    pred: Int,
+) raises -> Int:
+    """First DC scan (T.81 G.1.2.1): the baseline difference against
+    the predictor, stored shifted up by the point transform. Returns
+    the new predictor.
+    """
+    var t = _decode_symbol(bits, dc)
+    if t > 11:
+        raise Error("jpeg: invalid DC category")
+    var p = pred + _extend(bits.bits(t), t)
+    coeffs[base] = p << al
+    return p
+
+
+def _prog_dc_refine(
+    mut bits: _BitReader, mut coeffs: List[Int], base: Int, al: Int
+):
+    """Later DC scan: one bit, the next lower bit of the coefficient
+    already there."""
+    if bits.bits(1) != 0:
+        coeffs[base] |= 1 << al
+
+
+def _prog_ac_first(
+    mut bits: _BitReader,
+    ac: _HuffTable,
+    mut coeffs: List[Int],
+    base: Int,
+    zz: List[Int],
+    ss: Int,
+    se: Int,
+    al: Int,
+    mut eobrun: Int,
+) raises:
+    """First AC scan over the band `ss..se` (T.81 G.1.2.2). Run/size
+    pairs as in baseline, except that size zero with a run below 15
+    starts an end-of-band run: this block and the next `2^r - 1` have
+    nothing further in the band.
+    """
+    if eobrun > 0:
+        eobrun -= 1
+        return
+    var k = ss
+    while k <= se:
+        var rs = _decode_symbol(bits, ac)
+        var r = rs >> 4
+        var s = rs & 15
+        if s == 0:
+            if r < 15:
+                eobrun = (1 << r) - 1
+                if r > 0:
+                    eobrun += bits.bits(r)
+                break
+            k += 16
+            continue
+        k += r
+        if k > se:
+            raise Error("jpeg: AC coefficient run past the spectral band")
+        coeffs[base + zz[k]] = _extend(bits.bits(s), s) << al
+        k += 1
+
+
+def _prog_ac_refine(
+    mut bits: _BitReader,
+    ac: _HuffTable,
+    mut coeffs: List[Int],
+    base: Int,
+    zz: List[Int],
+    ss: Int,
+    se: Int,
+    al: Int,
+    mut eobrun: Int,
+) raises:
+    """Later AC scan (T.81 G.1.2.3), the intricate one.
+
+    Every coefficient already non-zero in the band takes one
+    correction bit, whether or not this scan has anything new to say
+    about it. So a run/size pair counts only the coefficients that are
+    still zero, and the correction bits for the non-zero ones it walks
+    past are interleaved with that run. An end-of-band run does not
+    end the block either: the rest of the band still spends a
+    correction bit on each non-zero coefficient, in every block the
+    run covers.
+
+    A new coefficient always has size 1 -- a refinement can only add
+    the bit at the current point transform, never a larger magnitude.
+    """
+    var p1 = 1 << al
+    var m1 = -(1 << al)
+    var k = ss
+    if eobrun == 0:
+        while k <= se:
+            var rs = _decode_symbol(bits, ac)
+            var r = rs >> 4
+            var s = rs & 15
+            var newval = 0
+            if s == 0:
+                if r < 15:
+                    eobrun = 1 << r
+                    if r > 0:
+                        eobrun += bits.bits(r)
+                    break
+                # r == 15 is sixteen still-zero coefficients and no
+                # new term; fall through with newval left at zero.
+            else:
+                if s != 1:
+                    raise Error(
+                        "jpeg: a refinement AC coefficient must have size 1"
+                    )
+                newval = p1 if bits.bits(1) != 0 else m1
+            while k <= se:
+                var idx = base + zz[k]
+                if coeffs[idx] != 0:
+                    if bits.bits(1) != 0 and (coeffs[idx] & p1) == 0:
+                        if coeffs[idx] >= 0:
+                            coeffs[idx] += p1
+                        else:
+                            coeffs[idx] += m1
+                else:
+                    if r == 0:
+                        break
+                    r -= 1
+                k += 1
+            if newval != 0 and k <= se:
+                coeffs[base + zz[k]] = newval
+            k += 1
+    if eobrun > 0:
+        while k <= se:
+            var idx = base + zz[k]
+            if coeffs[idx] != 0:
+                if bits.bits(1) != 0 and (coeffs[idx] & p1) == 0:
+                    if coeffs[idx] >= 0:
+                        coeffs[idx] += p1
+                    else:
+                        coeffs[idx] += m1
+            k += 1
+        eobrun -= 1
+
+
+def _decode_progressive_scan(
+    data: List[UInt8],
+    start: Int,
+    mut comps: List[_Component],
+    scan: List[Int],
+    hmax: Int,
+    vmax: Int,
+    width: Int,
+    height: Int,
+    dc_tables: List[_HuffTable],
+    ac_tables: List[_HuffTable],
+    zz: List[Int],
+    restart_interval: Int,
+    ss: Int,
+    se: Int,
+    ah: Int,
+    al: Int,
+) raises -> Int:
+    """One progressive scan into the components' coefficient arrays.
+    Returns where its entropy-coded data ended.
+
+    A DC scan may cover several components and is then read in MCU
+    order, exactly as a baseline scan is. An AC scan covers one
+    component and is read in that component's own block raster, whose
+    width is `ceil(component samples / 8)` -- not the MCU-padded width
+    the coefficients are stored at, which is usually larger. Reading
+    the padded width here is the classic way to get a progressive
+    image that is right at the top and skewed further down.
+    """
+    var bits = _BitReader(data.copy(), start)
+    var eobrun = 0
+    if ss == 0:
+        if se != 0:
+            raise Error("jpeg: a DC scan must have a spectral band of 0 to 0")
+    elif len(scan) != 1:
+        raise Error("jpeg: an AC scan must name exactly one component")
+
+    if len(scan) == 1:
+        var ci = scan[0]
+        if ss == 0 and not dc_tables[comps[ci].td].present:
+            raise Error("jpeg: scan uses a Huffman table that was not defined")
+        if ss > 0 and not ac_tables[comps[ci].ta].present:
+            raise Error("jpeg: scan uses a Huffman table that was not defined")
+        # The component's own block grid, which for a subsampled
+        # component is smaller than its MCU-padded one.
+        var cw = (width * comps[ci].h + hmax - 1) // hmax
+        var ch = (height * comps[ci].v + vmax - 1) // vmax
+        var bx_count = (cw + 7) // 8
+        var by_count = (ch + 7) // 8
+        var row_blocks = comps[ci].bw
+        var n = 0
+        for by in range(by_count):
+            for bx in range(bx_count):
+                if restart_interval > 0 and n > 0 and n % restart_interval == 0:
+                    bits.restart()
+                    comps[ci].dc_pred = 0
+                    eobrun = 0
+                var base = (by * row_blocks + bx) * 64
+                if ss == 0:
+                    if ah == 0:
+                        var pred = comps[ci].dc_pred
+                        pred = _prog_dc_first(
+                            bits,
+                            dc_tables[comps[ci].td],
+                            comps[ci].coeffs,
+                            base,
+                            al,
+                            pred,
+                        )
+                        comps[ci].dc_pred = pred
+                    else:
+                        _prog_dc_refine(bits, comps[ci].coeffs, base, al)
+                elif ah == 0:
+                    _prog_ac_first(
+                        bits,
+                        ac_tables[comps[ci].ta],
+                        comps[ci].coeffs,
+                        base,
+                        zz,
+                        ss,
+                        se,
+                        al,
+                        eobrun,
+                    )
+                else:
+                    _prog_ac_refine(
+                        bits,
+                        ac_tables[comps[ci].ta],
+                        comps[ci].coeffs,
+                        base,
+                        zz,
+                        ss,
+                        se,
+                        al,
+                        eobrun,
+                    )
+                n += 1
+        return bits.end()
+
+    # Interleaved, so a DC scan by the rule above.
+    for i in range(len(scan)):
+        if not dc_tables[comps[scan[i]].td].present:
+            raise Error("jpeg: scan uses a Huffman table that was not defined")
+    var mcus_x = (width + 8 * hmax - 1) // (8 * hmax)
+    var mcus_y = (height + 8 * vmax - 1) // (8 * vmax)
+    var n = 0
+    for my in range(mcus_y):
+        for mx in range(mcus_x):
+            if restart_interval > 0 and n > 0 and n % restart_interval == 0:
+                bits.restart()
+                for i in range(len(scan)):
+                    comps[scan[i]].dc_pred = 0
+            for i in range(len(scan)):
+                var ci = scan[i]
+                var h = comps[ci].h
+                var v = comps[ci].v
+                var row_blocks = comps[ci].bw
+                for by in range(v):
+                    for bx in range(h):
+                        var base = (
+                            (my * v + by) * row_blocks + mx * h + bx
+                        ) * 64
+                        if ah == 0:
+                            var pred = comps[ci].dc_pred
+                            pred = _prog_dc_first(
+                                bits,
+                                dc_tables[comps[ci].td],
+                                comps[ci].coeffs,
+                                base,
+                                al,
+                                pred,
+                            )
+                            comps[ci].dc_pred = pred
+                        else:
+                            _prog_dc_refine(bits, comps[ci].coeffs, base, al)
+            n += 1
+    return bits.end()
+
+
+def _finish_progressive(
+    mut comps: List[_Component],
+    qt: List[List[Int]],
+    qt_present: List[Bool],
+    zz: List[Int],
+) raises:
+    """Dequantize and inverse-DCT every block, once the last scan has
+    finished refining it. Baseline does this inside the scan, one
+    block at a time; a progressive file cannot, because any later scan
+    may still change a coefficient.
+    """
+    var basis = _idct_table()
+    var coef = List[Int](length=64, fill=0)
+    for c in range(len(comps)):
+        if not qt_present[comps[c].tq]:
+            raise Error(
+                "jpeg: frame uses a quantization table that was not defined"
+            )
+        ref q = qt[comps[c].tq]
+        var pw = comps[c].pw
+        var bw = comps[c].bw
+        var bh = comps[c].bh
+        comps[c].plane = List[UInt8](length=pw * comps[c].ph, fill=0)
+        for by in range(bh):
+            for bx in range(bw):
+                var base = (by * bw + bx) * 64
+                var any_ac = False
+                for k in range(64):
+                    var idx = zz[k]
+                    var v = comps[c].coeffs[base + idx] * q[k]
+                    coef[idx] = v
+                    if k > 0 and v != 0:
+                        any_ac = True
+                if any_ac:
+                    _idct_block(coef, basis, comps[c].plane, pw, bx * 8, by * 8)
+                else:
+                    _flat_block(coef[0], comps[c].plane, pw, bx * 8, by * 8)
 
 
 def _decode_block(
