@@ -840,5 +840,254 @@ def test_radial_stops_are_sorted_on_insert_too() raises:
     assert_equal(g.color_at(50.0, 0.0).r, 100)
 
 
+# --- clipped gradient fills (#320) ---------------------------------
+# The fill narrows its coverage mask to the active rectangular clip
+# before allocating it, which is only sound if the narrowed render is
+# byte-identical to cropping an unclipped one. Every case below
+# renders the same scene twice and asserts exactly that: inside the
+# clip the two agree pixel for pixel, outside it the clipped canvas is
+# untouched background. A mask window that dropped an edge would show
+# up as a parity or winding error somewhere inside.
+
+
+def _two_lobe_path() raises -> Path:
+    """Two overlapping sub-paths, so the fill rule actually matters and
+    an edge outside a narrow clip still decides what is inside it."""
+    var p = Path()
+    p.move_to(20.0, 20.0)
+    p.line_to(170.0, 40.0)
+    p.line_to(150.0, 130.0)
+    p.line_to(30.0, 110.0)
+    p.close()
+    p.move_to(60.0, 45.0)
+    p.line_to(140.0, 55.0)
+    p.line_to(130.0, 100.0)
+    p.line_to(70.0, 95.0)
+    p.close()
+    return p^
+
+
+def _ramp() raises -> LinearGradient:
+    var g = LinearGradient(10.0, 10.0, 180.0, 140.0)
+    g.add_stop(0.0, Color(255, 0, 0, 200))
+    g.add_stop(0.5, Color(0, 255, 0, 120))
+    g.add_stop(1.0, Color(0, 0, 255, 255))
+    return g^
+
+
+def _assert_clip_equals_crop(
+    clipped: Canvas,
+    full: Canvas,
+    bg: Color,
+    cx: Int,
+    cy: Int,
+    cw: Int,
+    ch: Int,
+    label: String,
+) raises:
+    for y in range(clipped.height):
+        for x in range(clipped.width):
+            var inside = x >= cx and x < cx + cw and y >= cy and y < cy + ch
+            var want = full.get_pixel(x, y) if inside else bg
+            var got = clipped.get_pixel(x, y)
+            var at = String(label, " at (", x, ", ", y, ")")
+            assert_equal(got.r, want.r, at + " r")
+            assert_equal(got.g, want.g, at + " g")
+            assert_equal(got.b, want.b, at + " b")
+            assert_equal(got.a, want.a, at + " a")
+
+
+def test_clipped_linear_gradient_matches_a_cropped_full_render() raises:
+    var bg = Color(240, 240, 245)
+    for rule_index in range(2):
+        var rule = FillRule.EVEN_ODD if rule_index == 0 else FillRule.NONZERO
+        var path = _two_lobe_path()
+        var clipped = Canvas(200, 150, bg)
+        clipped.save()
+        clipped.push_clip(70, 50, 40, 30)
+        fill_path_gradient_aa(clipped, path, _ramp(), rule)
+        clipped.restore()
+        var full = Canvas(200, 150, bg)
+        fill_path_gradient_aa(full, path, _ramp(), rule)
+        _assert_clip_equals_crop(
+            clipped,
+            full,
+            bg,
+            70,
+            50,
+            40,
+            30,
+            String("linear rule ", rule_index),
+        )
+
+
+def test_clipped_radial_and_conic_gradients_match_a_cropped_render() raises:
+    var bg = Color(12, 14, 18, 255)
+    var path = _two_lobe_path()
+
+    var radial = RadialGradient(95.0, 75.0, 80.0)
+    radial.add_stop(0.0, Color(255, 240, 120, 220))
+    radial.add_stop(1.0, Color(20, 40, 160, 90))
+    var rc = Canvas(200, 150, bg)
+    rc.save()
+    rc.push_clip(30, 90, 55, 45)
+    fill_path_radial_gradient_aa(rc, path, radial)
+    rc.restore()
+    var rf = Canvas(200, 150, bg)
+    fill_path_radial_gradient_aa(rf, path, radial)
+    _assert_clip_equals_crop(rc, rf, bg, 30, 90, 55, 45, "radial")
+
+    var conic = ConicGradient(95.0, 75.0, 0.4)
+    conic.add_stop(0.0, Color(200, 30, 90, 255))
+    conic.add_stop(1.0, Color(30, 200, 90, 60))
+    var cc = Canvas(200, 150, bg)
+    cc.save()
+    cc.push_clip(120, 20, 50, 60)
+    fill_path_conic_gradient_aa(cc, path, conic)
+    cc.restore()
+    var cf = Canvas(200, 150, bg)
+    fill_path_conic_gradient_aa(cf, path, conic)
+    _assert_clip_equals_crop(cc, cf, bg, 120, 20, 50, 60, "conic")
+
+
+def test_clipped_gradient_under_a_transform_matches_a_cropped_render() raises:
+    """A device-space clip with transformed geometry: the clip is
+    pushed under the identity so its rectangle is known in device
+    space, and the transform is applied afterwards for the fill. The
+    mask window then has to come from the *mapped* path bounds
+    intersected with that rectangle.
+    """
+    var bg = Color(255, 255, 255)
+    var path = _two_lobe_path()
+    var clipped = Canvas(200, 150, bg)
+    clipped.save()
+    clipped.push_clip(60, 40, 45, 50)
+    clipped.translate(15.0, -10.0)
+    clipped.rotate(0.22)
+    clipped.scale(0.8, 1.1)
+    fill_path_gradient_aa(clipped, path, _ramp())
+    clipped.restore()
+    var full = Canvas(200, 150, bg)
+    full.save()
+    full.translate(15.0, -10.0)
+    full.rotate(0.22)
+    full.scale(0.8, 1.1)
+    fill_path_gradient_aa(full, path, _ramp())
+    full.restore()
+    _assert_clip_equals_crop(clipped, full, bg, 60, 40, 45, 50, "transformed")
+
+
+def test_a_rotated_clip_rectangle_only_removes_pixels() raises:
+    """Under a rotated transform `push_clip` is a clip *path*, not a
+    rectangle, and only its bounding box reaches the mask window. The
+    per-pixel mask still decides what survives, so the invariant is
+    one-sided: every pixel is either untouched background or exactly
+    what the unclipped render produced. Narrowing the window to the
+    bounding box cannot change a pixel, only drop one.
+    """
+    var bg = Color(255, 255, 255)
+    var path = _two_lobe_path()
+    var clipped = Canvas(200, 150, bg)
+    clipped.save()
+    clipped.rotate(0.3)
+    clipped.push_clip(20, 20, 90, 70)
+    clipped.reset_transform()
+    fill_path_gradient_aa(clipped, path, _ramp())
+    clipped.restore()
+    var full = Canvas(200, 150, bg)
+    fill_path_gradient_aa(full, path, _ramp())
+    var drawn = 0
+    for y in range(clipped.height):
+        for x in range(clipped.width):
+            var got = clipped.get_pixel(x, y)
+            var want = full.get_pixel(x, y)
+            var at = String("rotated clip at (", x, ", ", y, ")")
+            # The clip mask is anti-aliased, so a pixel on its edge is
+            # a blend of the two rather than one or the other. What
+            # holds everywhere is that the clip only attenuates: the
+            # result never leaves the interval between the background
+            # and the unclipped render. One level of slack for the
+            # blend's own rounding.
+            var g: List[Int] = [Int(got.r), Int(got.g), Int(got.b), Int(got.a)]
+            var w: List[Int] = [
+                Int(want.r),
+                Int(want.g),
+                Int(want.b),
+                Int(want.a),
+            ]
+            var b: List[Int] = [Int(bg.r), Int(bg.g), Int(bg.b), Int(bg.a)]
+            var names: List[String] = ["r", "g", "b", "a"]
+            for i in range(4):
+                assert_true(
+                    g[i] >= min(b[i], w[i]) - 1 and g[i] <= max(b[i], w[i]) + 1,
+                    String(
+                        at,
+                        " ",
+                        names[i],
+                        ": ",
+                        g[i],
+                        " outside [",
+                        min(b[i], w[i]),
+                        ", ",
+                        max(b[i], w[i]),
+                        "]",
+                    ),
+                )
+            if g[0] != b[0] or g[1] != b[1] or g[2] != b[2]:
+                drawn += 1
+    assert_true(drawn > 200, "the rotated clip must let real ink through")
+
+
+def test_nested_clips_narrow_to_the_intersection() raises:
+    var bg = Color(200, 205, 210)
+    var path = _two_lobe_path()
+    var clipped = Canvas(200, 150, bg)
+    clipped.save()
+    clipped.push_clip(40, 30, 100, 90)
+    clipped.push_clip(80, 60, 90, 80)  # intersection: 80,60 60x60
+    fill_path_gradient_aa(clipped, path, _ramp())
+    clipped.restore()
+    var full = Canvas(200, 150, bg)
+    fill_path_gradient_aa(full, path, _ramp())
+    _assert_clip_equals_crop(clipped, full, bg, 80, 60, 60, 60, "nested")
+
+
+def test_a_clip_reaching_off_canvas_is_bounded_by_the_canvas() raises:
+    """Negative coordinates and a clip wider than the canvas: the mask
+    window is the intersection of clip, canvas and path bounds."""
+    var bg = Color(9, 9, 9)
+    var path = _two_lobe_path()
+    var clipped = Canvas(200, 150, bg)
+    clipped.save()
+    clipped.push_clip(-40, -30, 120, 110)  # visible part: 0,0 80x80
+    fill_path_gradient_aa(clipped, path, _ramp())
+    clipped.restore()
+    var full = Canvas(200, 150, bg)
+    fill_path_gradient_aa(full, path, _ramp())
+    _assert_clip_equals_crop(clipped, full, bg, 0, 0, 80, 80, "off-canvas")
+
+
+def test_an_empty_clip_draws_nothing() raises:
+    """Zero-area and fully-off-canvas clips both return before the mask
+    is allocated; the canvas has to come back untouched."""
+    var bg = Color(77, 88, 99, 210)
+    var path = _two_lobe_path()
+    var widths: List[Int] = [0, 30]
+    var xs: List[Int] = [60, 400]
+    for i in range(2):
+        var c = Canvas(200, 150, bg)
+        c.save()
+        c.push_clip(xs[i], 40, widths[i], 40)
+        fill_path_gradient_aa(c, path, _ramp())
+        c.restore()
+        for y in range(c.height):
+            for x in range(c.width):
+                var px = c.get_pixel(x, y)
+                assert_equal(px.r, bg.r, String("empty clip ", i, " r"))
+                assert_equal(px.g, bg.g, String("empty clip ", i, " g"))
+                assert_equal(px.b, bg.b, String("empty clip ", i, " b"))
+                assert_equal(px.a, bg.a, String("empty clip ", i, " a"))
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

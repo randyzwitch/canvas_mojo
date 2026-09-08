@@ -1839,16 +1839,33 @@ def _fill_path_source_aa[
 
     var fe = _FillEdges(subpaths)
 
-    # The same one-pixel skirt the sweep pads by, clamped to the canvas:
-    # the mask's extent, and the region walked below.
-    var lo_x = max(0, fe.min_x - 1)
-    var hi_x = min(canvas.width, fe.max_x + 2)
-    var lo_y = max(0, fe.min_y - 1)
-    var hi_y = min(canvas.height, fe.max_y + 2)
-    var mask_width = hi_x - lo_x
-    var mask_height = hi_y - lo_y
+    # The same one-pixel skirt the sweep pads by, intersected with the
+    # canvas *and the active rectangular clip* before anything is
+    # allocated: a path clipped to a small window should not pay for a
+    # mask covering the whole path, nor for sweeping rows and columns
+    # nothing will read (#320).
+    #
+    # The edge table stays whole. Only the mask window narrows, and
+    # both sweeps compute each row's crossings across the full padded
+    # row before clipping their writes to the window, so an edge
+    # outside the clip still decides the parity and winding of the
+    # pixels inside it. A clip *path* is not applied here -- that
+    # stays per pixel at composition time, as `effective_fill_rect`'s
+    # own docstring notes.
+    var region = canvas.effective_fill_rect(
+        fe.min_x - 1,
+        fe.min_y - 1,
+        (fe.max_x + 2) - (fe.min_x - 1),
+        (fe.max_y + 2) - (fe.min_y - 1),
+    )
+    var lo_x = region[0]
+    var lo_y = region[1]
+    var mask_width = region[2]
+    var mask_height = region[3]
     if mask_width <= 0 or mask_height <= 0:
         return
+    var hi_x = lo_x + mask_width
+    var hi_y = lo_y + mask_height
 
     var mask = List[UInt8](length=mask_width * mask_height, fill=0)
     _sweep_edges_to_mask(

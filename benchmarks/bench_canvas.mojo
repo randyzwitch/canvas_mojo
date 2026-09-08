@@ -407,6 +407,26 @@ def _survey() raises -> List[_Row]:
         iters,
     )
 
+    # The same path behind a small rectangular clip. The coverage mask
+    # is allocated and swept for the clip's intersection with the path
+    # bounds rather than the whole path (#320), so this row tracks a
+    # cost that used to be the row above's regardless of how little
+    # was visible.
+    iters = 200
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        canvas.save()
+        canvas.push_clip(300, 200, 100, 80)
+        fill_path_gradient_aa(canvas, big_path, gradient)
+        canvas.restore()
+        sink += Int(canvas.get_pixel(350, 240).r)
+    _report(
+        rows,
+        "fill_path_gradient_aa 39-curve under a small clip",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     # RadialGradient's projection is a sqrt per pixel; ConicGradient's
     # is an atan2 per pixel. Same shapes as the linear rows above, so
     # the three are directly comparable.
