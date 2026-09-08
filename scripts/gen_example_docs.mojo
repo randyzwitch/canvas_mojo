@@ -6,17 +6,18 @@ The shown snippet is the whole example file minus its leading module
 docstring: nothing is extracted or trimmed, because each example is the
 pattern being taught start to finish -- imports, any helper, `main()`,
 and the write_bmp()/write_png() call producing the picture above the
-snippet. The docstring becomes the page's hook sentence and prose
-instead (see `_first_sentence()`).
+snippet. Page titles and descriptions live in explicit documentation
+metadata below; module docstrings remain free to explain the source.
 
 A Mojo script rather than Python, so this repo's tooling stays in the
 language it showcases. String primitives (`.strip()`, `.startswith()`,
 `.find()`) do what Python's `re` would; Mojo has no regex module.
 
-Adding an example: list it in both `_titles()` and exactly one category
-in `_categories()`. `main()`'s assertions catch either omission -- a
-file with no category, or a category naming a file that doesn't exist --
-rather than skipping it silently or failing deep in formatting.
+Adding an example: list it in `_titles()`, `_descriptions()`, and exactly
+one category in `_categories()`. `main()`'s assertions catch omissions --
+a file with no metadata or category, or a category naming a file that
+doesn't exist -- rather than skipping it silently or failing deep in
+formatting.
 """
 
 from std.collections import Dict
@@ -58,6 +59,56 @@ def _titles() -> Dict[String, String]:
     d["text"] = "Text"
     d["text_on_path"] = "Text on a Path & Stroked Text"
     d["vector"] = "Vector Output"
+    return d^
+
+
+def _descriptions() -> Dict[String, String]:
+    """Website copy kept separate from the example source docstrings."""
+    var d = Dict[String, String]()
+    d["fill_rect_blend"] = "Fill rectangles and layer translucent colors."
+    d["blend_modes"] = "Compare blend and Porter-Duff composite modes."
+    d["rect_stroke"] = "Draw crisp rectangle outlines at several widths."
+    d["lines"] = "Compare hard-edged and anti-aliased lines."
+    d[
+        "circles"
+    ] = "Compare filled, outlined, hard-edged, and anti-aliased circles."
+    d[
+        "ellipse"
+    ] = "Compare filled, outlined, hard-edged, and anti-aliased ellipses."
+    d["arc"] = "Draw arcs, wedges, and ring sectors."
+    d[
+        "polyline"
+    ] = "Connect several points with hard-edged and anti-aliased lines."
+    d[
+        "polygon"
+    ] = "Compare polygon outlines and fills with and without anti-aliasing."
+    d[
+        "path"
+    ] = "Build and fill a multi-subpath shape with lines and Bezier curves."
+    d["fill_rule"] = "Compare even-odd and nonzero filling on one path."
+    d["gradient"] = "Apply linear and radial gradients to rectangles and paths."
+    d["conic_gradient"] = "Sweep colors around a center with conic gradients."
+    d[
+        "color_space"
+    ] = "Compare sRGB and linear-light interpolation and blending."
+    d["patterns"] = "Fill geometry from a repeating canvas pattern."
+    d["dashes"] = "Apply dash patterns to lines and polygon outlines."
+    d[
+        "transform"
+    ] = "Map data coordinates into a translated and rotated pixel frame."
+    d["canvas_state"] = "Compose transforms with Canvas save and restore state."
+    d["clipping"] = "Restrict drawing to stacked rectangular clip regions."
+    d["layers"] = "Compose independently rendered canvases into one image."
+    d["draw_image"] = "Place a scaled and rotated canvas through a matrix."
+    d["shadows"] = "Blur pixels and draw a reusable shadowed shape."
+    d["clip_path"] = "Restrict drawing to an arbitrary path."
+    d["masks"] = "Control per-pixel coverage with alpha masks."
+    d["joins"] = "Compare stroke caps, joins, and miter limits."
+    d["png_output"] = "Write a PNG and read its pixels back."
+    d["transparency"] = "Preserve a transparent background in PNG output."
+    d["text"] = "Render aligned and rotated text from system fonts."
+    d["text_on_path"] = "Place text along a curve and draw outlined glyphs."
+    d["vector"] = "Render one DrawTarget routine to PNG, SVG, and PDF."
     return d^
 
 
@@ -114,17 +165,22 @@ def _categories() -> List[Category]:
     )
     cats.append(
         Category(
-            "Styling & transforms",
+            "Style",
             (
-                "Dash patterns, the Transform2D coordinate pipeline, the"
-                " canvas's own save/restore transform state, clip regions,"
-                " composing separate layers into one image, and drawing one"
-                " canvas into another under a matrix."
+                "Control strokes, compositing, and effects independently of"
+                " geometry."
+            ),
+            ["dashes", "joins", "blend_modes", "shadows"],
+        )
+    )
+    cats.append(
+        Category(
+            "Transforms & composition",
+            (
+                "Move between coordinate spaces, preserve drawing state, clip"
+                " content, and compose canvases."
             ),
             [
-                "dashes",
-                "joins",
-                "blend_modes",
                 "transform",
                 "canvas_state",
                 "clipping",
@@ -132,7 +188,6 @@ def _categories() -> List[Category]:
                 "masks",
                 "layers",
                 "draw_image",
-                "shadows",
             ],
         )
     )
@@ -183,54 +238,6 @@ def _write_file(path: String, content: String) raises:
     f.close()
 
 
-def _extract_docstring(source: String) -> String:
-    var start = source.find('"""')
-    if start == -1:
-        return ""
-    var content_start = start + 3
-    var end = source.find('"""', content_start)
-    if end == -1:
-        return ""
-    var raw = String(source[byte=content_start:end])
-    return String(raw.strip())
-
-
-def _first_sentence(docstring: String) -> String:
-    # Every docstring starts "Demo: <one-line hook> -- <detail>".
-    # Collapse the first paragraph's hand-wrapped newlines into one
-    # line, then cut at the first " -- " if present, else keep the
-    # whole first sentence.
-    var para_end = docstring.find("\n\n")
-    var first_para = (
-        String(docstring[byte=0:para_end]) if para_end != -1 else docstring
-    )
-
-    var words = List[String]()
-    for line in first_para.split("\n"):
-        var stripped = String(line.strip())
-        if stripped:
-            words.append(stripped)
-    var flat = String(" ").join(words)
-
-    if flat.startswith("Demo: "):
-        var without_prefix = String(flat[byte=6:])  # 6 == len("Demo: ")
-        flat = without_prefix
-
-    var idx = flat.find(" -- ")
-    var sentence = String(flat[byte=0:idx]) if idx != -1 else flat
-    var trimmed = String(sentence.strip())
-    sentence = trimmed
-    if sentence.endswith("."):
-        var without_dot = String(
-            sentence[byte = 0 : sentence.byte_length() - 1]
-        )
-        sentence = without_dot
-    sentence = sentence + "."
-
-    var first_char = String(sentence[byte=0:1]).upper()
-    return first_char + String(sentence[byte=1:])
-
-
 def _snippet_after_docstring(source: String) -> String:
     """Everything after the leading module docstring's closing
     `\"\"\"` -- imports, helpers, `main()`, the write_bmp()/write_png()
@@ -246,10 +253,10 @@ def _snippet_after_docstring(source: String) -> String:
     return String(rest.strip())
 
 
-def _build_page(name: String, title: String) raises -> String:
+def _build_page(
+    name: String, title: String, description: String
+) raises -> String:
     var source = _read_file(_EXAMPLES_DIR + "/" + name + ".mojo")
-    var docstring = _extract_docstring(source)
-    var hook = _first_sentence(docstring)
     # Every example writes both a .bmp and a .png through this
     # package's own write_png; docs display uses the .png, which
     # `pixi run docs-build` copies straight out of examples/.
@@ -261,7 +268,7 @@ def _build_page(name: String, title: String) raises -> String:
     page.append("title: " + title)
     page.append("---")
     page.append("")
-    page.append(hook)
+    page.append(description)
     page.append("")
     page.append("![" + title + "](" + image + ")")
     page.append("")
@@ -276,6 +283,7 @@ def _build_page(name: String, title: String) raises -> String:
 
 def main() raises:
     var titles = _titles()
+    var descriptions = _descriptions()
     var categories = _categories()
 
     var all_names = List[String]()
@@ -300,9 +308,11 @@ def main() raises:
     for n in all_names:
         if n not in titles:
             raise Error("Example has no title: " + n)
+        if n not in descriptions:
+            raise Error("Example has no description: " + n)
 
     for n in all_names:
-        var page = _build_page(n, titles[n])
+        var page = _build_page(n, titles[n], descriptions[n])
         _write_file(_OUT_DIR + "/" + n + ".md", page)
 
     var idx = List[String]()
@@ -326,8 +336,44 @@ def main() raises:
         idx.append("")
         idx.append(cat.blurb)
         idx.append("")
-        for n in cat.names:
-            idx.append("- [" + titles[n] + "](" + n + "/)")
+        idx.append("| | |")
+        idx.append("| --- | --- |")
+        var i = 0
+        while i < len(cat.names):
+            var left = cat.names[i]
+            var left_card = (
+                "[!["
+                + titles[left]
+                + "](out_"
+                + left
+                + ".png)]("
+                + left
+                + "/) **["
+                + titles[left]
+                + "]("
+                + left
+                + "/)** — "
+                + descriptions[left]
+            )
+            var right_card = ""
+            if i + 1 < len(cat.names):
+                var right = cat.names[i + 1]
+                right_card = (
+                    "[!["
+                    + titles[right]
+                    + "](out_"
+                    + right
+                    + ".png)]("
+                    + right
+                    + "/) **["
+                    + titles[right]
+                    + "]("
+                    + right
+                    + "/)** — "
+                    + descriptions[right]
+                )
+            idx.append("| " + left_card + " | " + right_card + " |")
+            i += 2
         idx.append("")
     _write_file(_OUT_DIR + "/_index.md", String("\n").join(idx))
 
