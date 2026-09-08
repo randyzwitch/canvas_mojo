@@ -1,30 +1,4 @@
-"""The anti-aliased scanline sweep and its parts: `_AACrossing` (one
-sub-scanline crossing at a real-valued x, kept `Float64` since an AA
-sweep places a crossing between two supersample columns rather than two
-whole pixels), the insertion sort that orders a sub-scanline's
-crossings, the `_EdgeTable` they are read out of, and `_sweep_edges_aa`
--- the coverage sweep `fill_path_aa` and `fill_polygon_aa` both run over
-whatever edges their caller hands in.
-
-The two fills differ only in how they describe their geometry: one walks
-sub-paths, the other a single point ring. Everything after that is
-identical.
-
-This is a near-leaf module, which is what lets both callers share it:
-`path.mojo` already imports drawing primitives *from* `polygon_fill`, so
-shared code has to live where neither imports. Nothing here imports
-either of them -- `_is_inside` comes from `fill_rule.mojo`, which
-imports nothing -- leaving the DAG polygon_fill -> aa_crossing,
-path -> aa_crossing, path -> polygon_fill.
-
-The sort is insertion sort: a sub-scanline's crossing count is a handful,
-not the whole shape's point count.
-
-A sub-scanline's crossings come from an active list rather than a scan
-of every edge: `_EdgeTable.sort_by_top` orders the edges by where they
-begin, and `crossings_at` admits and retires them as a band walks
-downward, so each sub-scanline touches only the edges near it.
-"""
+"""Supersampled scanline coverage for anti-aliased path and polygon fills."""
 
 from std.math import ceil, floor
 from std.runtime.asyncrt import TaskGroup
@@ -90,25 +64,12 @@ def _sort_aa_crossings_by_x(mut crossings: List[_AACrossing], unordered: Bool):
 
 
 def _sample_x(x0: Float64, g: Int, s: Int) -> Float64:
-    """The x of sub-sample `g`, counting across a whole row rather than
-    per pixel: `x0` is the row's left edge and samples sit at the
-    centers of `s` equal slices of each pixel. Identical to the
-    per-pixel `px + (sx + 0.5)/s - 0.5`, re-indexed so a run of samples
-    is a contiguous integer range -- which is what lets `fill_path_aa`
-    and `fill_polygon_aa` count an inside run instead of testing each
-    position in it.
-    """
+    """Return the x coordinate of row-wide sub-sample `g`."""
     return x0 + (Float64(g) + 0.5) / Float64(s)
 
 
 struct _EdgeTable(Movable):
-    """Every non-horizontal edge of a shape, as flat arrays, plus
-    `order`, the edge indices by ascending `y_lo` once `sort_by_top`
-    has run. The order lives on the table rather than traveling as a
-    separate argument because the table is what the sweep's band tasks
-    already receive; a List of its own handed to `create_task` is the
-    #97 failure.
-    """
+    """Non-horizontal shape edges and their scan order."""
 
     var y_lo: List[Float64]
     var y_hi: List[Float64]
@@ -181,11 +142,6 @@ struct _EdgeTable(Movable):
     def extent(self) -> Tuple[Float64, Float64, Float64, Float64]:
         """The exact box every edge lies in, as (min_x, min_y, max_x,
         max_y). All zeros for an empty table.
-
-        The four lists are read through their pointers: on a table of
-        tens of thousands of edges (a dashed series) the checked
-        indexing of `List` costs more than the compares, and `n` is
-        the length of every list here.
         """
         var n = len(self.y_lo)
         if n == 0:
@@ -244,9 +200,8 @@ struct _EdgeTable(Movable):
 
     def add_edge(mut self, ax: Float64, ay: Float64, bx: Float64, by: Float64):
         """Record one edge, mapped first if `set_map` gave a
-        transform. Horizontal edges are dropped: they never cross a
-        scanline, so keeping them would only cost a rejected test on
-        every sub-scanline for the life of the fill.
+        transform. Horizontal edges are omitted because they do not
+        cross a scanline.
         """
         var x_a = ax
         var y_a = ay
@@ -275,12 +230,8 @@ struct _EdgeTable(Movable):
         admits them in -- and `order_row` with that row per entry. Run
         once, after the last `add_edge` and before the sweep.
 
-        A counting sort over rows rather than a comparison sort over
-        `y_lo`: it is linear in the edge count, and a stroked series
-        has tens of thousands of edges. Sorting to whole rows only is
-        enough because `crossings_at` skips an admitted edge until
-        `fy` actually reaches its `y_lo`, so an edge admitted a fraction
-        of a row early costs one test per sub-scanline and nothing else.
+        Edges are sorted to whole rows; `crossings_at` ignores an
+        admitted edge until `fy` reaches its exact `y_lo`.
         """
         var n = len(self.y_lo)
         self.order = List[Int](length=n, fill=0)
@@ -324,20 +275,8 @@ struct _EdgeTable(Movable):
         """Position a band's incremental state at `first_fy`, its
         topmost sub-scanline.
 
-        A band covering rows partway down a shape must start with
-        every edge already spanning those rows in `active`, and
-        `cursor` past every edge that begins above them. Letting
-        `crossings_at` reach that state by admitting from index 0
-        costs an append and a retire for each of them, per band --
-        O(bands * edges) of list churn across a sweep, which is what
-        made a top-sorted table lose to a plain scan once the sweep
-        was spread over many cores.
-
-        This reaches the same state with a binary search for `cursor`
-        and one compare per skipped edge, appending only the ones
-        actually live. An edge admitted a fraction of a row early is
-        harmless: `crossings_at` skips it until `fy` reaches its
-        `y_lo`.
+        Sets `cursor` past edges beginning above the band and puts the
+        edges spanning `first_fy` in `active`.
         """
         active.clear()
         cursor = 0
@@ -375,27 +314,9 @@ struct _EdgeTable(Movable):
         """Every edge crossing y=fy, unordered, into a caller-owned
         list.
 
-        Incremental rather than a scan of every edge. `cursor` is how
-        many of `order` have been admitted to `active`, and `active`
-        holds the admitted edges not yet passed. An edge is admitted
-        once its top row is at or above `fy`'s row, skipped while
-        `fy < y_lo` (at most a fraction of a row, since `order` is
-        sorted to whole rows), and dropped for good once `fy >= y_hi`
-        -- together the same `y_lo <= fy < y_hi` test the scan made,
-        applied only to the edges near the sub-scanline. That needs
-        sub-scanlines in non-decreasing `fy`, which a band's
-        row-by-row, sub-row-by-sub-row walk provides; `seed_band` puts
-        a band's `cursor` and `active` at its first sub-scanline. The
-        order crossings
-        come out in differs from the scan's, but they are sorted by x
-        before use and two crossings at the same x bound an empty run,
-        so the coverage counts are unchanged.
-
-        Read through pointers: the arrays are built once per fill and
-        never resized while the sweep runs, and every index came out of
-        `order`, which was built from the same count. Checked reads
-        would defeat the point -- seven bounds checks per edge is more
-        work than the two the point lists cost, not less.
+        Calls must use non-decreasing `fy`. `cursor` tracks admitted
+        edges and `active` holds those not yet passed. Call `seed_band`
+        before the first sub-scanline of a band.
         """
         crossings.clear()
         var ylo = self.y_lo.unsafe_ptr()
@@ -441,10 +362,7 @@ struct _EdgeTable(Movable):
             active.resize(live, 0)
 
 
-# Below this many pixels in a fill's bounding box, the sweep runs
-# inline rather than dispatching tasks: task setup is not free and the
-# shapes this package fills most often are glyph-sized. Set by
-# benchmark (#92) -- re-benchmark before changing it.
+# Below this many bounding-box pixels, the sweep runs inline.
 comptime _MIN_PARALLEL_PIXELS = _MIN_PARALLEL_WORK
 
 
@@ -452,13 +370,7 @@ struct _CoverageAlpha(Movable):
     """The alpha a covered-sample count maps to, tabulated once per
     fill. Entry `covered` is
     `Int(Float64(covered) / Float64(total_samples) * Float64(alpha) + 0.5)`,
-    the expression the sampled primitives (circles, ellipses, arcs)
-    evaluate for each pixel they touch; tabulating it replaces a
-    divide, a multiply and a float-to-int per pixel with one load, and
-    produces the same bytes.
-
-    The edge sweep below keeps the inline expression: through the table
-    it measured slower, not faster (#125), so it is not used there.
+    matching the sampled circle, ellipse, and arc primitives.
     """
 
     var _table: List[UInt8]
@@ -663,8 +575,7 @@ def _sweep_edges_sampled_aa(
     # shared, immutable edge table and writes only its own pixels -- so
     # a large fill is split into bands, one task per band.
     #
-    # Only a large one. See _MIN_PARALLEL_PIXELS: dispatching for a
-    # glyph costs more than sweeping it inline.
+    # Small fills run inline; see `_MIN_PARALLEL_PIXELS`.
     var bands = _bands_for(
         row_count * row_width,
         row_count,
@@ -674,8 +585,7 @@ def _sweep_edges_sampled_aa(
     # Top-sort the edges so each sub-scanline touches only the edges
     # near it, and each band starts already positioned among them (see
     # `_EdgeTable.seed_band`). Every sweep sorts, banded or not: the
-    # sort is a counting sort, linear in the edge count, against a
-    # sweep that costs edges times sub-scanlines when it scans instead.
+    # sort is a counting sort over rows.
     edges.sort_by_top()
 
     if bands == 1:
@@ -761,24 +671,15 @@ def _sweep_band(
     Bands write disjoint rows, so no two ever touch the same pixel.
     `canvas` is shared mutably between them on exactly that basis.
 
-    Each row is intersected once with the canvas and the rectangle
-    clip -- the test `set_pixel` would otherwise repeat per pixel --
-    and its covered pixels go through `write_pixel`. A row the
-    intersection empties is skipped before its coverage is even
-    accumulated, which is what makes a clip cheap for the part of a
-    shape it hides. While a clip path is pushed the per-pixel mask
-    still applies, so those rows fall back to `set_pixel`, the
-    arrangement `Canvas._fill_region` uses.
+    Rows are intersected with the canvas and rectangle clip before
+    coverage is accumulated. With a clip path, pixels use `set_pixel`
+    so the clip mask is applied.
     """
     var s = supersample
     var total_samples = s * s
     var masked = canvas.has_clip_mask()
 
-    # Buffers for the whole band, not per row and per sub-scanline.
-    # A glyph-sized path is small enough that allocating a crossing
-    # list, a suffix list and a coverage row per sub-scanline costs more
-    # than the sampling does (#73). `_draw_polyline_core_aa` reuses its
-    # per-row buffers the same way.
+    # Reuse these buffers for every row and sub-scanline in the band.
     var row_covered = List[Int](capacity=row_width)
     for _ in range(row_width):
         row_covered.append(0)

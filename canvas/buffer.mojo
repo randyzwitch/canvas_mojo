@@ -148,33 +148,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # and the values between are what make a clip path's own edge
     # anti-aliased rather than a staircase.
     #
-    # A stack of whole masks rather than one mask plus a stack of undo
-    # information: a mask is w*h bytes, and nesting clips more than a
-    # couple deep is not something a chart does, so the simpler
-    # structure costs nothing that matters. Each pushed mask is already
-    # intersected with its parent (see push_clip_path), so only the top
-    # one is ever consulted -- the same arrangement clip_stack uses for
-    # rectangles.
+    # Each mask is already intersected with its parent, so only the top
+    # mask must be consulted.
     var clip_masks: List[List[UInt8]]
     # len(clip_masks), mirrored as a plain Int. `set_pixel` tests this
     # once per pixel drawn anywhere in the package, and a bare field
     # load beats reaching into a List-of-Lists for its length.
     var _clip_mask_count: Int
-    # Keeps the struct over 256 bytes, which is the line between a
-    # `Canvas` argument being copied into the callee and being passed
-    # by reference. `set_pixel` and the methods it calls take the
-    # canvas once per pixel for every hard-edged primitive and every
-    # clip-path blend, so at 256 bytes or less that copy is paid per
-    # pixel and grows with the struct. Measured on the 800x600
-    # benchmark, `draw_line solid full diagonal` is 7.2 us with the
-    # struct at 96 bytes, 10.3 at 160, 12.9 at 224, 14.2 at 256, and
-    # 4.2 at 264 and every size above; `fill_circle_aa x2000 under a
-    # clip path` is 3.4 ms at 96 bytes and 2.1 ms at 264. Fields added
-    # without crossing the line only make it worse, which is what
-    # happened to an earlier clip-bounds cache (#145). The check in
-    # `__init__` keeps it over the line as fields come and go. Measured
-    # with Mojo 1.0 (#182); re-measure those two rows if a compiler
-    # update changes how arguments are passed.
+    # Mojo passes a Canvas by reference only when the struct exceeds
+    # 256 bytes. Keep this padding and the size check in `__init__` so
+    # pixel-writing calls do not copy the Canvas value.
     var _layout_pad: InlineArray[UInt8, 176]
     # The current transform (see `save`), and whether it is anything
     # but the identity. Every drawing call tests the flag once, so it
@@ -602,9 +585,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         supersample: Int = 4,
         curve_steps: Int = 0,
     ):
-        """Restrict subsequent drawing to `path`'s interior -- the
-        arbitrary-shape counterpart of `push_clip`. Costs one byte per
-        pixel.
+        """Restrict subsequent drawing to `path`'s interior.
 
         The clip is *anti-aliased*, not a hard in/out test: the path's
         coverage becomes a 0-255 mask, and a pixel the path half covers
@@ -1168,9 +1149,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
                     self.write_pixel(x, y, color)
             return
 
-        # Unit-stride inner loop with the index carried along rather
-        # than a strided `range`, which benchmarked slower (#78). Four
-        # opaque destination pixels at a time go through one
+        # Carry the index through a unit-stride inner loop. Four opaque
+        # destination pixels at a time go through one
         # sixteen-lane vector of the same hoisted arithmetic, `_div255`
         # as the same multiply and shift; a group with a translucent pixel
         # takes the scalar loop below.

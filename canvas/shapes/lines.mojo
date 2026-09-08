@@ -1012,11 +1012,8 @@ def _stroke_pieces(
 
         # A joint. Two quads meeting at a turn of angle theta leave a
         # wedge of depth half_width * (1 - cos(theta/2)), so a
-        # nearly-straight joint that is drawn on both sides is already
-        # covered and needs no disk. That test is not a micro-
-        # optimization: a flattened curve is thousands of
-        # nearly-collinear segments, and a disk at every one of them
-        # buries the sweep in edges it gains nothing from.
+        # nearly-straight joint drawn on both sides is already covered
+        # and needs no disk.
         var nxt = (seg + 1) % num_segments
         if not reached_end or seg_len[nxt] == 0.0:
             _add_disk(edges, bx[seg], by[seg], half_width)

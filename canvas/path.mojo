@@ -1843,7 +1843,7 @@ def _fill_path_source_aa[
     # canvas *and the active rectangular clip* before anything is
     # allocated: a path clipped to a small window should not pay for a
     # mask covering the whole path, nor for sweeping rows and columns
-    # nothing will read (#320).
+    # nothing will read.
     #
     # The edge table stays whole. Only the mask window narrows, and
     # both sweeps compute each row's crossings across the full padded

@@ -13,9 +13,7 @@ from std.runtime.asyncrt import TaskGroup
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.workers import _bands_for
 
-# Below this many *source* pixels read, the resize runs inline rather
-# than dispatching tasks. Matches the fill sweep's threshold in
-# canvas.aa_crossing; set by benchmark (#96).
+# Below this many source pixels, resize runs inline.
 comptime _MIN_PARALLEL_PIXELS = 40000
 
 
@@ -692,7 +690,7 @@ def _resize_horizontal(
         tg.create_task(_resize_h_band_async(source, out, out_width, wx, lo, hi))
     tg.wait()
     # Named past the tasks, or they are freed while bands read them
-    # (#263). `wx` holds the weight lists the bands index into.
+    # `wx` holds the weight lists the bands index into.
     _ = len(wx.weights)
     _ = source.width
     return out^
@@ -778,7 +776,7 @@ def _resize_vertical(
             _resize_v_band_async(mid, out_width, wx, wy, pixels, lo, hi)
         )
     tg.wait()
-    # Named past the tasks (#263).
+    # Named again after the tasks to keep the borrowed value alive.
     _ = len(mid)
     _ = len(wy.weights)
     _ = len(wx.sums)

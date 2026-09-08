@@ -1,8 +1,4 @@
-"""SvgCanvas: a vector `DrawTarget` that accumulates SVG markup instead
-of rasterizing into a pixel buffer. No anti-aliasing math, no coverage
-sampling, no fill-rule scanline algorithm -- an SVG renderer (browser,
-image viewer, PDF exporter) does all of that at whatever resolution it
-displays at, so content drawn through this carries no fixed pixel size.
+"""A `DrawTarget` that accumulates resolution-independent SVG markup.
 
 The surface implements every `DrawTarget` method. It is not a
 general-purpose SVG builder: linear and radial gradients on rects and
@@ -50,17 +46,9 @@ comptime _SVG_DECIMALS = 3
 
 def _write_svg_float(mut out: String, value: Float64):
     """Append `value` to `out` at exactly `_SVG_DECIMALS` decimal places.
-    Plain `String(Float64)` is not safe for SVG coordinates: the same
-    `cx + radius * cos(angle)` expression can land one ULP apart
-    depending on compilation context, and shortest-round-trip
-    formatting turns that into a different *string* even though both
-    values are the same point on any display. Rounding to millipixels
-    -- far finer than a display resolves -- collapses the two. See the
-    wiki for the full case.
 
-    Written straight into `out`: an element's dozen numbers are the
-    bulk of its text, and a String per number was most of what an
-    element cost to emit (#193).
+    Fixed precision prevents equivalent coordinates that differ by one
+    floating-point ULP from producing different markup.
     """
     # 1000, 100, 10: 10 ** _SVG_DECIMALS and the pad thresholds below it.
     var scaled = round_to_int(value * 1000.0)

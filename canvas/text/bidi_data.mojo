@@ -16,10 +16,6 @@ a newer Unicode version, and re-run tests/test_bidi.mojo.
 """
 
 # The first 256 codepoints, one class letter each, indexed directly.
-# Latin-1 is nearly all of the text this package draws, and a binary
-# search over the table below costs about ten probes and a hundred
-# byte reads per codepoint -- enough to make text measurement three
-# times slower when every character pays it.
 comptime _LATIN1 = (
     "jjjjjjjjjlklmkjjjjjjjjjjjjjjkkklmnnfffnnnnnehehhddddddddddhnnnnn"
     "naaaaaaaaaaaaaaaaaaaaaaaaaannnnnnaaaaaaaaaaaaaaaaaaaaaaaaaannnnj"

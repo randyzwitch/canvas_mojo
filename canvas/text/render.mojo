@@ -159,7 +159,7 @@ from canvas.text.text_align import TextAlign
 # Two anchors whose fractional parts differ only in floating-point
 # rounding (10.3 + advance against 42.3 + advance) round to the same
 # step and share a mask; without this, exact-bit keys missed on nearly
-# every fractional anchor (#170).
+# every fractional anchor.
 comptime _SUBPIXEL_STEPS = 64
 
 
@@ -310,10 +310,8 @@ struct _ShapedGlyph(ImplicitlyCopyable, Movable):
     var kern_before: Float64
     # The characters this glyph stands for where `codepoint` has
     # stopped naming them -- a ligature that absorbed several, or any
-    # substitution. Empty otherwise, and `text()` fills that in from
-    # `codepoint` on demand: only the PDF backend's ToUnicode map ever
-    # reads it, and building a String for every glyph of every run
-    # cost the raster text path about a fifth of its time.
+    # substitution. Empty otherwise; `text()` builds it from `codepoint`
+    # when the PDF backend needs its ToUnicode mapping.
     var chars: String
 
     def __init__(out self, glyph: Int, codepoint: Int, chars: String = ""):
@@ -560,9 +558,8 @@ def _resolve_glyph(
     shaping found it a glyph there, otherwise from a fallback font
     resolved through `resolve_font_file_for_char` (codepoint-
     constrained matching -- e.g. CJK text requested under a Latin-only
-    family). Both the fallback path and the parsed fallback face are
-    cached by `cache`, so several fallback glyphs for the same
-    codepoint cost one lookup and one parse.
+    family). Both the fallback path and parsed face are cached by
+    `cache`.
     """
     if shaped.glyph != 0:
         return _PositionedGlyph(
@@ -903,9 +900,8 @@ def measure_text_block(
     A string with no ink (empty, or every line whitespace-only) returns
     a zero-sized box at the anchor, matching draw_text's no-op.
 
-    Builds a `FontCache` per call, which rescans every font file
-    installed on the machine. See the `cache=` overload below, and
-    `draw_text` for what the difference costs.
+    Builds a `FontCache` per call. Use the `cache=` overload when
+    measuring multiple blocks.
 
     Args:
         text: Text to lay out, "\\n"-separated lines.
@@ -999,20 +995,10 @@ struct TextLayout(Movable):
     """Text already shaped, kerned, line-broken and aligned, ready to
     be measured or drawn without doing that work again.
 
-    `measure_text_block` and `draw_text` each lay a string out from
-    scratch, so a caller that measures a label to decide where it goes
-    and then draws it pays for the layout twice -- about a fifth of
-    the pair on a three-line block. Prepare it once, then hand the
-    result to `measure_layout` and `draw_layout`.
-
-    Reuse is caller-managed on purpose: no hidden cache, and so no
-    invalidation to get wrong. A layout pins every input that shaped
-    it -- the string, size, family, slant, weight, rotation,
-    alignment, kerning and ligature settings -- and changing any of
-    them means preparing a new one. The anchor is deliberately not
-    pinned: the layout is anchor-relative, so the same one draws at
-    any (x, y), which is what makes it worth keeping for a label whose
-    position is still being decided.
+    Pass a prepared layout to `measure_layout` and `draw_layout`. It
+    retains the string, font, rotation, alignment, kerning, and ligature
+    settings used to prepare it. Its anchor is relative, so it can be
+    drawn at any `(x, y)`.
 
     The `FontCache` it was prepared against must be the one it is
     drawn with. The layout holds glyph indices resolved through that
@@ -1426,10 +1412,7 @@ def draw_text(
     kerning: Bool = True,
     ligatures: Bool = True,
 ) raises:
-    """`draw_text` anchored at a sub-pixel position, resolving fonts
-    fresh. See the sub-pixel cached overload below for what the anchor
-    buys, and the whole-pixel overload above for what resolving fresh
-    costs.
+    """Draw text at a sub-pixel anchor, resolving fonts for this call.
 
     Args:
         canvas: Canvas to draw into.
@@ -1692,11 +1675,8 @@ def _composite_glyph_mask(
     """
     var masked = canvas.has_clip_mask()
     var total = Float64(mask.total_samples)
-    # An opaque color over an exact-area mask, which is every glyph a
-    # NONZERO fill rasterizes: the count is in 255ths, so it is the
-    # alpha, and the general form below rounds back to it for every
-    # count. Skipping the divide there is most of the compositing cost
-    # of a small label.
+    # For opaque color over an exact-area mask, the count in 255ths is
+    # already the resulting alpha.
     var direct = color.a == 255 and mask.total_samples == 255
     var cp = mask.counts.unsafe_ptr()
     var left = offset_x + mask.origin_x
@@ -1953,18 +1933,12 @@ def draw_text(
     *,
     mut cache: FontCache,
 ) raises:
-    """The implementation every other `draw_text` overload delegates to:
-    sub-pixel anchor, fonts resolved through `cache` rather than fresh
-    every call.
+    """Draw text at a sub-pixel anchor using `cache` for font resolution.
 
     A sub-pixel anchor places a label against something itself at a
     fractional position -- a tick at x = 103.7, a label centered on a bar
     whose midpoint is not a whole pixel. Rounding the anchor first shifts
     the whole string.
-
-    Resolving through the cache collapses the two resolutions a single
-    call makes, the measuring pass and the render pass, into one lookup
-    plus a hit.
 
     Args:
         canvas: Canvas to draw into.
@@ -2154,9 +2128,7 @@ def stroke_text(
     kerning: Bool = True,
     ligatures: Bool = True,
 ) raises:
-    """`draw_text`'s outline instead of its fill, resolving fonts fresh
-    every call. See the `cache=` overload below for the parameters and
-    `draw_text` for what resolving fresh costs.
+    """Stroke text outlines, resolving fonts for this call.
 
     Args:
         canvas: Canvas to draw into.
@@ -2611,9 +2583,7 @@ def draw_text_on_path(
     kerning: Bool = True,
     ligatures: Bool = True,
 ) raises:
-    """Text along a curve, resolving fonts fresh every call. See the
-    `cache=` overload below for the parameters and `draw_text` for what
-    resolving fresh costs.
+    """Draw text along a curve, resolving fonts for this call.
 
     Args:
         canvas: Canvas to draw into.

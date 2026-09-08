@@ -1,38 +1,8 @@
-"""How a parallel pass decides how many row bands to split itself into.
-
-Every banded pass in this package writes disjoint rows and reads
-shared input, so the only questions are how much work is worth a task
-and how many tasks a caller will allow.
-
-The second used to have no answer at all: an application rendering
-several canvases at once had each of them fan out to every thread.
-`Canvas.set_max_workers` is that answer, and it is what `_bands_for`
-respects. The cap is a per-render ceiling rather than a budget across
-renders: two canvases each capped at 8 may use 16 threads between
-them, which is the point -- a knob for keeping one render from taking
-the machine, not an allocator.
-
-The first mostly answers itself. Measured band by band on a 64-thread
-machine, the sweep, the source fills and the transformed composite go
-on improving to the core count and past the sizes anyone renders: an
-800x600 even-odd fill runs 4669 us on one band and 760 on sixty-four,
-a gradient rectangle 5567 and 486. So the default is the count the
-limit allows, and the floor below which a pass runs inline is what
-keeps a glyph off the task queue.
-
-`_bands_for_work` is for the exception. Blur is one: its bands
-recompute a halo of rows for their neighbours, so past sixteen the
-duplicated work costs more than the split saves (1123 us at sixteen,
-1306 at sixty-four). A kernel only takes it with a figure measured for
-that kernel.
-"""
+"""Helpers for splitting parallel passes into row bands."""
 
 from std.runtime.asyncrt import parallelism_level
 
-# Below this much work a pass runs inline rather than dispatching
-# tasks at all: task setup is not free and the shapes this package
-# fills most often are glyph-sized. Set by benchmark (#92) and
-# re-measured for #292 -- re-benchmark before changing it.
+# Below this much work, a pass runs inline instead of dispatching tasks.
 comptime _MIN_PARALLEL_WORK = 40000
 
 
@@ -55,10 +25,8 @@ def _worker_limit(requested: Int) -> Int:
 def _bands_for(work: Int, rows: Int, cap: Int) -> Int:
     """How many row bands to split `work` over.
 
-    One band below `_MIN_PARALLEL_WORK`, where dispatching costs more
-    than the work does. Above it, as many as the worker limit and the
-    rows allow, which is what the measurements support for every
-    kernel here but blur.
+    Uses one band below `_MIN_PARALLEL_WORK`; otherwise uses up to the
+    worker limit and available row count.
 
     Args:
         work: The pass's own measure of how much there is to do.
@@ -79,15 +47,13 @@ def _bands_for(work: Int, rows: Int, cap: Int) -> Int:
 
 
 def _bands_for_work(work: Int, rows: Int, work_per_band: Int, cap: Int) -> Int:
-    """`_bands_for` for a kernel measured to want fewer bands than the
-    limit -- one whose bands duplicate work, as blur's halo does.
+    """Choose bands while requiring at least `work_per_band` work per band.
 
     Args:
         work: The pass's own measure of how much there is to do, in
             whatever unit its `work_per_band` is expressed in.
         rows: Rows available to divide, which bounds the band count.
-        work_per_band: How much work is worth one task, measured for
-            that kernel.
+        work_per_band: Minimum work assigned to each band.
         cap: The caller's worker cap, from `Canvas.max_workers`.
 
     Returns:

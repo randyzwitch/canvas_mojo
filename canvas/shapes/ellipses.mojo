@@ -280,9 +280,7 @@ def fill_ellipse_aa(
     )
 
 
-# Below this horizontal radius the interior span is not worth solving
-# for -- same value, same reasoning and same caveat as
-# fill_circle_aa's, set by benchmark (#84).
+# Below this horizontal radius, test pixels without solving an interior span.
 comptime _MIN_SPAN_RADIUS = 8.0
 
 

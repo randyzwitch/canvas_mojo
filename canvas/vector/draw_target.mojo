@@ -15,15 +15,8 @@ and `stroke_path_aa`, take the full stroke style -- `dashes`,
 `dash_offset`, `cap`, `join`, `miter_limit` -- so a dashed series or a
 square-capped rule renders the same way on every backend.
 
-`draw_ellipse_aa` is the outline `fill_path_aa`/`stroke_path_aa` cannot
-reproduce exactly: `Path.arc_to` takes a single `radius`, so a `Path`
-builds circular arcs only and an ellipse comes out as a cubic
-approximation. `draw_circle_aa` has no such gap -- a stroked circular
-`Path` is exact -- and is on the trait instead for parity with
-`fill_circle_aa` and with the sub-pixel, width-taking overloads
-`Canvas` already carries as free-function calls. Both outlines take a
-sub-pixel `(cx, cy)`, the matching sub-pixel radii, and `width`; neither
-takes `dashes`, since the raster primitives behind them do not.
+Circle and ellipse outlines take sub-pixel centers and radii plus a
+stroke width. They do not support dashes.
 
 Method parameters mirror the same-named function in
 `canvas.shapes`/`canvas.path`, minus `supersample`: a raster
@@ -72,29 +65,11 @@ since CSS has no keyword for them; `PdfCanvas` emits them as an
 `color_space` -- which decides whether a later source-over blend mixes
 in sRGB or linear light.
 
-Two further methods, `begin_annotated_group` and
-`end_annotated_group`, declare no drawing at all: they label whatever
-is drawn between them. A vector backend has somewhere to put that
-label and a raster one does not, so `SvgCanvas` wraps the run in
-`<g><title>`, `PdfCanvas` opens a marked-content sequence, and
-`Canvas` implements both as no-ops. That asymmetry is
-the point rather than a wart -- a raster image has no per-shape
-metadata to carry, and a caller drawing through the trait should not
-have to know which backend it holds in order to name what it draws.
+`begin_annotated_group` and `end_annotated_group` label the enclosed
+drawing. SVG and PDF preserve the label; `Canvas` treats both calls as
+no-ops.
 
-They are scoped rather than a `title` parameter on each primitive
-because one datum is often several primitives: a box plot's box,
-whiskers, median and caps are one thing to a reader and four calls to
-this trait. A group spans however many a datum happens to need.
-
-Text is not on the trait. `Canvas` rasterizes glyph outlines through
-`fill_path_aa`, `SvgCanvas` emits `<text>` markup and `PdfCanvas`
-writes `TJ` operators in an embedded font subset, so there is no
-shared operation to declare. A generic caller collects text as plain
-data (position, string, color, size, alignment) and lets each backend
-draw it. Keeping text off `Canvas`'s method surface also keeps
-`canvas.text`'s imports off every `Canvas` user, since Mojo resolves a
-struct's whole method surface eagerly.
+Text is backend-specific and is not part of this trait.
 
 Conformance is nominal, not structural: `Canvas` (`canvas/buffer.mojo`),
 `SvgCanvas` (`canvas/vector/svg.mojo`) and `PdfCanvas`

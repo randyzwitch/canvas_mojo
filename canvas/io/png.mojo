@@ -415,18 +415,9 @@ def write_png(
             rp[unsafe_offset=o + 2] = px[unsafe_offset=last + 2]
             o += 3
 
-    # Two candidate encodings, unfiltered and Sub-filtered, and the
-    # one that compresses smaller is kept. The unfiltered rows win
-    # wherever deflate's LZ77 finds flat color and repeated rows,
-    # which is most of a chart; the Sub-filtered rows win where every
-    # byte differs from its neighbor, a photograph or noise, whose
-    # deltas are smaller than the values. The choice is per image
-    # (#167 has the original table), and it is made on a sample: every
-    # `_FILTER_SAMPLE_STRIDE`th row compressed both ways, since
-    # compressing the whole image twice cost as much as writing it
-    # once, and the sample picks the same way on every image the
-    # full comparison did. The byte-residual heuristic libpng uses
-    # was tried first and picked Sub on every chart, where it loses.
+    # Choose unfiltered or Sub-filtered scanlines per image. Flat and
+    # repeated rows favor unfiltered data; varying rows favor Sub.
+    # Encoding levels may compare samples instead of both full images.
     var row_bytes = w * channels
     var max_chain = level._max_chain()
     var max_lazy = level._max_lazy()
@@ -451,11 +442,8 @@ def write_png(
         filtered = len(sub_out) < len(raw_out)
         compressed = sub_out^ if filtered else raw_out^
     else:
-        # The sample is judged at the default search effort whatever
-        # the level asks for. It is a few percent of the encode, and
-        # deciding it wrongly is expensive in a way no saved search
-        # makes up for: an unfiltered gradient is three times the bytes
-        # of a Sub-filtered one and slower to deflate as well.
+        # Judge the sample at the default search effort so encoding
+        # level does not affect the filter choice.
         filtered = _sub_compresses_smaller(raw, sub, h, row_bytes, stride)
         compressed = deflate(sub, max_chain, max_lazy) if filtered else deflate(
             raw, max_chain, max_lazy

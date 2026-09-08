@@ -156,9 +156,7 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, mask: Mask):
     _draw_canvas_device[True](dst, src, x, y, 255, mask)
 
 
-# Groups of eight source pixels skipped before `_draw_canvas_device`
-# tests again whether a group can be copied rather than blended. See
-# the loop for why the test is worth suppressing at all.
+# Groups skipped before testing again for a copyable source run.
 comptime _COPY_RETRY = 15
 
 
@@ -331,12 +329,7 @@ def _draw_canvas_device[
     loops compile with nothing ahead of them and it never calls
     back into the public function.
 
-    `with_mask` says whether `mask` scales each source pixel's alpha
-    on the way through, the way `apply_mask` would have. It is a
-    compile-time parameter, so an unmasked call compiles with no mask
-    lookup in its loops at all. Masking the source into a copy first
-    instead costs a canvas-sized allocation and a whole pass over it,
-    most of which the clipped overlap never reads.
+    `with_mask` says whether `mask` scales each source pixel's alpha.
 
     The mask is aligned with the source's top-left corner, not the
     destination's, and a source pixel it does not reach draws nothing
@@ -424,8 +417,8 @@ def _draw_canvas_device[
     var dp = dst.pixels.unsafe_ptr()
     var dst_stride = dst.width * BYTES_PER_PIXEL
 
-    # Two kinds of run are worth taking eight pixels at a time, and a
-    # composited layer is mostly made of them. A run of opaque source
+    # Process common opaque and transparent runs eight pixels at a time.
+    # A run of opaque source
     # pixels at full opacity is a copy: OR-ing in 255 everywhere but
     # the alpha lanes leaves the vector all-255 exactly when all eight
     # alphas are. A run of fully transparent ones writes nothing at
@@ -860,9 +853,7 @@ def _draw_canvas_mapped(
         dst.has_clip_mask(),
     )
 
-    # Bands write disjoint destination rows and only read the source,
-    # the basis the fill sweep bands on, and the same threshold: below
-    # it the tasks cost more than the rows do.
+    # Bands write disjoint destination rows and only read the source.
     var bands = _bands_for(rw * rh, rh, dst.max_workers())
 
     if bands == 1:
