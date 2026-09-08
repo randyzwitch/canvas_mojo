@@ -14,7 +14,7 @@ from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.mask import Mask
-from canvas.path import Path
+from canvas.path import Path, fill_path_gradient_aa
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.shapes.rects import (
     fill_rect,
@@ -247,6 +247,61 @@ def test_a_rotated_rectangle_clip_keeps_the_transform() raises:
                 Int(manual.get_pixel(x, y).r),
                 String("rotated clip at ", x, ",", y),
             )
+
+
+def test_the_benchmarks_small_clip_scene_actually_paints() raises:
+    """Guards the benchmark geometry, not the renderer.
+
+    `benchmarks/bench_canvas.mojo` times a gradient path fill under a
+    small clip. Its window sat at (300, 200), which falls in the gap
+    between two of the test path's arches, so for two releases that
+    row painted nothing and its 51 us was flattening curves and
+    finding no coverage -- not what the row's name claimed (#355).
+
+    The scene now uses two windows and this pins both: the low one
+    intersects and must paint, the high one must not. If the path's
+    shape is ever changed, this fails rather than the benchmark
+    quietly going back to measuring rejection.
+    """
+    var big = Path()
+    big.move_to(60.0, 500.0)
+    for i in range(1, 40):
+        var x = 60.0 + Float64(i) * 18.0
+        big.quad_curve_to(x - 9.0, 120.0, x, 500.0)
+    big.close()
+
+    var grad = LinearGradient(0.0, 0.0, 800.0, 600.0)
+    grad.add_stop(0.0, Color(30, 40, 60))
+    grad.add_stop(1.0, Color(220, 90, 60))
+
+    var painted = Canvas(800, 600, BG)
+    painted.save()
+    painted.push_clip(300, 400, 100, 80)
+    fill_path_gradient_aa(painted, big, grad)
+    painted.restore()
+    var n = 0
+    for y in range(600):
+        for x in range(800):
+            var p = painted.get_pixel(x, y)
+            if p.r != BG.r or p.g != BG.g or p.b != BG.b:
+                n += 1
+    assert_true(
+        n > 4000,
+        String("the intersecting clip must paint, got ", n, " pixels"),
+    )
+
+    var empty = Canvas(800, 600, BG)
+    empty.save()
+    empty.push_clip(300, 200, 100, 80)
+    fill_path_gradient_aa(empty, big, grad)
+    empty.restore()
+    var m = 0
+    for y in range(600):
+        for x in range(800):
+            var q = empty.get_pixel(x, y)
+            if q.r != BG.r or q.g != BG.g or q.b != BG.b:
+                m += 1
+    assert_equal(m, 0, "the high clip falls between arches and paints nothing")
 
 
 def test_no_clip_path_lets_everything_through() raises:

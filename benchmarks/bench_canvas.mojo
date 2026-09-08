@@ -438,6 +438,16 @@ def _survey() raises -> List[_Row]:
     # bounds rather than the whole path (#320), so this row tracks a
     # cost that used to be the row above's regardless of how little
     # was visible.
+    #
+    # Two clips, because they measure different things and the first
+    # one alone was read as the second for two releases. The path is
+    # 39 arches rising to y=120 from a base at y=500, so a window high
+    # up sits in the gap between two arches and the fill paints
+    # nothing at all: that row is the cost of flattening the curves
+    # and finding there is no coverage, which is worth knowing but is
+    # not what "under a small clip" sounds like. The window lower down
+    # is about 70% covered, and is the one that measures painting
+    # through an intersecting clip.
     iters = 200
     t0 = perf_counter_ns()
     for _ in range(iters):
@@ -446,6 +456,21 @@ def _survey() raises -> List[_Row]:
         fill_path_gradient_aa(canvas, big_path, gradient)
         canvas.restore()
         sink += Int(canvas.get_pixel(350, 240).r)
+    _report(
+        rows,
+        "fill_path_gradient_aa 39-curve, clip misses the path",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    iters = 200
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        canvas.save()
+        canvas.push_clip(300, 400, 100, 80)
+        fill_path_gradient_aa(canvas, big_path, gradient)
+        canvas.restore()
+        sink += Int(canvas.get_pixel(350, 440).r)
     _report(
         rows,
         "fill_path_gradient_aa 39-curve under a small clip",

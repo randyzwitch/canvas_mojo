@@ -63,6 +63,7 @@ micro = "mojo run -I . benchmarks/micro_canvas.mojo"
 roofline = "mojo run -I . benchmarks/roofline_constants.mojo"
 roofline-census = "mojo run -I . benchmarks/roofline_census.mojo"
 roofline-locality = "mojo run -I . benchmarks/roofline_locality.mojo"
+roofline-shapes = "mojo run -I . benchmarks/roofline_shapes.mojo"
 
 # `mojo format`'s default 80 columns rather than a custom `-l`, so a
 # bare `mojo format` (or format-on-save) is always correct here.

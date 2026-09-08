@@ -20,6 +20,7 @@ machine properties and do not carry to other hardware.
     pixi run roofline           # machine constants
     pixi run roofline-census    # pixels each row must change
     pixi run roofline-locality  # async task placement
+    pixi run roofline-shapes    # coverage-inclusive floors for shapes
 
 ## The yardsticks
 
@@ -55,6 +56,65 @@ renders each scene onto a known background and counts what actually
 changed. That is the floor's denominator -- the output the operation is
 obliged to produce.
 
+## Coverage floors, and why the loose ones misled
+
+A floor that prices only the blend understates a shape by two orders
+of magnitude, and ranking rows by that number sends effort at the
+wrong ones. `roofline_shapes.mojo` measures what the shapes actually
+have to do. Each kernel does the least arithmetic a correct
+implementation of its shape can: locate the pixel relative to the
+edge, turn that into a coverage fraction, scale the alpha, blend.
+
+| row | blend-only floor | coverage floor |
+|---|---:|---:|
+| `fill_circle_aa x2000 markers` | 0.4% | **23.8%** |
+| `fill_ellipse_aa x2000 small` | 0.4% | **34.7%** |
+| `fill_arc_aa x2000 small` | 0.2% | **23.1%** |
+| `fill_polygon_aa 64-gon` | 4.3% | **36.9%** |
+| `fill_circle_aa one large (r=250)` | 16.9% | **79.0%** |
+
+The large disk is the cautionary one. Read from the blend-only floor
+it looked 5.9x off and worth attention; measured properly it is at
+79% and there is nothing there. Optimizing it would have been effort
+spent against a number, not against the machine.
+
+Two corrections had to be made to get these, and both generalize.
+
+**Count visits, not changed pixels.** 2000 markers change 88,810
+distinct pixels but make the rasterizer look at 200,000, because
+their bounding boxes overlap. Work that a shape repeats on a pixel
+another shape already touched was never optional, so a floor built on
+the census's changed-pixel count prices away real work. Every
+coverage row above uses visits.
+
+**Respect the algorithm's shape.** The first large-disk kernel tested
+each pixel in the bounding box for distance and came out at 254% of
+the row it was supposed to bound -- a floor slower than the thing it
+floors, which is a contradiction. A large shape's interior is a run:
+the row's span is solved once analytically, the inside is filled with
+no coverage arithmetic at all, and only the two rim pixels pay for
+coverage. Corrected, the same row reads 79%. A floor has to model how
+the work must be organized, not just how many pixels it lands on.
+
+Rows priced this way are marked `coverage` rather than `tight` or
+`loose`: the floor now includes the coverage arithmetic, but not
+per-call setup, curve flattening, or clipping.
+
+## Floors that were called tight and are not
+
+`resize 1600x1200 -> 741x533` was priced at input plus output traffic,
+which is compulsory but not sufficient: the filter also does a
+Float64 multiply-accumulate per tap per channel, and that arithmetic
+is not in the number. #358 cut the row from 2626 us to 1046 by
+removing the 28.5 MB intermediate -- the traffic part -- and the row
+still sits at 9.2% of a floor that prices no filtering at all. Treat
+that percentage as an upper bound on what remains.
+
+`fill_rect 600x400 multiply` is priced with the source-over kernel,
+which is the wrong arithmetic: a multiply blend does the multiply and
+then the composite. Its floor is too low by whatever that costs, and
+measuring it belongs with the work on that row.
+
 ## What it found
 
 **Four rows are finished.** Transformed nearest sampling is at 103% of
@@ -87,12 +147,21 @@ destination is memcpy by another name, but the fast path re-derives
 "is this run opaque?" per eight-pixel group by reading the source. It
 also does not band -- its time is flat across every core count tested.
 
-**One row measures nothing at all.** The census returns zero changed
-pixels for `fill_path_gradient_aa 39-curve under a small clip`: the
-clip rectangle at (300,200,100,80) falls in the gap between two arches
-of the test path. The row spends 51.1 us producing no output. It still
-measures something real -- flattening 39 curves and sweeping the clip --
-but not what its name implies.
+**One row measured nothing at all, and now two rows measure the right
+things.** The census returned zero changed pixels for
+`fill_path_gradient_aa 39-curve under a small clip`: the clip
+rectangle at (300,200,100,80) fell in the gap between two arches of
+the test path, so the row spent 51.1 us producing no output. It was
+measuring flattening and rejection under a name that promised
+painting.
+
+Both are worth timing, so there are now two rows. The high window
+keeps the old geometry under the honest name `clip misses the path`;
+a second window at (300,400,100,80) is about 87% covered and is the
+one that measures painting through an intersecting clip.
+`tests/test_clip_path.mojo` pins both counts, so changing the test
+path's shape fails a test rather than quietly returning the benchmark
+to measuring rejection (#355).
 
 **The scalar tax, priced.** A blend mode other than source-over cannot
 take the packed store and goes through `write_pixel` per pixel. The
@@ -153,12 +222,12 @@ worst first.
 |---:|---|---:|---:|---:|:--:|---|
 | 0.1 | `draw_polyline_aa 3000-segment smooth series` * | 1120.2 | 0.62 | 5,141 | loose | blend only; coverage math not in floor |
 | 0.1 | `draw_text 3 lines @13px (uncached)` | 1753.0 | 2.22 | 4,000 | loose | dominated by a full font rescan |
-| 0.2 | `fill_arc_aa x2000 small (r=4)` | 2766.3 | 6.00 | 50,000 | loose | blend only; coverage math not in floor |
+| 23.1 | `fill_arc_aa x2000 small (r=4)` | 2766.3 | 637.90 | 242,000 | coverage | disk coverage + two half-plane tests per visit |
 | 0.2 | `fill_path_aa glyph-sized` | 22.8 | 0.05 | 425 | loose | blend only; coverage math not in floor |
 | 0.2 | `stroke_path_aa 39-curve path` * | 2350.6 | 4.79 | 39,947 | loose | blend only; coverage math not in floor |
 | 0.3 | `fill_circle_aa x2000 under a clip path` | 3281.7 | 10.66 | 88,810 | loose | blend only; coverage math not in floor |
-| 0.4 | `fill_circle_aa x2000 markers (r=3.5)` | 2921.0 | 10.66 | 88,810 | loose | blend only; coverage math not in floor |
-| 0.4 | `fill_ellipse_aa x2000 small (5x3)` | 3482.5 | 15.29 | 127,450 | loose | blend only; coverage math not in floor |
+| 23.8 | `fill_circle_aa x2000 markers (r=3.5)` | 2921.0 | 695.40 | 200,000 | coverage | distance, clamp and blend per visit |
+| 34.7 | `fill_ellipse_aa x2000 small (5x3)` | 3482.5 | 1208.60 | 234,000 | coverage | normalized radius, clamp and blend per visit |
 | 0.4 | `fill_path_gradient_aa glyph-sized` | 27.6 | 0.10 | 425 | loose | + gradient eval/px (sqrt, atan2) |
 | 0.4 | `draw_polyline_aa 3000-segment dashed` * | 3133.7 | 12.55 | 104,585 | loose | blend only; coverage math not in floor |
 | 0.4 | `fill_circle_aa x2000 under a clip rect` | 2923.2 | 10.66 | 88,810 | loose | blend only; coverage math not in floor |
@@ -181,10 +250,11 @@ worst first.
 | 3.5 | `resize 1600x1200 -> 800x600` * | 2820.4 | 99.38 | 480,000 | tight | same traffic as downsample |
 | 3.6 | `resize 1600x1200 -> 741x533` * | 2628.2 | 95.86 | 395,073 | tight | read 7.68 MB, write 1.58 |
 | 3.7 | `fill_circles_aa x2000 markers batched (r=3.5)` * | 301.0 | 11.18 | 93,142 | loose | blend only; coverage math not in floor |
-| 3.8 | `fill_path_gradient_aa 39-curve under a small clip` | 51.1 | 1.95 | 0 | loose | changes ZERO pixels; floor is flatten 39 curves + sweep 8000 px |
+| -- | `fill_path_gradient_aa 39-curve, clip misses the path` | 51.1 | -- | 0 | n/a | renamed: flatten 39 curves and find no coverage |
+| -- | `fill_path_gradient_aa 39-curve under a small clip` | -- | -- | 7,000 | n/a | new intersecting scene; re-record for a time |
 | 3.8 | `fill_path_radial_gradient_aa large 39-curve` * | 1198.7 | 45.44 | 94,669 | loose | + gradient eval/px (sqrt, atan2) |
 | 4.1 | `measure then draw 3 lines (laid out twice)` | 119.6 | 4.92 | 4,000 | loose | layout twice + blit |
-| 4.3 | `fill_polygon_aa 64-gon` * | 442.9 | 18.90 | 157,501 | loose | blend only; coverage math not in floor |
+| 36.9 | `fill_polygon_aa 64-gon` * | 442.9 | 163.50 | 157,244 | coverage | scanline crossings, interior run, edge coverage |
 | 6.9 | `fill_path_conic_gradient_aa large 39-curve` * | 1318.8 | 90.88 | 94,669 | loose | + gradient eval/px (sqrt, atan2) |
 | 7.4 | `measure_text one label (cached)` | 2.7 | 0.20 | 0 | loose | 10 glyph lookups + advances |
 | 8.2 | `draw_canvas 800x600 through a mask` | 843.4 | 69.20 | 480,000 | tight | + mask read |
@@ -195,7 +265,7 @@ worst first.
 | 10.5 | `measure_text_block 3 lines (cached)` | 21.2 | 2.22 | 0 | loose | 111 glyph lookups + advances |
 | 11.4 | `downsample 1600x1200 -> 2x` * | 872.4 | 99.38 | 480,000 | tight | read 7.68 MB, write 1.92 |
 | 14.0 | `fill_arc_aa large pie wedge (r=260)` * | 76.1 | 10.63 | 88,594 | loose | blend only; coverage math not in floor |
-| 16.9 | `fill_circle_aa one large (r=250)` * | 140.2 | 23.68 | 197,317 | loose | blend only; coverage math not in floor |
+| 79.0 | `fill_circle_aa one large (r=250)` * | 140.2 | 110.80 | 196,805 | coverage | analytic row span, interior run, rim coverage |
 | 21.7 | `fill_ellipse_aa one large (340x220)` * | 130.5 | 28.32 | 236,029 | loose | blend only; coverage math not in floor |
 | 21.9 | `draw_canvas 800x600 translucent` | 283.0 | 61.92 | 480,000 | tight | read+write+blend |
 | 28.0 | `Canvas.fill translucent (blend)` | 221.5 | 61.92 | 480,000 | tight | read+write+blend |
