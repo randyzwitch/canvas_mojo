@@ -40,7 +40,8 @@ from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
-from canvas.path import Path, fill_path_aa
+from canvas.gradient import LinearGradient
+from canvas.path import Path, fill_path_aa, fill_path_gradient_aa
 from canvas.shapes.lines import draw_line, draw_line_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
@@ -284,6 +285,37 @@ struct LineAaHorizontal(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
+struct GradientUnderClip(Movable, MicroCase):
+    """A large gradient-filled path whose visible area is a small
+    rectangle: the case where the coverage mask used to be allocated
+    and swept for the whole path however little of it could be
+    painted (#320).
+    """
+
+    var canvas: Canvas
+    var path: Path
+    var gradient: LinearGradient
+
+    def __init__(out self) raises:
+        self.canvas = Canvas(W, H, WHITE)
+        self.canvas.push_clip(350, 260, 100, 80)
+        self.path = Path()
+        self.path.move_to(20.3, 30.7)
+        self.path.line_to(780.2, 40.1)
+        self.path.quad_curve_to(750.3, 850.0, 40.7, 550.3)
+        self.path.close()
+        self.gradient = LinearGradient(0.0, 0.0, 800.0, 600.0)
+        self.gradient.add_stop(0.0, Color(240, 30, 70, 173))
+        self.gradient.add_stop(1.0, Color(20, 90, 210, 39))
+
+    def name(self) -> String:
+        return "large gradient path under 100x80 clip"
+
+    def run(mut self, mut sink: Int) raises:
+        fill_path_gradient_aa(self.canvas, self.path, self.gradient)
+        sink += Int(self.canvas.get_pixel(380, 290).r)
+
+
 struct FillPathGlyphSized(Movable, MicroCase):
     """A quadrilateral the size of a glyph, filled through the
     exact-area path: the small-shape end of the rasterizer, where
@@ -420,6 +452,10 @@ def main() raises:
 
     var small = FillPathGlyphSized()
     _ = measure(small, sink, rounds=9, iters=2000)
+    print("")
+
+    var clipped_gradient = GradientUnderClip()
+    _ = measure(clipped_gradient, sink, rounds=9, iters=200)
     print("")
 
     var text_a = TextCached()
