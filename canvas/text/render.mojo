@@ -308,9 +308,12 @@ struct _ShapedGlyph(ImplicitlyCopyable, Movable):
     var glyph: Int
     var codepoint: Int
     var kern_before: Float64
-    # The characters this glyph stands for, however many a ligature
-    # absorbed: what a PDF's ToUnicode map needs where `codepoint` has
-    # stopped naming the glyph.
+    # The characters this glyph stands for where `codepoint` has
+    # stopped naming them -- a ligature that absorbed several, or any
+    # substitution. Empty otherwise, and `text()` fills that in from
+    # `codepoint` on demand: only the PDF backend's ToUnicode map ever
+    # reads it, and building a String for every glyph of every run
+    # cost the raster text path about a fifth of its time.
     var chars: String
 
     def __init__(out self, glyph: Int, codepoint: Int, chars: String = ""):
@@ -318,8 +321,17 @@ struct _ShapedGlyph(ImplicitlyCopyable, Movable):
         self.codepoint = codepoint
         self.kern_before = 0.0
         self.chars = chars
-        if chars == "" and codepoint >= 0:
-            self.chars = String(chr(codepoint))
+
+    def text(self) -> String:
+        """The characters this glyph stands for. `chars` when shaping
+        set it, the codepoint otherwise, and empty for a glyph that
+        stands for neither.
+        """
+        if self.chars != "":
+            return self.chars
+        if self.codepoint >= 0:
+            return String(chr(self.codepoint))
+        return String()
 
 
 def _script_tag(codepoints: List[Int]) -> String:

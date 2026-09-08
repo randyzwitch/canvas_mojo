@@ -186,6 +186,14 @@ def _codepoint_class(cp: Int) -> Int:
         return _MARK
     if (cp >= 0x21 and cp <= 0x2F) or (cp >= 0x3A and cp <= 0x40):
         return _WEAK_NEUTRAL
+    # Latin and the blocks beside it are most of most text, and none
+    # of what follows can match below U+0300: the combining marks
+    # start there, Hebrew at U+0590, Arabic at U+0600, and every
+    # formatting character including ALM is higher still. Answering
+    # here saves that whole chain of range tests per codepoint on the
+    # common line.
+    if cp >= 0x41 and cp < 0x0300:
+        return _STRONG_L
 
     # Hebrew, Hebrew presentation forms.
     if cp >= 0x0590 and cp <= 0x05FF:
