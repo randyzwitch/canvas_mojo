@@ -17,11 +17,13 @@ from canvas import (
     FontDatabase,
     FontSlant,
     FontWeight,
+    FPoint,
     Hatch,
     LinearGradient,
     Mask,
     Path,
     PatternSource,
+    PdfCanvas,
     SvgCanvas,
     TextAlign,
     blur,
@@ -41,6 +43,120 @@ from canvas import (
     write_png,
     write_svg,
 )
+
+
+def _draw_markers[T: DrawTarget](mut target: T, radius: Float64) raises:
+    """A scatter drawn through the trait, which is the shape a chart
+    library's mark layer has: generic over the backend, so it cannot
+    name `Canvas` and cannot specialize on it either (#333).
+    """
+    var centers = List[FPoint]()
+    var colors = List[Color]()
+    for i in range(60):
+        centers.append(
+            FPoint(
+                2.0 + Float64((i * 7) % 56) * 0.5,
+                2.0 + Float64((i * 11) % 52) * 0.5,
+            )
+        )
+        colors.append(Color(UInt8(40 + i * 3), 90, 200, UInt8(120 + i * 2)))
+    target.fill_circles_aa(centers, radius, Color(200, 60, 40, 180))
+    target.fill_circles_aa(centers, radius, colors)
+
+
+def _draw_markers_singly[T: DrawTarget](mut target: T, radius: Float64) raises:
+    """The same scatter, one call per marker: what the batch has to
+    match."""
+    var centers = List[FPoint]()
+    var colors = List[Color]()
+    for i in range(60):
+        centers.append(
+            FPoint(
+                2.0 + Float64((i * 7) % 56) * 0.5,
+                2.0 + Float64((i * 11) % 52) * 0.5,
+            )
+        )
+        colors.append(Color(UInt8(40 + i * 3), 90, 200, UInt8(120 + i * 2)))
+    for i in range(len(centers)):
+        target.fill_circle_aa(
+            centers[i].x, centers[i].y, radius, Color(200, 60, 40, 180)
+        )
+    for i in range(len(centers)):
+        target.fill_circle_aa(centers[i].x, centers[i].y, radius, colors[i])
+
+
+def test_batched_markers_reach_every_backend_through_the_trait() raises:
+    """#333: a caller generic over `DrawTarget` could not reach the
+    batched marker path, because it takes a concrete `Canvas` and Mojo
+    has no way to specialize a generic function on the concrete type.
+
+    Raster output must be identical to the per-marker loop, and both
+    vector backends must emit the same markup either way -- there the
+    batch *is* the loop, so anything else would mean the trait method
+    had drifted from the single one.
+    """
+    var batched = Canvas(40, 34, Color(255, 255, 255))
+    _draw_markers(batched, 3.0)
+    var singly = Canvas(40, 34, Color(255, 255, 255))
+    _draw_markers_singly(singly, 3.0)
+    var differing = 0
+    for y in range(34):
+        for x in range(40):
+            var a = batched.get_pixel(x, y)
+            var b = singly.get_pixel(x, y)
+            if a.r != b.r or a.g != b.g or a.b != b.b or a.a != b.a:
+                differing += 1
+    assert_equal(differing, 0, "raster batch differs from the loop")
+
+    var svg_a = SvgCanvas(40, 34)
+    _draw_markers(svg_a, 3.0)
+    var svg_b = SvgCanvas(40, 34)
+    _draw_markers_singly(svg_b, 3.0)
+    assert_equal(svg_a.to_string(), svg_b.to_string(), "SVG markup")
+
+    var pdf_a = PdfCanvas(40, 34)
+    _draw_markers(pdf_a, 3.0)
+    var pdf_b = PdfCanvas(40, 34)
+    _draw_markers_singly(pdf_b, 3.0)
+    assert_equal(len(pdf_a.to_bytes()), len(pdf_b.to_bytes()), "PDF bytes")
+
+    # A radius past the closed-form limit takes the per-marker
+    # fallback; the trait method still has to agree with the loop.
+    var big_a = Canvas(40, 34, Color(255, 255, 255))
+    _draw_markers(big_a, 11.0)
+    var big_b = Canvas(40, 34, Color(255, 255, 255))
+    _draw_markers_singly(big_b, 11.0)
+    for y in range(34):
+        for x in range(40):
+            var a = big_a.get_pixel(x, y)
+            var b = big_b.get_pixel(x, y)
+            assert_equal(a.r, b.r, String("large r at (", x, ", ", y, ")"))
+            assert_equal(a.a, b.a, String("large a at (", x, ", ", y, ")"))
+
+
+def test_a_colour_list_of_the_wrong_length_raises_on_every_backend() raises:
+    var centers = List[FPoint]()
+    centers.append(FPoint(5.0, 5.0))
+    centers.append(FPoint(9.0, 9.0))
+    var one = List[Color]()
+    one.append(Color(255, 0, 0))
+    var raised = 0
+    var c = Canvas(20, 20, Color(255, 255, 255))
+    try:
+        c.fill_circles_aa(centers, 2.0, one)
+    except:
+        raised += 1
+    var s = SvgCanvas(20, 20)
+    try:
+        s.fill_circles_aa(centers, 2.0, one)
+    except:
+        raised += 1
+    var p = PdfCanvas(20, 20)
+    try:
+        p.fill_circles_aa(centers, 2.0, one)
+    except:
+        raised += 1
+    assert_equal(raised, 3, "every backend must reject a short color list")
 
 
 def _draw_scene[T: DrawTarget](mut target: T):

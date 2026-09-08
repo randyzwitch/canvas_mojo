@@ -27,7 +27,7 @@ from canvas.color import (
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.fill_rule import FillRule
-from canvas.geometry import Matrix2D, _mapped_bounds, _mapped_rect
+from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
     Path,
     fill_path_aa,
@@ -1402,6 +1402,44 @@ struct Canvas(Copyable, DrawTarget, Movable):
             color: Fill color.
         """
         fill_circle_aa(self, cx, cy, radius, color)
+
+    def fill_circles_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        color: Color,
+    ) raises:
+        """`DrawTarget`'s batched disks: the canvas is split across
+        cores rather than the markers. See `canvas.shapes.circles`.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            radius: Radius shared by every marker, in pixels.
+            color: Fill color shared by every marker.
+        """
+        from canvas.shapes.circles import fill_circles_aa as _batch
+
+        _batch(self, centers, radius, color)
+
+    def fill_circles_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_circles_aa` with a color per marker.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            radius: Radius shared by every marker, in pixels.
+            colors: One color per centre, same length as `centers`.
+
+        Raises:
+            Error: If `colors` is not the same length as `centers`.
+        """
+        from canvas.shapes.circles import fill_circles_aa as _batch
+
+        _batch(self, centers, radius, colors)
 
     def fill_circle_aa(
         mut self, cx: Float64, cy: Float64, radius: Float64, color: Color

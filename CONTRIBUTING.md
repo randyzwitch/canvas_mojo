@@ -46,18 +46,19 @@ defaults in `text/font_discovery.mojo` do not cover yours.
 ## The DrawTarget trait, and why the package works
 
 `DrawTarget` (`canvas/vector/draw_target.mojo`) is the load-bearing
-idea in this package. It declares eleven drawing primitives, two
+idea in this package. It declares twelve drawing primitives, two
 methods that label rather than draw, and the drawing state those
 primitives read:
 
 ```mojo
 trait DrawTarget:
-    # Eleven drawing primitives. Most take both an Int (pixel-index)
+    # Twelve drawing primitives. Most take both an Int (pixel-index)
     # and a Float64 (geometry) overload; only one of each is shown.
     def fill_rect(mut self, x: Int, y: Int, width: Int, height: Int, color: Color): ...
     def fill_rect_gradient(mut self, ..., gradient: LinearGradient): ...
     def draw_line_aa(mut self, ..., width: Float64 = 1.0, dashes: List[Float64] = ..., cap: LineCap = ..., join: LineJoin = ...): ...
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color): ...
+    def fill_circles_aa(mut self, centers: List[FPoint], radius: Float64, color: Color) raises: ...
     def draw_circle_aa(mut self, cx: Float64, cy: Float64, radius: Float64, color: Color, width: Float64 = 1.0): ...
     def fill_ellipse_aa(mut self, cx: Int, cy: Int, rx: Int, ry: Int, color: Color): ...
     def draw_ellipse_aa(mut self, cx: Float64, cy: Float64, rx: Float64, ry: Float64, color: Color, width: Float64 = 1.0): ...
@@ -152,6 +153,15 @@ addition:
   caller *through the trait*. Add to the trait when something concrete
   needs it, not before — every addition is a method all three backends
   must implement forever.
+- **`fill_circles_aa` is the exception that shows the rule.** It is
+  not a new shape — it is `fill_circle_aa` in bulk — so by the
+  paragraph above it does not belong. It is there because a caller
+  generic over the trait has no other way to reach the raster
+  backend's batched path: Mojo cannot specialize a `[T: DrawTarget]`
+  function on the concrete type, so the alternative is a second copy
+  of the marker loop that drifts from the first (#333). A performance
+  contract a generic caller cannot otherwise obtain is a reason to
+  add; a faster way to draw the same shape, by itself, is not.
 - **The ellipse is where "use `fill_path_aa`/`stroke_path_aa`" stops
   being the answer.** Every other shape left off the trait is left off
   because one of those two covers it. An ellipse is the case where

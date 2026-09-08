@@ -80,6 +80,10 @@ importable package is named `canvas`; the project is `canvas_mojo`.
   color weighted by alpha throughout. `downsample(canvas, factor)`
   stays the faster path for an integer factor dividing both
   dimensions, and the two agree byte for byte there.
+- `fill_circles_aa` is on the `DrawTarget` trait as well as being a
+  free function, so a routine generic over the backend reaches the
+  batched path: `target.fill_circles_aa(centers, radius, color)`. The
+  vector backends emit one element per marker either way.
 - `fill_circles_aa(canvas, centers, radius, color)` draws a whole
   scatter in one call, banding the canvas across cores instead of
   drawing one marker at a time -- 8.5x on 2,000 small markers and

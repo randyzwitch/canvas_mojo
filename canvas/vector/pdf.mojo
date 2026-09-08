@@ -742,6 +742,53 @@ struct PdfCanvas(DrawTarget, Movable):
         self._content += "l S "
         self._end()
 
+    def fill_circles_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        color: Color,
+    ) raises:
+        """`DrawTarget`'s batched disks. This backend emits a filled path per
+        marker whichever entry point is used, so the batch is the loop
+        and the output is unchanged by construction.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            radius: Radius shared by every marker, in pixels.
+            color: Fill color shared by every marker.
+        """
+        for i in range(len(centers)):
+            self.fill_circle_aa(centers[i].x, centers[i].y, radius, color)
+
+    def fill_circles_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_circles_aa` with a color per marker.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            radius: Radius shared by every marker, in pixels.
+            colors: One color per centre, same length as `centers`.
+
+        Raises:
+            Error: If `colors` is not the same length as `centers`.
+        """
+        if len(colors) != len(centers):
+            raise Error(
+                String(
+                    "fill_circles_aa: ",
+                    len(colors),
+                    " colors for ",
+                    len(centers),
+                    " centers",
+                )
+            )
+        for i in range(len(centers)):
+            self.fill_circle_aa(centers[i].x, centers[i].y, radius, colors[i])
+
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """A filled circle.
 
