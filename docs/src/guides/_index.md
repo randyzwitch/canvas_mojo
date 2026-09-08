@@ -18,3 +18,5 @@ signature or parameter.
   composition, clipping, and `save`/`restore`.
 - [Text](text/) — font resolution, alignment, measurement, prepared
   layouts, and cache lifetime.
+- [Choosing a Backend](choosing-a-backend/) — compare raster, SVG, and
+  PDF output and the capabilities specific to each target.
