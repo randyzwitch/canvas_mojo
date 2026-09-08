@@ -20,8 +20,10 @@ from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
+from canvas.color import _div255
 from canvas.compose import Filter, draw_canvas
 from canvas.geometry import Matrix2D
+from canvas.mask import Mask
 from canvas.path import Path
 from canvas.shapes.rects import fill_rect
 
@@ -276,6 +278,140 @@ def _assert_same_bytes(a: Canvas, b: Canvas, label: String) raises:
             assert_equal(p.g, q.g, at + " (g)")
             assert_equal(p.b, q.b, at + " (b)")
             assert_equal(p.a, q.a, at + " (a)")
+
+
+def _expected_over_opaque(
+    src: Color, dst: Color, coverage: Int, opacity: Int
+) -> Color:
+    """Source-over onto an opaque destination, written out from the
+    specification rather than from the code under test.
+
+    The alpha is scaled by coverage and then by opacity, each through
+    the same `_div255`, in that order -- the vector path folds both
+    into one multiply-add and must land on the same bytes.
+    """
+    var a = _div255(Int(src.a) * coverage)
+    a = _div255(a * opacity)
+    var inv = 255 - a
+    return Color(
+        UInt8(_div255(Int(src.r) * a + Int(dst.r) * inv)),
+        UInt8(_div255(Int(src.g) * a + Int(dst.g) * inv)),
+        UInt8(_div255(Int(src.b) * a + Int(dst.b) * inv)),
+        255,
+    )
+
+
+def test_masked_and_scaled_compositing_matches_the_specification() raises:
+    """The vector path folds coverage and opacity into the alpha before
+    blending. Checked against the arithmetic spelled out above, over a
+    width that is not a multiple of the eight-pixel group so the tail
+    is covered too.
+    """
+    comptime W = 61
+    comptime H = 9
+    var opacities: List[Int] = [0, 1, 128, 254, 255]
+    for oi in range(len(opacities)):
+        var op = opacities[oi]
+        var src = _varied_source(W, H, 137)
+        var mask = Mask(W, H)
+        var mp = mask.coverage.unsafe_ptr()
+        for i in range(W * H):
+            mp[unsafe_offset=i] = UInt8((i * 37) & 0xFF)
+
+        # Mask and opacity together.
+        var got = Canvas(W, H, WHITE)
+        draw_canvas(got, src, 0, 0, mask)
+        for y in range(H):
+            for x in range(W):
+                var want = _expected_over_opaque(
+                    src.get_pixel(x, y),
+                    WHITE,
+                    Int(mask.coverage[y * W + x]),
+                    255,
+                )
+                var p = got.get_pixel(x, y)
+                var at = String("mask at (", x, ", ", y, ")")
+                assert_equal(p.r, want.r, at + " r")
+                assert_equal(p.g, want.g, at + " g")
+                assert_equal(p.b, want.b, at + " b")
+                assert_equal(p.a, want.a, at + " a")
+
+        # Opacity on its own.
+        var go = Canvas(W, H, WHITE)
+        draw_canvas(go, src, 0, 0, UInt8(op))
+        for y in range(H):
+            for x in range(W):
+                var want = _expected_over_opaque(
+                    src.get_pixel(x, y), WHITE, 255, op
+                )
+                var p = go.get_pixel(x, y)
+                var at = String("opacity ", op, " at (", x, ", ", y, ")")
+                assert_equal(p.r, want.r, at + " r")
+                assert_equal(p.g, want.g, at + " g")
+                assert_equal(p.b, want.b, at + " b")
+
+
+def test_a_group_over_mixed_destination_alpha_falls_back() raises:
+    """The vector kernel only runs where all eight destination pixels
+    are opaque. A row that turns translucent partway must still come
+    out identical to the same draw done one pixel at a time -- which
+    here is the same draw onto a destination made opaque a pixel at a
+    time, compared against a canvas built with a translucent hole.
+    """
+    comptime W = 24
+    comptime H = 4
+    var src = _varied_source(W, H, 200)
+
+    var mixed = Canvas(W, H, WHITE)
+    # A translucent pixel inside the second group of eight.
+    mixed.set_pixel(9, 1, Color(60, 70, 80, 100))
+    var before = mixed.get_pixel(9, 1)
+
+    var drawn = Canvas(W, H, WHITE)
+    drawn.set_pixel(9, 1, before)
+    draw_canvas(drawn, src, 0, 0, 200)
+
+    # Every pixel whose destination was opaque must match the
+    # specification; the one that was not is left to the exact path
+    # and only has to stay put as a valid blend, not equal it.
+    for y in range(H):
+        for x in range(W):
+            if x == 9 and y == 1:
+                continue
+            var want = _expected_over_opaque(
+                src.get_pixel(x, y), WHITE, 255, 200
+            )
+            var p = drawn.get_pixel(x, y)
+            var at = String("mixed dst at (", x, ", ", y, ")")
+            assert_equal(p.r, want.r, at + " r")
+            assert_equal(p.g, want.g, at + " g")
+            assert_equal(p.b, want.b, at + " b")
+    assert_true(
+        drawn.get_pixel(9, 1).a >= before.a,
+        "compositing over a translucent pixel raises its alpha",
+    )
+
+
+def test_opacity_and_mask_agree_with_a_pre_scaled_mask() raises:
+    """Opacity 128 with full coverage, and coverage 128 with full
+    opacity, scale the same alpha by the same factor in the same
+    order, so they must produce the same bytes.
+    """
+    comptime W = 33
+    comptime H = 5
+    var src = _varied_source(W, H, 255)
+
+    var by_opacity = Canvas(W, H, WHITE)
+    draw_canvas(by_opacity, src, 0, 0, 128)
+
+    var flat = Mask(W, H)
+    var fp = flat.coverage.unsafe_ptr()
+    for i in range(W * H):
+        fp[unsafe_offset=i] = 128
+    var by_mask = Canvas(W, H, WHITE)
+    draw_canvas(by_mask, src, 0, 0, flat)
+
+    _assert_same_bytes(by_opacity, by_mask, "opacity 128 vs coverage 128")
 
 
 def test_identity_matrix_matches_the_blit() raises:

@@ -265,12 +265,16 @@ def _blend_group_opaque(
         destination was not opaque and the caller must fall back.
     """
     comptime W = _GROUP_BYTES
-    var dp = dst.pixels.unsafe_ptr()
-    var dv = dp.unsafe_offset(d_idx).unsafe_load[width=W]()
-    if (dv | _NOT_ALPHA).reduce_min() != 255:
-        return False
     var v = src.pixels.unsafe_ptr().unsafe_offset(s_idx).unsafe_load[width=W]()
-    var a32 = v.shuffle[
+    return _blend_group_with_alpha(dst, v, _broadcast_alpha(v), d_idx)
+
+
+def _broadcast_alpha(
+    v: SIMD[DType.uint8, _GROUP_BYTES]
+) -> SIMD[DType.uint32, _GROUP_BYTES]:
+    """Each pixel's alpha lane copied across its four lanes, so a
+    per-pixel alpha can multiply a per-channel vector."""
+    return v.shuffle[
         3,
         3,
         3,
@@ -304,6 +308,30 @@ def _blend_group_opaque(
         31,
         31,
     ]().cast[DType.uint32]()
+
+
+def _blend_group_with_alpha(
+    mut dst: Canvas,
+    v: SIMD[DType.uint8, _GROUP_BYTES],
+    a32: SIMD[DType.uint32, _GROUP_BYTES],
+    d_idx: Int,
+) -> Bool:
+    """Composite eight source pixels `v` onto `dst` at `d_idx` with
+    per-lane alpha `a32`, and report whether it happened.
+
+    The blend `_blend_group_opaque` documents, with the alpha handed
+    in rather than read from the source, so a mask's coverage and a
+    global opacity can be folded into it before it runs.
+
+    Returns:
+        True if the eight pixels were composited, False if the
+        destination was not opaque and the caller must fall back.
+    """
+    comptime W = _GROUP_BYTES
+    var dp = dst.pixels.unsafe_ptr()
+    var dv = dp.unsafe_offset(d_idx).unsafe_load[width=W]()
+    if (dv | _NOT_ALPHA).reduce_min() != 255:
+        return False
     var num = v.cast[DType.uint32]() * a32 + dv.cast[DType.uint32]() * (
         SIMD[DType.uint32, W](255) - a32
     )
@@ -312,6 +340,60 @@ def _blend_group_opaque(
     ]()
     dp.unsafe_offset(d_idx).unsafe_store(outv | _ALPHA_ONLY)
     return True
+
+
+def _div255_simd(
+    v: SIMD[DType.uint32, _GROUP_BYTES]
+) -> SIMD[DType.uint32, _GROUP_BYTES]:
+    """`_div255` per lane, the same multiply and shift."""
+    return (v * UInt32(_DIV255_MUL)) >> UInt32(_DIV255_SHIFT)
+
+
+def _blend_group_scaled[
+    with_mask: Bool
+](
+    mut dst: Canvas,
+    src: Canvas,
+    d_idx: Int,
+    s_idx: Int,
+    mask: Mask,
+    m_idx: Int,
+    opacity: UInt8,
+) -> Bool:
+    """`_blend_group_opaque` for eight pixels whose alpha is scaled
+    by a mask's coverage, a global opacity, or both.
+
+    The effective alpha is `div255(div255(sa * coverage) * opacity)`,
+    each step the same multiply-and-shift the per-pixel path uses and
+    in the same order, so the two agree byte for byte. The per-pixel
+    path skips a multiplication when coverage or opacity is 255;
+    `div255(a * 255) == a` exactly, so doing it anyway changes
+    nothing and keeps the vector straight-line.
+
+    Coverage is eight contiguous bytes, one per pixel, widened to the
+    four lanes of each pixel by interleaving it with itself twice.
+
+    Returns:
+        True if the eight pixels were composited, False if the
+        destination was not opaque and the caller must fall back.
+    """
+    comptime W = _GROUP_BYTES
+    var v = src.pixels.unsafe_ptr().unsafe_offset(s_idx).unsafe_load[width=W]()
+    var a32 = _broadcast_alpha(v)
+
+    comptime if with_mask:
+        var c8 = (
+            mask.coverage.unsafe_ptr()
+            .unsafe_offset(m_idx)
+            .unsafe_load[width=_GROUP]()
+        )
+        var c32 = (
+            c8.interleave(c8).interleave(c8.interleave(c8)).cast[DType.uint32]()
+        )
+        a32 = _div255_simd(a32 * c32)
+    if opacity != 255:
+        a32 = _div255_simd(a32 * UInt32(opacity))
+    return _blend_group_with_alpha(dst, v, a32, d_idx)
 
 
 def _draw_canvas_device[
@@ -494,10 +576,33 @@ def _draw_canvas_device[
                     # Mixed alphas: eight at a time when the
                     # destination is opaque, out of line so the copy
                     # and skip tests above keep a small loop body.
-                    comptime if not with_mask:
-                        if fast and _blend_group_opaque(dst, src, d_idx, s_idx):
+                    # A mask's coverage and a global opacity fold into
+                    # the alpha before the blend, so neither one sends
+                    # the group back to the per-pixel loop; only linear
+                    # light does, since `write_pixel` owns that
+                    # conversion.
+                    if not linear:
+                        var done: Bool
+
+                        comptime if with_mask:
+                            done = _blend_group_scaled[True](
+                                dst, src, d_idx, s_idx, mask, m_idx, opacity
+                            )
+                        else:
+                            if full:
+                                # No coverage and no scaling: the
+                                # original kernel, untouched.
+                                done = _blend_group_opaque(
+                                    dst, src, d_idx, s_idx
+                                )
+                            else:
+                                done = _blend_group_scaled[False](
+                                    dst, src, d_idx, s_idx, mask, m_idx, opacity
+                                )
+                        if done:
                             s_idx += GROUP_BYTES
                             d_idx += GROUP_BYTES
+                            m_idx += GROUP
                             col += GROUP
                             continue
                     retry = _COPY_RETRY
