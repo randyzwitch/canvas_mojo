@@ -3,11 +3,16 @@ error paths. Every expected pixel is computed independently, with the
 arithmetic given per case below.
 """
 
-from std.testing import assert_equal, assert_raises, TestSuite
+from std.testing import (
+    assert_equal,
+    assert_raises,
+    assert_true,
+    TestSuite,
+)
 
 from canvas.buffer import Canvas
 from canvas.color import Color
-from canvas.resize import downsample
+from canvas.resize import downsample, resize
 
 comptime BG = Color(0, 0, 0)
 
@@ -300,6 +305,192 @@ def test_factor_three_alpha_weighting_and_empty_dimensions() raises:
     assert_equal(small.width, 0)
     assert_equal(small.height, 2)
     assert_equal(len(small.pixels), 0)
+
+
+# --- arbitrary-size resize (#298) ----------------------------------
+# `resize` generalizes `downsample` to any target size. The property
+# that pins it down is that it must still *be* `downsample` wherever
+# downsample applies: an integer ratio dividing both dimensions has
+# to come back byte for byte, or the two entry points would quietly
+# disagree about what averaging means.
+
+
+def _scene(w: Int, h: Int) raises -> Canvas:
+    """Varied color and alpha, including fully transparent pixels
+    carrying color -- the case alpha weighting exists for."""
+    var c = Canvas(w, h, Color(0, 0, 0, 0))
+    for y in range(h):
+        for x in range(w):
+            var a = (x * 7 + y * 13) % 256
+            c.write_pixel(
+                x,
+                y,
+                Color(
+                    UInt8((x * 11) % 256),
+                    UInt8((y * 17) % 256),
+                    UInt8((x * y) % 256),
+                    UInt8(a),
+                ),
+            )
+    return c^
+
+
+def _assert_same(a: Canvas, b: Canvas, label: String) raises:
+    assert_equal(a.width, b.width, label + " width")
+    assert_equal(a.height, b.height, label + " height")
+    for y in range(a.height):
+        for x in range(a.width):
+            var p = a.get_pixel(x, y)
+            var q = b.get_pixel(x, y)
+            var at = String(label, " at (", x, ", ", y, ")")
+            assert_equal(p.r, q.r, at + " r")
+            assert_equal(p.g, q.g, at + " g")
+            assert_equal(p.b, q.b, at + " b")
+            assert_equal(p.a, q.a, at + " a")
+
+
+def test_resize_matches_downsample_at_integer_ratios() raises:
+    """The equivalence the whole design rests on. Every weight is
+    exactly 1 at an integer ratio and the count is exactly the factor,
+    so the weighted mean reduces to downsample's block mean."""
+    # 60 is divisible by every factor below, so downsample accepts
+    # each one; a non-square scene would rule most of them out.
+    var factors: List[Int] = [1, 2, 3, 4, 5, 6, 10]
+    for fi in range(len(factors)):
+        var f = factors[fi]
+        var src = _scene(60, 60)
+        var want = downsample(src, f)
+        var got = resize(src, 60 // f, 60 // f)
+        _assert_same(got, want, String("factor ", f))
+
+
+def test_resize_to_the_same_size_copies_every_byte() raises:
+    """Including color under zero alpha, which a filtered round trip
+    would flatten -- the same promise downsample makes at factor 1."""
+    var src = _scene(17, 11)
+    var got = resize(src, 17, 11)
+    _assert_same(got, src, "identity")
+
+
+def test_fractional_and_anisotropic_ratios() raises:
+    """Neither axis an integer ratio, and one axis growing while the
+    other shrinks -- what downsample cannot express at all."""
+    var src = _scene(37, 29)
+    var got = resize(src, 13, 41)
+    assert_equal(got.width, 13)
+    assert_equal(got.height, 41)
+    var opaque = Canvas(37, 29, Color(200, 100, 50, 255))
+    var flat = resize(opaque, 13, 41)
+    for y in range(41):
+        for x in range(13):
+            var p = flat.get_pixel(x, y)
+            var at = String("flat at (", x, ", ", y, ")")
+            assert_equal(p.a, 255, at + " a")
+            assert_equal(p.r, 200, at + " r")
+            assert_equal(p.g, 100, at + " g")
+            assert_equal(p.b, 50, at + " b")
+
+
+def test_transparent_border_does_not_darken_the_edge() raises:
+    """A red square on a transparent field, reduced. Alpha weighting
+    is what keeps the surviving color red rather than dragging it to
+    black, which is the bug #283 fixed for downsample."""
+    var src = Canvas(40, 40, Color(0, 0, 0, 0))
+    for y in range(10, 30):
+        for x in range(10, 30):
+            src.write_pixel(x, y, Color(255, 0, 0, 255))
+    var got = resize(src, 9, 9)
+    for y in range(9):
+        for x in range(9):
+            var p = got.get_pixel(x, y)
+            if p.a > 0:
+                assert_equal(
+                    p.r, 255, String("edge color at (", x, ", ", y, ")")
+                )
+                assert_equal(p.g, 0, String("edge g at (", x, ", ", y, ")"))
+                assert_equal(p.b, 0, String("edge b at (", x, ", ", y, ")"))
+
+
+def test_a_checkerboard_reduces_to_its_mean_rather_than_aliasing() raises:
+    """The point of an area filter. Point sampling a 1px checkerboard
+    down by 8 returns all-black or all-white depending on phase; area
+    averaging returns the mean everywhere."""
+    var src = Canvas(64, 64, Color(0, 0, 0))
+    for y in range(64):
+        for x in range(64):
+            var v = 255 if (x + y) % 2 == 0 else 0
+            src.write_pixel(x, y, Color(UInt8(v), UInt8(v), UInt8(v)))
+    var got = resize(src, 8, 8)
+    for y in range(8):
+        for x in range(8):
+            var p = got.get_pixel(x, y)
+            var at = String("checker at (", x, ", ", y, ")")
+            assert_true(
+                Int(p.r) >= 125 and Int(p.r) <= 130,
+                at + String(" expected ~128, got ", Int(p.r)),
+            )
+
+
+def test_enlarging_interpolates_rather_than_repeating() raises:
+    """A growing axis takes a triangle filter, so a two-pixel ramp
+    grows into a gradient. An area filter would collapse to
+    nearest-neighbor and give two flat halves."""
+    var src = Canvas(2, 1, Color(0, 0, 0))
+    src.write_pixel(0, 0, Color(0, 0, 0))
+    src.write_pixel(1, 0, Color(255, 255, 255))
+    var got = resize(src, 16, 1)
+    var distinct = 0
+    var seen = List[Bool](length=256, fill=False)
+    for x in range(16):
+        var v = Int(got.get_pixel(x, 0).r)
+        if not seen[v]:
+            seen[v] = True
+            distinct += 1
+    assert_true(
+        distinct >= 8,
+        String("expected a ramp, got ", distinct, " distinct levels"),
+    )
+    assert_true(
+        Int(got.get_pixel(0, 0).r) < Int(got.get_pixel(15, 0).r),
+        "the ramp must run dark to light",
+    )
+
+
+def test_one_pixel_inputs_and_outputs() raises:
+    var one = Canvas(1, 1, Color(70, 140, 210, 190))
+    var grown = resize(one, 5, 4)
+    for y in range(4):
+        for x in range(5):
+            var p = grown.get_pixel(x, y)
+            assert_equal(p.r, 70, "grown r")
+            assert_equal(p.g, 140, "grown g")
+            assert_equal(p.b, 210, "grown b")
+            assert_equal(p.a, 190, "grown a")
+    var src = _scene(9, 7)
+    var tiny = resize(src, 1, 1)
+    assert_equal(tiny.width, 1)
+    assert_equal(tiny.height, 1)
+
+
+def test_resize_is_identical_at_every_worker_count() raises:
+    """Both passes are banded, so the split must not change the
+    picture -- including one band, which takes the serial path."""
+    var src = _scene(200, 150)
+    var reference = resize(src, 83, 61)
+    var caps: List[Int] = [1, 2, 3, 8, 64]
+    for ci in range(len(caps)):
+        var s = _scene(200, 150)
+        s.set_max_workers(caps[ci])
+        var got = resize(s, 83, 61)
+        _assert_same(got, reference, String("workers ", caps[ci]))
+
+
+def test_resize_rejects_a_degenerate_target() raises:
+    var src = _scene(8, 8)
+    with assert_raises():
+        _ = resize(src, 0, 4)
+    with assert_raises():
+        _ = resize(src, 4, -1)
 
 
 def main() raises:

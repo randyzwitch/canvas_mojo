@@ -74,13 +74,20 @@ importable package is named `canvas`; the project is `canvas_mojo`.
   a fifth quicker on flat content at the same bytes, `SMALL` trades
   roughly 1.7x the time for a smaller file, `DEFAULT` is the default.
   Every level decodes to the same pixels.
+- `resize(canvas, width, height)` resamples to any target size --
+  fractional ratios, anisotropic, one axis up while the other goes
+  down. Area filtering where an axis shrinks, linear where it grows,
+  color weighted by alpha throughout. `downsample(canvas, factor)`
+  stays the faster path for an integer factor dividing both
+  dimensions, and the two agree byte for byte there.
 - `fill_circles_aa(canvas, centers, radius, color)` draws a whole
   scatter in one call, banding the canvas across cores instead of
-  drawing one marker at a time -- around 10x on 2,000 small markers.
-  `centers` is a `List[FPoint]` in draw order; a `List[Color]` in
-  place of the single color gives one color per marker. The result is
-  identical to `fill_circle_aa` per center, overlapping translucent
-  markers included.
+  drawing one marker at a time -- 8.5x on 2,000 small markers and
+  15x on 100,000, the ratio rising as the batch amortizes the
+  dispatch. `centers` is a `List[FPoint]` in draw order; a
+  `List[Color]` in place of the single color gives one color per
+  marker. The result is identical to `fill_circle_aa` per center,
+  overlapping translucent markers included.
 - `canvas.set_max_workers(n)` caps how many threads one render's
   banded passes may use, for an application drawing several canvases
   at once. It is a per-render ceiling, not a budget across renders,
@@ -210,7 +217,7 @@ from canvas.compose import draw_canvas
 from canvas.geometry import Matrix2D
 
 def main() raises:
-    var photo = read_jpeg("photo.jpg")            # baseline JPEG, opaque RGBA
+    var photo = read_jpeg("photo.jpg")            # baseline or progressive
     var logo = read_png("logo.png")               # alpha preserved
     var c = Canvas(photo.width, photo.height, Color(0, 0, 0))
     draw_canvas(c, photo, 0, 0)
