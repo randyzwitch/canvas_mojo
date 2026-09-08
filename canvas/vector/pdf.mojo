@@ -1010,6 +1010,65 @@ struct PdfCanvas(DrawTarget, Movable):
         self._content += "h f "
         self._end()
 
+    def fill_arcs_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        start_angle: Float64,
+        end_angle: Float64,
+        color: Color,
+    ) raises:
+        """`DrawTarget`'s batched wedges. This backend emits one element
+        per wedge whichever entry point is used, so the batch is the
+        loop and the output is unchanged by construction.
+
+        Args:
+            centers: Sub-pixel centre of each wedge, in draw order.
+            radius: Radius shared by every wedge, in pixels.
+            start_angle: Start of the sweep, radians, shared.
+            end_angle: End of the sweep, radians, shared.
+            color: Fill color shared by every wedge.
+        """
+        for i in range(len(centers)):
+            ref p = centers[i]
+            self.fill_arc_aa(p.x, p.y, radius, start_angle, end_angle, color)
+
+    def fill_arcs_aa(
+        mut self,
+        centers: List[FPoint],
+        radius: Float64,
+        start_angle: Float64,
+        end_angle: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_arcs_aa` with a color per wedge.
+
+        Args:
+            centers: Sub-pixel centre of each wedge, in draw order.
+            radius: Radius shared by every wedge, in pixels.
+            start_angle: Start of the sweep, radians, shared.
+            end_angle: End of the sweep, radians, shared.
+            colors: One color per centre, same length as `centers`.
+
+        Raises:
+            Error: If `colors` is not the same length as `centers`.
+        """
+        if len(colors) != len(centers):
+            raise Error(
+                String(
+                    "fill_arcs_aa: colors has ",
+                    len(colors),
+                    " entries for ",
+                    len(centers),
+                    " centers",
+                )
+            )
+        for i in range(len(centers)):
+            ref p = centers[i]
+            self.fill_arc_aa(
+                p.x, p.y, radius, start_angle, end_angle, colors[i]
+            )
+
     def fill_ring_sector_aa(
         mut self,
         cx: Float64,

@@ -12,14 +12,14 @@ _angle_in_span, _arc_bounds, _union_bounds, _extend_bounds) every
 function above builds on.
 """
 
-from std.math import acos, atan2, ceil, cos, pi, sin
+from std.math import acos, atan2, ceil, cos, floor, pi, sin
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.buffer import Canvas
 from canvas.geometry import Point, FPoint, round_to_int
-from canvas.aa_crossing import _CoverageAlpha
+from canvas.aa_crossing import _CoverageAlpha, _EdgeTable, _sweep_edges_aa
 from canvas.shapes.lines import (
     LineCap,
     LineJoin,
@@ -27,6 +27,7 @@ from canvas.shapes.lines import (
     draw_polyline_aa,
 )
 from canvas.shapes.polygon_fill import fill_polygon, _fill_polygon_aa_device
+from canvas.workers import _bands_for
 from canvas.path import (
     fill_path_aa,
     _ring_path,
@@ -717,6 +718,329 @@ def fill_ring_sector(
     for p in inner_points:
         points.append(p)
     fill_polygon(canvas, points, color)
+
+
+def _fill_arc_aa_rows(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_fill_arc_aa_device` restricted to rows [row_lo, row_hi).
+
+    A wedge has no closed-form coverage the way a disk does, so this
+    is the same polygon sweep the single-wedge path runs, told which
+    rows to write. The area rasterizer pads its row range outward by
+    one below and two above, which would make two bands write the same
+    pixels; `clamp_lo`/`clamp_hi` bound it past that padding.
+    """
+    if radius <= 0.0:
+        return
+    var points = _wedge_fpoints(cx, cy, radius, start_angle, end_angle)
+    var n = len(points)
+    if n < 3:
+        return
+    var min_x = points[0].x
+    var max_x = min_x
+    var min_y = points[0].y
+    var max_y = min_y
+    for i in range(1, n):
+        if points[i].x < min_x:
+            min_x = points[i].x
+        if points[i].x > max_x:
+            max_x = points[i].x
+        if points[i].y < min_y:
+            min_y = points[i].y
+        if points[i].y > max_y:
+            max_y = points[i].y
+    var edges = _EdgeTable(n)
+    for i in range(n):
+        var a = points[i]
+        var b = points[(i + 1) % n]
+        edges.add_edge(a.x, a.y, b.x, b.y)
+    _sweep_edges_aa(
+        canvas,
+        edges,
+        Int(floor(min_x)),
+        Int(floor(min_y)),
+        Int(ceil(max_x)),
+        Int(ceil(max_y)),
+        color,
+        FillRule.NONZERO,
+        4,
+        row_lo,
+        row_hi,
+    )
+
+
+def _arcs_band(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """Every wedge reaching rows [row_lo, row_hi), in submission order.
+
+    Order is the whole correctness argument for overlapping
+    translucent wedges: a pixel's value depends on the wedge being
+    drawn and on what is already under it, so walking the batch in
+    order within each band reproduces exactly what drawing them one at
+    a time produces. Bands own disjoint rows, so they never race and
+    need no ordering between them.
+    """
+    var uniform = len(colors) == 0
+    for i in range(len(centers)):
+        ref p = centers[i]
+        if p.y + radius + 2.0 < Float64(row_lo):
+            continue
+        if p.y - radius - 1.0 >= Float64(row_hi):
+            continue
+        _fill_arc_aa_rows(
+            canvas,
+            p.x,
+            p.y,
+            radius,
+            start_angle,
+            end_angle,
+            color if uniform else colors[i],
+            row_lo,
+            row_hi,
+        )
+
+
+async def _arcs_band_async(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_arcs_band` as a task. `centers` and `colors` are borrowed,
+    never owned: a heap-backed aggregate handed to `create_task` by
+    value is canvas_mojo#97.
+    """
+    _arcs_band(
+        canvas,
+        centers,
+        colors,
+        radius,
+        start_angle,
+        end_angle,
+        color,
+        row_lo,
+        row_hi,
+    )
+
+
+def _fill_arcs_sequential(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+) raises:
+    """One `fill_arc_aa` per centre, the definition every batched path
+    has to agree with."""
+    var uniform = len(colors) == 0
+    for i in range(len(centers)):
+        ref p = centers[i]
+        fill_arc_aa(
+            canvas,
+            p.x,
+            p.y,
+            radius,
+            start_angle,
+            end_angle,
+            color if uniform else colors[i],
+        )
+
+
+def _fill_arcs_aa_impl(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+) raises:
+    """The body both `fill_arcs_aa` overloads land in. An empty
+    `colors` means every wedge takes `color`."""
+    if len(centers) == 0:
+        return
+    if radius <= 0.0:
+        return
+
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if not m.is_similarity():
+            # A non-similarity turns each wedge into a sheared shape,
+            # so there is nothing uniform left to batch.
+            _fill_arcs_sequential(
+                canvas, centers, colors, radius, start_angle, end_angle, color
+            )
+            return
+        # A rotation moves the sweep, which is shared by the batch, so
+        # only a transform that does not rotate keeps one angle pair
+        # for every wedge.
+        if not m.is_axis_aligned():
+            _fill_arcs_sequential(
+                canvas, centers, colors, radius, start_angle, end_angle, color
+            )
+            return
+        var mapped = List[FPoint](capacity=len(centers))
+        for i in range(len(centers)):
+            ref p = centers[i]
+            var q = m.apply(p.x, p.y)
+            mapped.append(FPoint(q.x, q.y))
+        var scaled = radius * m.scale_factor()
+        var saved = canvas._take_transform()
+        try:
+            _fill_arcs_aa_impl(
+                canvas, mapped, colors, scaled, start_angle, end_angle, color
+            )
+        except e:
+            canvas._set_transform(saved)
+            raise e
+        canvas._set_transform(saved)
+        return
+
+    # Roughly the swept area, the figure `_bands_for` weighs against
+    # its parallel threshold.
+    var span = abs(end_angle - start_angle)
+    if span > 6.283185307179586:
+        span = 6.283185307179586
+    var per_wedge = Int(0.5 * span * (radius + 1.0) * (radius + 1.0)) + 1
+    var bands = _bands_for(
+        len(centers) * per_wedge, canvas.height, canvas.max_workers()
+    )
+    if bands <= 1:
+        _arcs_band(
+            canvas,
+            centers,
+            colors,
+            radius,
+            start_angle,
+            end_angle,
+            color,
+            0,
+            canvas.height,
+        )
+        return
+
+    var per_band = (canvas.height + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var row_lo = b * per_band
+        var row_hi = min(row_lo + per_band, canvas.height)
+        if row_lo >= row_hi:
+            continue
+        tg.create_task(
+            _arcs_band_async(
+                canvas,
+                centers,
+                colors,
+                radius,
+                start_angle,
+                end_angle,
+                color,
+                row_lo,
+                row_hi,
+            )
+        )
+    tg.wait()
+    # Named past the tasks: a task's borrow is not a use the compiler
+    # counts, so without this the lists are freed while bands still
+    # read them.
+    _ = len(centers)
+    _ = len(colors)
+
+
+def fill_arcs_aa(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    color: Color,
+) raises:
+    """Fill many equal-size anti-aliased wedges in one call.
+
+    Output is identical to calling `fill_arc_aa` once per centre in the
+    same order, including where translucent wedges overlap: each band
+    walks the batch in submission order, and bands own disjoint rows.
+
+    A transform that rotates or is not a similarity falls back to one
+    call per centre, since the sweep angles are shared by the batch and
+    a rotation would move them per wedge.
+
+    Args:
+        canvas: Canvas drawn on.
+        centers: Wedge centres, in user space.
+        radius: Radius shared by every wedge.
+        start_angle: Start of the sweep, radians, shared.
+        end_angle: End of the sweep, radians, shared.
+        color: Fill colour for every wedge.
+
+    Raises:
+        Error: Propagated from the per-wedge path.
+    """
+    _fill_arcs_aa_impl(
+        canvas, centers, List[Color](), radius, start_angle, end_angle, color
+    )
+
+
+def fill_arcs_aa(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    radius: Float64,
+    start_angle: Float64,
+    end_angle: Float64,
+    colors: List[Color],
+) raises:
+    """`fill_arcs_aa` with a colour per wedge.
+
+    Args:
+        canvas: Canvas drawn on.
+        centers: Wedge centres, in user space.
+        radius: Radius shared by every wedge.
+        start_angle: Start of the sweep, radians, shared.
+        end_angle: End of the sweep, radians, shared.
+        colors: One colour per centre; must be the same length.
+
+    Raises:
+        Error: If `colors` is not the same length as `centers`, or
+            propagated from the per-wedge path.
+    """
+    if len(colors) != len(centers):
+        raise Error(
+            String(
+                "fill_arcs_aa: colors has ",
+                len(colors),
+                " entries for ",
+                len(centers),
+                " centers",
+            )
+        )
+    _fill_arcs_aa_impl(
+        canvas, centers, colors, radius, start_angle, end_angle, Color(0, 0, 0)
+    )
 
 
 def fill_ring_sector_aa(

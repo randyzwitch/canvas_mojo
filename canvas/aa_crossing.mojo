@@ -508,6 +508,8 @@ def _sweep_edges_aa(
     color: Color,
     fill_rule: FillRule,
     supersample: Int,
+    clamp_lo: Int = 0,
+    clamp_hi: Int = -1,
 ):
     """Rasterize `edges` into `canvas` with anti-aliased coverage, by
     the rasterizer the fill rule calls for: `FillRule.NONZERO` goes to
@@ -517,7 +519,17 @@ def _sweep_edges_aa(
     docstring for why.
     """
     if fill_rule == FillRule.NONZERO:
-        _area_edges_aa(canvas, edges, min_x, min_y, max_x, max_y, color)
+        _area_edges_aa(
+            canvas,
+            edges,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            color,
+            clamp_lo,
+            clamp_hi,
+        )
         return
     _sweep_edges_sampled_aa(
         canvas,
