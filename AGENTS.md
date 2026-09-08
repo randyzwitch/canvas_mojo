@@ -197,6 +197,13 @@ resolves.
   `bench-record-digests` only when the new output is known correct,
   and say why in the PR. Text is excluded, for the reason the golden
   suite draws none: glyphs come from whatever fonts the machine has.
+- A row's absolute time is only comparable across versions when the
+  rows *before* it are the same. Adding survey rows shifts later ones:
+  `read_png` read 620 us at v0.24.0 and 730 us at v0.25.0, and it was
+  neither the decoder nor the file -- the PNG bytes were identical and
+  an isolated decode of them was slightly *faster* on the newer tree.
+  Two text rows added ahead of the image section were enough. Bisect a
+  row with a standalone script before believing the survey about it.
 - `benchmarks/reference.txt` is the timing memory across runs, and
   `bench-check` is how a row that doubled gets noticed (#251 went four
   releases unnoticed without it). It also names rows with no reference
