@@ -210,7 +210,7 @@ from canvas.compose import draw_canvas
 from canvas.geometry import Matrix2D
 
 def main() raises:
-    var photo = read_jpeg("photo.jpg")            # baseline JPEG, opaque RGBA
+    var photo = read_jpeg("photo.jpg")            # baseline or progressive
     var logo = read_png("logo.png")               # alpha preserved
     var c = Canvas(photo.width, photo.height, Color(0, 0, 0))
     draw_canvas(c, photo, 0, 0)

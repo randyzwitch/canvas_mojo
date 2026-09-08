@@ -1,19 +1,30 @@
-"""Tests for io/jpeg.mojo: baseline JPEG decoding against files
-written by Pillow (libjpeg) under tests/jpeg/, each beside a PNG of
-what libjpeg itself decodes it to.
+"""Tests for io/jpeg.mojo: JPEG decoding against files written by
+Pillow (libjpeg) under tests/jpeg/, each beside a PNG of what libjpeg
+itself decodes it to.
 
 The comparison is a tolerance, not equality: the inverse DCT here is
 floating point where libjpeg's default is integer, so a sample can
-land one level off, and the YCbCr conversion rounds once more. The
-fixtures cover 4:4:4, 4:2:0 and 4:2:2 chroma subsampling, an odd
-image size (partial MCUs on both edges), grayscale, and restart
-intervals. A progressive file must raise rather than misdecode.
+land one level off, and the YCbCr conversion rounds once more.
 
-To regenerate the fixtures: the `scene` in this file's docstring is a
-horizontal red ramp against a vertical green ramp, a red ellipse and
-a green rectangle, saved by Pillow at the subsampling and quality
-named in each fixture, with `restart_marker_blocks=2` for the restart
-one; the expected PNG is Pillow's own decode of the saved file.
+The sequential fixtures cover 4:4:4, 4:2:0 and 4:2:2 chroma
+subsampling, an odd image size (partial MCUs on both edges),
+grayscale, and restart intervals. The progressive ones cover the same
+ground again -- grayscale, 4:4:4, an odd 4:2:0 size, restart
+intervals -- because progressive reads the blocks in a different
+order and the errors that order admits are different. The odd 4:2:0
+one earns its place: its chroma block grids are narrower than the
+MCU-padded array the coefficients live in, and an AC scan walks the
+former, so reading the latter skews the image further down every row.
+The 4:4:4 fixture is its complement, the case where the two are equal
+and the bug hides.
+
+To regenerate the fixtures: the scene is a horizontal red ramp
+against a vertical green ramp with a red ellipse and a green
+rectangle, saved by Pillow at the subsampling and quality named in
+each fixture, with `restart_marker_blocks=2` for the restart ones and
+`progressive=True` for the progressive ones; the expected PNG is
+Pillow's own decode of the saved file. `progressive_truncated.jpg` is
+the first two thirds of `progressive.jpg`.
 """
 
 from std.testing import assert_equal, assert_true, TestSuite
@@ -80,17 +91,54 @@ def test_restart_intervals_match_libjpeg() raises:
     _assert_close("restart", 4, 0.2)
 
 
-def test_progressive_raises() raises:
+def test_progressive_matches_libjpeg() raises:
+    """The same scene saved progressively: several scans refining one
+    coefficient array, put through the inverse DCT only once they are
+    all in. The tolerance is the same as every other fixture's -- the
+    coefficients come out identical to libjpeg's, so only the inverse
+    DCT and the color conversion separate the two.
+    """
+    _assert_close("progressive", 4, 0.2)
+
+
+def test_progressive_grayscale_matches_libjpeg() raises:
+    """One component, so every scan is non-interleaved, including the
+    DC ones."""
+    _assert_close("progressive_gray", 4, 0.2)
+
+
+def test_progressive_444_matches_libjpeg() raises:
+    """No subsampling, so each component's own block grid is the MCU
+    grid. The complement of the odd 4:2:0 fixture below: this one
+    passes even with the block stride taken from the wrong place."""
+    _assert_close("progressive_444", 4, 0.2)
+
+
+def test_progressive_odd_size_subsampled_matches_libjpeg() raises:
+    """37x29 at 4:2:0: partial MCUs on both edges, and chroma block
+    grids narrower than their MCU-padded storage. An AC scan is
+    non-interleaved and walks the component's own grid, so reading the
+    padded width instead skews the image progressively further down --
+    which is what this fixture is here to catch."""
+    _assert_close("progressive_odd_420", 4, 0.25)
+
+
+def test_progressive_restart_intervals_match_libjpeg() raises:
+    """Restart markers inside progressive scans, where the reset
+    clears the end-of-band run as well as the DC predictors."""
+    _assert_close("progressive_restart", 4, 0.2)
+
+
+def test_truncated_progressive_raises() raises:
+    """Cut two thirds of the way through. The scans that did arrive
+    decode, but the frame is short of the data its headers promise, so
+    this must fail rather than return a partly-refined image."""
     var raised = False
     try:
-        _ = read_jpeg(_DIR + "progressive.jpg")
-    except e:
+        _ = read_jpeg(_DIR + "progressive_truncated.jpg")
+    except:
         raised = True
-        assert_true(
-            "progressive" in String(e),
-            "the error names the unsupported process",
-        )
-    assert_true(raised, "a progressive file must raise")
+    assert_true(raised, "a truncated progressive file must raise")
 
 
 def test_not_a_jpeg_raises() raises:
