@@ -48,7 +48,10 @@ fills, 4×4 supersampled for even-odd fills and strokes) — see
 - [`shapes.rects`](../canvas/shapes/rects/) — `draw_rect`,
   `fill_rect`, plus `fill_rect_gradient`/`fill_rect_radial_gradient`.
 - [`shapes.circles`](../canvas/shapes/circles/) — `draw_circle`,
-  `fill_circle`, and their `_aa` counterparts.
+  `fill_circle`, and their `_aa` counterparts, plus
+  `fill_circles_aa` for a whole scatter in one call: it splits the
+  canvas across cores rather than the markers, which are individually
+  too small to be worth a thread.
 - [`shapes.ellipses`](../canvas/shapes/ellipses/) —
   `draw_ellipse`, `fill_ellipse`, and their `_aa` counterparts.
 - [`shapes.arcs`](../canvas/shapes/arcs/) — `draw_arc`,
