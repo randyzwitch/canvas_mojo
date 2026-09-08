@@ -494,12 +494,9 @@ def _collect_font_files_visited(mut visited: List[String]) -> List[String]:
     for directory in frontier:
         visited.append(directory)
     var depth = 0
-    # Level by level: every directory of the level is listed, then
-    # each entry is classified -- a stat to tell a subdirectory from
-    # a stray file, `realpath` on a font -- in bands across cores,
-    # since those two calls are the whole cost of the walk and each
-    # entry's is independent. The tasks borrow the entry lists and
-    # write their own slots of `kind` and `canonical` (#97, #263).
+    # Walk level by level. Entries are classified independently in
+    # bands; tasks borrow the entry lists and write disjoint slots of
+    # `kind` and `canonical`.
     while len(frontier) > 0 and depth <= _MAX_SCAN_DEPTH:
         var children = List[String]()
         var font_named = List[Bool]()
@@ -1465,12 +1462,9 @@ struct FontDatabase(Movable):
         var count = len(files)
         if count == 0:
             return
-        # The per-file reads are the cost -- a thousand files on a
-        # desktop, each opened and read at three offsets -- and they
-        # are independent, so the files are parsed in bands across
-        # cores, each task writing its own slots of `results`. The
-        # tasks borrow `files` and `results`, so both are named again
-        # after `wait` (#263).
+        # Parse files independently in bands; each task writes disjoint
+        # slots of `results`. Name borrowed lists again after `wait` to
+        # keep them alive while tasks run.
         var results = List[List[FontFace]]()
         for _ in range(count):
             results.append(List[FontFace]())

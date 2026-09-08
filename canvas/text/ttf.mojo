@@ -2179,16 +2179,7 @@ def _decompose_contour_native(
     pen_y: Float64,
     scale: Float64,
 ) raises:
-    """A direct translation of FreeType's `FT_Outline_Decompose`
-    algorithm, against this module's plain-`List`-based
-    `RawGlyphOutline` rather than a pointer-based `FT_Outline` -- and
-    simplified accordingly: `glyf` outlines are always quadratic
-    (on-curve/off-curve only), never cubic, so that algorithm's CUBIC
-    branch (needed only because FreeType's outline API is
-    format-agnostic and can hand back cubic control points for
-    CFF-outline fonts) never applies here and is omitted, not
-    forgotten.
-    """
+    """Append a quadratic TrueType contour to `path` at `(pen_x, pen_y)`."""
     if last < first:
         return
 

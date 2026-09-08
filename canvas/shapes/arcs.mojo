@@ -34,9 +34,7 @@ from canvas.path import (
 )
 
 
-# Below this many pixels in a shape's bounding box, the fill runs
-# inline rather than dispatching tasks. Matches the fill sweep's
-# threshold in canvas.aa_crossing; set by benchmark (#102).
+# Below this many bounding-box pixels, the fill runs inline.
 comptime _MIN_PARALLEL_PIXELS = 40000
 
 

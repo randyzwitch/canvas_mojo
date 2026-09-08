@@ -212,7 +212,7 @@ def _fill_rect_source[
 
     # Rows are independent, each writing only its own pixels, so a
     # large fill is banded across cores as the fill sweep is; `source`
-    # and `canvas` are shared by reference (#97 applies).
+    # and `canvas` are shared by reference.
     var bands = _bands_for(rw * rh, rh, canvas.max_workers())
     if bands == 1:
         _fill_source_rows(canvas, rx, rw, ry, ry + rh, source, to_user)

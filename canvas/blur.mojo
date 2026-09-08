@@ -1,43 +1,13 @@
 """Gaussian blur, approximated by three successive box blurs, and
 `draw_shadowed`, the drop-shadow / glow composite built on it.
 
-`blur()` operates directly on a `Canvas`'s pixel buffer -- unlike every
-other whole-buffer operation in this package (`downsample`,
-`draw_canvas`) it ignores the active clip and transform entirely, since
-neither "blur the region inside this clip" nor "blur under a rotation"
-has an obvious meaning, and the one caller that needs it
-(`draw_shadowed`) always blurs a freshly made, unclipped, untransformed
-layer.
-
-`draw_shadowed` lives here rather than in `canvas.compose` because its
-whole job is arranging a call to `blur()`: it tints a layer, blurs the
-tint, and composites the result. Keeping it beside `blur()` keeps the
-shadow-specific tinting step (`_tint_and_place`) out of `compose.mojo`,
-which otherwise knows nothing about color beyond the straight-alpha
-blend every composite already does.
-
-Both of `draw_shadowed`'s composites need the active clip *and* blend
-mode to apply -- a shadow multiplied onto its backdrop is a real use --
-and `canvas.compose.draw_canvas` only guarantees the second for a
-placement that actually needs resampling (a scale or a rotation): a
-plain axis-aligned placement, translation-only under the default
-SOURCE_OVER, takes a direct-pointer blit that composites with a fixed
-straight-alpha source-over regardless of `dst`'s active blend mode (see
-`_draw_canvas_device` in `compose.mojo`). `_composite_onto` below calls
-`draw_canvas` for that common case and only falls back to a per-pixel
-loop through `Canvas.set_pixel` -- the same call `draw_canvas` itself
-makes under a clip path -- when the active blend mode isn't
-SOURCE_OVER, so the common path stays exactly as fast as it already
-was and the uncommon one is still correct.
+`blur()` modifies the entire pixel buffer and ignores the active clip
+and transform. `draw_shadowed` applies the destination's clip and blend
+mode when compositing the shadow and source layer.
 
 ## The three-box approximation
 
-A single box blur is a poor stand-in for a Gaussian -- it has hard
-corners in its frequency response that show up as ringing. Convolving
-three box blurs together is a well-known fix: by the central limit
-theorem three uniform (box) distributions summed already look close to
-a Gaussian, and three passes stay cheap since a box blur's own cost is
-independent of its width (see `_box_blur_line` below).
+Three successive box blurs approximate a Gaussian.
 
 The box widths are derived from the desired standard deviation `sigma`
 by P. Kovesi, "Fast Almost-Gaussian Filtering", DICTA 2010: for `n`
@@ -48,38 +18,18 @@ boxes,
     wu = wl + 2
     m  = round((12*sigma^2 - n*wl^2 - 4*n*wl - 3*n) / (-4*wl - 4))
 
-and `m` boxes of width `wl` plus `n - m` of width `wu` (n=3 here)
-approximate a Gaussian of standard deviation `sigma` to within about
-3% of its peak error. Odd widths keep every box centered exactly on the
-output pixel, so no half-pixel offset bookkeeping is needed between
-passes.
+and `m` boxes use width `wl`, with the remaining `n - m` using `wu`.
+Odd widths keep every box centered on its output pixel.
 
-`sigma` itself is derived from `radius` the way CSS's `blur()` filter
-function defines its equivalent `feGaussianBlur`: standard deviation is
-half the given radius (CSS Filter Effects Module Level 1,
-`blurEquivalent`). `radius` plays the same role as the HTML5 canvas's
-`shadowBlur`, and the box-blur widths below are three approximations of
-a Gaussian at that resolution stacked on top of that mapping.
+Following CSS `blur()`, `sigma` is half of `radius`.
 
 ## Premultiplied alpha and edge handling
 
-Both blur passes run on premultiplied color (`channel * alpha / 255`),
-converted once at the start and divided back out once at the end, so
-that a transparent pixel next to an opaque one contributes none of its
-(otherwise meaningless) color to the average -- the same reasoning
-`draw_canvas`'s bilinear sampler documents for interpolation.
+Blur operates on premultiplied color (`channel * alpha / 255`) so
+transparent pixels do not contribute hidden color.
 
-Each 1-D box average clamps at the buffer's edge: the sample one step
-past the last pixel is the last pixel again, repeated as many times as
-the box reaches past the edge. This is the same choice `_clamped_pixel`
-in `canvas.compose` makes for a bilinear sample near an edge.
-
-## Layout and pass order
-
-A working row holds one pixel as four consecutive Float32 (`_LANES`:
-premultiplied r, g, b, then a), so a sliding-window step is one
-four-wide vector add and subtract for all four channels; a plane per
-channel cost four times the loop-carried latency for the same work.
+Each 1-D box average clamps samples outside the buffer to its nearest
+edge pixel.
 
 Box blurs commute, so the three horizontal sweeps run back to back and
 then the three vertical ones, rather than alternating. Away from the
@@ -88,21 +38,8 @@ meets an intermediate rather than the original, a difference of at
 most a few levels within the outermost `_shadow_pad` pixels
 (`draw_shadowed` pads by that much, so its shadows are unaffected).
 
-The whole blur is one task per band of rows (`_blur_band`), and each
-band streams: a row is converted from a read-only copy of the pixels,
-swept horizontally three times in a row-sized buffer, and fed into
-the first of three vertical stages (`_VStage`), each a sliding window
-over a ring of its input rows that emits an output row the moment the
-window's last row has arrived, into the next stage or, from the last,
-back onto the canvas. The rings hold `2r + 2` rows apiece, so a band's
-working set is a few hundred kilobytes whatever the canvas size, and
-what crosses memory is the pixel bytes in and out. On a many-core
-machine that traffic, not the arithmetic, is what a blur costs: the
-earlier structure -- a plane per channel, one dispatch per sweep per
-channel -- streamed twenty-four full-canvas planes. A band has to start `r0 + r1 + r2` rows above its
-own so the vertical windows are full by its first row; those rows are
-computed by two bands, so `_bands_for` keeps a band at least that
-tall.
+Each row band begins `r0 + r1 + r2` rows above its output range so the
+vertical sliding windows are populated before its first output row.
 """
 
 from std.math import sqrt
@@ -535,15 +472,8 @@ async def _blur_band_async(
 def _bands_for(w: Int, h: Int, halo: Int, max_workers: Int = 0) -> Int:
     """How many row bands to blur a `w x h` canvas in: one below
     `_MIN_PARALLEL_WORK`, otherwise what the worker limit allows,
-    capped so that a band is at least `halo` rows -- the rows a band
-    computes over again for its neighbors are then at most twice its
-    own, which measured as the point past which more bands stopped
-    paying.
-
-    That halo cap is the radius-dependent one, and it is the only one
-    blur needs. A second cap on pixels per band was tried and removed:
-    fitted at radius 8 it held radius 16 to sixteen bands where the
-    halo allows twenty-five, and cost 55% there.
+    capped so that each band is at least `halo` rows. Bands recompute
+    the halo rows needed by their neighbors.
     """
     var bands = _shared_bands_for(w * h, h, max_workers)
     var by_halo = h // max(halo, 1)
@@ -602,7 +532,7 @@ def blur(mut canvas: Canvas, radius: Float64):
         )
     tg.wait()
     # The tasks borrow `source` without the compiler counting it as a
-    # use, so name it here to keep it alive past `wait` (#263).
+    # use, so name it here to keep it alive past `wait`.
     _ = len(source)
 
 

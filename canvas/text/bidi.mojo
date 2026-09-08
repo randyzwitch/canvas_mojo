@@ -1,46 +1,9 @@
-"""Bidirectional text layout: a partial implementation of the Unicode
-Bidirectional Algorithm (UAX #9), covering what real mixed
-Hebrew/Arabic/Latin/digit text needs. Each codepoint is classified by
-direction and assigned an embedding level, the line is reordered into
-visual (left-to-right-drawable) order by the run-reversal technique of
-UAX #9's rule L2, and paired characters (parens, brackets, comparisons)
-that land inside a right-to-left run are mirrored.
+"""Unicode bidirectional layout for mixed-direction text.
 
-Character classes come from `bidi_data.mojo`, generated from Unicode
-15.0 and exact for every codepoint.
-
-The algorithm is implemented in full: X1-X8 assign explicit levels
-from the directional controls, X9 sets the controls aside, BD13 groups
-the level runs into isolating run sequences, W1-W7 resolve the weak
-types, N0 the bracket pairs, N1-N2 the neutrals, I1-I2 turn the
-resolved types into levels, and L1 returns separators and trailing
-whitespace to the paragraph level. Reordering (L2) is by cluster, so a
-base and its combining marks move together and a mark never lands on
-the letter beside its own.
-
-It passes all 91,707 cases of Unicode's `BidiCharacterTest.txt` for
-15.0. A sampled subset is committed under `tests/bidi/` and checked by
-`tests/test_bidi.mojo`, including every case that caught a bug while
-this was written.
-
-Two fast paths keep that off the common line. Text with no
-right-to-left character and no control in it resolves to the
-paragraph level by definition, and returns immediately. Latin-1 --
-nearly all the text this package draws -- reads its class from a
-direct 256-entry table rather than searching the range table. Together
-they hold the cost of full conformance to about 2% on an ordinary
-label; without them it was three times slower.
-
-Not implemented here:
-
-- Arabic contextual letter-shaping: this module reorders and mirrors
-  existing codepoints only. `joining.mojo` picks each Arabic letter's
-  contextual form, and `render.mojo` shapes each run `visual_runs`
-  reports before reordering it, since joining is defined between
-  logical neighbors.
-
-Hebrew has no contextual shaping, so Hebrew text laid out through this
-module renders fully.
+Implements UAX #9 embedding, weak and neutral resolution, bracket
+mirroring, and visual reordering using Unicode 15.0 data. Reordering is
+cluster-aware so combining marks remain with their base character.
+Arabic contextual shaping is handled separately by `joining.mojo`.
 """
 
 
@@ -386,10 +349,7 @@ def _resolve_levels(codepoints: List[Int], base_level: Int) -> List[Int]:
 
     # The common line: left-to-right text with no right-to-left
     # character and no control in it. Everything then resolves to the
-    # paragraph level, so the whole of X1-X8, BD13, W, N and I can be
-    # skipped. This is every ordinary Latin label, and it is the
-    # difference between the full algorithm costing nothing on them
-    # and costing half again as much per character.
+    # paragraph level, so X1-X8, BD13, W, N, and I can be skipped.
     if base_level == 0:
         var plain = True
         for i in range(n):

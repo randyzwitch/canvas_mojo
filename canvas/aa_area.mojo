@@ -1,55 +1,9 @@
-"""Exact-area anti-aliasing for nonzero fills: the signed-area
-accumulation rasterizer that font renderers use (FreeType's smooth
-renderer, font-rs, stb_truetype's v2 rasterizer), as the alternative
-to `aa_crossing.mojo`'s supersampled sweep.
+"""Signed-area anti-aliasing for nonzero path and stroke fills.
 
-Each edge deposits, into every pixel it crosses, the signed area it
-cuts off (`_deposit_edge`), plus a carry into the pixel to its right
-for the rest of the row. Pixel (px, py) is the square
-[px - 0.5, px + 0.5] x [py - 0.5, py + 0.5], the convention every
-rasterizer in this package shares (the sweep samples at
-`px + (g + 0.5) / s - 0.5`); the deposit arithmetic works on
-[px, px + 1) cells, so `_deposit_all` shifts each edge by half a pixel
-on the way in. A prefix sum along the row then turns the
-deposits into each pixel's accumulated winding, a real number whose
-magnitude is the pixel's covered fraction: exact where one edge
-crosses the pixel, and the sum of the pieces where several do. The
-cost is proportional to edge length plus the cells touched, not to a
-sample count or to the bounding box: each row of the accumulator
-tracks the span its edges deposited into (`_Accumulator`), and only
-that span is zeroed and resolved, so a diagonal line across a wide
-box costs its own width per row. The coverage has 256 levels rather
-than the sweep's 17, which is the difference on a near-horizontal edge
-or a thin stem.
-
-The accumulated winding is a real number, so `min(1, |w|)` recovers
-the nonzero rule -- a self-overlapping outline fills as its union, and
-opposite windings cancel -- but not even-odd, which needs the discrete
-winding at each sample. `FillRule.EVEN_ODD` therefore stays on the
-sweep; `_sweep_edges_aa` and `_sweep_edges_to_mask` dispatch here for
-`FillRule.NONZERO`.
-
-Strokes come here as outlines, when they can be simple ones. Where
-two pieces of a shape overlap inside one edge pixel an accumulation
-adds their coverages and clamps rather than taking their union, so
-the union of pieces the sweep fills a stroke with (a quad per segment,
-a disk per joint) over-covers every vertex here: a joint disk's sliver
-on top of a quad's 0.2 makes 0.26, and a dense series reads wider than
-drawn. `_stroke_edges` builds one simple polygon per drawn run
-instead, so there is nothing to add -- and where it cannot (a hairpin
-or a reversal, whose bodies overlap each other) the stroke stays on
-the sampled sweep. A fill's sub-paths overlap only where the caller
-drew them so, and that is the trade every accumulation rasterizer
-(FreeType included) makes for glyphs.
-
-Each band of rows deposits into an accumulator of its own and resolves
-it, in one task: the same core writes the cells and reads them back,
-so nothing crosses between caches. Which cells a row's deposits will
-reach is found first, by walking every edge over the rows it crosses
-(`_row_spans`); that is what sizes the work before any of it is done,
-decides the banding, and tells each band which cells to zero. The
-tasks read the edge table and the spans read-only and write only their
-own rows of the canvas (#97 applies as it does in the sweep).
+Pixel `(px, py)` spans `[px - 0.5, px + 0.5]` on each axis. Each edge
+deposits signed coverage into the cells it crosses; a row prefix sum
+converts those deposits to coverage. Even-odd fills use the sampled
+sweep in `aa_crossing.mojo` instead.
 """
 
 from std.math import ceil, floor
@@ -61,32 +15,17 @@ from canvas.buffer import Canvas
 from canvas.color import Color
 
 
-# Cells of work a band takes on at least. Creating a task costs about
-# 1.2us and the bands only start once the last one is created, so a
-# band with fewer cells than this spends more of its time being
-# dispatched than resolving; `_bands_for` divides the work by it before
-# capping at the core count. Below `_MIN_PARALLEL_PIXELS` there is one
-# band.
+# Minimum accumulator cells assigned to each band.
 comptime _CELLS_PER_BAND = 5000
 
-# A run of at least this many cells nothing was deposited into is
-# written as one span through `Canvas._fill_region`; a shorter one is
-# not worth the call over `write_pixel`.
+# Minimum empty-cell run written through `Canvas._fill_region`.
 comptime _RUN_MIN = 4
 
 
 struct _RowSpans(Movable):
-    """Per row of a region, the first and last accumulator cell the
-    deposit will write, found by `_row_spans` before any area is
-    deposited. A row no edge crosses has `hi < lo`.
+    """First and last accumulator cell touched in each row.
 
-    Known up front, the spans settle three things: how many cells the
-    resolve has ahead of it, which decides the banding; which cells
-    each band's accumulator zeroes, so the rest stay uninitialised; and
-    how far each row's prefix sum walks. Outside a row's span the
-    deposits are zero on the left and add up to the row's total, zero
-    for a closed shape, on the right, so nothing there would have been
-    written.
+    A row no edge crosses has `hi < lo`.
     """
 
     var lo: List[Int]
@@ -515,7 +454,7 @@ def _area_edges_aa(
     # Mojo destroys a value right after its last use, and the tasks
     # borrow `spans` without the compiler counting that as one: named
     # for the last time inside the loop, it would be freed before
-    # `wait` returned (#263). Naming it here moves its last use past
+    # `wait` returned. Naming it here moves its last use past
     # the tasks.
     _ = len(spans.lo)
 

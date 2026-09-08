@@ -692,19 +692,10 @@ def _blend_lanes[
 def _blend_span_impl[
     MODE: Int
 ](mut pixels: List[UInt8], start: Int, count: Int, src: Color):
-    """`_blend_pixel` over `count` consecutive pixels of `pixels` from
-    pixel index `start`, with the mode a compile-time parameter: the
-    mode's branches fold away and the loop is the arithmetic and the
-    loads and stores. One instantiation per mode, reached through
-    `_blend_span`.
+    """Blend `src` over `count` pixels using compile-time mode `MODE`.
 
-    A separable mode over an opaque pixel is the common case and the
-    cheap one: with `ab = 255` the general form collapses to
-    `out = _div255(sa * B(cb, cs) + (255 - sa) * cb)` per channel and
-    an opaque result, which is what those pixels take. For the six
-    modes whose `B` is plain integer arithmetic, four opaque pixels at
-    a time go through one sixteen-lane vector. Every other pixel takes
-    `_blend_pixel`, so the bytes are the same either way.
+    Integer separable modes process four opaque pixels at a time. Other
+    pixels use `_blend_pixel`.
     """
     var p = pixels.unsafe_ptr()
     var idx = start * 4

@@ -1,6 +1,4 @@
-"""`PdfCanvas`: a `DrawTarget` that writes a PDF document, the third
-backend beside `Canvas` (raster) and `SvgCanvas` (SVG markup), and
-the one output a chart library's users ask for after PNG and SVG.
+"""`PdfCanvas`: a `DrawTarget` that writes PDF documents.
 
 Every call appends operators to the current page's content stream,
 in the same coordinate space the other backends use: the stream opens
@@ -22,23 +20,19 @@ with `Q`, a linear or radial gradient onto an axial or radial shading
 and a `Canvas` drawn with `draw_image` onto an image XObject with a
 soft mask for its alpha.
 
-Text is real text. `draw_text` lays the string out exactly as the
-raster `draw_text` does -- the same shaping, kerning, alignment and
-rotation -- and writes each run of glyphs as a `TJ` in the font that
+`draw_text` lays text out as the raster backend does and writes each
+run of glyphs as a `TJ` in the font that
 produced it, the font embedded as a subset (`canvas.vector.pdf_font`)
 with a `ToUnicode` map, so a label is selectable, searchable and
-copyable in a viewer and sits exactly where the PNG's does. A
+copyable. A
 fallback font a glyph came from is embedded alongside the primary. The
 content stream and the font programs are Flate-compressed through this
 package's own `deflate`.
 
-Not expressible here, and said so rather than approximated: the
-Porter-Duff operators other than source-over (a PDF blend mode is a
-separable or non-separable mode only), alpha on gradient stops (a
-shading has no per-stop opacity), conic gradients, `ColorSpace.LINEAR`
-(PDF has no linear-light compositing switch; the setting is kept for
-`color_space` and otherwise ignored), and color bitmap glyphs (emoji),
-which have no outline in the embedded program and draw nothing.
+Unsupported features are Porter-Duff operators other than source-over,
+alpha on gradient stops, conic gradients, `ColorSpace.LINEAR`, and
+color bitmap glyphs. Unsupported blend operators render source-over;
+the other unsupported features are omitted or ignored.
 Annotated groups become marked content (`/Span << /Alt (title) >> BDC
 ... EMC`), which is what a PDF has for "this run of drawing has a
 label".

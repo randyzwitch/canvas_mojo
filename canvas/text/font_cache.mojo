@@ -1,59 +1,9 @@
-"""A per-caller cache of the family/slant/weight[/codepoint] -> font-
-file-path resolution `font_discovery.mojo` does, and of the parsed,
-sized `TTFFace` behind each resolved path.
+"""Caller-owned cache for font resolution, parsed faces, and glyph masks.
 
-The path half saves a rescan of the font directories per
-`resolve_font_file` call, including draw_text()'s own duplication: one
-call resolves its font twice, measuring then rendering, unless a
-FontCache threads through both passes.
-
-Behind both halves sits one `FontDatabase`, built on the first lookup
-that misses the path dictionaries. That build reads
-`font_discovery.mojo`'s cache file when one is valid, a millisecond or
-two; when none is (first run on a machine, or a font installed since)
-it walks the font directories and reads every file's tables, tens of
-milliseconds, and writes the file for next time. Either way it is paid
-once per `FontDatabase` and scales with how many fonts are installed
-rather than with what is being drawn -- against tens of *micro*seconds
-for a cached label. Construct one per run of many labels, never one
-per label. Constructing it costs nothing, so a cache shared across
-code that may or may not draw text pays it only if some of it does
-(#199).
-
-The overloads that take no `cache=` build one of these per call, so they
-carry that whole scan every time. See `canvas.text.render`, whose
-docstrings say what that costs.
-
-The face half saves TTFFace's parse + set_pixel_size. TTFFace owns the
-font file's raw bytes (`data: List[UInt8]`, Movable only), so the Dict
-holds `ArcPointer[TTFFace]`: one heap-allocated face per (path, pixel
-size), and a hit bumps a refcount rather than copying the payload.
-`set_pixel_size`, the one mutating method, runs once at insert, and
-keying by `path + "@" + pixel_size` rather than path alone keeps two
-callers at different sizes from corrupting each other's scale state.
-
-The third half is rasterized glyphs. `draw_text` keys each unrotated
-glyph by face, pixel size, codepoint and the glyph origin's sub-pixel
-offset in 1/64 px, and stores its coverage as the sub-sample counts
-the anti-aliased sweep computed (`_GlyphMask`); a hit composites the
-counts instead of extracting and sweeping the outline again, for the
-pixels a direct fill would write. This is what makes a cached label
-tens of microseconds rather than a millisecond.
-
-That store is bounded by bytes rather than by entry count, because a
-72-pixel glyph's mask is forty times a 12-pixel one's and a count
-cannot tell them apart. It is held in two generations: new masks go
-into the young one, and when that reaches half the budget the old one
-is released and the young becomes old. A mask found in the old
-generation moves back to the young, so anything still in use survives
-each turnover and only what has gone unused since the last one is
-released. See `_store_glyph_mask`.
-
-Mojo has no mutable global state (declaring one raises "global variables
-are not supported"), so there is no implicit shared cache. Pass one
-FontCache to draw_text/measure_text/measure_text_block through their
-`cache=` keyword-only overloads; callers that don't get per-call
-resolution.
+Pass one `FontCache` through the `cache=` overloads of text measurement
+and drawing functions. Font discovery is initialized lazily. Parsed
+faces are keyed by path and pixel size; glyph masks are held in a
+bounded two-generation store.
 """
 
 from std.math import ceil
@@ -83,19 +33,12 @@ from canvas.text.ttf import TTFFace
 comptime _GLYPH_MASK_BUDGET = 32 << 20
 comptime _GLYPH_GENERATION_BUDGET = _GLYPH_MASK_BUDGET // 2
 
-# ...and how many entries either generation may hold. Bytes alone are
-# not enough: a store of small masks stays far inside the byte budget
-# while growing to tens of thousands of entries, and a dictionary that
-# size costs more to probe. Holding 14,000 masks measured a warm
-# lookup at 17 us against 10 us for the 4,096-entry store this
-# replaces, which is a bad trade for hits that were already cheap. Two
-# generations of 2,048 keep the total where it was.
+# Cap entries as well as bytes so many small masks cannot grow the
+# dictionary without bound.
 comptime _GLYPH_GENERATION_ENTRIES = 2048
 
 # Charged per entry on top of its mask and its key, for the dictionary
-# slot and the struct around them. An estimate, and deliberately
-# generous: its job is to keep a flood of tiny masks from overrunning
-# the budget by a wide margin, not to be exact.
+# slot and the struct around them. This is a conservative estimate.
 comptime _GLYPH_ENTRY_OVERHEAD = 96
 
 
@@ -231,8 +174,7 @@ struct FontCache(Movable):
 
     def clear_glyph_masks(mut self):
         """Release every rasterized glyph mask, keeping the resolved
-        font paths and faces. The next draw re-rasterizes what it
-        needs, at the cost of a cold label.
+        font paths and faces. Later draws rasterize their masks again.
         """
         self._glyph_masks = Dict[String, _GlyphMask]()
         self._glyph_masks_old = Dict[String, _GlyphMask]()
@@ -269,11 +211,9 @@ struct FontCache(Movable):
         generations over first if it no longer fits.
 
         Turning over releases the old generation and makes the young
-        one old, so what is released is exactly what has not been
-        looked up since the previous turnover. Either bound can force
-        it: entries, which is what keeps a lookup cheap, or bytes,
-        which is what keeps a page of 72-pixel headings from holding
-        tens of megabytes. A mask on its own larger than a
+        one old, so entries not used since the previous turnover are
+        released. Either the entry or byte bound can trigger it. A mask
+        on its own larger than a
         generation's share does not trigger the byte bound against an
         empty young generation, since there would be nothing to
         release and it would loop.

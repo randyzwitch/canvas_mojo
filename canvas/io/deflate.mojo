@@ -665,12 +665,8 @@ comptime _WINDOW = 32768
 # Real encoders go much higher at their top compression levels.
 comptime _MAX_CHAIN = 32
 
-# The longest match `deflate` still looks one byte further for. Above
-# it a match is taken as found, without the second search the lazy
-# rule needs. Both a ratio and a speed knob, and monotonic in neither:
-# set by benchmark (#172, which has the numbers) over the example
-# images, where 48, 64 and 96 land within 0.1% of each other, 32 comes
-# out 1.9% larger, and 128 and up is both larger and slower to write.
+# The longest match for which `deflate` performs the lazy rule's
+# one-byte lookahead. Longer matches are accepted immediately.
 comptime _MAX_LAZY = 64
 
 # Hash table sizing for the match search below. The table is indexed by
@@ -845,10 +841,8 @@ struct _HashChains(Movable):
         while size < n and size < _MAX_HASH_SIZE:
             size <<= 1
         self.head = List[Int32](length=size, fill=-1)
-        # _WINDOW entries, not one per input byte. A match may never
-        # reach further back than _WINDOW, so a link out of that range
-        # could never be used, and sizing this to the input instead
-        # measured slower (#104).
+        # A match cannot reach farther back than _WINDOW, so links use
+        # a fixed-size circular buffer.
         self.prev = List[Int32](length=_WINDOW, fill=-1)
         self.mask = size - 1
         self.indexed = 0
@@ -932,11 +926,8 @@ def _find_match(
     var best_length = 0
     var best_distance = 0
     var max_possible = min(_MAX_MATCH, n - pos)
-    # The comparison loop below is where this function spends its time
-    # -- deflate's cost scales with _MAX_CHAIN precisely because each
-    # candidate is compared byte by byte -- and a checked List read
-    # costs several times the compare it guards. Both indices stay
-    # inside `data`: `pos + length` is bounded by `max_possible`, which
+    # Both pointer indices stay inside `data`: `pos + length` is bounded
+    # by `max_possible`, which
     # is at most `n - pos`, and `candidate + length` is smaller still
     # since `candidate < pos`.
     var d = data.unsafe_ptr()
@@ -964,10 +955,8 @@ def _find_match(
                 break
             candidate = skip
             continue
-        # Eight bytes at a time while there is room, then one at a
-        # time. A run at distance 1 -- flat color, which most of an
-        # image is -- matches to the cap, so this is the loop that
-        # decides what a large fill costs.
+        # Compare eight bytes at a time while there is room, then finish
+        # one byte at a time.
         var length = 0
         comptime W = 8
         while length + W <= max_possible:

@@ -241,11 +241,7 @@ def fill_circle_aa(
     )
 
 
-# Below this radius the interior span is not worth solving for: the
-# sqrt, the endpoint nudging and the bulk-fill call cost more per row
-# than testing the handful of pixels the row contains. Set by benchmark
-# (#83, which has the numbers) -- re-benchmark the small-marker and
-# large-disk cases before changing it.
+# Below this radius, test each pixel rather than solving an interior span.
 comptime _MIN_SPAN_RADIUS = 8.0
 
 
@@ -307,20 +303,7 @@ def fill_circle_aa(
 
 # --- Exact pixel coverage for a disk -------------------------------------
 
-# Everything below works on the unit disk, and callers divide their
-# coordinates by the radius on the way in. That takes a division and a
-# `t/r` per arc evaluation out of the pixel loop, worth about 8% of a
-# small marker's fill measured against the radius-space form the two
-# agree with to 7e-15.
-#
-# The `asin` here is the single most expensive operation in a small
-# fill, about 40% of it, but glibc's is hard to beat: a degree-five
-# minimax fit of the usual `pi/2 - sqrt(1-x)*P(x)` shape, accurate to
-# 1.3e-6 and well inside the half-a-level budget, measured 1.75x
-# slower than the library call. It vectorizes and the library call
-# does not, so it wins in a synthetic loop, but nothing here is
-# vectorized -- the chain is latency-bound, and its `sqrt` plus five
-# dependent multiply-adds is a longer chain than glibc needs.
+# Calculations use a unit disk; callers normalize coordinates by radius.
 
 
 @always_inline
@@ -399,16 +382,7 @@ def _unit_disk_rect_area(
     return total
 
 
-# Above this radius a circle goes back to the general exact-area
-# rasterizer. Both routes give the same 256 levels; they differ in
-# what they spend to get there. The closed form pays a `sqrt`/`asin`
-# pair per pixel edge and allocates nothing, which wins while the
-# shape is small; the polygon pays an edge table and an accumulator
-# once and then only arithmetic per pixel, which wins once there are
-# enough pixels to amortize it. Timed against each other over 8,000
-# calls (#281): the closed form is 0.91x the polygon's time at r=6,
-# 1.14x at r=8, 1.35x at r=10 and 1.94x at r=18, so they cross just
-# under seven.
+# Larger circles use the general exact-area rasterizer.
 comptime _CLOSED_FORM_MAX_RADIUS = 7.0
 
 
@@ -429,10 +403,6 @@ def _fill_circle_aa_device(
     (`_unit_disk_rect_area`), which allocates nothing; a larger one
     flattens to a polygon and takes the general rasterizer, which
     allocates once and amortizes it over more pixels.
-
-    #276 sent every circle down the polygon route, which for a marker
-    a few pixels across cost about ten allocations and 4.8x the
-    sampler it replaced (#281). A small circle needs none of that.
 
     `supersample` is accepted and unused, as it is on every other
     exact-area fill.
@@ -709,7 +679,7 @@ def _fill_circles_aa_impl(
     tg.wait()
     # Named past the tasks: a task's borrow is not a use the compiler
     # counts, so without this the lists are freed while bands still
-    # read them (#263).
+    # read them.
     _ = len(centers)
     _ = len(colors)
 
@@ -722,13 +692,6 @@ def fill_circles_aa(
 ) raises:
     """Fill many equal-radius anti-aliased disks in one call.
 
-    The scatter-plot shape. Each marker is far too small to be worth a
-    task of its own, so splitting per marker cannot pay, and drawing
-    them one at a time leaves every core but one idle. This splits the
-    *canvas* into row bands instead and hands each band the whole
-    batch, so the work is shared out by where markers land rather than
-    by which marker they are.
-
     Output is identical to calling `fill_circle_aa` once per center in
     the same order, including where translucent markers overlap: each
     band walks the batch in submission order, and bands own disjoint
@@ -736,7 +699,7 @@ def fill_circles_aa(
 
     A radius past the closed-form limit, a canvas transform that is
     not a similarity, or too little total work each fall back to
-    per-marker calls, which produce the same pixels more slowly.
+    per-marker calls.
 
     Args:
         canvas: Canvas to fill into.
@@ -917,13 +880,8 @@ def _draw_circle_aa_device(
         return
     var half = width / 2.0
     if half >= radius:
-        # Every point within `half` of the circle, the center
-        # included, so the stroked region is exactly the disk out to
-        # `radius + half`. #279 makes the general stroke correct here
-        # too, but it gets there by unioning the segment quads, which
-        # only the sampled sweep can do -- 17 coverage levels against
-        # this fill's 256, measured as a worst pixel of 14 levels
-        # against 4. The closed form is both sharper and cheaper.
+        # When the half-width reaches the center, the stroked region is
+        # exactly the disk out to `radius + half`.
         _fill_circle_aa_device(canvas, cx, cy, radius + half, color)
         return
     # `stroke_path_aa` is the public entry and re-applies the canvas
