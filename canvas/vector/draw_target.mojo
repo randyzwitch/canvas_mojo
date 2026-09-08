@@ -6,7 +6,8 @@ so nothing rendered through the trait deals in supersampling.
 
 Twelve drawing primitives are declared -- `fill_rect`,
 `fill_rect_gradient`, `draw_line_aa`, `fill_circle_aa`,
-`fill_circles_aa`, `draw_circle_aa`, `fill_ellipse_aa`,
+`fill_circles_aa`, `fill_ellipses_aa`, `draw_circle_aa`,
+`fill_ellipse_aa`,
 `draw_ellipse_aa`, `fill_arc_aa`, `fill_ring_sector_aa`,
 `stroke_path_aa` and `fill_path_aa` -- a subset of `canvas.shapes`.
 `fill_circles_aa` is the one that is not a distinct shape: it is
@@ -305,6 +306,51 @@ trait DrawTarget:
         Args:
             centers: Sub-pixel centre of each marker, in draw order.
             radius: Radius shared by every marker, in pixels.
+            colors: One color per centre, same length as `centers`.
+        """
+        ...
+
+    def fill_ellipses_aa(
+        mut self,
+        centers: List[FPoint],
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+    ) raises:
+        """Many equal-size ellipses in one call, in draw order.
+
+        `fill_circles_aa` for markers that are not round -- the same
+        pixels as `fill_ellipse_aa` per centre, and on the raster
+        backend far faster for the same reason: the canvas splits
+        across cores rather than the markers, which are individually
+        too small to be worth a thread. A vector backend emits one
+        element per marker either way.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            rx: Horizontal radius shared by every marker, in pixels.
+            ry: Vertical radius shared by every marker, in pixels.
+            color: Fill color shared by every marker.
+        """
+        ...
+
+    def fill_ellipses_aa(
+        mut self,
+        centers: List[FPoint],
+        rx: Float64,
+        ry: Float64,
+        colors: List[Color],
+    ) raises:
+        """`fill_ellipses_aa` with a color per marker.
+
+        Raises for the same reason the disk overload does: `colors`
+        has to be the same length as `centers`, and drawing the
+        shorter of the two would silently lose markers.
+
+        Args:
+            centers: Sub-pixel centre of each marker, in draw order.
+            rx: Horizontal radius shared by every marker, in pixels.
+            ry: Vertical radius shared by every marker, in pixels.
             colors: One color per centre, same length as `centers`.
         """
         ...

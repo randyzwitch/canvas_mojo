@@ -22,7 +22,7 @@ from canvas.path import (
 )
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa, fill_circles_aa
-from canvas.shapes.ellipses import fill_ellipse_aa
+from canvas.shapes.ellipses import fill_ellipse_aa, fill_ellipses_aa
 from canvas.shapes.lines import draw_line, draw_line_aa, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.shapes.rects import fill_rect
@@ -101,6 +101,18 @@ def main() raises:
             INK,
         )
     _say("fill_ellipse_aa x2000 small (5x3)", _changed(base, c))
+
+    var ell_centers = List[FPoint](capacity=2000)
+    for i in range(2000):
+        ell_centers.append(
+            FPoint(
+                20.0 + Float64((i * 37) % 7600) * 0.1,
+                20.0 + Float64((i * 53) % 5600) * 0.1,
+            )
+        )
+    c = Canvas(W, H, WHITE)
+    fill_ellipses_aa(c, ell_centers, 5.0, 3.0, INK)
+    _say("fill_ellipses_aa x2000 markers batched (5x3)", _changed(base, c))
 
     c = Canvas(W, H, WHITE)
     fill_arc_aa(c, 400.0, 300.0, 260.0, -1.2, 1.4, INK)

@@ -7,10 +7,11 @@ vs. `_aa` naming convention this follows.
 """
 
 from std.math import ceil, floor, sqrt
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.color import Color
 from canvas.buffer import Canvas
-from canvas.geometry import round_to_int
+from canvas.geometry import FPoint, round_to_int
 from canvas.fill_rule import FillRule
 from canvas.path import (
     fill_path,
@@ -26,6 +27,7 @@ from canvas.shapes.circles import (
     _unit_disk_rect_area,
 )
 from canvas.shapes.polygon_fill import _fill_polygon_aa_device
+from canvas.workers import _bands_for
 
 
 def _plot_ellipse_points(
@@ -431,6 +433,301 @@ def _fill_ellipse_aa_device(
                     canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
             ux += inv_rx
         uy += inv_ry
+
+
+def _fill_ellipse_aa_rows(
+    mut canvas: Canvas,
+    cx: Float64,
+    cy: Float64,
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_fill_ellipse_aa_device`'s closed-form body, restricted to rows
+    [row_lo, row_hi).
+
+    The row clamp is what lets a batch of markers split across cores:
+    each band owns a disjoint set of rows, so two bands never write
+    the same pixel, and a marker straddling a boundary is visited by
+    both -- each doing only its own rows. `uy` is derived from the
+    clamped first row, so the unit-space walk starts in the right
+    place rather than being stepped into it.
+
+    Only the closed-form route is here. A radius past
+    `_CLOSED_FORM_MAX_RADIUS` goes through the polygon rasterizer,
+    which bands internally and has no row-restricted entry point, so
+    `fill_ellipses_aa` keeps those on the per-marker path.
+    """
+    var alpha_scale = Float64(color.a)
+    var inv_rx = 1.0 / rx
+    var inv_ry = 1.0 / ry
+    var area_scale = rx * ry
+    var lo_x = Int(floor(cx - rx)) - 1
+    var hi_x = Int(ceil(cx + rx)) + 2
+    var lo_y = max(Int(floor(cy - ry)) - 1, row_lo)
+    var hi_y = min(Int(ceil(cy + ry)) + 2, row_hi)
+    if lo_y >= hi_y:
+        return
+    var half_x = 0.5 * inv_rx
+    var half_y = 0.5 * inv_ry
+    var uy = (Float64(lo_y) - cy) * inv_ry
+    for py in range(lo_y, hi_y):
+        var ady = abs(uy)
+        var near_dy = max(0.0, ady - half_y)
+        var far_dy = ady + half_y
+        var near_dy2 = near_dy * near_dy
+        var far_dy2 = far_dy * far_dy
+        if near_dy2 > 1.0:
+            uy += inv_ry
+            continue
+        var y0 = uy - half_y
+        var y1 = uy + half_y
+        var ux = (Float64(lo_x) - cx) * inv_rx
+        for px in range(lo_x, hi_x):
+            var adx = abs(ux)
+            var near_dx = max(0.0, adx - half_x)
+            if near_dx * near_dx + near_dy2 > 1.0:
+                ux += inv_rx
+                continue
+            var far_dx = adx + half_x
+            if far_dx * far_dx + far_dy2 <= 1.0:
+                canvas.set_pixel(px, py, color)
+                ux += inv_rx
+                continue
+            var area = (
+                _unit_disk_rect_area(ux - half_x, ux + half_x, y0, y1)
+                * area_scale
+            )
+            if area > 0.0:
+                if area > 1.0:
+                    area = 1.0
+                var alpha = Int(area * alpha_scale + 0.5)
+                if alpha > 0:
+                    canvas.set_pixel(px, py, color.with_alpha(UInt8(alpha)))
+            ux += inv_rx
+        uy += inv_ry
+
+
+def _ellipses_band(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """Every marker reaching rows [row_lo, row_hi), in submission
+    order.
+
+    Order is the whole correctness argument for overlapping
+    translucent markers: a pixel's value depends on the marker being
+    drawn and on what is already under it, so walking the batch in
+    order within each band reproduces exactly what drawing them one at
+    a time produces. Bands own disjoint rows, so they never race and
+    need no ordering between them.
+    """
+    var uniform = len(colors) == 0
+    for i in range(len(centers)):
+        ref p = centers[i]
+        if p.y + ry + 2.0 < Float64(row_lo):
+            continue
+        if p.y - ry - 1.0 >= Float64(row_hi):
+            continue
+        _fill_ellipse_aa_rows(
+            canvas,
+            p.x,
+            p.y,
+            rx,
+            ry,
+            color if uniform else colors[i],
+            row_lo,
+            row_hi,
+        )
+
+
+async def _ellipses_band_async(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_ellipses_band` as a task. `centers` and `colors` are borrowed,
+    never owned: a heap-backed aggregate handed to `create_task` by
+    value is canvas_mojo#97.
+    """
+    _ellipses_band(canvas, centers, colors, rx, ry, color, row_lo, row_hi)
+
+
+def _fill_ellipses_sequential(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+) raises:
+    """One `fill_ellipse_aa` per center, the definition every batched
+    path has to agree with."""
+    var uniform = len(colors) == 0
+    for i in range(len(centers)):
+        ref p = centers[i]
+        fill_ellipse_aa(
+            canvas, p.x, p.y, rx, ry, color if uniform else colors[i]
+        )
+
+
+def _fill_ellipses_aa_impl(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+) raises:
+    """The body both `fill_ellipses_aa` overloads land in. An empty
+    `colors` means every marker takes `color`."""
+    if len(centers) == 0:
+        return
+    if rx <= 0.0 or ry <= 0.0:
+        _fill_ellipses_sequential(canvas, centers, colors, rx, ry, color)
+        return
+
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        if not m.is_similarity():
+            # A non-similarity turns each ellipse into one with a
+            # different orientation, so there is nothing uniform left
+            # to batch.
+            _fill_ellipses_sequential(canvas, centers, colors, rx, ry, color)
+            return
+        # A similarity scales both radii by the same factor and keeps
+        # the axes aligned, so mapping the centers once leaves a
+        # device-space batch.
+        var mapped = List[FPoint](capacity=len(centers))
+        for i in range(len(centers)):
+            ref p = centers[i]
+            var q = m.apply(p.x, p.y)
+            mapped.append(FPoint(q.x, q.y))
+        var s = m.scale_factor()
+        var saved = canvas._take_transform()
+        try:
+            _fill_ellipses_aa_impl(
+                canvas, mapped, colors, rx * s, ry * s, color
+            )
+        except e:
+            canvas._set_transform(saved)
+            raise e
+        canvas._set_transform(saved)
+        return
+
+    if max(rx, ry) > _CLOSED_FORM_MAX_RADIUS:
+        # The polygon route has no row-restricted entry point and
+        # already bands each ellipse across cores; batching would take
+        # that away rather than add to it.
+        _fill_ellipses_sequential(canvas, centers, colors, rx, ry, color)
+        return
+
+    # Roughly the covered area, the figure `_bands_for` weighs against
+    # its parallel threshold.
+    var per_marker = Int(3.15 * (rx + 1.0) * (ry + 1.0)) + 1
+    var bands = _bands_for(
+        len(centers) * per_marker, canvas.height, canvas.max_workers()
+    )
+    if bands <= 1:
+        _ellipses_band(canvas, centers, colors, rx, ry, color, 0, canvas.height)
+        return
+
+    var per_band = (canvas.height + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var row_lo = b * per_band
+        var row_hi = min(row_lo + per_band, canvas.height)
+        if row_lo >= row_hi:
+            continue
+        tg.create_task(
+            _ellipses_band_async(
+                canvas, centers, colors, rx, ry, color, row_lo, row_hi
+            )
+        )
+    tg.wait()
+    # Named past the tasks: a task's borrow is not a use the compiler
+    # counts, so without this the lists are freed while bands still
+    # read them.
+    _ = len(centers)
+    _ = len(colors)
+
+
+def fill_ellipses_aa(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    rx: Float64,
+    ry: Float64,
+    color: Color,
+) raises:
+    """Fill many equal-size anti-aliased ellipses in one call.
+
+    Output is identical to calling `fill_ellipse_aa` once per center in
+    the same order, including where translucent markers overlap: each
+    band walks the batch in submission order, and bands own disjoint
+    rows.
+
+    A radius past the closed-form limit, or a canvas transform that is
+    not a similarity, falls back to one call per center -- those routes
+    band internally already, so batching them would remove parallelism
+    rather than add it.
+
+    Args:
+        canvas: Canvas drawn on.
+        centers: Ellipse centres, in user space.
+        rx: Horizontal radius, shared by every ellipse.
+        ry: Vertical radius, shared by every ellipse.
+        color: Fill colour for every ellipse.
+
+    Raises:
+        Error: Propagated from the per-ellipse path.
+    """
+    _fill_ellipses_aa_impl(canvas, centers, List[Color](), rx, ry, color)
+
+
+def fill_ellipses_aa(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    rx: Float64,
+    ry: Float64,
+    colors: List[Color],
+) raises:
+    """`fill_ellipses_aa` with a colour per marker.
+
+    Args:
+        canvas: Canvas drawn on.
+        centers: Ellipse centres, in user space.
+        rx: Horizontal radius, shared by every ellipse.
+        ry: Vertical radius, shared by every ellipse.
+        colors: One colour per centre; must be the same length.
+
+    Raises:
+        Error: If `colors` is not the same length as `centers`, or
+            propagated from the per-ellipse path.
+    """
+    if len(colors) != len(centers):
+        raise Error(
+            String(
+                "fill_ellipses_aa: colors has ",
+                len(colors),
+                " entries for ",
+                len(centers),
+                " centers",
+            )
+        )
+    _fill_ellipses_aa_impl(canvas, centers, colors, rx, ry, Color(0, 0, 0))
 
 
 def draw_ellipse_aa(

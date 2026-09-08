@@ -68,7 +68,7 @@ from canvas.io.png import write_png, read_png
 from canvas.resize import downsample, resize
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa, fill_circles_aa
-from canvas.shapes.ellipses import fill_ellipse_aa
+from canvas.shapes.ellipses import fill_ellipse_aa, fill_ellipses_aa
 from canvas.shapes.lines import draw_line, draw_line_aa, draw_polyline_aa
 from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.shapes.rects import fill_rect
@@ -285,6 +285,29 @@ def _survey() raises -> List[_Row]:
         sink += Int(canvas.get_pixel(100, 100).r)
     _report(
         rows, "fill_ellipse_aa x2000 small (5x3)", perf_counter_ns() - t0, iters
+    )
+
+    # The same 2000 markers through the batch entry point, which bands
+    # the canvas instead of the markers -- the ellipse counterpart of
+    # the batched disks above. Centers are fractional here, so no two
+    # markers share a sub-pixel phase.
+    var ellipse_centers = List[FPoint](capacity=2000)
+    for i in range(2000):
+        ellipse_centers.append(
+            FPoint(
+                20.0 + Float64((i * 37) % 7600) * 0.1,
+                20.0 + Float64((i * 53) % 5600) * 0.1,
+            )
+        )
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_ellipses_aa(canvas, ellipse_centers, 5.0, 3.0, INK)
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "fill_ellipses_aa x2000 markers batched (5x3)",
+        perf_counter_ns() - t0,
+        iters,
     )
 
     # Pie and donut segments, the shapes a chart makes most of these
