@@ -4,99 +4,75 @@ type: docs
 weight: 100
 ---
 
-![A bar chart, pie wedge, donut segment, scatter plot with an error ellipse, and a filled area shape, all drawn by canvas_mojo itself](examples/out_vector.svg)
+![A bar chart, pie wedge, donut segment, scatter plot with an error ellipse, and a filled area shape, all drawn by canvas_mojo](examples/out_vector.svg)
 
-A 2D drawing engine written entirely in Mojo: pixel buffers, shape and
-path primitives, gradients, real system-font text, and PNG/BMP/SVG
-output — no Cairo, no FreeType, no other C rendering library anywhere
-in the pipeline.
+canvas_mojo is a native Mojo 2D drawing library for raster images, SVG,
+and PDF. It provides shapes, paths, gradients, compositing, transforms,
+clipping, image decoding, and system-font text without C rendering
+dependencies.
 
-## Why canvas_mojo?
-
-Drawing shapes and text to an image is usually a job you hand to a C
-library — Cairo, Skia, FreeType — from whatever language you're
-actually working in. canvas_mojo asks what that same job looks like
-kept entirely in Mojo instead: one language, top to bottom, so the
-whole rasterizer is readable and hackable rather than a thin wrapper
-around someone else's binary. `Canvas` (raster), `SvgCanvas` (SVG
-markup) and `PdfCanvas` (a one-page PDF) all implement the same
-`DrawTarget` trait, so code written against that trait — a chart
-library's own rendering core, say — works against any of them without
-knowing which one it's drawing into.
-
-This is an early-stage, heavily Claude-influenced personal project, so
-don't expect polish or a clean mapping onto Cairo's concepts. If you
-know what you're doing and want to contribute, let's chat.
+Use `Canvas` for pixels, `SvgCanvas` for SVG markup, or `PdfCanvas` for
+paged PDF output. All three implement `DrawTarget`, so one drawing
+routine can target every backend.
 
 ## Quickstart
 
-Add `canvas_mojo` as a git dependency in your own `pixi.toml`:
+Add the package to your project's `pixi.toml`:
 
 ```toml
 [workspace]
-preview = ["pixi-build"]  # git-source pixi dependencies are still a preview feature
+preview = ["pixi-build"]
 
 [dependencies]
 canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", branch = "main" }
 ```
 
-`pixi install`/`pixi run` builds `canvas_mojo` from that git ref and
-installs the resulting precompiled package into your own workspace's
-pixi environment — Mojo's own toolchain finds it there automatically,
-no `-I` flag needed. Then draw something:
+Then create a canvas, draw, and write an image:
 
 ```mojo
-from canvas import Canvas, Color, fill_circle_aa, write_bmp
+from canvas import Canvas, Color, fill_circle_aa, write_png
+
 
 def main() raises:
-    var c = Canvas(200, 200, Color(255, 255, 255))
-    fill_circle_aa(c, 100, 100, 80, Color(40, 100, 200))
-    write_bmp(c, "out.bmp")
+    var canvas = Canvas(200, 200, Color(255, 255, 255))
+    fill_circle_aa(canvas, 100, 100, 80, Color(40, 100, 200))
+    write_png(canvas, "circle.png")
 ```
 
-That's a filled, anti-aliased circle on a white background, written
-out as a real BMP file.
+Coordinates start at the top-left, with x increasing right and y
+increasing down. Functions ending in `_aa` draw anti-aliased shapes;
+prefer them for normal rendered output.
 
-## Where to next
+## What it includes
 
-- **[Examples](examples/)** — the same pattern applied to lines,
-  shapes, curves, gradients, dashes, transforms, clipping, text, and
-  PNG/BMP image I/O, source next to its actual rendered output.
-- **[API reference](api-guide/)** — the package grouped by what you're
-  trying to do (canvas & color, shapes, paths, gradients, text,
-  vector, image I/O), each entry linking to its full generated
-  reference, straight from this repo's own docstrings.
-- **[Wiki](https://github.com/randyzwitch/canvas_mojo/wiki)** — what's
-  built
-  ([Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog))
-  vs. still open
-  ([Backlog](https://github.com/randyzwitch/canvas_mojo/wiki/Backlog)),
-  plus an [Architecture](https://github.com/randyzwitch/canvas_mojo/wiki/Architecture)
-  walkthrough of how a drawing call moves through `Canvas`/`SvgCanvas`,
-  `Path`, and text rendering.
+- Lines, rectangles, circles, ellipses, arcs, polygons, and Bezier paths
+- Linear, radial, and conic gradients, plus raster patterns
+- Transforms, clipping, masks, blend modes, blur, and shadows
+- Text using installed TrueType and OpenType fonts
+- PNG and BMP reading and writing, plus baseline and progressive JPEG reading
+- Raster `Canvas`, `SvgCanvas`, and multipage `PdfCanvas` backends
 
-## Status
+## Where to go next
 
-Mojo-only, with no FFI and no linked libraries at all. The three jobs
-real system-font text rendering needs are each native Mojo here: font
-discovery (matching a family/style name against the fonts installed on
-the machine — `canvas/text/font_discovery.mojo`, which reads each
-font's own `name`/`OS/2` tables rather than linking `libfontconfig`),
-font parsing (glyph outlines and metrics — `canvas/text/
-ttf.mojo`), and rasterization (this package's own `fill_path_aa`) --
-no FreeType, no Cairo, no fontconfig, no other third-party
-rendering/font engine anywhere in the pipeline. Text rendering still
-needs *fonts* installed on the machine, the same way any text stack
-does; it just no longer needs a library to find them.
+- **[Examples](examples/)** shows complete programs beside their rendered output.
+- **[API reference](api-guide/)** groups the public package by task and links to generated symbol documentation.
+- **[Full package reference](canvas/)** contains every generated module and signature.
+- **[Architecture](https://github.com/randyzwitch/canvas_mojo/wiki/Architecture)** explains the rendering pipeline for contributors.
+
+The project is under active development. See the
+[Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog),
+[Backlog](https://github.com/randyzwitch/canvas_mojo/wiki/Backlog), and
+[GitHub repository](https://github.com/randyzwitch/canvas_mojo) for
+release and contribution details.
 
 ## Development
 
 ```sh
-pixi run test      # tests/*.mojo
-pixi run example   # examples/*.mojo, writes examples/out_*.{bmp,png}
-pixi run docs      # regenerates this site -- run `example` first
+pixi run test      # run the test suite
+pixi run example   # render the examples
+pixi run docs      # rebuild the documentation site
 ```
 
 ## License
 
-MIT — see [`LICENSE`](https://github.com/randyzwitch/canvas_mojo/blob/main/LICENSE).
+MIT — see [LICENSE](https://github.com/randyzwitch/canvas_mojo/blob/main/LICENSE).
