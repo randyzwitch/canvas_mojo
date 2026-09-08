@@ -13,7 +13,11 @@ for exactly which parts of the real algorithm are simplified.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
-from canvas.text.bidi import detect_base_level, visual_order
+from canvas.text.bidi import (
+    detect_base_level,
+    visual_order,
+    _resolve_levels,
+)
 
 
 def _codepoints_of(s: String) -> List[Int]:
@@ -264,6 +268,153 @@ def test_marks_in_pure_ltr_text_are_untouched() raises:
     var cps: List[Int] = [0x65, 0x0301, 0x61]
     var out = visual_order(cps, detect_base_level(cps))
     _assert_codepoints(out, cps, "LTR text is unchanged")
+
+
+# --- explicit embedding levels (#301) -------------------------------
+# UAX #9 X1-X8. Levels are asserted directly rather than through
+# visual order, because that is where the rules live: two different
+# level assignments can produce the same reordering on one input and
+# diverge on the next. Each expected array below was derived by
+# walking the directional status stack by hand.
+#
+# The two level formulas, from X2-X5: the next *odd* level above `n`
+# is `(n + 1) | 1`, the next *even* is `(n + 2) & ~1`. So an RLE from
+# level 0 goes to 1 and an LRE from 0 goes to 2, not 0.
+
+comptime _LRO = 0x202D
+comptime _RLO = 0x202E
+comptime _FSI = 0x2068
+
+
+def _assert_levels(got: List[Int], want: List[Int], label: String) raises:
+    assert_equal(len(got), len(want), label + " length")
+    for i in range(len(want)):
+        assert_equal(got[i], want[i], String(label, " at ", i))
+
+
+def test_rle_raises_the_level_of_what_it_encloses() raises:
+    """ "a RLE b PDF c" at base 0. The RLE itself sits outside at 0 and
+    pushes level 1; `b` is strong L, which opposes an odd level, so it
+    goes one deeper to 2. The PDF pops and takes the outer level.
+    """
+    var cps: List[Int] = [0x61, _RLE, 0x62, _PDF, 0x63]
+    var want: List[Int] = [0, 0, 2, 0, 0]
+    _assert_levels(_resolve_levels(cps, 0), want, "RLE")
+
+
+def test_rlo_overrides_the_direction_of_what_it_encloses() raises:
+    """RLO makes every character inside it strong right-to-left
+    whatever its own class, which is the whole difference from RLE:
+    the Latin letters here land at level 1 rather than 2.
+    """
+    var cps: List[Int] = [0x61, _RLO, 0x62, 0x63, _PDF, 0x64]
+    var want: List[Int] = [0, 0, 1, 1, 0, 0]
+    _assert_levels(_resolve_levels(cps, 0), want, "RLO")
+    # And it shows in the output: the overridden pair reverses.
+    var out = visual_order(cps, 0)
+    var vis: List[Int] = [0x61, 0x63, 0x62, 0x64]
+    _assert_codepoints(out, vis, "RLO visual")
+
+
+def test_lro_holds_latin_order_inside_right_to_left_text() raises:
+    """Base RTL, with two Hebrew letters around an LRO'd pair. The
+    surrounding Hebrew reverses; the overridden pair does not.
+    """
+    var cps: List[Int] = [_ALEF, _LRO, _BET, _GIMEL, _PDF, 0x05D3]
+    var want: List[Int] = [1, 1, 2, 2, 1, 1]
+    _assert_levels(_resolve_levels(cps, 1), want, "LRO")
+    var out = visual_order(cps, 1)
+    var vis: List[Int] = [0x05D3, _BET, _GIMEL, _ALEF]
+    _assert_codepoints(out, vis, "LRO visual")
+
+
+def test_an_isolate_gives_its_content_its_own_level() raises:
+    """ "a RLI b PDI d" at base 0: the initiator and the PDI both sit
+    at the outer level, and only what is between them is raised.
+    """
+    var cps: List[Int] = [0x61, _RLI, _ALEF, _PDI, 0x64]
+    var want: List[Int] = [0, 0, 1, 0, 0]
+    _assert_levels(_resolve_levels(cps, 0), want, "RLI")
+
+
+def test_an_lri_inside_rtl_text_goes_two_levels_deeper() raises:
+    """Base RTL. LRI from level 1 takes the next *even* level, 2, so
+    Hebrew inside it -- opposing that -- lands at 3. Getting the
+    formula wrong gives 2 here and the isolate stops isolating.
+    """
+    var cps: List[Int] = [_ALEF, _LRI, _BET, _PDI, 0x05D3]
+    var want: List[Int] = [1, 1, 3, 1, 1]
+    _assert_levels(_resolve_levels(cps, 1), want, "LRI in RTL")
+
+
+def test_fsi_takes_its_direction_from_its_contents() raises:
+    """FSI is whichever of LRI/RLI the first strong character inside
+    it calls for, so the same control produces different levels for
+    Hebrew and Latin content.
+    """
+    var hebrew: List[Int] = [0x61, _FSI, _ALEF, _PDI, 0x64]
+    var want_h: List[Int] = [0, 0, 1, 0, 0]
+    _assert_levels(_resolve_levels(hebrew, 0), want_h, "FSI hebrew")
+    var latin: List[Int] = [0x61, _FSI, 0x62, _PDI, 0x64]
+    var want_l: List[Int] = [0, 0, 2, 0, 0]
+    _assert_levels(_resolve_levels(latin, 0), want_l, "FSI latin")
+
+
+def test_a_pdf_cannot_escape_an_isolate() raises:
+    """X7. The PDF inside the isolate has no embedding of its own to
+    close, and must not pop the isolate: `c` stays inside.
+    """
+    var cps: List[Int] = [0x61, _RLI, _ALEF, _PDF, _BET, _PDI, 0x64]
+    var want: List[Int] = [0, 0, 1, 1, 1, 0, 0]
+    _assert_levels(_resolve_levels(cps, 0), want, "PDF in isolate")
+
+
+def test_overflowing_the_depth_limit_does_not_corrupt_what_follows() raises:
+    """BD2 caps explicit depth at 125. Past it the controls are
+    counted as overflow and take no effect, and the text after the
+    matching PDFs has to come back to the paragraph level rather than
+    being stranded deep.
+    """
+    var cps = List[Int]()
+    for _ in range(130):
+        cps.append(_RLE)
+    cps.append(0x61)
+    for _ in range(130):
+        cps.append(_PDF)
+    cps.append(0x62)
+    var levels = _resolve_levels(cps, 0)
+    assert_equal(len(levels), len(cps), "length")
+    # The trailing letter is back at the paragraph level.
+    assert_equal(levels[len(levels) - 1], 0, "text after the overflow")
+    # And nothing anywhere exceeded the cap.
+    var deepest = 0
+    for i in range(len(levels)):
+        if levels[i] > deepest:
+            deepest = levels[i]
+    assert_true(deepest <= 126, String("deepest level ", deepest))
+
+
+def test_an_unmatched_pdi_is_ignored() raises:
+    var cps: List[Int] = [0x61, _PDI, 0x62]
+    var want: List[Int] = [0, 0, 0]
+    _assert_levels(_resolve_levels(cps, 0), want, "stray PDI")
+
+
+def test_nested_embeddings_stack_and_unwind() raises:
+    """RLE inside RLE: 0 -> 1 -> 3, and each PDF steps back one."""
+    var cps: List[Int] = [
+        0x61,
+        _RLE,
+        _ALEF,
+        _RLE,
+        _BET,
+        _PDF,
+        _GIMEL,
+        _PDF,
+        0x62,
+    ]
+    var want: List[Int] = [0, 0, 1, 1, 3, 1, 1, 0, 0]
+    _assert_levels(_resolve_levels(cps, 0), want, "nested RLE")
 
 
 def main() raises:
