@@ -658,11 +658,37 @@ def _axis_weights(src_len: Int, out_len: Int) -> _AxisWeights:
     return _AxisWeights(starts^, counts^, offsets^, weights^, sums^)
 
 
-def _resize_horizontal(
-    source: Canvas, out_width: Int, wx: _AxisWeights
-) -> List[Float64]:
-    """Source rows resampled to `out_width`, as alpha-premultiplied
-    `(r*a, g*a, b*a, a)` in Float64.
+# Total horizontally-filtered scratch live across all bands. The
+# full-height intermediate this replaces is
+# `out_width * source.height * 4` doubles -- 28.5 MB for the
+# 741-column case -- written to memory and read straight back. Each
+# band gets an equal share, small enough to stay in cache, and the
+# only cost is re-filtering the few source rows two consecutive chunks
+# share.
+#
+# Budgeted in total rather than per band because the bands are
+# concurrent: a per-band figure that looks modest is multiplied by the
+# worker count, and at 64 bands a 1 MB strip is 56 MB live -- worse
+# than the buffer it replaces, and measurably slower than this.
+comptime _SCRATCH_BYTES = 6 << 20
+
+# A band never gets less than this, however many bands there are.
+comptime _MIN_STRIP_BYTES = 96 << 10
+
+
+def _resize_h_rows(
+    source: Canvas,
+    mut strip: List[Float64],
+    strip_off: Int,
+    strip_first: Int,
+    out_width: Int,
+    wx: _AxisWeights,
+    first_row: Int,
+    last_row: Int,
+):
+    """Source rows [first_row, last_row) resampled horizontally into a
+    strip that starts at source row `strip_first`, as
+    alpha-premultiplied `(r*a, g*a, b*a, a)` in Float64.
 
     Premultiplied because that is what makes the color average
     alpha-weighted, the same rule `downsample` follows: a transparent
@@ -670,50 +696,14 @@ def _resize_horizontal(
     Float64 rather than Float32 because the sums reach a few times
     255 * 255 * (source span), past the 2^24 where Float32 stops
     representing integers exactly.
-
-    The intermediate is `out_width * source.height * 4` doubles, which
-    is the bound on this operation's extra memory.
     """
-    var h = source.height
-    var out = List[Float64](unsafe_uninit_length=out_width * h * 4)
-    var bands = _bands_for(out_width * h, h, source.max_workers())
-    if bands <= 1:
-        _resize_h_band(source, out, out_width, wx, 0, h)
-        return out^
-    var per_band = (h + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
-        var lo = b * per_band
-        var hi = min(lo + per_band, h)
-        if lo >= hi:
-            continue
-        tg.create_task(_resize_h_band_async(source, out, out_width, wx, lo, hi))
-    tg.wait()
-    # Named past the tasks, or they are freed while bands read them
-    # `wx` holds the weight lists the bands index into.
-    _ = len(wx.weights)
-    _ = source.width
-    return out^
-
-
-def _resize_h_band(
-    source: Canvas,
-    mut out: List[Float64],
-    out_width: Int,
-    wx: _AxisWeights,
-    first_row: Int,
-    last_row: Int,
-):
-    """Source rows [first_row, last_row) resampled horizontally.
-    Bands write disjoint rows of `out`, which is the whole safety
-    argument."""
     var sp = source.pixels.unsafe_ptr()
-    var op = out.unsafe_ptr()
+    var op = strip.unsafe_ptr()
     var src_stride = source.width * BYTES_PER_PIXEL
     var wp = wx.weights.unsafe_ptr()
     for y in range(first_row, last_row):
         var row = y * src_stride
-        var orow = y * out_width * 4
+        var orow = strip_off + (y - strip_first) * out_width * 4
         for i in range(out_width):
             var j0 = wx.starts[i]
             var n = wx.counts[i]
@@ -737,22 +727,102 @@ def _resize_h_band(
             op[unsafe_offset=o + 3] = a
 
 
-async def _resize_h_band_async(
+def _strip_rows_for(wy: _AxisWeights, first_out: Int, last_out: Int) -> Int:
+    """Source rows output rows [first_out, last_out) read between
+    them. `wy.starts` is non-decreasing, so the window is the first
+    row's start through the last row's end."""
+    var s0 = wy.starts[first_out]
+    var last = last_out - 1
+    return wy.starts[last] + wy.counts[last] - s0
+
+
+def _chunk_rows(
+    wy: _AxisWeights, out_height: Int, out_width: Int, bands: Int
+) -> Int:
+    """Output rows per chunk: as many as keep one band's strip inside
+    its share of `_SCRATCH_BYTES`, and never fewer than one."""
+    var per_band = _SCRATCH_BYTES // max(bands, 1)
+    if per_band < _MIN_STRIP_BYTES:
+        per_band = _MIN_STRIP_BYTES
+    var budget = per_band // (out_width * 4 * 8)
+    if budget < 1:
+        budget = 1
+    var c = out_height
+    while c > 1:
+        # A whole-height chunk is the worst case; halve until the
+        # window it needs fits the budget.
+        if _strip_rows_for(wy, 0, c) <= budget:
+            break
+        c = c // 2
+    if c < 1:
+        c = 1
+    return c
+
+
+def _resize_fused_band(
     source: Canvas,
-    mut out: List[Float64],
     out_width: Int,
     wx: _AxisWeights,
-    first_row: Int,
-    last_row: Int,
+    wy: _AxisWeights,
+    mut pixels: List[UInt8],
+    mut scratch: List[Float64],
+    scratch_off: Int,
+    first_out: Int,
+    last_out: Int,
+    chunk: Int,
 ):
-    """`_resize_h_band` as a task. `wx` is borrowed, never owned: a
-    heap-backed aggregate handed to `create_task` by value is
-    canvas_mojo#97, and it holds four lists."""
-    _resize_h_band(source, out, out_width, wx, first_row, last_row)
+    """Output rows [first_out, last_out), filtered both ways through a
+    strip of horizontally-filtered rows rather than a full-height
+    intermediate.
+
+    The strip is a slice of one `scratch` buffer the caller allocates
+    for every band at once, at `scratch_off`; allocating per band
+    instead cost 64 allocations and their first-touch faults on every
+    call. Bands write disjoint rows of `pixels` and disjoint slices of
+    `scratch`, which is the whole safety argument.
+    """
+    var oy = first_out
+    while oy < last_out:
+        var end = min(oy + chunk, last_out)
+        var s0 = wy.starts[oy]
+        var s1 = wy.starts[end - 1] + wy.counts[end - 1]
+        _resize_h_rows(source, scratch, scratch_off, s0, out_width, wx, s0, s1)
+        _resize_v_rows(
+            scratch, scratch_off, s0, out_width, wx, wy, pixels, oy, end
+        )
+        oy = end
 
 
-def _resize_vertical(
-    mid: List[Float64],
+async def _resize_fused_band_async(
+    source: Canvas,
+    out_width: Int,
+    wx: _AxisWeights,
+    wy: _AxisWeights,
+    mut pixels: List[UInt8],
+    mut scratch: List[Float64],
+    scratch_off: Int,
+    first_out: Int,
+    last_out: Int,
+    chunk: Int,
+):
+    """`_resize_fused_band` as a task. Every aggregate is borrowed,
+    never owned: canvas_mojo#97."""
+    _resize_fused_band(
+        source,
+        out_width,
+        wx,
+        wy,
+        pixels,
+        scratch,
+        scratch_off,
+        first_out,
+        last_out,
+        chunk,
+    )
+
+
+def _resize_streamed(
+    source: Canvas,
     out_width: Int,
     out_height: Int,
     wx: _AxisWeights,
@@ -760,12 +830,32 @@ def _resize_vertical(
     mut pixels: List[UInt8],
     max_workers: Int,
 ):
-    """The vertical pass, banded over output rows."""
+    """Both passes, banded over output rows, with the intermediate cut
+    to a strip per band."""
     var bands = _bands_for(out_width * out_height, out_height, max_workers)
-    if bands <= 1:
-        _resize_v_band(mid, out_width, wx, wy, pixels, 0, out_height)
-        return
+    var chunk = _chunk_rows(wy, out_height, out_width, bands)
     var per_band = (out_height + bands - 1) // bands
+
+    # Widest window any chunk can need, so every band's slice is the
+    # same size and one allocation covers them all.
+    var widest = 0
+    var probe = 0
+    while probe < out_height:
+        var end = min(probe + chunk, out_height)
+        var rows = _strip_rows_for(wy, probe, end)
+        if rows > widest:
+            widest = rows
+        probe = end
+    var strip_len = widest * out_width * 4
+
+    if bands <= 1:
+        var scratch = List[Float64](unsafe_uninit_length=strip_len)
+        _resize_fused_band(
+            source, out_width, wx, wy, pixels, scratch, 0, 0, out_height, chunk
+        )
+        return
+
+    var scratch = List[Float64](unsafe_uninit_length=strip_len * bands)
     var tg = TaskGroup()
     for b in range(bands):
         var lo = b * per_band
@@ -773,17 +863,32 @@ def _resize_vertical(
         if lo >= hi:
             continue
         tg.create_task(
-            _resize_v_band_async(mid, out_width, wx, wy, pixels, lo, hi)
+            _resize_fused_band_async(
+                source,
+                out_width,
+                wx,
+                wy,
+                pixels,
+                scratch,
+                b * strip_len,
+                lo,
+                hi,
+                chunk,
+            )
         )
     tg.wait()
-    # Named again after the tasks to keep the borrowed value alive.
-    _ = len(mid)
+    _ = len(scratch)
+    # Named past the tasks, or they are freed while bands read them.
+    _ = len(wx.weights)
     _ = len(wy.weights)
     _ = len(wx.sums)
+    _ = source.width
 
 
-async def _resize_v_band_async(
-    mid: List[Float64],
+def _resize_v_rows(
+    strip: List[Float64],
+    strip_off: Int,
+    strip_first: Int,
     out_width: Int,
     wx: _AxisWeights,
     wy: _AxisWeights,
@@ -791,21 +896,13 @@ async def _resize_v_band_async(
     first_row: Int,
     last_row: Int,
 ):
-    """`_resize_v_band` as a task; `mid`, `wx` and `wy` are borrowed
-    rather than owned, for the reason in `_resize_h_band_async`."""
-    _resize_v_band(mid, out_width, wx, wy, pixels, first_row, last_row)
+    """The vertical pass, reading a strip that starts at source row
+    `strip_first` and unpremultiplying into 8-bit RGBA.
 
-
-def _resize_v_band(
-    mid: List[Float64],
-    out_width: Int,
-    wx: _AxisWeights,
-    wy: _AxisWeights,
-    mut pixels: List[UInt8],
-    first_row: Int,
-    last_row: Int,
-):
-    """The vertical pass, unpremultiplying into 8-bit RGBA.
+    Same weights, same accumulation order and the same single division
+    by the product of the two axes' sums whatever the strip's height,
+    so the bytes written do not depend on how the horizontally
+    filtered rows were chunked.
 
     Alpha is the plain weighted mean of the source alphas; color is
     the sum of `color * alpha` over the sum of `alpha`, so a nearly
@@ -816,7 +913,7 @@ def _resize_v_band(
     `downsample`'s, and this agrees with it byte for byte at an
     integer ratio.
     """
-    var mp = mid.unsafe_ptr()
+    var mp = strip.unsafe_ptr()
     var op = pixels.unsafe_ptr()
     var wp = wy.weights.unsafe_ptr()
     for oy in range(first_row, last_row):
@@ -831,7 +928,7 @@ def _resize_v_band(
             var a = 0.0
             for k in range(n):
                 var w = wp[unsafe_offset=wo + k]
-                var m = ((j0 + k) * out_width + x) * 4
+                var m = strip_off + ((j0 + k - strip_first) * out_width + x) * 4
                 r += w * mp[unsafe_offset=m]
                 g += w * mp[unsafe_offset=m + 1]
                 b += w * mp[unsafe_offset=m + 2]
@@ -954,9 +1051,10 @@ def _resize_general(source: Canvas, width: Int, height: Int) raises -> Canvas:
     """
     var wx = _axis_weights(source.width, width)
     var wy = _axis_weights(source.height, height)
-    var mid = _resize_horizontal(source, width, wx)
     var pixels = List[UInt8](
         unsafe_uninit_length=width * height * BYTES_PER_PIXEL
     )
-    _resize_vertical(mid, width, height, wx, wy, pixels, source.max_workers())
+    _resize_streamed(
+        source, width, height, wx, wy, pixels, source.max_workers()
+    )
     return Canvas(width, height, pixels^)
