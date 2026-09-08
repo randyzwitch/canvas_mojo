@@ -53,6 +53,17 @@ bench-record-digests = "CANVAS_BENCH_MODE=record-digests mojo run -I . benchmark
 # read it and when its numbers are trustworthy.
 micro = "mojo run -I . benchmarks/micro_canvas.mojo"
 
+# Roofline: what a row would cost if it did only the work it has to.
+# `roofline` measures this machine's rates, `roofline-census` counts
+# the pixels each bench scene is obliged to change, and
+# `roofline-locality` shows what an async task costs when its data
+# lives in another CCX's L3 slice. Read the three together with
+# benchmarks/roofline.md; the numbers are machine properties and do
+# not carry to other hardware. Run them on a quiet machine.
+roofline = "mojo run -I . benchmarks/roofline_constants.mojo"
+roofline-census = "mojo run -I . benchmarks/roofline_census.mojo"
+roofline-locality = "mojo run -I . benchmarks/roofline_locality.mojo"
+
 # `mojo format`'s default 80 columns rather than a custom `-l`, so a
 # bare `mojo format` (or format-on-save) is always correct here.
 # format.yml also runs this on every PR and commits the result back.

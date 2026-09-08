@@ -28,6 +28,9 @@ pixi run bench-record # rewrite that reference from this machine (quiet, on purp
 pixi run bench-verify # digest every verification scene against benchmarks/digests.txt
 pixi run bench-record-digests # rewrite those digests (only when the new output is known correct)
 pixi run micro       # interleaved micro-benchmarks, the gate for a perf change
+pixi run roofline    # this machine's rates: copy, fill, blend, scatter, dispatch
+pixi run roofline-census   # pixels each bench scene is obliged to change
+pixi run roofline-locality # what an async task costs across L3 slices
 pixi run fmt         # mojo format over canvas/ tests/ examples/ scripts/
 pixi run docs        # rebuilds the site into docs/site/public (needs `example` first)
 pixi run llms        # regenerates docs/site/static/llms.txt, the API digest
@@ -147,6 +150,15 @@ resolves.
   created, so a band needs thousands of cells of work
   (`_CELLS_PER_BAND` in aa_area.mojo). Below `_MIN_PARALLEL_PIXELS`
   run inline.
+- This 3970X holds 128 MB of L3 as eight separate 16 MB slices, and a
+  canvas lives in one of them. The same fill loop is 7.5x slower inside
+  an async task than called directly (166.6 vs 22.3 us) because the
+  scheduler spreads tasks over all eight slices and seven reach the
+  data over Infinity Fabric; pinning to one CCX takes it to 44.5 us,
+  and a 4-band fill there hits 194 GB/s. So a banded pass that only
+  moves bytes can lose to the serial version, while a compute-bound one
+  still wins -- measure the operation, never assume from the shape.
+  See benchmarks/roofline.md.
 
 ## Measuring performance
 
@@ -176,6 +188,22 @@ resolves.
   machine, not a bug. A parallel copy of a full-canvas plane is about
   as expensive as all the arithmetic, so the win is usually fewer bytes
   moved, not more threads.
+
+- A reference is a ratchet, not a standard: it says a row did not
+  change, never that it is good. `benchmarks/roofline.md` gives every
+  row a floor -- the measured cost of a minimal kernel doing the same
+  essential work -- so "is this optimized?" is a ratio with a stopping
+  point. Keep the tight/loose split when adding a row: a tight floor
+  accounts for all the compulsory work, a loose one omits real work
+  (coverage, gradient evaluation, entropy decode) and so bounds the
+  headroom from above rather than promising it.
+- Measure a floor, do not derive one from a spec sheet, and measure it
+  on the library rather than on a kernel where you can. A pure-memory
+  microbenchmark said task placement was worth 6.8x; the real bench
+  said eight rows gain and the best is 2.31x.
+- A timing loop that writes the same constant every iteration is
+  loop-invariant and gets hoisted: a 1.92 MB fill "measured" 0.11 us,
+  17 TB/s. Vary the value written and sink a byte of the result.
 
 ## Verifying output
 
