@@ -7,6 +7,7 @@ This is the mechanism behind supersampled anti-aliasing -- render
 so every output pixel averages `factor * factor` real source samples.
 """
 
+from std.math import floor
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -540,3 +541,390 @@ def _downsample_band_general(
                 op[unsafe_offset=out_idx + 2] = UInt8((b_sum + half_a) // a_sum)
             op[unsafe_offset=out_idx + 3] = UInt8(alpha)
             out_idx += BYTES_PER_PIXEL
+
+
+# --- arbitrary-size resize ------------------------------------------
+
+
+struct _AxisWeights(Movable):
+    """Per-output-position resampling weights along one axis, flat.
+
+    `weights[offsets[i] : offsets[i] + counts[i]]` are the weights for
+    output position `i`, applying to source positions
+    `starts[i] ..< starts[i] + counts[i]`. Flattened rather than a list
+    of lists because the inner loop reads them once per pixel of the
+    other axis, and a `List[List[...]]` costs an indirection per
+    output position on every one of those.
+    """
+
+    var starts: List[Int]
+    var counts: List[Int]
+    var offsets: List[Int]
+    var weights: List[Float64]
+    var sums: List[Float64]
+
+    def __init__(
+        out self,
+        var starts: List[Int],
+        var counts: List[Int],
+        var offsets: List[Int],
+        var weights: List[Float64],
+        var sums: List[Float64],
+    ):
+        self.starts = starts^
+        self.counts = counts^
+        self.offsets = offsets^
+        self.weights = weights^
+        self.sums = sums^
+
+
+def _axis_weights(src_len: Int, out_len: Int) -> _AxisWeights:
+    """Weights taking `src_len` samples to `out_len` along one axis.
+
+    Two regimes, which is what makes one function serve both
+    directions of resize:
+
+    Shrinking (`out_len < src_len`) uses the exact **area** each
+    output pixel covers: output pixel `i` spans source
+    `[i * s, (i + 1) * s)` for `s = src_len / out_len`, and each
+    source pixel's weight is the length of its overlap with that
+    span. At an integer ratio every weight is exactly 1 and the count
+    is exactly the ratio, which is what makes this agree with
+    `downsample` to the byte.
+
+    Growing (`out_len >= src_len`) uses a **triangle** of radius 1
+    around the mapped center, which is linear interpolation. An area
+    filter would degenerate to nearest-neighbor here, since the span
+    lands inside a single source pixel.
+
+    Coordinates are pixel-center based throughout: source pixel `j`
+    covers `[j, j + 1)` in the continuous axis, matching this
+    package's convention that pixel (x, y) is the square
+    [x - 0.5, x + 0.5] shifted by the half-pixel the two spaces differ
+    by.
+    """
+    var starts = List[Int](capacity=out_len)
+    var counts = List[Int](capacity=out_len)
+    var offsets = List[Int](capacity=out_len)
+    var weights = List[Float64]()
+    var sums = List[Float64](capacity=out_len)
+    var scale = Float64(src_len) / Float64(out_len)
+
+    if out_len < src_len:
+        for i in range(out_len):
+            var lo = Float64(i) * scale
+            var hi = Float64(i + 1) * scale
+            var j0 = Int(lo)
+            var j1 = Int(hi)
+            if Float64(j1) < hi:
+                j1 += 1
+            if j1 > src_len:
+                j1 = src_len
+            if j0 >= j1:
+                j0 = min(j0, src_len - 1)
+                j1 = j0 + 1
+            starts.append(j0)
+            counts.append(j1 - j0)
+            offsets.append(len(weights))
+            var total = 0.0
+            for j in range(j0, j1):
+                var a = max(lo, Float64(j))
+                var b = min(hi, Float64(j + 1))
+                var w = max(0.0, b - a)
+                total += w
+                weights.append(w)
+            sums.append(total if total > 0.0 else 1.0)
+    else:
+        for i in range(out_len):
+            # Center of output pixel i in source coordinates.
+            var center = (Float64(i) + 0.5) * scale - 0.5
+            var j0 = Int(floor(center))
+            var j1 = j0 + 2
+            if j0 < 0:
+                j0 = 0
+            if j1 > src_len:
+                j1 = src_len
+            if j0 >= j1:
+                j0 = src_len - 1
+                j1 = src_len
+            starts.append(j0)
+            counts.append(j1 - j0)
+            offsets.append(len(weights))
+            var total = 0.0
+            for j in range(j0, j1):
+                var t = abs(center - Float64(j))
+                var w = max(0.0, 1.0 - t)
+                total += w
+                weights.append(w)
+            sums.append(total if total > 0.0 else 1.0)
+    return _AxisWeights(starts^, counts^, offsets^, weights^, sums^)
+
+
+def _resize_horizontal(
+    source: Canvas, out_width: Int, wx: _AxisWeights
+) -> List[Float64]:
+    """Source rows resampled to `out_width`, as alpha-premultiplied
+    `(r*a, g*a, b*a, a)` in Float64.
+
+    Premultiplied because that is what makes the color average
+    alpha-weighted, the same rule `downsample` follows: a transparent
+    source pixel contributes no color rather than contributing black.
+    Float64 rather than Float32 because the sums reach a few times
+    255 * 255 * (source span), past the 2^24 where Float32 stops
+    representing integers exactly.
+
+    The intermediate is `out_width * source.height * 4` doubles, which
+    is the bound on this operation's extra memory.
+    """
+    var h = source.height
+    var out = List[Float64](unsafe_uninit_length=out_width * h * 4)
+    var bands = _bands_for(out_width * h, h, source.max_workers())
+    if bands <= 1:
+        _resize_h_band(source, out, out_width, wx, 0, h)
+        return out^
+    var per_band = (h + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var lo = b * per_band
+        var hi = min(lo + per_band, h)
+        if lo >= hi:
+            continue
+        tg.create_task(_resize_h_band_async(source, out, out_width, wx, lo, hi))
+    tg.wait()
+    # Named past the tasks, or they are freed while bands read them
+    # (#263). `wx` holds the weight lists the bands index into.
+    _ = len(wx.weights)
+    _ = source.width
+    return out^
+
+
+def _resize_h_band(
+    source: Canvas,
+    mut out: List[Float64],
+    out_width: Int,
+    wx: _AxisWeights,
+    first_row: Int,
+    last_row: Int,
+):
+    """Source rows [first_row, last_row) resampled horizontally.
+    Bands write disjoint rows of `out`, which is the whole safety
+    argument."""
+    var sp = source.pixels.unsafe_ptr()
+    var op = out.unsafe_ptr()
+    var src_stride = source.width * BYTES_PER_PIXEL
+    var wp = wx.weights.unsafe_ptr()
+    for y in range(first_row, last_row):
+        var row = y * src_stride
+        var orow = y * out_width * 4
+        for i in range(out_width):
+            var j0 = wx.starts[i]
+            var n = wx.counts[i]
+            var wo = wx.offsets[i]
+            var r = 0.0
+            var g = 0.0
+            var b = 0.0
+            var a = 0.0
+            for k in range(n):
+                var w = wp[unsafe_offset=wo + k]
+                var s = row + (j0 + k) * BYTES_PER_PIXEL
+                var sa = Float64(Int(sp[unsafe_offset=s + 3]))
+                r += w * Float64(Int(sp[unsafe_offset=s])) * sa
+                g += w * Float64(Int(sp[unsafe_offset=s + 1])) * sa
+                b += w * Float64(Int(sp[unsafe_offset=s + 2])) * sa
+                a += w * sa
+            var o = orow + i * 4
+            op[unsafe_offset=o] = r
+            op[unsafe_offset=o + 1] = g
+            op[unsafe_offset=o + 2] = b
+            op[unsafe_offset=o + 3] = a
+
+
+async def _resize_h_band_async(
+    source: Canvas,
+    mut out: List[Float64],
+    out_width: Int,
+    wx: _AxisWeights,
+    first_row: Int,
+    last_row: Int,
+):
+    """`_resize_h_band` as a task. `wx` is borrowed, never owned: a
+    heap-backed aggregate handed to `create_task` by value is
+    canvas_mojo#97, and it holds four lists."""
+    _resize_h_band(source, out, out_width, wx, first_row, last_row)
+
+
+def _resize_vertical(
+    mid: List[Float64],
+    out_width: Int,
+    out_height: Int,
+    wx: _AxisWeights,
+    wy: _AxisWeights,
+    mut pixels: List[UInt8],
+    max_workers: Int,
+):
+    """The vertical pass, banded over output rows."""
+    var bands = _bands_for(out_width * out_height, out_height, max_workers)
+    if bands <= 1:
+        _resize_v_band(mid, out_width, wx, wy, pixels, 0, out_height)
+        return
+    var per_band = (out_height + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var lo = b * per_band
+        var hi = min(lo + per_band, out_height)
+        if lo >= hi:
+            continue
+        tg.create_task(
+            _resize_v_band_async(mid, out_width, wx, wy, pixels, lo, hi)
+        )
+    tg.wait()
+    # Named past the tasks (#263).
+    _ = len(mid)
+    _ = len(wy.weights)
+    _ = len(wx.sums)
+
+
+async def _resize_v_band_async(
+    mid: List[Float64],
+    out_width: Int,
+    wx: _AxisWeights,
+    wy: _AxisWeights,
+    mut pixels: List[UInt8],
+    first_row: Int,
+    last_row: Int,
+):
+    """`_resize_v_band` as a task; `mid`, `wx` and `wy` are borrowed
+    rather than owned, for the reason in `_resize_h_band_async`."""
+    _resize_v_band(mid, out_width, wx, wy, pixels, first_row, last_row)
+
+
+def _resize_v_band(
+    mid: List[Float64],
+    out_width: Int,
+    wx: _AxisWeights,
+    wy: _AxisWeights,
+    mut pixels: List[UInt8],
+    first_row: Int,
+    last_row: Int,
+):
+    """The vertical pass, unpremultiplying into 8-bit RGBA.
+
+    Alpha is the plain weighted mean of the source alphas; color is
+    the sum of `color * alpha` over the sum of `alpha`, so a nearly
+    transparent source pixel barely moves the color. An output pixel
+    whose alpha rounds to zero becomes transparent black, since no
+    color it could carry would ever be visible and leaving one there
+    only invites it to leak through a later operation. Both rules are
+    `downsample`'s, and this agrees with it byte for byte at an
+    integer ratio.
+    """
+    var mp = mid.unsafe_ptr()
+    var op = pixels.unsafe_ptr()
+    var wp = wy.weights.unsafe_ptr()
+    for oy in range(first_row, last_row):
+        var j0 = wy.starts[oy]
+        var n = wy.counts[oy]
+        var wo = wy.offsets[oy]
+        var out_row = oy * out_width * BYTES_PER_PIXEL
+        for x in range(out_width):
+            var r = 0.0
+            var g = 0.0
+            var b = 0.0
+            var a = 0.0
+            for k in range(n):
+                var w = wp[unsafe_offset=wo + k]
+                var m = ((j0 + k) * out_width + x) * 4
+                r += w * mp[unsafe_offset=m]
+                g += w * mp[unsafe_offset=m + 1]
+                b += w * mp[unsafe_offset=m + 2]
+                a += w * mp[unsafe_offset=m + 3]
+            var o = out_row + x * BYTES_PER_PIXEL
+            # The weights are left unnormalized and divided out once,
+            # here, by the exact product of the two axes' sums. At an
+            # integer ratio that product is the block size and every
+            # accumulated value is an exact integer in Float64, which
+            # is what makes this agree with `downsample` to the byte;
+            # normalizing the weights first would divide by an inexact
+            # 1/3 or 1/5 and flip the occasional round-half case.
+            var scale = wx.sums[x] * wy.sums[oy]
+            var alpha = Int(a / scale + 0.5)
+            if alpha < 0:
+                alpha = 0
+            if alpha > 255:
+                alpha = 255
+            if alpha == 0 or a <= 0.0:
+                op[unsafe_offset=o] = 0
+                op[unsafe_offset=o + 1] = 0
+                op[unsafe_offset=o + 2] = 0
+                op[unsafe_offset=o + 3] = 0
+                continue
+            # Color needs no scale: it is a sum of `color * alpha`
+            # over a sum of `alpha`, and the weight factors cancel.
+            var cr = Int(r / a + 0.5)
+            var cg = Int(g / a + 0.5)
+            var cb = Int(b / a + 0.5)
+            op[unsafe_offset=o] = UInt8(max(0, min(255, cr)))
+            op[unsafe_offset=o + 1] = UInt8(max(0, min(255, cg)))
+            op[unsafe_offset=o + 2] = UInt8(max(0, min(255, cb)))
+            op[unsafe_offset=o + 3] = UInt8(alpha)
+
+
+def resize(source: Canvas, width: Int, height: Int) raises -> Canvas:
+    """Resample `source` to exactly `width` x `height`, with alpha-
+    correct filtering and no constraint on the ratio.
+
+    `downsample` shrinks by an integer factor that has to divide both
+    dimensions; this takes any target size, including fractional and
+    anisotropic ratios, and one axis growing while the other shrinks.
+
+    The filter is chosen per axis by what that axis is doing. An axis
+    being **reduced** takes the exact area each output pixel covers,
+    which is the right answer for minification and is what suppresses
+    aliasing on a checkerboard or a fine grid. An axis being
+    **enlarged** takes a triangle of radius one, which is linear
+    interpolation; an area filter there would collapse to
+    nearest-neighbor, since the covered span falls inside a single
+    source pixel.
+
+    Color is filtered alpha-weighted and returned as straight RGBA,
+    so transparent source pixels neither darken an edge nor
+    contribute hidden color, and an output pixel whose alpha rounds
+    to zero is transparent black. These are `downsample`'s rules, and
+    at an integer ratio dividing both dimensions this returns exactly
+    what `downsample` returns.
+
+    Extra memory is one intermediate of `width * source.height * 4`
+    doubles, from resampling horizontally before vertically.
+
+    Args:
+        source: Canvas to resample.
+        width: Target width in pixels, at least 1.
+        height: Target height in pixels, at least 1.
+
+    Returns:
+        A new `width` x `height` Canvas.
+
+    Raises:
+        Error: If `width` or `height` is below 1.
+    """
+    if width < 1 or height < 1:
+        raise Error(
+            String(
+                "resize: target size must be at least 1x1, got ",
+                width,
+                "x",
+                height,
+            )
+        )
+    if width == source.width and height == source.height:
+        # Every byte preserved, including color under zero alpha,
+        # which a filtered round trip would flatten.
+        return Canvas(width, height, source.pixels.copy())
+    var wx = _axis_weights(source.width, width)
+    var wy = _axis_weights(source.height, height)
+    var mid = _resize_horizontal(source, width, wx)
+    var pixels = List[UInt8](
+        unsafe_uninit_length=width * height * BYTES_PER_PIXEL
+    )
+    _resize_vertical(mid, width, height, wx, wy, pixels, source.max_workers())
+    return Canvas(width, height, pixels^)

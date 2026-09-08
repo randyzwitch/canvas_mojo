@@ -190,12 +190,14 @@ it oversized for extra anti-aliasing.
 - [`io.deflate`](../canvas/io/deflate/) — `deflate`/`inflate`,
   the compression `io.png` runs on; only worth using directly if you
   need DEFLATE bytes for something other than a PNG.
-- [`resize`](../canvas/resize/) — `downsample`: shrink a `Canvas`
+- [`resize`](../canvas/resize/) — `downsample` shrinks a `Canvas`
   by an integer factor, averaging each output pixel from the source
-  block it covers — alpha as the plain mean, color weighted by alpha
-  so transparent samples don't darken an edge. Render oversized, then
-  downsample, for finer anti-aliasing than a single-resolution render
-  gets you.
+  block it covers; `resize` takes any target size, including
+  fractional and anisotropic ratios, filtering by area where an axis
+  shrinks and linearly where it grows. Both weight color by alpha, so
+  transparent samples don't darken an edge, and agree byte for byte
+  where both apply. Render oversized, then reduce, for finer
+  anti-aliasing than a single-resolution render gets you.
 
 ---
 

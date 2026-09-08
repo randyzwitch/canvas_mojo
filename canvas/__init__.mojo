@@ -4,7 +4,7 @@ from canvas.color import Color, ColorSpace
 from canvas.named_colors import *
 from canvas.buffer import Canvas
 from canvas.compose import Filter, draw_canvas
-from canvas.resize import downsample
+from canvas.resize import downsample, resize
 from canvas.io.bmp import read_bmp, write_bmp
 from canvas.io.png import PngLevel, read_png, write_png
 from canvas.vector.draw_target import DrawTarget
