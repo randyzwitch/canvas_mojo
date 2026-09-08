@@ -205,6 +205,14 @@ resolves.
   accounts for all the compulsory work, a loose one omits real work
   (coverage, gradient evaluation, entropy decode) and so bounds the
   headroom from above rather than promising it.
+- A floor has to count the work the algorithm must repeat, not the
+  output it produces, and model how that work is organized. 2000
+  markers change 88,810 pixels but visit 200,000, because their boxes
+  overlap; and a large disk's interior is a run, so a per-pixel
+  distance kernel "floors" it at 254% of its actual time, which is a
+  contradiction rather than a result. Pricing the shape rows properly
+  moved them from 0.2-16.9% of floor to 23-79% and reversed which ones
+  are worth attention. `pixi run roofline-shapes`.
 - Measure a floor, do not derive one from a spec sheet, and measure it
   on the library rather than on a kernel where you can. A pure-memory
   microbenchmark said task placement was worth 6.8x; the real bench

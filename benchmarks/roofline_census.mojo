@@ -14,7 +14,12 @@ from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Matrix2D
 from canvas.gradient import LinearGradient
 from canvas.mask import Mask
-from canvas.path import Path, fill_path_aa, fill_path_gradient_aa, stroke_path_aa
+from canvas.path import (
+    Path,
+    fill_path_aa,
+    fill_path_gradient_aa,
+    stroke_path_aa,
+)
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa, fill_circles_aa
 from canvas.shapes.ellipses import fill_ellipse_aa
@@ -38,9 +43,9 @@ def _changed(base: Canvas, after: Canvas) -> Int:
         var o = i * 4
         if (
             a[unsafe_offset=o] != b[unsafe_offset=o]
-            or a[unsafe_offset = o + 1] != b[unsafe_offset = o + 1]
-            or a[unsafe_offset = o + 2] != b[unsafe_offset = o + 2]
-            or a[unsafe_offset = o + 3] != b[unsafe_offset = o + 3]
+            or a[unsafe_offset=o + 1] != b[unsafe_offset=o + 1]
+            or a[unsafe_offset=o + 2] != b[unsafe_offset=o + 2]
+            or a[unsafe_offset=o + 3] != b[unsafe_offset=o + 3]
         ):
             n += 1
     return n
@@ -161,6 +166,16 @@ def main() raises:
     c = Canvas(W, H, WHITE)
     c.save()
     c.push_clip(300, 200, 100, 80)
+    fill_path_gradient_aa(c, big_path, grad)
+    c.restore()
+    _say(
+        "fill_path_gradient_aa 39-curve, clip misses the path",
+        _changed(base, c),
+    )
+
+    c = Canvas(W, H, WHITE)
+    c.save()
+    c.push_clip(300, 400, 100, 80)
     fill_path_gradient_aa(c, big_path, grad)
     c.restore()
     _say("fill_path_gradient_aa 39-curve under a small clip", _changed(base, c))
