@@ -6,6 +6,8 @@ isolation -- this exercises the buffer indexing math too).
 from std.testing import assert_equal, assert_true, assert_false, TestSuite
 
 from canvas.color import Color
+from canvas.blend import BlendMode
+from canvas.path import Path
 from canvas.buffer import (
     Canvas,
     _clear_bands,
@@ -276,6 +278,109 @@ def test_translucent_fill_still_blends() raises:
     var p = c.get_pixel(2, 1)
     assert_true(p.r > 0 and p.r < 255)
     assert_equal(p.a, 255)
+
+
+def _fill_two_ways(
+    w: Int, h: Int, bg: Color, blend: BlendMode, color: Color
+) raises -> Tuple[Canvas, Canvas]:
+    """The same fill on a canvas free to band and one capped to a single
+    worker. Blending is not idempotent, so a band boundary that
+    double-blends or skips a row shows up as a differing byte.
+    """
+    var banded = Canvas(w, h, bg)
+    banded.set_blend_mode(blend)
+    banded.fill_rect(0, 0, w, h, color)
+
+    var serial = Canvas(w, h, bg)
+    serial.set_max_workers(1)
+    serial.set_blend_mode(blend)
+    serial.fill_rect(0, 0, w, h, color)
+    return (banded^, serial^)
+
+
+def _assert_same_bytes(a: Canvas, b: Canvas) raises:
+    assert_equal(len(a.pixels), len(b.pixels))
+    for i in range(len(a.pixels)):
+        if a.pixels[i] != b.pixels[i]:
+            raise Error(
+                "byte "
+                + String(i)
+                + " (pixel "
+                + String(i // 4)
+                + " row "
+                + String(i // 4 // a.width)
+                + "): banded "
+                + String(a.pixels[i])
+                + ", serial "
+                + String(b.pixels[i])
+            )
+
+
+def test_banded_multiply_fill_matches_a_serial_one() raises:
+    # Past _MIN_PARALLEL_WORK so the fill really does split.
+    var r = _fill_two_ways(
+        400, 200, Color(200, 180, 160), BlendMode.MULTIPLY, Color(90, 120, 200)
+    )
+    _assert_same_bytes(r[0], r[1])
+
+
+def test_banded_translucent_fill_matches_a_serial_one() raises:
+    var r = _fill_two_ways(
+        400,
+        200,
+        Color(30, 60, 90),
+        BlendMode.SOURCE_OVER,
+        Color(200, 100, 50, 128),
+    )
+    _assert_same_bytes(r[0], r[1])
+
+
+def test_banded_fill_over_a_translucent_destination_matches_serial() raises:
+    # A destination that is not opaque takes the scalar fallback inside
+    # each band; the split must not change where that happens.
+    var r = _fill_two_ways(
+        400,
+        200,
+        Color(30, 60, 90, 40),
+        BlendMode.SCREEN,
+        Color(10, 220, 90, 200),
+    )
+    _assert_same_bytes(r[0], r[1])
+
+
+def test_banded_fill_still_respects_a_clip_path_mask() raises:
+    # A clip mask sends every pixel through the checked per-pixel path.
+    # Bands must not let a pixel escape it.
+    var banded = Canvas(400, 200, Color(0, 0, 0))
+    var p = Path()
+    p.move_to(50.0, 20.0)
+    p.line_to(350.0, 20.0)
+    p.line_to(350.0, 180.0)
+    p.line_to(50.0, 180.0)
+    p.close()
+    banded.push_clip_path(p)
+    banded.fill_rect(0, 0, 400, 200, Color(255, 255, 255, 200))
+    banded.pop_clip_path()
+
+    var serial = Canvas(400, 200, Color(0, 0, 0))
+    serial.set_max_workers(1)
+    serial.push_clip_path(p)
+    serial.fill_rect(0, 0, 400, 200, Color(255, 255, 255, 200))
+    serial.pop_clip_path()
+
+    _assert_same_bytes(banded, serial)
+    # And the clip actually clipped.
+    _assert_pixel_eq(banded, 5, 5, 0)
+
+
+def test_opaque_fill_rect_is_unchanged_by_the_banded_entry_point() raises:
+    # The stores-only case must stay on the serial store path whatever
+    # the worker count, and produce the same bytes either way.
+    var r = _fill_two_ways(
+        400, 200, Color(10, 20, 30), BlendMode.SOURCE_OVER, Color(7, 8, 9)
+    )
+    _assert_same_bytes(r[0], r[1])
+    _assert_pixel_eq(r[0], 399, 199, 7)
 
 
 def _assert_pixel_eq(c: Canvas, x: Int, y: Int, expected_r: UInt8) raises:
