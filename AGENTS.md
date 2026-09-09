@@ -173,6 +173,14 @@ resolves.
   store-only pass of the same size would have lost. So classify by what
   the pass does per pixel, not by how many bytes it touches --
   `Canvas._fill_region_top` splits on exactly that test.
+- A pass that reads a lot and computes little sits between those two,
+  and there the runtime's default worker count can be the *worst*
+  available choice. `downsample` of a 7.7 MB source measured 718 us at
+  8 bands, 716 at 16, 810 at 32 and 922 at 64 -- 1.29x off its own peak
+  at the count the runtime picks. A 17.3 MB source past the slice
+  improves monotonically to 64. So cap band count against the source
+  size for a read-heavy pass (`_read_local_bands` in resize.mojo); do
+  not assume more workers is at worst neutral.
 
 ## Measuring performance
 

@@ -17,6 +17,37 @@ from canvas.workers import _bands_for
 comptime _MIN_PARALLEL_PIXELS = 40000
 
 
+# One CCX's L3 slice on the machine this was tuned on. A source that
+# fits inside one slice is already sitting in the L3 of whichever CCX
+# built it, and splitting the read across more bands than this spreads
+# it over CCXs that have to fetch it over Infinity Fabric (#338).
+#
+# Measured on a 1600x1200 source (7.7 MB, inside the slice): 718 us at
+# 8 bands, 716 at 16, 810 at 32, 922 at 64 -- the default worker count
+# was the worst of them. A 2400x1800 source (17.3 MB, past the slice)
+# is DRAM-bound whatever happens and improves monotonically to 64, so
+# the cap only applies below the slice.
+comptime _L3_SLICE_BYTES = 16 << 20
+comptime _MAX_LOCAL_BANDS = 16
+
+
+def _read_local_bands(source_bytes: Int, bands: Int) -> Int:
+    """`bands`, capped when the source is small enough that spreading
+    the read further costs more in cross-CCX traffic than it buys in
+    parallelism.
+
+    Args:
+        source_bytes: Bytes of source the pass reads.
+        bands: The band count the work would otherwise use.
+
+    Returns:
+        The band count to use, at least 1.
+    """
+    if source_bytes >= _L3_SLICE_BYTES:
+        return bands
+    return max(min(bands, _MAX_LOCAL_BANDS), 1)
+
+
 def downsample(source: Canvas, factor: Int) raises -> Canvas:
     """Shrink `source` by `factor`, which must evenly divide both
     `source.width` and `source.height` -- raises rather than truncating
@@ -114,10 +145,13 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     # that is what the work actually scales with: a factor-8
     # downsample writes very little but reads 64 pixels for each of
     # them.
-    var bands = _bands_for(
-        out_width * out_height * n,
-        out_height,
-        source.max_workers(),
+    var bands = _read_local_bands(
+        source.width * source.height * 4,
+        _bands_for(
+            out_width * out_height * n,
+            out_height,
+            source.max_workers(),
+        ),
     )
 
     if bands == 1:
