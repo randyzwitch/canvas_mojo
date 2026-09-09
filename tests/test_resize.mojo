@@ -12,7 +12,14 @@ from std.testing import (
 
 from canvas.buffer import Canvas
 from canvas.color import Color
-from canvas.resize import _resize_general, downsample, resize
+from canvas.resize import (
+    _read_local_bands,
+    _L3_SLICE_BYTES,
+    _MAX_LOCAL_BANDS,
+    _resize_general,
+    downsample,
+    resize,
+)
 
 comptime BG = Color(0, 0, 0)
 
@@ -523,6 +530,40 @@ def test_resize_rejects_a_degenerate_target() raises:
         _ = resize(src, 0, 4)
     with assert_raises():
         _ = resize(src, 4, -1)
+
+
+def test_read_local_bands_caps_a_source_inside_one_l3_slice() raises:
+    # Below the slice the source is already in one CCX's L3, and
+    # spreading the read further costs more in cross-CCX traffic than
+    # it buys -- 64 bands measured slower than 16 on a 7.7 MB source.
+    var small = _L3_SLICE_BYTES - 1
+    assert_equal(_read_local_bands(small, 64), _MAX_LOCAL_BANDS)
+    assert_equal(_read_local_bands(small, 8), 8)
+    assert_equal(_read_local_bands(small, 1), 1)
+
+
+def test_read_local_bands_leaves_a_source_past_the_slice_alone() raises:
+    # Past the slice the read is going to DRAM whatever happens, and
+    # more bands keep helping.
+    var big = _L3_SLICE_BYTES
+    assert_equal(_read_local_bands(big, 64), 64)
+    assert_equal(_read_local_bands(big, 8), 8)
+
+
+def test_capped_downsample_matches_an_uncapped_one_byte_for_byte() raises:
+    # The cap changes only how the work is divided.
+    var src = Canvas(200, 160, Color(200, 100, 50))
+    for y in range(0, 160, 7):
+        src.fill_rect(0, y, 200, 3, Color(10, 220, 90, 180))
+
+    src.set_max_workers(64)
+    var many = downsample(src, 2)
+    src.set_max_workers(1)
+    var one = downsample(src, 2)
+
+    assert_equal(len(many.pixels), len(one.pixels))
+    for i in range(len(many.pixels)):
+        assert_equal(many.pixels[i], one.pixels[i])
 
 
 def main() raises:
