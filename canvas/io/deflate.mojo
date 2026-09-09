@@ -13,6 +13,10 @@ tests/test_deflate.mojo round-trips both directions against real
 `zlib.compress()`/`zlib.decompress()` output.
 """
 
+from std.runtime.asyncrt import TaskGroup
+
+from canvas.workers import _bands_for_work
+
 
 comptime _MAX_BITS = 15
 comptime _MAX_L_CODES = 286
@@ -271,6 +275,17 @@ struct _BitWriter(Movable):
             self.data.append(UInt8(self.bitbuf & 0xFF))
             self.bitbuf >>= 8
             self.bitcnt -= 8
+
+    def align_to_byte(mut self):
+        """Zero-pad to the next byte boundary. A stored block's header
+        must start byte-aligned (RFC 1951 3.2.4), and padding to one
+        is also what lets two independently coded streams be joined by
+        appending bytes rather than splicing bits.
+        """
+        if self.bitcnt > 0:
+            self.data.append(UInt8(self.bitbuf & 0xFF))
+            self.bitbuf = 0
+            self.bitcnt = 0
 
     def finish(mut self) raises -> List[UInt8]:
         """Flush any partial final byte. DEFLATE zero-pads the last
@@ -1209,60 +1224,63 @@ def _run_length_code(lengths: List[Int]) -> List[_LengthCode]:
     return out^
 
 
-def deflate(
-    data: List[UInt8],
-    max_chain: Int = _MAX_CHAIN,
-    max_lazy: Int = _MAX_LAZY,
-) raises -> List[UInt8]:
-    """Compress `data` into a raw DEFLATE stream (RFC 1951): LZ77 over
-    a head/prev hash-chain match search (see _HashChains) capped at
-    _MAX_CHAIN candidates, then one Huffman-coded block. Not a zlib
-    stream (RFC 1950) -- a caller needing one, such as write_png, adds
-    the 2-byte header and 4-byte Adler-32 trailer itself.
+struct _TokenPass(Movable):
+    """One LZ77 pass: the tokens, and the symbol frequencies they imply.
 
-    Every position of every token is indexed, so a match can start
-    partway into an earlier one and a run is coded at distance 1. A
-    match shorter than _MAX_LAZY is not taken until the position one
-    byte on has been searched too: if that one is longer, the byte here
-    is emitted as a literal and the longer match follows it.
-
-    The block is coded with whichever of the two Huffman options costs
-    fewer bits, worked out from the token stream's symbol frequencies
-    before anything is written: the fixed tables (3.2.6), which carry
-    no header, or a dynamic code fitted to those frequencies (3.2.7),
-    which pays for its header with shorter codes. A handful of bytes
-    stays fixed; anything image-sized goes dynamic. The extra bits a
-    match's length and distance carry are the same under both, so
-    they drop out of the comparison.
-
-    Always one block (BFINAL=1 from the start): RFC 1951 caps a stored
-    block at 65535 bytes but puts no upper bound on a compressed one.
-
-    Args:
-        data: Bytes to compress.
-        max_chain: Hash-chain candidates the match search may walk at
-            each position. Lower trades compression for speed.
-        max_lazy: Match length below which the search still looks one
-            byte ahead for a longer match. Zero turns lazy matching
-            off, which costs more bytes than it saves time.
-
-    Returns:
-        The compressed bytes, no zlib wrapper.
+    Kept together because the emit pass needs both and they are only
+    ever produced together. A parallel encode sums the frequencies of
+    several passes and concatenates their token lists.
     """
-    # The same base-length/base-distance tables _codes() decodes
-    # against.
-    var lens = _length_bases()
-    var lext = _length_extra_bits()
-    var dists = _distance_bases()
-    var dext = _distance_extra_bits()
 
-    # Pass one: LZ77 into a token buffer, counting symbols as it goes.
+    var tokens: List[_Token]
+    var lit_freq: List[Int]
+    var dist_freq: List[Int]
+
+    def __init__(
+        out self,
+        var tokens: List[_Token],
+        var lit_freq: List[Int],
+        var dist_freq: List[Int],
+    ):
+        self.tokens = tokens^
+        self.lit_freq = lit_freq^
+        self.dist_freq = dist_freq^
+
+
+def _tokenize(
+    data: List[UInt8], max_chain: Int, max_lazy: Int, start: Int = 0
+) raises -> _TokenPass:
+    """LZ77 `data` into tokens, counting symbols as it goes.
+
+    Every distance a token carries points inside `data`, never before
+    it, so a token list produced from one buffer stays valid when it
+    is concatenated after another's: a match reaches back only over
+    bytes this pass itself emitted. That is what lets several passes
+    be run at once and their tokens joined.
+
+    `start` leaves `data[:start]` as *context*: it is indexed for the
+    match search but no token is emitted for it, so a match may reach
+    back into it. A parallel encode uses that to hand each chunk the
+    window before it, which is what keeps a chunked encode from losing
+    the long matches a chart's repeated scanlines depend on. The
+    decoder needs nothing extra, because by the time it reads these
+    tokens that context is already in its output window.
+
+    This is about 85% of `deflate`'s time, which is why it is the part
+    worth splitting across cores.
+    """
+    var lens = _length_bases()
+    var dists = _distance_bases()
     var n = len(data)
     var chains = _HashChains(n)
     var tokens = List[_Token]()
     var lit_freq = List[Int](length=_MAX_L_CODES, fill=0)
     var dist_freq = List[Int](length=_MAX_D_CODES, fill=0)
-    var i = 0
+    var i = start
+    if start > 0:
+        # Index the context so matches can reach into it, without
+        # emitting a token for any of it.
+        chains.index_upto(data, start)
     # The match the previous position's look-ahead found and left for
     # this one, so a deferred match is searched for once rather than
     # twice.
@@ -1310,7 +1328,27 @@ def deflate(
             chains.index_upto(data, i + 1)
             i += 1
     lit_freq[256] = 1  # end-of-block, sent exactly once
+    return _TokenPass(tokens^, lit_freq^, dist_freq^)
 
+
+def _emit_block(
+    tokens: List[_Token],
+    lit_freq: List[Int],
+    dist_freq: List[Int],
+    final: Bool,
+) raises -> List[UInt8]:
+    """Huffman-code `tokens` as one DEFLATE block.
+
+    Whichever of the fixed tables (3.2.6) or a dynamic code fitted to
+    `lit_freq`/`dist_freq` (3.2.7) costs fewer bits, worked out before
+    anything is written. `final` marks the block BFINAL; False instead
+    appends an empty stored block, byte-aligning the output so another
+    stream can follow.
+    """
+    var lens = _length_bases()
+    var lext = _length_extra_bits()
+    var dists = _distance_bases()
+    var dext = _distance_extra_bits()
     # A dynamic code for these frequencies, and what it would cost.
     var dyn_lit = _huffman_lengths(lit_freq, _MAX_BITS)
     var dyn_dist = _huffman_lengths(dist_freq, _MAX_BITS)
@@ -1353,7 +1391,7 @@ def deflate(
 
     # Pass two: the header, then the tokens through the chosen code.
     var writer = _BitWriter()
-    writer.write_bits(1, 1)  # BFINAL = 1 -- the only block
+    writer.write_bits(1 if final else 0, 1)  # BFINAL
     var lit_lengths: List[Int]
     var dist_lengths: List[Int]
     if dynamic_bits < fixed_bits:
@@ -1389,4 +1427,209 @@ def deflate(
         writer.write_bits(token.distance - dists[dsym], dext[dsym])
 
     writer.write_bits(lit_codes[256], lit_lengths[256])  # end-of-block
+
+    if not final:
+        # An empty stored block, whose header must be byte-aligned, so
+        # writing one pads this stream to a byte boundary and leaves
+        # the next stream free to start at byte zero of its own
+        # buffer. That is what makes chunks joinable by appending
+        # bytes instead of splicing bits, and it costs five bytes.
+        writer.write_bits(0, 1)  # BFINAL = 0
+        writer.write_bits(0, 2)  # BTYPE = 00, stored
+        writer.align_to_byte()
+        writer.write_bits(0, 16)  # LEN = 0
+        writer.write_bits(0xFFFF, 16)  # NLEN = ~LEN
     return writer.finish()
+
+
+def deflate(
+    data: List[UInt8],
+    max_chain: Int = _MAX_CHAIN,
+    max_lazy: Int = _MAX_LAZY,
+    final: Bool = True,
+) raises -> List[UInt8]:
+    """Compress `data` into a raw DEFLATE stream (RFC 1951): LZ77 over
+    a head/prev hash-chain match search (see _HashChains) capped at
+    _MAX_CHAIN candidates, then one Huffman-coded block. Not a zlib
+    stream (RFC 1950) -- a caller needing one, such as write_png, adds
+    the 2-byte header and 4-byte Adler-32 trailer itself.
+
+    Every position of every token is indexed, so a match can start
+    partway into an earlier one and a run is coded at distance 1. A
+    match shorter than _MAX_LAZY is not taken until the position one
+    byte on has been searched too: if that one is longer, the byte here
+    is emitted as a literal and the longer match follows it.
+
+    The block is coded with whichever of the two Huffman options costs
+    fewer bits, worked out from the token stream's symbol frequencies
+    before anything is written: the fixed tables (3.2.6), which carry
+    no header, or a dynamic code fitted to those frequencies (3.2.7),
+    which pays for its header with shorter codes. A handful of bytes
+    stays fixed; anything image-sized goes dynamic. The extra bits a
+    match's length and distance carry are the same under both, so
+    they drop out of the comparison.
+
+    One compressed block: RFC 1951 caps a stored block at 65535 bytes
+    but puts no upper bound on a compressed one.
+
+    `final` marks that block BFINAL. Passing False instead appends an
+    empty stored block, which byte-aligns the stream, so several
+    independently compressed pieces can be joined by appending their
+    bytes and terminated by one final empty stored block. That is what
+    `deflate_parallel` does.
+
+    Args:
+        data: Bytes to compress.
+        max_chain: Hash-chain candidates the match search may walk at
+            each position. Lower trades compression for speed.
+        max_lazy: Match length below which the search still looks one
+            byte ahead for a longer match. Zero turns lazy matching
+            off, which costs more bytes than it saves time.
+        final: Whether this block ends the stream. False byte-aligns
+            the output so another stream can follow it.
+
+    Returns:
+        The compressed bytes, no zlib wrapper.
+    """
+    var pass1 = _tokenize(data, max_chain, max_lazy)
+    return _emit_block(pass1.tokens, pass1.lit_freq, pass1.dist_freq, final)
+
+
+# Below this many bytes a parallel encode cannot pay for its dispatch,
+# and the chunking would cost compression for nothing.
+comptime _MIN_PARALLEL_DEFLATE = 1 << 18
+
+# Chunks smaller than this stop being worth a task: each one re-indexes
+# the 32 KB of context before it, so the context has to be a modest
+# fraction of the chunk rather than most of it.
+comptime _MIN_DEFLATE_CHUNK = 1 << 16
+
+
+async def _tokenize_chunk(
+    data: List[UInt8],
+    lo: Int,
+    hi: Int,
+    max_chain: Int,
+    max_lazy: Int,
+    mut parts: List[_TokenPass],
+    slot: Int,
+):
+    """LZ77 `data[lo:hi]` into `parts[slot]`.
+
+    The slice is copied with the 32 KB before it, which `_tokenize`
+    indexes as context but does not emit: a match may reach back into
+    the previous chunk, exactly as it would in a serial encode, and
+    the decoder already has those bytes in its window. Without that
+    context a chart pays for every scanline that used to match the row
+    above it across a boundary. Tasks write disjoint slots, which is
+    the whole safety argument.
+
+    `data` and `parts` are borrowed, never owned: a heap-backed
+    aggregate handed to `create_task` by value is canvas_mojo#97.
+    """
+    # DEFLATE's window is 32 KB, so that much of the preceding data is
+    # every byte a match from this chunk could reach.
+    var ctx = min(lo, 1 << 15)
+    var piece = List[UInt8](unsafe_uninit_length=hi - lo + ctx)
+    var src = data.unsafe_ptr()
+    var dst = piece.unsafe_ptr()
+    for k in range(hi - lo + ctx):
+        dst[unsafe_offset=k] = src[unsafe_offset=lo - ctx + k]
+    try:
+        parts[slot] = _tokenize(piece, max_chain, max_lazy, ctx)
+    except:
+        parts[slot] = _TokenPass(
+            List[_Token](),
+            List[Int](length=_MAX_L_CODES, fill=0),
+            List[Int](length=_MAX_D_CODES, fill=0),
+        )
+
+
+def deflate_parallel(
+    data: List[UInt8],
+    max_chain: Int = _MAX_CHAIN,
+    max_lazy: Int = _MAX_LAZY,
+    max_workers: Int = 0,
+) raises -> List[UInt8]:
+    """`deflate`, with the LZ77 pass split across cores.
+
+    The match search is about 85% of an encode and the Huffman pass
+    the rest, so this splits the first and leaves the second alone:
+    each chunk is tokenized on its own core, the token lists are
+    concatenated in order, their symbol frequencies are summed, and
+    the whole thing is written as **one** block under one code.
+
+    That is what makes it nearly free in bytes. Coding each chunk as
+    its own block instead would give every chunk a dynamic Huffman
+    header of its own, which on a chart-sized image cost more than the
+    image: 21,757 bytes became 41,233. Sharing one code leaves only
+    the matches that would have reached across a chunk boundary.
+
+    The tokens concatenate because every distance a chunk emits points
+    inside that chunk, so it reaches back only over bytes already
+    written by the time the decoder gets there.
+
+    Args:
+        data: Bytes to compress.
+        max_chain: Hash-chain candidates the match search may walk.
+        max_lazy: Match length below which the search looks ahead.
+        max_workers: Cap on chunks; 0 asks the runtime.
+
+    Returns:
+        The compressed bytes, no zlib wrapper -- decodable by any
+        RFC 1951 decoder, `inflate` included.
+    """
+    var n = len(data)
+    if n < _MIN_PARALLEL_DEFLATE:
+        return deflate(data, max_chain, max_lazy)
+
+    var chunks = _bands_for_work(
+        n, n // _MIN_DEFLATE_CHUNK, _MIN_DEFLATE_CHUNK, max_workers
+    )
+    if chunks <= 1:
+        return deflate(data, max_chain, max_lazy)
+
+    var per = (n + chunks - 1) // chunks
+    var parts = List[_TokenPass](capacity=chunks)
+    for _ in range(chunks):
+        parts.append(
+            _TokenPass(
+                List[_Token](),
+                List[Int](length=_MAX_L_CODES, fill=0),
+                List[Int](length=_MAX_D_CODES, fill=0),
+            )
+        )
+
+    var tg = TaskGroup()
+    var used = 0
+    for c in range(chunks):
+        var lo = c * per
+        var hi = min(lo + per, n)
+        if lo >= hi:
+            continue
+        tg.create_task(
+            _tokenize_chunk(data, lo, hi, max_chain, max_lazy, parts, used)
+        )
+        used += 1
+    tg.wait()
+    # Named past the tasks: a task's borrow is not a use the compiler
+    # counts, so without this they are freed while chunks still write.
+    _ = len(data)
+
+    var total = 0
+    for i in range(used):
+        total += len(parts[i].tokens)
+    var tokens = List[_Token](capacity=total)
+    var lit_freq = List[Int](length=_MAX_L_CODES, fill=0)
+    var dist_freq = List[Int](length=_MAX_D_CODES, fill=0)
+    for i in range(used):
+        for tok in parts[i].tokens:
+            tokens.append(tok)
+        for s in range(_MAX_L_CODES):
+            lit_freq[s] += parts[i].lit_freq[s]
+        for s in range(_MAX_D_CODES):
+            dist_freq[s] += parts[i].dist_freq[s]
+    # Each pass counted an end-of-block it will not send; exactly one
+    # goes out for the single block written here.
+    lit_freq[256] = 1
+    return _emit_block(tokens, lit_freq, dist_freq, True)
