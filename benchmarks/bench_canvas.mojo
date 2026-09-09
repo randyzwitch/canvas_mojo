@@ -258,6 +258,21 @@ def _survey() raises -> List[_Row]:
         iters,
     )
 
+    # The same batch at a radius past the closed-form limit, which is
+    # where a supersampling caller's markers land (#340). Until the
+    # row-restricted polygon sweep this fell back to one call each and
+    # batching bought nothing at all.
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_circles_aa(canvas, marker_centers, 10.5, INK)
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "fill_circles_aa x2000 markers batched (r=10.5)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     iters = 200
     t0 = perf_counter_ns()
     for _ in range(iters):

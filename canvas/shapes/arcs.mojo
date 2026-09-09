@@ -26,7 +26,11 @@ from canvas.shapes.lines import (
     draw_polyline,
     draw_polyline_aa,
 )
-from canvas.shapes.polygon_fill import fill_polygon, _fill_polygon_aa_device
+from canvas.shapes.polygon_fill import (
+    fill_polygon,
+    _fill_polygon_aa_device,
+    _fill_polygon_aa_rows,
+)
 from canvas.workers import _bands_for
 from canvas.path import (
     fill_path_aa,
@@ -733,46 +737,17 @@ def _fill_arc_aa_rows(
 ):
     """`_fill_arc_aa_device` restricted to rows [row_lo, row_hi).
 
-    A wedge has no closed-form coverage the way a disk does, so this
-    is the same polygon sweep the single-wedge path runs, told which
-    rows to write. The area rasterizer pads its row range outward by
-    one below and two above, which would make two bands write the same
-    pixels; `clamp_lo`/`clamp_hi` bound it past that padding.
+    A wedge has no closed-form coverage the way a small disk does, so
+    this is the same polygon sweep the single-wedge path runs, told
+    which rows to write.
     """
     if radius <= 0.0:
         return
-    var points = _wedge_fpoints(cx, cy, radius, start_angle, end_angle)
-    var n = len(points)
-    if n < 3:
-        return
-    var min_x = points[0].x
-    var max_x = min_x
-    var min_y = points[0].y
-    var max_y = min_y
-    for i in range(1, n):
-        if points[i].x < min_x:
-            min_x = points[i].x
-        if points[i].x > max_x:
-            max_x = points[i].x
-        if points[i].y < min_y:
-            min_y = points[i].y
-        if points[i].y > max_y:
-            max_y = points[i].y
-    var edges = _EdgeTable(n)
-    for i in range(n):
-        var a = points[i]
-        var b = points[(i + 1) % n]
-        edges.add_edge(a.x, a.y, b.x, b.y)
-    _sweep_edges_aa(
+    _fill_polygon_aa_rows(
         canvas,
-        edges,
-        Int(floor(min_x)),
-        Int(floor(min_y)),
-        Int(ceil(max_x)),
-        Int(ceil(max_y)),
+        _wedge_fpoints(cx, cy, radius, start_angle, end_angle),
         color,
         FillRule.NONZERO,
-        4,
         row_lo,
         row_hi,
     )

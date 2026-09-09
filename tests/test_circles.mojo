@@ -570,3 +570,57 @@ def test_empty_batch_and_mismatched_colors() raises:
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+def test_batched_markers_past_the_closed_form_limit() raises:
+    """The radius cliff from #340. Above `_CLOSED_FORM_MAX_RADIUS` a
+    disk has no closed-form coverage, and the batch used to fall back
+    to one call per centre -- so a supersampling caller, whose markers
+    are large in device space precisely because of the supersample,
+    got nothing from batching. It now takes a row-restricted polygon
+    sweep instead, and must still agree with the sequential loop.
+    """
+    var pts = _scatter(700, 37, 53)
+    var ink = Color(220, 90, 40)
+    var radii: List[Float64] = [8.0, 10.5, 14.0, 25.0]
+    for ri in range(len(radii)):
+        var r = radii[ri]
+        var batched = Canvas(280, 190, BG)
+        fill_circles_aa(batched, pts, r, ink)
+        var one_by_one = Canvas(280, 190, BG)
+        for i in range(len(pts)):
+            fill_circle_aa(one_by_one, pts[i].x, pts[i].y, r, ink)
+        _assert_same_canvas(batched, one_by_one, String("radius ", r))
+
+
+def test_large_translucent_markers_keep_submission_order() raises:
+    """Order still decides the result on the polygon route, and two
+    bands must not both write a row -- the row clamp is what prevents
+    a marker straddling a boundary being composited twice."""
+    var pts = List[FPoint]()
+    for i in range(300):
+        pts.append(
+            FPoint(40.0 + Float64(i % 15) * 3.1, 30.0 + Float64(i // 15) * 3.7)
+        )
+    var ink = Color(30, 140, 220, 70)
+    var batched = Canvas(200, 160, BG)
+    fill_circles_aa(batched, pts, 11.0, ink)
+    var one_by_one = Canvas(200, 160, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(one_by_one, pts[i].x, pts[i].y, 11.0, ink)
+    _assert_same_canvas(batched, one_by_one, "large translucent pile")
+
+
+def test_large_batched_markers_at_every_worker_count() raises:
+    """More bands means more boundaries a large marker straddles."""
+    var pts = _scatter(400, 41, 59)
+    var ink = Color(210, 100, 60, 150)
+    var reference = Canvas(240, 160, BG)
+    for i in range(len(pts)):
+        fill_circle_aa(reference, pts[i].x, pts[i].y, 12.0, ink)
+    var counts: List[Int] = [1, 2, 3, 8, 64]
+    for wi in range(len(counts)):
+        var c = Canvas(240, 160, BG)
+        c.set_max_workers(counts[wi])
+        fill_circles_aa(c, pts, 12.0, ink)
+        _assert_same_canvas(c, reference, String("workers=", counts[wi]))

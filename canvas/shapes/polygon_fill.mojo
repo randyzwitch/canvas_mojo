@@ -356,3 +356,61 @@ def _fill_polygon_aa_device(
         fill_rule,
         supersample,
     )
+
+
+def _fill_polygon_aa_rows(
+    mut canvas: Canvas,
+    points: List[FPoint],
+    color: Color,
+    fill_rule: FillRule,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_fill_polygon_aa_device` restricted to rows [row_lo, row_hi).
+
+    The row-restricted entry point a batch of shapes needs when the
+    shape has no closed-form coverage: each band sweeps the same
+    polygon but writes only its own rows, so many shapes can be drawn
+    across cores without any of them being banded internally.
+
+    The area rasterizer pads its row range outward by one row below
+    and two above, so that a pixel an edge only partly covers is still
+    swept. Clamping the bounding box alone would therefore leave two
+    bands overlapping by three rows and compositing a translucent
+    shape twice; `clamp_lo`/`clamp_hi` bound the rows written past
+    that padding.
+    """
+    var n = len(points)
+    if n < 3:
+        return
+    var min_x = points[0].x
+    var max_x = min_x
+    var min_y = points[0].y
+    var max_y = min_y
+    for i in range(1, n):
+        if points[i].x < min_x:
+            min_x = points[i].x
+        if points[i].x > max_x:
+            max_x = points[i].x
+        if points[i].y < min_y:
+            min_y = points[i].y
+        if points[i].y > max_y:
+            max_y = points[i].y
+    var edges = _EdgeTable(n)
+    for i in range(n):
+        var a = points[i]
+        var b = points[(i + 1) % n]
+        edges.add_edge(a.x, a.y, b.x, b.y)
+    _sweep_edges_aa(
+        canvas,
+        edges,
+        Int(floor(min_x)),
+        Int(floor(min_y)),
+        Int(ceil(max_x)),
+        Int(ceil(max_y)),
+        color,
+        fill_rule,
+        4,
+        row_lo,
+        row_hi,
+    )
