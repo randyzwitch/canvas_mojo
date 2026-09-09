@@ -43,6 +43,7 @@ from canvas.io.deflate import (
     _MAX_LAZY as _DEFLATE_MAX_LAZY,
     deflate,
     inflate,
+    deflate_parallel,
 )
 
 
@@ -436,9 +437,13 @@ def write_png(
     var compressed: List[UInt8]
     if stride == 0:
         # Both encodings in full rather than a sample, and the smaller
-        # one kept.
-        var sub_out = deflate(sub, max_chain, max_lazy)
-        var raw_out = deflate(raw, max_chain, max_lazy)
+        # one kept. Two whole-image encodes is the one place in this
+        # writer where the match search dominates enough to pay for
+        # splitting it across cores; the single-encode paths below
+        # spend more of their time building buffers than compressing,
+        # and parallelising them there cost more than it saved.
+        var sub_out = deflate_parallel(sub, max_chain, max_lazy)
+        var raw_out = deflate_parallel(raw, max_chain, max_lazy)
         filtered = len(sub_out) < len(raw_out)
         compressed = sub_out^ if filtered else raw_out^
     else:
