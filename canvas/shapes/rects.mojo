@@ -172,7 +172,7 @@ def _fill_rect_device(
         return
 
     var region = canvas.effective_fill_rect(x, y, width, height)
-    canvas._fill_region(region[0], region[1], region[2], region[3], color)
+    canvas._fill_region_top(region[0], region[1], region[2], region[3], color)
 
 
 def _fill_rect_source[

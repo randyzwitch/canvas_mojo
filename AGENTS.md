@@ -166,6 +166,13 @@ resolves.
   (16 MB at 16.5 GB/s) and the same bands are worth 2.2x to 3.7x. So a
   pure-store pass should switch on bytes against the slice size, not on
   a work count -- `_MIN_PARALLEL_CLEAR` in buffer.mojo.
+- The other half of that rule: a pass that *reads* each pixel and does
+  arithmetic on it is ALU-bound, not memory-bound, and bands regardless
+  of size. The multiply span over 600x400 is 199 us serial and 60 us
+  across 32 bands (3.3x) on a buffer far inside one slice, where a
+  store-only pass of the same size would have lost. So classify by what
+  the pass does per pixel, not by how many bytes it touches --
+  `Canvas._fill_region_top` splits on exactly that test.
 
 ## Measuring performance
 

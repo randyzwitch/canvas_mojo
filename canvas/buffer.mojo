@@ -27,7 +27,7 @@ from canvas.color import (
 )
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
-from canvas.workers import _worker_limit
+from canvas.workers import _bands_for, _worker_limit
 from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
@@ -232,6 +232,15 @@ def _clear_packed(
             continue
         tg.create_task(_store_packed_span_async(pixels, start, n, packed))
     tg.wait()
+
+
+async def _fill_region_band_async(
+    mut canvas: Canvas, rx: Int, ry: Int, rw: Int, rh: Int, color: Color
+):
+    """One band of rows of `Canvas._fill_region_top`. Bands write
+    disjoint rows and read nothing the others write.
+    """
+    canvas._fill_region(rx, ry, rw, rh, color)
 
 
 def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
@@ -1223,7 +1232,56 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 self._max_workers,
             )
             return
-        self._fill_region(region[0], region[1], region[2], region[3], color)
+        self._fill_region_top(region[0], region[1], region[2], region[3], color)
+
+    def _fill_region_top(
+        mut self, rx: Int, ry: Int, rw: Int, rh: Int, color: Color
+    ):
+        """`_fill_region` for a call that is not already inside a band
+        task -- `Canvas.fill` and `canvas.shapes.rects.fill_rect` --
+        split across rows when the work is arithmetic rather than
+        stores.
+
+        The distinction matters and is not the usual one. An opaque
+        source-over fill is one store per pixel with no reads, so it is
+        limited by memory rather than by the core, and below one L3
+        slice bands make it *slower* (see `_clear_packed`). Every other
+        case -- another blend mode, a translucent color, an active clip
+        mask -- reads each destination pixel and does per-pixel
+        arithmetic on it. That is ALU-bound and scales: the multiply
+        span measured 199 us serial and 60 us across bands over a
+        600x400 rectangle, and the same kernel is what `#350` had
+        priced against a floor 6.4x too cheap to notice.
+
+        Only the three top-level callers reach this. `aa_area`'s span
+        writer keeps calling `_fill_region` directly, since it already
+        runs inside a band of its own.
+        """
+        if rw <= 0 or rh <= 0:
+            return
+        var stores_only = (
+            self._clip_mask_count == 0
+            and self._blend.is_source_over()
+            and (color.a == 255 or color.a == 0)
+        )
+        var bands = 1
+        if not stores_only:
+            bands = _bands_for(rw * rh, rh, self._max_workers)
+        if bands == 1:
+            self._fill_region(rx, ry, rw, rh, color)
+            return
+
+        var per_band = (rh + bands - 1) // bands
+        var tg = TaskGroup()
+        for b in range(bands):
+            var band_y = ry + b * per_band
+            var band_h = min(per_band, ry + rh - band_y)
+            if band_h <= 0:
+                continue
+            tg.create_task(
+                _fill_region_band_async(self, rx, band_y, rw, band_h, color)
+            )
+        tg.wait()
 
     def _fill_region(
         mut self, rx: Int, ry: Int, rw: Int, rh: Int, color: Color
