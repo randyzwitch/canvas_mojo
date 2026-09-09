@@ -185,13 +185,16 @@ def test_fill_polygon_aa_matches_the_reference_sample_by_sample() raises:
     #
     # A shape with slanted and near-vertical edges, deliberately at
     # fractional positions, so crossings land between sub-samples and
-    # occasionally on one.
+    # occasionally on one. It is deliberately self-intersecting: a
+    # simple polygon takes the exact-area rasterizer instead, since
+    # even-odd and nonzero agree on it, and would not exercise the
+    # sampled sweep this test exists to pin.
     var poly: List[Point] = [
         Point(3, 2),
-        Point(17, 5),
         Point(19, 14),
-        Point(11, 18),
         Point(6, 11),
+        Point(17, 5),
+        Point(11, 18),
     ]
     var c = Canvas(24, 22, BG)
     fill_polygon_aa(c, poly, FG)
@@ -259,18 +262,23 @@ def test_fill_polygon_aa_zero_coverage_pixel_inside_bounding_box_is_untouched() 
 
 
 def test_fill_polygon_aa_partial_coverage_matches_hand_computed_values() raises:
-    # Hand-summed 4x4 sub-sample grids, white-on-black so the gray
-    # value equals the coverage fraction exactly (round(n/16 * 255)):
-    # pixel (10,10) straddles the hypotenuse at 6/16 -> alpha 96, and
-    # (0,10) straddles the left edge at 8/16 -> alpha 128.
+    # Exact areas, white-on-black so the gray value equals the coverage
+    # fraction. A pixel covers [x-0.5, x+0.5] x [y-0.5, y+0.5], so for
+    # the right triangle below the hypotenuse x+y=20 cuts pixel (10,10)
+    # -- which spans 19 <= x+y <= 21 -- exactly in half, and the left
+    # edge x=0 cuts (0,10) exactly in half. Both are 128.
+    #
+    # The hypotenuse pixel read 96 while even-odd was rasterized by
+    # sampling: 6 of 16 sub-samples, the grid's approximation of the
+    # half it actually covers.
     var tri: List[Point] = [Point(0, 0), Point(20, 0), Point(0, 20)]
     var c = Canvas(21, 21, BG)
     fill_polygon_aa(c, tri, FG)
 
     var hyp = c.get_pixel(10, 10)
-    assert_equal(hyp.r, 96)
-    assert_equal(hyp.g, 96)
-    assert_equal(hyp.b, 96)
+    assert_equal(hyp.r, 128)
+    assert_equal(hyp.g, 128)
+    assert_equal(hyp.b, 128)
 
     var edge = c.get_pixel(0, 10)
     assert_equal(edge.r, 128)

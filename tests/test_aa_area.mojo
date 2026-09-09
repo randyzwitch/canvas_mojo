@@ -16,6 +16,7 @@ every nonzero fill half a pixel off; the expectations below are the
 ones that catch that.
 """
 
+from std.math import cos, sin
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.aa_crossing import _EdgeTable
@@ -115,12 +116,11 @@ def test_shallow_edge_has_more_than_seventeen_levels() raises:
         previous = a
 
 
-def test_even_odd_still_samples() raises:
-    # The same half-pixel triangle under EVEN_ODD goes through the
-    # sweep, whose coverage is a count of 16 samples: the alpha is a
-    # multiple of 255/16 and, with the samples that fall on and beside
-    # a diagonal, not the exact 128 -- the two rules are different
-    # rasterizers.
+def test_even_odd_takes_the_area_path_when_the_rules_agree() raises:
+    # The same half-pixel triangle under EVEN_ODD. It does not overlap
+    # itself, so the two rules select the same region and the exact
+    # area rasterizer answers for both -- the diagonal halves the
+    # pixel, so the alpha is 128 and not a multiple of 255/16.
     var c = Canvas(4, 4, BG)
     var p = Path()
     p.move_to(0.5, 0.5)
@@ -128,10 +128,36 @@ def test_even_odd_still_samples() raises:
     p.line_to(0.5, 1.5)
     p.close()
     fill_path_aa(c, p, INK, FillRule.EVEN_ODD)
-    var a = _alpha_of(c, 1, 1)
-    var sixteenths = Int(Float64(a) / 255.0 * 16.0 + 0.5)
-    _assert_near(a, Int(Float64(sixteenths) / 16.0 * 255.0 + 0.5), 1, "sampled")
-    assert_true(a != 128 and a > 0, "sampled, not exact: " + String(a))
+    assert_equal(_alpha_of(c, 1, 1), 128)
+
+
+def test_even_odd_still_samples_when_the_rules_differ() raises:
+    # A {5/2} star polygon winds its center twice, so even-odd (hollow)
+    # and nonzero (filled) genuinely disagree and the area rasterizer
+    # cannot answer for even-odd. The center must read as background,
+    # and the edge coverage must come back on the sampler's grid of
+    # sixteenths.
+    var c = Canvas(120, 120, BG)
+    var p = Path()
+    for i in range(5):
+        var a = (
+            6.283185307179586 * Float64((i * 2) % 5) / 5.0 - 1.5707963267948966
+        )
+        var x = 60.0 + 50.0 * cos(a)
+        var y = 60.0 + 50.0 * sin(a)
+        if i == 0:
+            p.move_to(x, y)
+        else:
+            p.line_to(x, y)
+    p.close()
+    fill_path_aa(c, p, INK, FillRule.EVEN_ODD)
+    assert_equal(_alpha_of(c, 60, 60), 0)
+
+    var solid = Canvas(120, 120, BG)
+    fill_path_aa(solid, p, INK, FillRule.NONZERO)
+    assert_true(
+        _alpha_of(solid, 60, 60) > 250, "nonzero fills the star's center"
+    )
 
 
 def test_nonzero_union_and_cancellation() raises:
