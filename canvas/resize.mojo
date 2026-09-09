@@ -182,6 +182,14 @@ def _downsample_band(
             source, pixels, first_row, last_row, out_width
         )
         return
+    if factor == 3:
+        # The supersample ratio a chart library reaches for by default
+        # (canvas_mojo#364), and the reason this kernel no longer
+        # assumes the block size is a power of two.
+        _downsample_band_fixed[3](
+            source, pixels, first_row, last_row, out_width
+        )
+        return
     if factor == 4:
         _downsample_band_fixed[4](
             source, pixels, first_row, last_row, out_width
@@ -293,6 +301,11 @@ def _downsample_band_fixed[
     """
     comptime N = factor * factor
     comptime HALF = N // 2
+    # Only the factor-2 vector group below uses a shift; the per-block
+    # path divides by N, which the compiler turns into the same shift
+    # when N is a power of two and into a multiply otherwise. That is
+    # what lets this serve factor 3, whose block of nine is not a
+    # shift at all.
     comptime SHIFT = 2 if factor == 2 else 4
     var sp = source.pixels.unsafe_ptr()
     var op = pixels.unsafe_ptr()
@@ -438,16 +451,12 @@ def _downsample_band_fixed[
                             opaque = False
                         i += BYTES_PER_PIXEL
                 if opaque:
-                    op[unsafe_offset=out_idx] = UInt8((r_sum + HALF) >> SHIFT)
-                    op[unsafe_offset=out_idx + 1] = UInt8(
-                        (g_sum + HALF) >> SHIFT
-                    )
-                    op[unsafe_offset=out_idx + 2] = UInt8(
-                        (b_sum + HALF) >> SHIFT
-                    )
+                    op[unsafe_offset=out_idx] = UInt8((r_sum + HALF) // N)
+                    op[unsafe_offset=out_idx + 1] = UInt8((g_sum + HALF) // N)
+                    op[unsafe_offset=out_idx + 2] = UInt8((b_sum + HALF) // N)
                     op[unsafe_offset=out_idx + 3] = 255
                 else:
-                    var alpha = (a_sum + HALF) >> SHIFT
+                    var alpha = (a_sum + HALF) // N
                     # A block faint enough that the output alpha rounds
                     # to zero is canonical transparent black, so
                     # nothing divides by an alpha sum that rounded away.
