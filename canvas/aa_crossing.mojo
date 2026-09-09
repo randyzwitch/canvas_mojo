@@ -498,6 +498,98 @@ def _accumulate_row_coverage(
                 g = upper + 1
 
 
+def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
+    """Whether `FillRule.EVEN_ODD` and `FillRule.NONZERO` select the
+    same region for `edges`, so the cheaper and exact area rasterizer
+    can serve an even-odd caller.
+
+    A closed path's crossing count at a point is congruent to its
+    winding number mod 2, so "odd" and "non-zero" are the same
+    predicate wherever the winding stays in {-1, 0, 1}. This walks each
+    scanline's crossings in x order, prefix-sums the edge directions,
+    and reports whether the running winding ever reaches 2 in
+    magnitude. Every path that does not overlap itself passes.
+
+    It is a decision taken before anything is written, which is what
+    lets the mask writer and the direct fill act on it without having
+    to retract pixels, and keeps the two agreeing on where an edge
+    lands.
+
+    Rows admit edges through `sort_by_top`'s order and drop them as
+    they end, so each row costs its own crossings rather than a pass
+    over the whole table -- a 39-curve path flattens to thousands of
+    edges and only a handful cross any given row. Scanning every edge
+    per row instead made those paths 3.7x slower than the sampled
+    sweep this gate exists to avoid.
+
+    Sampled at each row's center. A self-overlap that opens and closes
+    between two scanlines is not seen, which is a sub-pixel difference
+    against a sampler whose own grid is a sixteenth of a pixel.
+    """
+    var n = len(edges.y_lo)
+    # Two crossings cannot put a winding past 1, and a row can only
+    # have as many crossings as the table has edges.
+    if n < 3:
+        return True
+
+    edges.sort_by_top()
+    var active = List[Int]()
+    var alen = 0
+    var xs = List[Float64]()
+    var dirs = List[Int]()
+    var admitted = 0
+
+    for row in range(min_y, max_y + 1):
+        var sy = Float64(row) + 0.5
+        while admitted < n and edges.order_row[admitted] <= row:
+            if alen < len(active):
+                active[alen] = edges.order[admitted]
+            else:
+                active.append(edges.order[admitted])
+            alen += 1
+            admitted += 1
+
+        # One pass over the active set: drop the edges that have ended,
+        # compact the rest back into place, and collect this row's
+        # crossings from those that span it.
+        xs.clear()
+        dirs.clear()
+        var kept = 0
+        for k in range(alen):
+            var e = active[k]
+            if sy >= edges.y_hi[e]:
+                continue
+            active[kept] = e
+            kept += 1
+            if sy < edges.y_lo[e]:
+                continue
+            var t = (sy - edges.y0[e]) / edges.dy[e]
+            xs.append(edges.x0[e] + t * edges.dx[e])
+            dirs.append(edges.direction[e])
+        alen = kept
+
+        if len(xs) < 3:
+            continue
+        # Insertion sort: a row holds a handful of crossings even for a
+        # path with thousands of edges.
+        for i in range(1, len(xs)):
+            var vx = xs[i]
+            var vd = dirs[i]
+            var j = i - 1
+            while j >= 0 and xs[j] > vx:
+                xs[j + 1] = xs[j]
+                dirs[j + 1] = dirs[j]
+                j -= 1
+            xs[j + 1] = vx
+            dirs[j + 1] = vd
+        var winding = 0
+        for i in range(len(dirs)):
+            winding += dirs[i]
+            if winding > 1 or winding < -1:
+                return False
+    return True
+
+
 def _sweep_edges_aa(
     mut canvas: Canvas,
     mut edges: _EdgeTable,
@@ -514,11 +606,14 @@ def _sweep_edges_aa(
     """Rasterize `edges` into `canvas` with anti-aliased coverage, by
     the rasterizer the fill rule calls for: `FillRule.NONZERO` goes to
     `canvas.aa_area` for each pixel's exact covered area (`supersample`
-    unused), `EVEN_ODD` to `_sweep_edges_sampled_aa`. Strokes call the
-    sampled sweep directly, whatever their rule -- see `aa_area`'s
-    docstring for why.
+    unused), and `EVEN_ODD` there too when `_rules_agree` finds the two
+    rules select the same region, which is every path that does not
+    overlap itself. A path really wound twice somewhere falls to
+    `_sweep_edges_sampled_aa`, the only rasterizer here that implements
+    the even-odd rule as such. Strokes call the sampled sweep directly,
+    whatever their rule -- see `aa_area`'s docstring for why.
     """
-    if fill_rule == FillRule.NONZERO:
+    if fill_rule == FillRule.NONZERO or _rules_agree(edges, min_y, max_y):
         _area_edges_aa(
             canvas,
             edges,
@@ -782,7 +877,9 @@ def _sweep_edges_to_mask(
     `_sweep_edges_aa` is, with the same single-band-only top-sort:
     bands write disjoint rows of `mask` and only read `edges`.
     """
-    if fill_rule == FillRule.NONZERO:
+    # The same gate `_sweep_edges_aa` uses, so a clip boundary and a
+    # fill boundary of the same path still land in the same places.
+    if fill_rule == FillRule.NONZERO or _rules_agree(edges, min_y, max_y):
         _area_edges_to_mask(
             mask,
             mask_width,
