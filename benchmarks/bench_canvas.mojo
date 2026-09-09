@@ -174,9 +174,13 @@ def _survey() raises -> List[_Row]:
     sink += Int(c0.get_pixel(0, 0).r)
     var iters = 200
     var t0 = perf_counter_ns()
-    for _ in range(iters):
+    for i in range(iters):
         var c = Canvas(W, H, WHITE)
-        sink += Int(c.get_pixel(0, 0).r)
+        # Read at an index the optimizer cannot fold: reading pixel 0 of
+        # a canvas whose fill it can follow lets it drop every other
+        # store, which reported this row at 0.3 us. The index depends on
+        # the loop counter, so the whole buffer has to be written.
+        sink += Int(c.get_pixel(i % W, i % H).r)
     _report(
         rows, "Canvas(800x600) construct+fill", perf_counter_ns() - t0, iters
     )
@@ -188,6 +192,24 @@ def _survey() raises -> List[_Row]:
         canvas.fill(INK)
         sink += Int(canvas.get_pixel(0, 0).r)
     _report(rows, "Canvas.fill opaque", perf_counter_ns() - t0, iters)
+
+    # A supersampling consumer allocates a scratch canvas several times
+    # the chart's size on every render and never reuses it, so what the
+    # constructor costs at that size is the cost it actually pays. 2400
+    # x 1800 is dataviz_mojo's 800x600 chart at its default 3x (#364);
+    # it is also past the point where the clear stops fitting in one L3
+    # slice, which is where the constructor bands the fill.
+    iters = 20
+    t0 = perf_counter_ns()
+    for i in range(iters):
+        var scratch = Canvas(2400, 1800, WHITE)
+        sink += Int(scratch.get_pixel(i % 2400, i % 1800).r)
+    _report(
+        rows,
+        "Canvas(2400x1800) allocate and clear",
+        perf_counter_ns() - t0,
+        iters,
+    )
 
     iters = 200
     t0 = perf_counter_ns()
@@ -254,6 +276,21 @@ def _survey() raises -> List[_Row]:
     _report(
         rows,
         "fill_circles_aa x2000 markers batched (r=3.5)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    # The same batch at a radius past the closed-form limit, which is
+    # where a supersampling caller's markers land (#340). Until the
+    # row-restricted polygon sweep this fell back to one call each and
+    # batching bought nothing at all.
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        fill_circles_aa(canvas, marker_centers, 10.5, INK)
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "fill_circles_aa x2000 markers batched (r=10.5)",
         perf_counter_ns() - t0,
         iters,
     )

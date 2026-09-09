@@ -25,7 +25,10 @@ from canvas.path import (
 )
 from canvas.aa_crossing import _CoverageAlpha
 from canvas.shapes.arcs import _ellipse_fpoints
-from canvas.shapes.polygon_fill import _fill_polygon_aa_device
+from canvas.shapes.polygon_fill import (
+    _fill_polygon_aa_device,
+    _fill_polygon_aa_rows,
+)
 from canvas.workers import _bands_for
 
 
@@ -489,10 +492,10 @@ def _fill_circle_aa_rows(
     clamped first row, so the unit-space walk starts in the right
     place rather than being stepped into it.
 
-    Only the closed-form route is here. A radius past
-    `_CLOSED_FORM_MAX_RADIUS` goes through the polygon rasterizer,
-    which bands internally and has no row-restricted entry point, so
-    `fill_circles_aa` keeps those on the per-marker path.
+    Only the closed form is here. A radius past
+    `_CLOSED_FORM_MAX_RADIUS` has none, and `_circles_band` sends
+    those to `_fill_polygon_aa_rows` instead -- decided once for the
+    batch, since every marker shares the radius.
     """
     var r2 = radius * radius
     var inv_r = 1.0 / radius
@@ -557,6 +560,9 @@ def _circles_band(
     need no ordering between them.
     """
     var uniform = len(colors) == 0
+    # The radius is shared by the batch, so which coverage route to
+    # take is decided once rather than per marker.
+    var closed_form = radius <= _CLOSED_FORM_MAX_RADIUS
     for i in range(len(centers)):
         ref p = centers[i]
         # Cheap reject, before the fill re-derives the same bounds.
@@ -564,15 +570,18 @@ def _circles_band(
             continue
         if p.y - radius - 1.0 >= Float64(row_hi):
             continue
-        _fill_circle_aa_rows(
-            canvas,
-            p.x,
-            p.y,
-            radius,
-            color if uniform else colors[i],
-            row_lo,
-            row_hi,
-        )
+        var c = color if uniform else colors[i]
+        if closed_form:
+            _fill_circle_aa_rows(canvas, p.x, p.y, radius, c, row_lo, row_hi)
+        else:
+            _fill_polygon_aa_rows(
+                canvas,
+                _ellipse_fpoints(p.x, p.y, radius, radius),
+                c,
+                FillRule.NONZERO,
+                row_lo,
+                row_hi,
+            )
 
 
 async def _circles_band_async(
@@ -645,13 +654,6 @@ def _fill_circles_aa_impl(
             canvas._set_transform(saved)
             raise e
         canvas._set_transform(saved)
-        return
-
-    if radius > _CLOSED_FORM_MAX_RADIUS:
-        # The polygon route has no row-restricted entry point and
-        # already bands each disk across cores; batching would take
-        # that away rather than add to it.
-        _fill_circles_sequential(canvas, centers, colors, radius, color)
         return
 
     # Roughly the covered area, the figure `_bands_for` weighs against

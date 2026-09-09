@@ -523,3 +523,60 @@ def test_batched_ellipses_at_every_worker_count() raises:
         c.set_max_workers(counts[wi])
         fill_ellipses_aa(c, pts, 4.0, 3.0, ink)
         _same_canvas(c, reference, String("workers=", counts[wi]))
+
+
+def test_batched_ellipses_past_the_limit_now_batch() raises:
+    """The radius cliff from #340, on the ellipse route. Radii above
+    `_CLOSED_FORM_MAX_RADIUS` used to fall back to one call per
+    centre; they now take a row-restricted polygon sweep and must
+    still agree with the sequential loop byte for byte.
+    """
+    var pts = _scatter(500, 37, 53)
+    var ink = Color(220, 90, 40)
+    var sizes: List[List[Float64]] = [
+        [9.0, 6.0],
+        [12.0, 8.0],
+        [20.0, 4.0],
+        [5.0, 18.0],
+    ]
+    for si in range(len(sizes)):
+        var rx = sizes[si][0]
+        var ry = sizes[si][1]
+        var batched = Canvas(280, 190, Color(0, 0, 0))
+        fill_ellipses_aa(batched, pts, rx, ry, ink)
+        var one_by_one = Canvas(280, 190, Color(0, 0, 0))
+        for i in range(len(pts)):
+            fill_ellipse_aa(one_by_one, pts[i].x, pts[i].y, rx, ry, ink)
+        _same_canvas(batched, one_by_one, String(rx, "x", ry))
+
+
+def test_large_translucent_ellipses_keep_submission_order() raises:
+    """Order still decides the result on the polygon route, and the
+    row clamp is what stops two bands compositing a straddling marker
+    twice."""
+    var pts = List[FPoint]()
+    for i in range(300):
+        pts.append(
+            FPoint(40.0 + Float64(i % 15) * 3.1, 30.0 + Float64(i // 15) * 3.7)
+        )
+    var ink = Color(30, 140, 220, 70)
+    var batched = Canvas(200, 160, Color(0, 0, 0))
+    fill_ellipses_aa(batched, pts, 13.0, 9.0, ink)
+    var one_by_one = Canvas(200, 160, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_ellipse_aa(one_by_one, pts[i].x, pts[i].y, 13.0, 9.0, ink)
+    _same_canvas(batched, one_by_one, "large translucent pile")
+
+
+def test_large_batched_ellipses_at_every_worker_count() raises:
+    var pts = _scatter(400, 41, 59)
+    var ink = Color(210, 100, 60, 150)
+    var reference = Canvas(240, 160, Color(0, 0, 0))
+    for i in range(len(pts)):
+        fill_ellipse_aa(reference, pts[i].x, pts[i].y, 14.0, 9.0, ink)
+    var counts: List[Int] = [1, 2, 3, 8, 64]
+    for wi in range(len(counts)):
+        var c = Canvas(240, 160, Color(0, 0, 0))
+        c.set_max_workers(counts[wi])
+        fill_ellipses_aa(c, pts, 14.0, 9.0, ink)
+        _same_canvas(c, reference, String("workers=", counts[wi]))

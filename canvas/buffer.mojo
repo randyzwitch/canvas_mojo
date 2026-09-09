@@ -14,6 +14,7 @@
 comptime BYTES_PER_PIXEL = 4
 
 from std.sys import size_of
+from std.runtime.asyncrt import TaskGroup
 
 from canvas.blend import BlendMode, _blend_pixel, _blend_span
 from canvas.color import (
@@ -26,6 +27,7 @@ from canvas.color import (
 )
 from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
+from canvas.workers import _worker_limit
 from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
@@ -112,6 +114,124 @@ def _pack_rgba(color: Color) -> UInt32:
         | (UInt32(color.b) << 16)
         | (UInt32(color.a) << 24)
     )
+
+
+# A whole-buffer solid fill is one store per pixel and no reads, so its
+# only limit is how fast stores retire -- and that limit changes shape
+# at one L3 slice.
+#
+# This machine's 128 MB of L3 is eight separate 16 MB slices, one per
+# CCX (see benchmarks/roofline.md). A buffer inside one slice is
+# written at L3 speed by the single core that owns it -- 8 MB clears at
+# 74 GB/s -- and splitting it across bands only moves those lines to
+# other CCXs' slices over Infinity Fabric, which measured *slower* than
+# staying serial at every size below the slice. Past the slice the
+# writes go to DRAM either way, one core cannot keep enough of them in
+# flight to fill the memory channels (16 MB clears at 16.5 GB/s), and
+# bands are worth 2.2x to 3.7x.
+#
+# So the threshold is one L3 slice, not a work count. Both constants
+# are properties of this CPU; another machine's slice size would move
+# them, and the sweep that produced them is in the #364 PR.
+comptime _L3_SLICE_BYTES = 16 << 20
+comptime _MIN_PARALLEL_CLEAR = _L3_SLICE_BYTES
+
+# Half a slice per band, so each band's share still fits the slice of
+# whichever CCX runs it with room to spare. Two bands measured fastest
+# at 16 MB (3.66x) and the count matters far less than the threshold
+# does -- every count from 2 to 16 beat serial above the slice.
+comptime _CLEAR_BYTES_PER_BAND = _L3_SLICE_BYTES // 2
+
+# A cap for buffers large enough that the ratio would keep growing
+# after the memory channels are already saturated.
+comptime _MAX_CLEAR_BANDS = 16
+
+
+def _store_packed_span(
+    mut pixels: List[UInt8], start: Int, count: Int, packed: UInt32
+):
+    """Write `packed` to `count` consecutive pixels from pixel index
+    `start`, eight at a time through vector stores and one at a time for
+    the remainder. `Canvas._store_packed` is the method form of this,
+    used where the fill is a row of an active drawing operation; this
+    free function is what the band tasks below call, since they hold the
+    buffer rather than the canvas.
+    """
+    comptime LANES = 8
+    var p32 = pixels.unsafe_ptr().unsafe_bitcast[UInt32]()
+    var vec = SIMD[DType.uint32, LANES](packed)
+    var idx = start
+    var end = start + count
+    while idx + LANES <= end:
+        p32.unsafe_offset(idx).unsafe_store(vec)
+        idx += LANES
+    while idx < end:
+        p32[unsafe_offset=idx] = packed
+        idx += 1
+
+
+async def _store_packed_span_async(
+    mut pixels: List[UInt8], start: Int, count: Int, packed: UInt32
+):
+    _store_packed_span(pixels, start, count, packed)
+
+
+def _clear_bands(count: Int, cap: Int) -> Int:
+    """How many bands to split a `count`-pixel solid fill over: 1 while
+    the buffer fits in one L3 slice, where a band would cost more than
+    it saves, otherwise one band per `_CLEAR_BYTES_PER_BAND` bounded by
+    `_MAX_CLEAR_BANDS`, the caller's worker cap and the runtime's count.
+
+    Args:
+        count: Pixels to fill.
+        cap: The caller's worker cap, 0 or less for no cap of its own.
+
+    Returns:
+        The band count, at least 1.
+    """
+    var total = count * BYTES_PER_PIXEL
+    if total < _MIN_PARALLEL_CLEAR:
+        return 1
+    # The floor of two applies before the cap, not after: past the
+    # threshold even the smallest split is worth making, but a caller
+    # that asked for one worker gets one band.
+    var bands = min(total // _CLEAR_BYTES_PER_BAND, _MAX_CLEAR_BANDS)
+    return max(min(max(bands, 2), _worker_limit(cap)), 1)
+
+
+def _clear_packed(
+    mut pixels: List[UInt8], count: Int, packed: UInt32, cap: Int
+):
+    """Fill `count` pixels from index 0 with `packed`, across bands when
+    the buffer is large enough to be worth it.
+
+    Only whole-buffer fills reach this -- `Canvas.__init__`'s initial
+    color and an unclipped opaque `Canvas.fill`. A per-row fill inside a
+    drawing operation calls `Canvas._store_packed` directly, since those
+    already run inside band tasks of their own and nesting task groups
+    would oversubscribe the runtime.
+
+    Args:
+        pixels: The buffer to fill, at least `count` pixels long.
+        count: Pixels to fill.
+        packed: The packed color, from `_pack_rgba`.
+        cap: The caller's worker cap, from `Canvas.max_workers`.
+    """
+    if count <= 0:
+        return
+    var bands = _clear_bands(count, cap)
+    if bands == 1:
+        _store_packed_span(pixels, 0, count, packed)
+        return
+    var per = (count + bands - 1) // bands
+    var tg = TaskGroup()
+    for b in range(bands):
+        var start = b * per
+        var n = min(per, count - start)
+        if n <= 0:
+            continue
+        tg.create_task(_store_packed_span_async(pixels, start, n, packed))
+    tg.wait()
 
 
 def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
@@ -213,7 +333,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # bytes, so the 32-bit stores are aligned; the vector stores
         # make no alignment assumption.
         var total = width * height * BYTES_PER_PIXEL
-        self.pixels = List[UInt8](length=total, fill=0)
+        # The fill below writes every channel of every pixel, including
+        # its scalar tail, before any of them can be read, so a zeroing
+        # allocation here would be a second full pass over the buffer
+        # that changes nothing. It runs on a local rather than on
+        # `self.pixels` because the band tasks borrow the buffer and
+        # `self` is not a whole value yet -- the fields below are unset.
+        var buf = List[UInt8](unsafe_uninit_length=total)
+        _clear_packed(buf, width * height, _pack_rgba(fill), 0)
+        self.pixels = buf^
         self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
@@ -228,10 +356,6 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._max_workers = 0
         self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
-        if total == 0:
-            return
-
-        self._store_packed(0, width * height, _pack_rgba(fill))
 
     def __init__(
         out self, width: Int, height: Int, var pixels: List[UInt8]
@@ -775,22 +899,16 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
     def _store_packed(mut self, start: Int, count: Int, packed: UInt32):
         """Write `packed` (see `_pack_rgba`) to `count` consecutive
-        pixels from pixel index `start`, eight at a time through vector
-        stores and one at a time for the remainder. This is what a
-        solid fill costs per row: no scratch span to build or free, and
-        the wide stores keep a canvas-wide row at memcpy speed.
+        pixels from pixel index `start`. This is what a solid fill costs
+        per row: no scratch span to build or free, and the wide stores
+        in `_store_packed_span` keep a canvas-wide row at memcpy speed.
+
+        Always serial. A row of a drawing operation is usually already
+        running inside a band task, so the split belongs at the top of
+        the operation, not here -- `_clear_packed` is the banded form,
+        and only whole-buffer fills call it.
         """
-        comptime LANES = 8
-        var p32 = self.pixels.unsafe_ptr().unsafe_bitcast[UInt32]()
-        var vec = SIMD[DType.uint32, LANES](packed)
-        var idx = start
-        var end = start + count
-        while idx + LANES <= end:
-            p32.unsafe_offset(idx).unsafe_store(vec)
-            idx += LANES
-        while idx < end:
-            p32[unsafe_offset=idx] = packed
-            idx += 1
+        _store_packed_span(self.pixels, start, count, packed)
 
     def write_pixel(mut self, x: Int, y: Int, color: Color):
         """Write `color` at (x, y) *without* set_pixel's in_bounds/
@@ -1084,6 +1202,27 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 translucent.
         """
         var region = self.effective_fill_rect(0, 0, self.width, self.height)
+        # The whole buffer, opaque, source-over, no clip path: the fill
+        # is one contiguous run of stores, which is the one shape that
+        # can be split across bands. Every other case -- a clip cutting
+        # the region down, a translucent color, another blend mode --
+        # goes to `_fill_region` as before.
+        if (
+            color.a == 255
+            and self._blend.is_source_over()
+            and self._clip_mask_count == 0
+            and region[0] == 0
+            and region[1] == 0
+            and region[2] == self.width
+            and region[3] == self.height
+        ):
+            _clear_packed(
+                self.pixels,
+                self.width * self.height,
+                _pack_rgba(color),
+                self._max_workers,
+            )
+            return
         self._fill_region(region[0], region[1], region[2], region[3], color)
 
     def _fill_region(

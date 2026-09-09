@@ -26,7 +26,10 @@ from canvas.shapes.circles import (
     _CLOSED_FORM_MAX_RADIUS,
     _unit_disk_rect_area,
 )
-from canvas.shapes.polygon_fill import _fill_polygon_aa_device
+from canvas.shapes.polygon_fill import (
+    _fill_polygon_aa_device,
+    _fill_polygon_aa_rows,
+)
 from canvas.workers import _bands_for
 
 
@@ -455,10 +458,10 @@ def _fill_ellipse_aa_rows(
     clamped first row, so the unit-space walk starts in the right
     place rather than being stepped into it.
 
-    Only the closed-form route is here. A radius past
-    `_CLOSED_FORM_MAX_RADIUS` goes through the polygon rasterizer,
-    which bands internally and has no row-restricted entry point, so
-    `fill_ellipses_aa` keeps those on the per-marker path.
+    Only the closed form is here. A radius past
+    `_CLOSED_FORM_MAX_RADIUS` has none, and `_ellipses_band` sends
+    those to `_fill_polygon_aa_rows` instead -- decided once for the
+    batch, since every marker shares the radii.
     """
     var alpha_scale = Float64(color.a)
     var inv_rx = 1.0 / rx
@@ -531,22 +534,27 @@ def _ellipses_band(
     need no ordering between them.
     """
     var uniform = len(colors) == 0
+    # The radii are shared by the batch, so which coverage route to
+    # take is decided once rather than per marker.
+    var closed_form = max(rx, ry) <= _CLOSED_FORM_MAX_RADIUS
     for i in range(len(centers)):
         ref p = centers[i]
         if p.y + ry + 2.0 < Float64(row_lo):
             continue
         if p.y - ry - 1.0 >= Float64(row_hi):
             continue
-        _fill_ellipse_aa_rows(
-            canvas,
-            p.x,
-            p.y,
-            rx,
-            ry,
-            color if uniform else colors[i],
-            row_lo,
-            row_hi,
-        )
+        var c = color if uniform else colors[i]
+        if closed_form:
+            _fill_ellipse_aa_rows(canvas, p.x, p.y, rx, ry, c, row_lo, row_hi)
+        else:
+            _fill_polygon_aa_rows(
+                canvas,
+                _ellipse_fpoints(p.x, p.y, rx, ry),
+                c,
+                FillRule.NONZERO,
+                row_lo,
+                row_hi,
+            )
 
 
 async def _ellipses_band_async(
@@ -626,13 +634,6 @@ def _fill_ellipses_aa_impl(
             canvas._set_transform(saved)
             raise e
         canvas._set_transform(saved)
-        return
-
-    if max(rx, ry) > _CLOSED_FORM_MAX_RADIUS:
-        # The polygon route has no row-restricted entry point and
-        # already bands each ellipse across cores; batching would take
-        # that away rather than add to it.
-        _fill_ellipses_sequential(canvas, centers, colors, rx, ry, color)
         return
 
     # Roughly the covered area, the figure `_bands_for` weighs against
