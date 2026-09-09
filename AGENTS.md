@@ -159,6 +159,13 @@ resolves.
   moves bytes can lose to the serial version, while a compute-bound one
   still wins -- measure the operation, never assume from the shape.
   See benchmarks/roofline.md.
+- That slice is also a threshold, not just a caution. A whole-buffer
+  clear inside one slice is written at L3 speed by the core that owns
+  it (8 MB at 74 GB/s) and every band count from 2 to 16 measured
+  *slower*; past the slice the serial version falls to the DRAM wall
+  (16 MB at 16.5 GB/s) and the same bands are worth 2.2x to 3.7x. So a
+  pure-store pass should switch on bytes against the slice size, not on
+  a work count -- `_MIN_PARALLEL_CLEAR` in buffer.mojo.
 
 ## Measuring performance
 
@@ -172,6 +179,16 @@ resolves.
   load put every row 15-40% high, which raises the floor `bench-check`
   compares against for good. The tell is rows the branch never touched
   moving, so diff a new recording against the old and read those first.
+- In a worktree, run each gate through exactly one `pixi run`. A nested
+  one silently tests the main checkout: `pixi run --manifest-path <main>
+  bash -c "cd <worktree> && pixi run ... test"` resets the cwd back to
+  the manifest directory on the inner call, and the run reports a clean
+  suite for code that is not the branch's. The form that works is one
+  `pixi run`, a `cd`, then the script or `mojo` directly:
+  `pixi run --manifest-path <main> bash -c "cd <worktree> && bash
+  scripts/run_tests.sh <files>"`. The tell is the file count or the
+  `Running N tests for <path>` line naming the wrong directory -- read
+  that path, not just the totals.
 - Compare two implementations inside one process, not across two runs
   of different builds. `resize 1600x1200 -> 741x533` swings 2487-2858
   us across fresh processes on an idle machine, so alternating builds
@@ -230,6 +247,13 @@ resolves.
 - Golden tests fail on any pixel change. Regenerate with
   `CANVAS_REGEN_GOLDEN=1` only when the new output is known correct,
   and say why in the PR.
+- Reading one pixel of a buffer the optimizer can follow does not keep
+  the fill alive. `Canvas(800x600) construct+fill` dropped from 44 us
+  to 0.3 us purely because the constructor's fill moved into a local
+  the compiler could see end to end, leaving `get_pixel(0, 0)` as the
+  only live store. Index the read with something it cannot fold -- the
+  loop counter -- and check any row whose time falls by more than the
+  change can explain.
 - The checksum the bench prints is an anti-elimination sink, not a
   correctness check. It folds a handful of sampled channels together
   so the compiler cannot delete the work; almost every pixel never
