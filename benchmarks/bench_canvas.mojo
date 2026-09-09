@@ -777,6 +777,19 @@ def _survey() raises -> List[_Row]:
         sink += Int(small.get_pixel(10, 10).r)
     _report(rows, "downsample 1600x1200 -> 2x", perf_counter_ns() - t0, iters)
 
+    # Factor 3, the ratio a supersampling consumer reaches for by
+    # default (#364). It has its own row because it was the one common
+    # factor with no fixed-size kernel, and nothing in the suite
+    # pointed at it.
+    var super3 = Canvas(W * 3, H * 3, WHITE)
+    fill_circle_aa(super3, 1200.0, 900.0, 750.0, INK)
+    iters = 20
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        var small3 = downsample(super3, 3)
+        sink += Int(small3.get_pixel(10, 10).r)
+    _report(rows, "downsample 2400x1800 -> 3x", perf_counter_ns() - t0, iters)
+
     # The same reduction through the arbitrary-size path, which cannot
     # use the fixed-factor kernels and carries a Float64 intermediate
     # (#298), and then one no integer factor can express. The pair
@@ -786,17 +799,13 @@ def _survey() raises -> List[_Row]:
     for _ in range(iters):
         var same = resize(supersampled, 800, 600)
         sink += Int(same.get_pixel(10, 10).r)
-    _report(
-        rows, "resize 1600x1200 -> 800x600", perf_counter_ns() - t0, iters
-    )
+    _report(rows, "resize 1600x1200 -> 800x600", perf_counter_ns() - t0, iters)
 
     t0 = perf_counter_ns()
     for _ in range(iters):
         var odd = resize(supersampled, 741, 533)
         sink += Int(odd.get_pixel(10, 10).r)
-    _report(
-        rows, "resize 1600x1200 -> 741x533", perf_counter_ns() - t0, iters
-    )
+    _report(rows, "resize 1600x1200 -> 741x533", perf_counter_ns() - t0, iters)
 
     # --- blur ------------------------------------------------------
     # blur() runs the same three box-blur passes whatever the radius --
