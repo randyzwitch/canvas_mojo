@@ -663,8 +663,8 @@ def _sweep_edges_aa(
     rules select the same region, which is every path that does not
     overlap itself. A path really wound twice somewhere falls to
     `_sweep_edges_sampled_aa`, the only rasterizer here that implements
-    the even-odd rule as such. Strokes call the sampled sweep directly,
-    whatever their rule -- see `aa_area`'s docstring for why.
+    the even-odd rule as such. A stroke calls the sampled sweep directly
+    for the one shape `_stroke_edges` builds as overlapping pieces.
     """
     if fill_rule == FillRule.NONZERO or _rules_agree(edges, min_y, max_y):
         _area_edges_aa(
