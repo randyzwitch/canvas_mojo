@@ -131,13 +131,12 @@ def test_even_odd_takes_the_area_path_when_the_rules_agree() raises:
     assert_equal(_alpha_of(c, 1, 1), 128)
 
 
-def test_even_odd_samples_when_a_row_has_too_many_crossings() raises:
-    # `_rules_agree` gives up on a busy row rather than ordering its
-    # crossings, and giving up is always safe: it only sends the fill to
-    # the sampled sweep it would have used before the gate existed. A
-    # star with far more points than _AGREE_MAX_CROSSINGS puts enough
-    # crossings on its middle rows to trip that, and its center must
-    # still come out hollow under even-odd.
+def test_even_odd_on_a_path_with_many_crossings_per_row() raises:
+    # A 61-point star polygon puts far more than a handful of crossings
+    # on its middle rows, which is the shape that made the gate's
+    # per-row sort quadratic (#375). The rules genuinely differ here, so
+    # the sampled sweep must answer and the center must come out hollow
+    # under even-odd whatever the gate costs to reach that conclusion.
     var c = Canvas(240, 240, BG)
     var p = Path()
     comptime POINTS = 61

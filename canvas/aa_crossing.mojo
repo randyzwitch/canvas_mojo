@@ -498,10 +498,12 @@ def _accumulate_row_coverage(
                 g = upper + 1
 
 
-# Rows with more crossings than this make `_rules_agree` give up and
-# report disagreement, which is always safe -- it only sends the fill
-# to the sampled sweep it would have used anyway. See that function.
-comptime _AGREE_MAX_CROSSINGS = 24
+# The gate gives up on a row with more active edges than this, which is
+# always safe: it only sends the fill to the sampled sweep it would have
+# used anyway. Kept alongside the sorted active list because the two do
+# different jobs -- the sort keeps a busy row cheap, the cap stops the
+# gate walking every row of a path that is going to fail.
+comptime _AGREE_MAX_CROSSINGS = 64
 
 
 def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
@@ -521,96 +523,107 @@ def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
     to retract pixels, and keeps the two agreeing on where an edge
     lands.
 
-    Rows admit edges through `sort_by_top`'s order and drop them as
-    they end, so each row costs its own crossings rather than a pass
-    over the whole table. Scanning every edge per row instead made
-    those paths 3.7x slower than the sampled sweep this gate exists to
-    avoid.
-
-    The gate gives up -- conservatively, since falling back to the
-    sampled sweep is always correct -- on a row with more than
-    `_AGREE_MAX_CROSSINGS` crossings. Ordering them costs O(c^2), and
-    a path busy enough to put a hundred crossings on one row is both
-    where that hurts and where the gate is least likely to succeed: the
-    39-curve bench paths cross a row about a hundred times, do overlap
-    themselves, and were paying 100-210 us to be told so. A shape
-    simple enough for the two rules to agree crosses a row a handful of
-    times -- two for a circle or a convex polygon, a few for a glyph.
+    The active list stays sorted by x from one scanline to the next.
+    Edges move a little in x per row and rarely swap, so re-sorting a
+    nearly ordered list is close to linear, where sorting each row from
+    scratch is quadratic in the crossings. That difference is not
+    academic: a per-row sort of a table in admission order made four
+    39-curve rows 1.11x to 1.44x slower than the sampled sweep this
+    gate exists to avoid, since those paths put about a hundred
+    crossings on a row and overlap themselves, so the gate paid the
+    sort and then reported failure (#374, #375).
 
     Sampled at each row's center. A self-overlap that opens and closes
     between two scanlines is not seen, which is a sub-pixel difference
     against a sampler whose own grid is a sixteenth of a pixel.
     """
     var n = len(edges.y_lo)
-    # Two crossings cannot put a winding past 1, and a row can only
-    # have as many crossings as the table has edges.
+    # Two crossings cannot put a winding past 1.
     if n < 3:
         return True
 
     edges.sort_by_top()
-    var active = List[Int]()
+    # Parallel arrays, kept in ascending x: the edge, its x on the
+    # current scanline, and its direction.
+    var aidx = List[Int]()
+    var ax = List[Float64]()
+    var adir = List[Int]()
     var alen = 0
-    var xs = List[Float64]()
-    var dirs = List[Int]()
     var admitted = 0
 
     for row in range(min_y, max_y + 1):
         var sy = Float64(row) + 0.5
-        while admitted < n and edges.order_row[admitted] <= row:
-            if alen < len(active):
-                active[alen] = edges.order[admitted]
-            else:
-                active.append(edges.order[admitted])
-            alen += 1
-            admitted += 1
 
-        # Drop the edges that have ended and compact the rest back into
-        # place. No arithmetic here beyond the comparison, so the bail
-        # below happens before this row costs anything.
+        # Drop what has ended, keeping the order of the rest, and move
+        # each survivor to its x on this scanline. An edge admitted but
+        # not yet started is carried at its entry x so it sits near the
+        # place it will occupy.
         var kept = 0
         for k in range(alen):
-            var e = active[k]
+            var e = aidx[k]
             if sy >= edges.y_hi[e]:
                 continue
-            active[kept] = e
+            var at = sy
+            if at < edges.y_lo[e]:
+                at = edges.y_lo[e]
+            var t = (at - edges.y0[e]) / edges.dy[e]
+            aidx[kept] = e
+            ax[kept] = edges.x0[e] + t * edges.dx[e]
+            adir[kept] = edges.direction[e]
             kept += 1
         alen = kept
 
-        # An active edge is one this row could cross, so this bounds the
-        # crossings, and it is known before the divide per edge below.
+        while admitted < n and edges.order_row[admitted] <= row:
+            var e = edges.order[admitted]
+            admitted += 1
+            if sy >= edges.y_hi[e]:
+                continue
+            var at = sy
+            if at < edges.y_lo[e]:
+                at = edges.y_lo[e]
+            var t = (at - edges.y0[e]) / edges.dy[e]
+            var x = edges.x0[e] + t * edges.dx[e]
+            if alen < len(aidx):
+                aidx[alen] = e
+                ax[alen] = x
+                adir[alen] = edges.direction[e]
+            else:
+                aidx.append(e)
+                ax.append(x)
+                adir.append(edges.direction[e])
+            alen += 1
+
         if alen > _AGREE_MAX_CROSSINGS:
             return False
         if alen < 3:
             continue
 
-        xs.clear()
-        dirs.clear()
+        # Insertion sort over a list that was ordered on the previous
+        # scanline: linear in the common case, and the newly admitted
+        # edges are the only ones far from position.
+        for i in range(1, alen):
+            var vx = ax[i]
+            var vi = aidx[i]
+            var vd = adir[i]
+            var j = i - 1
+            while j >= 0 and ax[j] > vx:
+                ax[j + 1] = ax[j]
+                aidx[j + 1] = aidx[j]
+                adir[j + 1] = adir[j]
+                j -= 1
+            ax[j + 1] = vx
+            aidx[j + 1] = vi
+            adir[j + 1] = vd
+
+        # Only edges that actually span this scanline wind it; the
+        # sort left the rest in place among them, so skipping them here
+        # preserves the x order of those that do.
+        var winding = 0
         for k in range(alen):
-            var e = active[k]
+            var e = aidx[k]
             if sy < edges.y_lo[e]:
                 continue
-            var t = (sy - edges.y0[e]) / edges.dy[e]
-            xs.append(edges.x0[e] + t * edges.dx[e])
-            dirs.append(edges.direction[e])
-
-        if len(xs) < 3:
-            continue
-        # Insertion sort: past the check above a row holds few enough
-        # crossings that ordering them is cheaper than the work this
-        # decision saves.
-        for i in range(1, len(xs)):
-            var vx = xs[i]
-            var vd = dirs[i]
-            var j = i - 1
-            while j >= 0 and xs[j] > vx:
-                xs[j + 1] = xs[j]
-                dirs[j + 1] = dirs[j]
-                j -= 1
-            xs[j + 1] = vx
-            dirs[j + 1] = vd
-        var winding = 0
-        for i in range(len(dirs)):
-            winding += dirs[i]
+            winding += adir[k]
             if winding > 1 or winding < -1:
                 return False
     return True
