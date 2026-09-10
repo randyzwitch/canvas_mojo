@@ -131,6 +131,40 @@ def test_even_odd_takes_the_area_path_when_the_rules_agree() raises:
     assert_equal(_alpha_of(c, 1, 1), 128)
 
 
+def test_even_odd_samples_when_a_row_has_too_many_crossings() raises:
+    # `_rules_agree` gives up on a busy row rather than ordering its
+    # crossings, and giving up is always safe: it only sends the fill to
+    # the sampled sweep it would have used before the gate existed. A
+    # star with far more points than _AGREE_MAX_CROSSINGS puts enough
+    # crossings on its middle rows to trip that, and its center must
+    # still come out hollow under even-odd.
+    var c = Canvas(240, 240, BG)
+    var p = Path()
+    comptime POINTS = 61
+    for i in range(POINTS):
+        var a = (
+            6.283185307179586 * Float64((i * 30) % POINTS) / Float64(POINTS)
+            - 1.5707963267948966
+        )
+        var x = 120.0 + 110.0 * cos(a)
+        var y = 120.0 + 110.0 * sin(a)
+        if i == 0:
+            p.move_to(x, y)
+        else:
+            p.line_to(x, y)
+    p.close()
+    fill_path_aa(c, p, INK, FillRule.EVEN_ODD)
+
+    var solid = Canvas(240, 240, BG)
+    fill_path_aa(solid, p, INK, FillRule.NONZERO)
+    # The two rules must still disagree at the center: nonzero fills it,
+    # even-odd does not.
+    assert_true(
+        _alpha_of(solid, 120, 120) > 250, "nonzero fills the star's center"
+    )
+    assert_equal(_alpha_of(c, 120, 120), 0)
+
+
 def test_even_odd_still_samples_when_the_rules_differ() raises:
     # A {5/2} star polygon winds its center twice, so even-odd (hollow)
     # and nonzero (filled) genuinely disagree and the area rasterizer

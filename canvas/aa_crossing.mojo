@@ -498,6 +498,12 @@ def _accumulate_row_coverage(
                 g = upper + 1
 
 
+# Rows with more crossings than this make `_rules_agree` give up and
+# report disagreement, which is always safe -- it only sends the fill
+# to the sampled sweep it would have used anyway. See that function.
+comptime _AGREE_MAX_CROSSINGS = 24
+
+
 def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
     """Whether `FillRule.EVEN_ODD` and `FillRule.NONZERO` select the
     same region for `edges`, so the cheaper and exact area rasterizer
@@ -517,10 +523,19 @@ def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
 
     Rows admit edges through `sort_by_top`'s order and drop them as
     they end, so each row costs its own crossings rather than a pass
-    over the whole table -- a 39-curve path flattens to thousands of
-    edges and only a handful cross any given row. Scanning every edge
-    per row instead made those paths 3.7x slower than the sampled
-    sweep this gate exists to avoid.
+    over the whole table. Scanning every edge per row instead made
+    those paths 3.7x slower than the sampled sweep this gate exists to
+    avoid.
+
+    The gate gives up -- conservatively, since falling back to the
+    sampled sweep is always correct -- on a row with more than
+    `_AGREE_MAX_CROSSINGS` crossings. Ordering them costs O(c^2), and
+    a path busy enough to put a hundred crossings on one row is both
+    where that hurts and where the gate is least likely to succeed: the
+    39-curve bench paths cross a row about a hundred times, do overlap
+    themselves, and were paying 100-210 us to be told so. A shape
+    simple enough for the two rules to agree crosses a row a handful of
+    times -- two for a circle or a convex polygon, a few for a glyph.
 
     Sampled at each row's center. A self-overlap that opens and closes
     between two scanlines is not seen, which is a sub-pixel difference
@@ -549,11 +564,9 @@ def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
             alen += 1
             admitted += 1
 
-        # One pass over the active set: drop the edges that have ended,
-        # compact the rest back into place, and collect this row's
-        # crossings from those that span it.
-        xs.clear()
-        dirs.clear()
+        # Drop the edges that have ended and compact the rest back into
+        # place. No arithmetic here beyond the comparison, so the bail
+        # below happens before this row costs anything.
         var kept = 0
         for k in range(alen):
             var e = active[k]
@@ -561,17 +574,30 @@ def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
                 continue
             active[kept] = e
             kept += 1
+        alen = kept
+
+        # An active edge is one this row could cross, so this bounds the
+        # crossings, and it is known before the divide per edge below.
+        if alen > _AGREE_MAX_CROSSINGS:
+            return False
+        if alen < 3:
+            continue
+
+        xs.clear()
+        dirs.clear()
+        for k in range(alen):
+            var e = active[k]
             if sy < edges.y_lo[e]:
                 continue
             var t = (sy - edges.y0[e]) / edges.dy[e]
             xs.append(edges.x0[e] + t * edges.dx[e])
             dirs.append(edges.direction[e])
-        alen = kept
 
         if len(xs) < 3:
             continue
-        # Insertion sort: a row holds a handful of crossings even for a
-        # path with thousands of edges.
+        # Insertion sort: past the check above a row holds few enough
+        # crossings that ordering them is cheaper than the work this
+        # decision saves.
         for i in range(1, len(xs)):
             var vx = xs[i]
             var vd = dirs[i]
