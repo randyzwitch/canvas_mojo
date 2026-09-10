@@ -23,7 +23,7 @@ from canvas.aa_crossing import _EdgeTable
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
-from canvas.geometry import FPoint
+from canvas.geometry import FPoint, Matrix2D
 from canvas.path import Path, fill_path_aa
 from canvas.shapes.lines import draw_line_aa
 from canvas.shapes.polygon_fill import fill_polygon_aa
@@ -311,6 +311,95 @@ def test_clip_path_mask_has_fine_levels() raises:
             distinct += 1
     assert_true(distinct > 17, String(distinct) + " mask levels")
     c.pop_clip_path()
+
+
+def test_add_ring_and_add_rect_record_what_add_edge_would() raises:
+    # `add_ring` writes a whole polygon through pointers into lists
+    # grown once, and has to leave the table exactly as a loop of
+    # `add_edge` over consecutive points does: the same edges in the
+    # same order, horizontals dropped (which shrinks the grown lists
+    # back), and every point mapped when a transform is set. The
+    # polygon has two horizontal edges and a repeated point, and the
+    # ring is added on top of an edge already in the table. Under the
+    # identity the horizontals and the repeated point drop, three of
+    # six; rotated, only the repeated point does.
+    var pts: List[FPoint] = [
+        FPoint(2.0, 3.0),
+        FPoint(9.5, 3.0),
+        FPoint(9.5, 3.0),
+        FPoint(12.0, 7.25),
+        FPoint(4.0, 7.25),
+        FPoint(1.0, 5.0),
+    ]
+    var xs = List[Float64]()
+    var ys = List[Float64]()
+    for i in range(len(pts)):
+        xs.append(pts[i].x)
+        ys.append(pts[i].y)
+    var maps: List[Matrix2D] = [
+        Matrix2D.identity(),
+        Matrix2D.rotation(0.7).then(Matrix2D.translation(3.0, -2.0)),
+    ]
+    for m in range(len(maps)):
+        var by_edge = _EdgeTable()
+        var by_ring = _EdgeTable()
+        var by_lists = _EdgeTable()
+        by_edge.set_map(maps[m])
+        by_ring.set_map(maps[m])
+        by_lists.set_map(maps[m])
+        by_edge.add_edge(0.0, 0.0, 1.0, 1.0)
+        by_ring.add_edge(0.0, 0.0, 1.0, 1.0)
+        by_lists.add_edge(0.0, 0.0, 1.0, 1.0)
+        var n = len(pts)
+        for i in range(n):
+            var a = pts[i]
+            var b = pts[(i + 1) % n]
+            by_edge.add_edge(a.x, a.y, b.x, b.y)
+        by_ring.add_ring(pts)
+        by_lists.add_ring(xs, ys)
+        assert_equal(len(by_edge.y_lo), 4 if m == 0 else 6)
+        assert_equal(len(by_ring.y_lo), len(by_edge.y_lo))
+        assert_equal(len(by_lists.y_lo), len(by_edge.y_lo))
+        for i in range(len(by_edge.y_lo)):
+            assert_equal(by_ring.y_lo[i], by_edge.y_lo[i])
+            assert_equal(by_ring.y_hi[i], by_edge.y_hi[i])
+            assert_equal(by_ring.x0[i], by_edge.x0[i])
+            assert_equal(by_ring.y0[i], by_edge.y0[i])
+            assert_equal(by_ring.dx[i], by_edge.dx[i])
+            assert_equal(by_ring.dy[i], by_edge.dy[i])
+            assert_equal(by_ring.direction[i], by_edge.direction[i])
+            assert_equal(by_lists.y_lo[i], by_edge.y_lo[i])
+            assert_equal(by_lists.x0[i], by_edge.x0[i])
+            assert_equal(by_lists.dx[i], by_edge.dx[i])
+            assert_equal(by_lists.direction[i], by_edge.direction[i])
+    # `add_rect` likewise records the four edges of a segment's
+    # rectangle as four `add_edge` calls would, with a horizontal pair
+    # dropped when the segment is vertical.
+    for m in range(len(maps)):
+        var by_edge = _EdgeTable()
+        var by_rect = _EdgeTable()
+        by_edge.set_map(maps[m])
+        by_rect.set_map(maps[m])
+        by_edge.add_edge(4.0 + 1.5, 2.0, 4.0 + 1.5, 9.0)
+        by_edge.add_edge(4.0 + 1.5, 9.0, 4.0 - 1.5, 9.0)
+        by_edge.add_edge(4.0 - 1.5, 9.0, 4.0 - 1.5, 2.0)
+        by_edge.add_edge(4.0 - 1.5, 2.0, 4.0 + 1.5, 2.0)
+        by_rect.add_rect(4.0, 2.0, 4.0, 9.0, 1.5, 0.0)
+        assert_equal(len(by_edge.y_lo), 2 if m == 0 else 4)
+        assert_equal(len(by_rect.y_lo), len(by_edge.y_lo))
+        for i in range(len(by_edge.y_lo)):
+            assert_equal(by_rect.y_lo[i], by_edge.y_lo[i])
+            assert_equal(by_rect.y_hi[i], by_edge.y_hi[i])
+            assert_equal(by_rect.x0[i], by_edge.x0[i])
+            assert_equal(by_rect.y0[i], by_edge.y0[i])
+            assert_equal(by_rect.dx[i], by_edge.dx[i])
+            assert_equal(by_rect.dy[i], by_edge.dy[i])
+            assert_equal(by_rect.direction[i], by_edge.direction[i])
+    # A ring of fewer than two points adds nothing.
+    var short = _EdgeTable()
+    var one: List[FPoint] = [FPoint(1.0, 1.0)]
+    short.add_ring(one)
+    assert_equal(len(short.y_lo), 0)
 
 
 def test_edge_table_bounds() raises:

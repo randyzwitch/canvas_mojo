@@ -337,10 +337,7 @@ def _fill_polygon_aa_device(
             max_y = points[i].y
 
     var edges = _EdgeTable(n)
-    for i in range(n):
-        var a = points[i]
-        var b = points[(i + 1) % n]
-        edges.add_edge(a.x, a.y, b.x, b.y)
+    edges.add_ring(points)
 
     # Widened outward to whole pixels (floor/ceil, not round) so a
     # pixel an edge only partly covers is still swept -- see
@@ -397,10 +394,7 @@ def _fill_polygon_aa_rows(
         if points[i].y > max_y:
             max_y = points[i].y
     var edges = _EdgeTable(n)
-    for i in range(n):
-        var a = points[i]
-        var b = points[(i + 1) % n]
-        edges.add_edge(a.x, a.y, b.x, b.y)
+    edges.add_ring(points)
     _sweep_edges_aa(
         canvas,
         edges,

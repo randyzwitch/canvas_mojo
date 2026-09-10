@@ -9,7 +9,7 @@ from canvas.aa_area import _area_edges_aa, _area_edges_to_mask
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule, _is_inside
-from canvas.geometry import Matrix2D
+from canvas.geometry import FPoint, Matrix2D
 
 
 struct _AACrossing(Comparable, ImplicitlyCopyable, Movable):
@@ -230,6 +230,194 @@ struct _EdgeTable(Movable):
         self.dx.append(x_b - x_a)
         self.dy.append(y_b - y_a)
         self.direction.append(1 if y_b > y_a else -1)
+        self._sorted = False
+
+    def _grow(mut self, total: Int):
+        """Room for `total` edges, the new ones uninitialized, or the
+        lists cut back to `total` when it is fewer.
+
+        Capacity doubles when it runs out, as `append` grows it: a
+        resize to the exact length reallocates and copies the whole
+        table each time, which made a dashed series of thousands of
+        `add_rect` calls quadratic once past the initial reservation.
+        """
+        if total > self.y_lo.capacity():
+            var want = max(total, 2 * self.y_lo.capacity())
+            self.y_lo.reserve(want)
+            self.y_hi.reserve(want)
+            self.x0.reserve(want)
+            self.y0.reserve(want)
+            self.dx.reserve(want)
+            self.dy.reserve(want)
+            self.direction.reserve(want)
+        self.y_lo.resize(unsafe_uninit_length=total)
+        self.y_hi.resize(unsafe_uninit_length=total)
+        self.x0.resize(unsafe_uninit_length=total)
+        self.y0.resize(unsafe_uninit_length=total)
+        self.dx.resize(unsafe_uninit_length=total)
+        self.dy.resize(unsafe_uninit_length=total)
+        self.direction.resize(unsafe_uninit_length=total)
+
+    @always_inline
+    def _store(
+        mut self,
+        k: Int,
+        x_a: Float64,
+        y_a: Float64,
+        x_b: Float64,
+        y_b: Float64,
+    ):
+        """Edge `k`, which `_grow` made room for, as `add_edge` would
+        record it. Unchecked: `k` is below the grown length.
+        """
+        self.y_lo.unsafe_ptr()[unsafe_offset=k] = min(y_a, y_b)
+        self.y_hi.unsafe_ptr()[unsafe_offset=k] = max(y_a, y_b)
+        self.x0.unsafe_ptr()[unsafe_offset=k] = x_a
+        self.y0.unsafe_ptr()[unsafe_offset=k] = y_a
+        self.dx.unsafe_ptr()[unsafe_offset=k] = x_b - x_a
+        self.dy.unsafe_ptr()[unsafe_offset=k] = y_b - y_a
+        self.direction.unsafe_ptr()[unsafe_offset=k] = 1 if y_b > y_a else -1
+
+    def add_ring(mut self, points: List[FPoint]):
+        """Every edge of the closed polygon `points` in order, the
+        closing edge last: what `add_edge` over each consecutive pair
+        records, mapped and with horizontals dropped the same way,
+        written through pointers into lists grown once. Seven appends
+        per edge, each with its capacity check, were 138 us of a
+        3000-point stroke outline's build; this is 40 (#383).
+        """
+        var n = len(points)
+        if n < 2:
+            return
+        var pp = points.unsafe_ptr()
+        var base = len(self.y_lo)
+        self._grow(base + n)
+        var k = base
+        var first = pp[unsafe_offset=0]
+        var fx = first.x
+        var fy = first.y
+        if self._mapped:
+            var m = self._map.apply(fx, fy)
+            fx = m.x
+            fy = m.y
+        var ax = fx
+        var ay = fy
+        for i in range(1, n + 1):
+            var bx: Float64
+            var by: Float64
+            if i == n:
+                bx = fx
+                by = fy
+            else:
+                var q = pp[unsafe_offset=i]
+                bx = q.x
+                by = q.y
+                if self._mapped:
+                    var m = self._map.apply(bx, by)
+                    bx = m.x
+                    by = m.y
+            if ay != by:
+                self._store(k, ax, ay, bx, by)
+                k += 1
+            ax = bx
+            ay = by
+        if k < base + n:
+            self._grow(k)
+        self._sorted = False
+
+    def add_rect(
+        mut self,
+        ax: Float64,
+        ay: Float64,
+        bx: Float64,
+        by: Float64,
+        nx: Float64,
+        ny: Float64,
+    ):
+        """The rectangle around the segment a -> b whose offset normal
+        is (nx, ny): four edges in the order the outline of a two-point
+        run has them, the +n side forward and the -n side back, mapped
+        and with horizontals dropped as `add_edge` would. A dashed
+        series is thousands of these.
+        """
+        var cx0 = ax + nx
+        var cy0 = ay + ny
+        var cx1 = bx + nx
+        var cy1 = by + ny
+        var cx2 = bx - nx
+        var cy2 = by - ny
+        var cx3 = ax - nx
+        var cy3 = ay - ny
+        if self._mapped:
+            var m0 = self._map.apply(cx0, cy0)
+            var m1 = self._map.apply(cx1, cy1)
+            var m2 = self._map.apply(cx2, cy2)
+            var m3 = self._map.apply(cx3, cy3)
+            cx0 = m0.x
+            cy0 = m0.y
+            cx1 = m1.x
+            cy1 = m1.y
+            cx2 = m2.x
+            cy2 = m2.y
+            cx3 = m3.x
+            cy3 = m3.y
+        var base = len(self.y_lo)
+        self._grow(base + 4)
+        var k = base
+        if cy0 != cy1:
+            self._store(k, cx0, cy0, cx1, cy1)
+            k += 1
+        if cy1 != cy2:
+            self._store(k, cx1, cy1, cx2, cy2)
+            k += 1
+        if cy2 != cy3:
+            self._store(k, cx2, cy2, cx3, cy3)
+            k += 1
+        if cy3 != cy0:
+            self._store(k, cx3, cy3, cx0, cy0)
+            k += 1
+        if k < base + 4:
+            self._grow(k)
+        self._sorted = False
+
+    def add_ring(mut self, xs: List[Float64], ys: List[Float64]):
+        """`add_ring` over a polygon given as two coordinate lists."""
+        var n = len(xs)
+        if n < 2:
+            return
+        var xp = xs.unsafe_ptr()
+        var yp = ys.unsafe_ptr()
+        var base = len(self.y_lo)
+        self._grow(base + n)
+        var k = base
+        var fx = xp[unsafe_offset=0]
+        var fy = yp[unsafe_offset=0]
+        if self._mapped:
+            var m = self._map.apply(fx, fy)
+            fx = m.x
+            fy = m.y
+        var ax = fx
+        var ay = fy
+        for i in range(1, n + 1):
+            var bx: Float64
+            var by: Float64
+            if i == n:
+                bx = fx
+                by = fy
+            else:
+                bx = xp[unsafe_offset=i]
+                by = yp[unsafe_offset=i]
+                if self._mapped:
+                    var m = self._map.apply(bx, by)
+                    bx = m.x
+                    by = m.y
+            if ay != by:
+                self._store(k, ax, ay, bx, by)
+                k += 1
+            ax = bx
+            ay = by
+        if k < base + n:
+            self._grow(k)
         self._sorted = False
 
     def sort_by_top(mut self):

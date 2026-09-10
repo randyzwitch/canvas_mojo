@@ -1515,8 +1515,9 @@ struct _FillEdges(Movable):
         for sp_idx in range(len(subpaths)):
             ref sp = subpaths[sp_idx]
             var pn = len(sp.points)
+            var pp = sp.points.unsafe_ptr()
             for i in range(pn):
-                var a = sp.points[i]
+                var a = pp[unsafe_offset=i]  # i < pn
                 if a.x < min_x:
                     min_x = a.x
                 if a.x > max_x:
@@ -1525,10 +1526,7 @@ struct _FillEdges(Movable):
                     min_y = a.y
                 if a.y > max_y:
                     max_y = a.y
-                if pn < 2:
-                    continue
-                var b = sp.points[(i + 1) % pn]
-                self.edges.add_edge(a.x, a.y, b.x, b.y)
+            self.edges.add_ring(sp.points)
         self.min_x = Int(floor(min_x))
         self.min_y = Int(floor(min_y))
         self.max_x = Int(ceil(max_x))

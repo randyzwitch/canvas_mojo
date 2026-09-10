@@ -79,15 +79,23 @@ def _row_spans(
     var lo = spans.lo.unsafe_ptr()
     var hi = spans.hi.unsafe_ptr()
     var limit = acc_width - 1
+    # Read through pointers: seven checked reads per edge were most
+    # of what this walk cost on a table of short edges. i < n.
     var n = len(edges.y_lo)
+    var ey_lo = edges.y_lo.unsafe_ptr()
+    var ey_hi = edges.y_hi.unsafe_ptr()
+    var ex0 = edges.x0.unsafe_ptr()
+    var ey0 = edges.y0.unsafe_ptr()
+    var edx = edges.dx.unsafe_ptr()
+    var edy = edges.dy.unsafe_ptr()
     for i in range(n):
-        var y_lo = edges.y_lo[i] + 0.5
-        var y_hi = edges.y_hi[i] + 0.5
+        var y_lo = ey_lo[unsafe_offset=i] + 0.5
+        var y_hi = ey_hi[unsafe_offset=i] + 0.5
         if y_hi <= Float64(first_row) or y_lo >= Float64(last_row):
             continue
-        var x0 = edges.x0[i] + 0.5 - Float64(row_first_px)
-        var y0 = edges.y0[i] + 0.5
-        var dxdy = edges.dx[i] / edges.dy[i]
+        var x0 = ex0[unsafe_offset=i] + 0.5 - Float64(row_first_px)
+        var y0 = ey0[unsafe_offset=i] + 0.5
+        var dxdy = edx[unsafe_offset=i] / edy[unsafe_offset=i]
         var r_start = max(Int(floor(y_lo)), first_row)
         var r_end = min(Int(ceil(y_hi)), last_row)
         for r in range(r_start, r_end):
@@ -108,26 +116,104 @@ def _row_spans(
     return spans^
 
 
+# Rows sampled, one in this many, to estimate a region's cells before
+# it is banded. Each band then finds its own rows' exact spans.
+comptime _SPAN_SAMPLE_STRIDE = 8
+
+
+def _estimate_cells(
+    edges: _EdgeTable,
+    first_row: Int,
+    last_row: Int,
+    row_first_px: Int,
+    acc_width: Int,
+) -> Int:
+    """About how many cells the spans of rows [first_row, last_row)
+    add up to: `_row_spans` over every `_SPAN_SAMPLE_STRIDE`th row,
+    scaled back up. What the banding decision needs, at a fraction of
+    the walk the exact spans cost -- which each band then makes over
+    its own rows, in parallel, rather than one thread over all of
+    them ahead of the tasks (#383).
+
+    A region shorter than the stride samples no row and estimates
+    zero, so it runs as one band; with fewer rows than that there is
+    little to split.
+    """
+    var stride = _SPAN_SAMPLE_STRIDE
+    var samples = (last_row - first_row + stride - 1) // stride
+    if samples <= 0:
+        return 0
+    var lo = List[Int](length=samples, fill=acc_width)
+    var hi = List[Int](length=samples, fill=-1)
+    var lp = lo.unsafe_ptr()
+    var hp = hi.unsafe_ptr()
+    var limit = acc_width - 1
+    var n = len(edges.y_lo)
+    var ey_lo = edges.y_lo.unsafe_ptr()
+    var ey_hi = edges.y_hi.unsafe_ptr()
+    var ex0 = edges.x0.unsafe_ptr()
+    var ey0 = edges.y0.unsafe_ptr()
+    var edx = edges.dx.unsafe_ptr()
+    var edy = edges.dy.unsafe_ptr()
+    for i in range(n):  # i < n
+        var y_lo = ey_lo[unsafe_offset=i] + 0.5
+        var y_hi = ey_hi[unsafe_offset=i] + 0.5
+        if y_hi <= Float64(first_row) or y_lo >= Float64(last_row):
+            continue
+        var r_start = max(Int(floor(y_lo)), first_row)
+        var r_end = min(Int(ceil(y_hi)), last_row)
+        # The first sampled row at or after r_start. An edge shorter
+        # than the stride mostly meets none, and is dropped here
+        # before its x data is read or its slope divided: on a table
+        # of short edges that is most of the edges.
+        var k = (r_start - first_row + stride - 1) // stride
+        var r = first_row + k * stride
+        if r >= r_end:
+            continue
+        var x0 = ex0[unsafe_offset=i] + 0.5 - Float64(row_first_px)
+        var y0 = ey0[unsafe_offset=i] + 0.5
+        var dxdy = edx[unsafe_offset=i] / edy[unsafe_offset=i]
+        while r < r_end:
+            var y_top = max(Float64(r), y_lo)
+            var y_bot = min(Float64(r + 1), y_hi)
+            if y_bot - y_top > 0.0:
+                var xa = x0 + (y_top - y0) * dxdy
+                var xb = x0 + (y_bot - y0) * dxdy
+                var cols = _edge_row_columns(xa, xb, limit)
+                var c0 = cols[0]
+                var c1 = min(max(cols[1], c0 + 1), limit)
+                if c0 < lp[unsafe_offset=k]:
+                    lp[unsafe_offset=k] = c0
+                if c1 > hp[unsafe_offset=k]:
+                    hp[unsafe_offset=k] = c1
+            k += 1
+            r += stride
+    var total = 0
+    for k in range(samples):
+        var span = hp[unsafe_offset=k] - lp[unsafe_offset=k] + 1
+        if span > 0:
+            total += span
+    return total * stride
+
+
 struct _Accumulator(Movable):
-    """A band's area accumulator: `rows * width` cells, row 0 standing
-    for row `first` of the region's `_RowSpans`. Only the cells inside
-    each row's span are zeroed; the rest are never written or read.
+    """A band's area accumulator: `rows * width` cells, row r standing
+    for row r of the band's `_RowSpans`. Only the cells inside each
+    row's span are zeroed; the rest are never written or read.
     """
 
     var cells: List[Float32]
     var width: Int
     var rows: Int
-    var first: Int
 
-    def __init__(out self, spans: _RowSpans, first: Int, rows: Int, width: Int):
+    def __init__(out self, spans: _RowSpans, rows: Int, width: Int):
         self.width = width
         self.rows = rows
-        self.first = first
         self.cells = List[Float32](unsafe_uninit_length=rows * width)
         var p = self.cells.unsafe_ptr()
         for r in range(rows):
-            var lo = spans.lo[first + r]
-            var hi = spans.hi[first + r]
+            var lo = spans.lo[r]
+            var hi = spans.hi[r]
             var base = r * width
             for c in range(lo, hi + 1):
                 p[unsafe_offset=base + c] = 0.0
@@ -223,9 +309,16 @@ def _deposit_all(
     cell row py's start once 0.5 is added; likewise for columns.
     """
     var n = len(edges.y_lo)
-    for i in range(n):
-        var y_lo = edges.y_lo[i] + 0.5
-        var y_hi = edges.y_hi[i] + 0.5
+    var ey_lo = edges.y_lo.unsafe_ptr()
+    var ey_hi = edges.y_hi.unsafe_ptr()
+    var ex0 = edges.x0.unsafe_ptr()
+    var ey0 = edges.y0.unsafe_ptr()
+    var edx = edges.dx.unsafe_ptr()
+    var edy = edges.dy.unsafe_ptr()
+    var edir = edges.direction.unsafe_ptr()
+    for i in range(n):  # i < n
+        var y_lo = ey_lo[unsafe_offset=i] + 0.5
+        var y_hi = ey_hi[unsafe_offset=i] + 0.5
         if y_hi <= Float64(first_row):
             continue
         if y_lo >= Float64(last_row):
@@ -235,13 +328,13 @@ def _deposit_all(
             first_row,
             last_row,
             row_first_px,
-            edges.x0[i] + 0.5,
-            edges.y0[i] + 0.5,
-            edges.dx[i],
-            edges.dy[i],
+            ex0[unsafe_offset=i] + 0.5,
+            ey0[unsafe_offset=i] + 0.5,
+            edx[unsafe_offset=i],
+            edy[unsafe_offset=i],
             y_lo,
             y_hi,
-            edges.direction[i],
+            edir[unsafe_offset=i],
         )
 
 
@@ -291,8 +384,8 @@ def _resolve_rows(
     var p = acc.cells.unsafe_ptr()
     for r in range(acc.rows):
         var py = first_row + r
-        var span_lo = spans.lo[acc.first + r]
-        var span_hi = spans.hi[acc.first + r]
+        var span_lo = spans.lo[r]
+        var span_hi = spans.hi[r]
         if span_hi < span_lo:
             continue
         var region = canvas.effective_fill_rect(row_first_px, py, row_width, 1)
@@ -333,24 +426,20 @@ def _resolve_rows(
 def _area_band(
     mut canvas: Canvas,
     edges: _EdgeTable,
-    spans: _RowSpans,
-    region_first_row: Int,
     band_start: Int,
     band_end: Int,
     row_first_px: Int,
     row_width: Int,
     color: Color,
 ):
-    """Rows [band_start, band_end) of a region whose first row is
-    `region_first_row`: an accumulator of the band's own, the deposit
-    of every edge reaching it, and the resolve onto `canvas`.
+    """Rows [band_start, band_end): the band's own spans and
+    accumulator, the deposit of every edge reaching it, and the
+    resolve onto `canvas`. Bands write disjoint rows and share nothing
+    but the edge table, which they only read.
     """
-    var acc = _Accumulator(
-        spans,
-        band_start - region_first_row,
-        band_end - band_start,
-        row_width + 2,
-    )
+    var acc_width = row_width + 2
+    var spans = _row_spans(edges, band_start, band_end, row_first_px, acc_width)
+    var acc = _Accumulator(spans, band_end - band_start, acc_width)
     _deposit_all(acc, edges, band_start, band_end, row_first_px)
     _resolve_rows(
         canvas, acc, spans, band_start, row_first_px, row_width, color
@@ -360,8 +449,6 @@ def _area_band(
 async def _area_band_async(
     mut canvas: Canvas,
     edges: _EdgeTable,
-    spans: _RowSpans,
-    region_first_row: Int,
     band_start: Int,
     band_end: Int,
     row_first_px: Int,
@@ -370,15 +457,7 @@ async def _area_band_async(
 ):
     """`_area_band` as a task; see `_sweep_band_async`."""
     _area_band(
-        canvas,
-        edges,
-        spans,
-        region_first_row,
-        band_start,
-        band_end,
-        row_first_px,
-        row_width,
-        color,
+        canvas, edges, band_start, band_end, row_first_px, row_width, color
     )
 
 
@@ -398,11 +477,14 @@ def _area_edges_aa(
     them; columns are kept whole, since a row's prefix sum has to
     start at the shape's left edge.
 
-    The spans are found first, over every row, and the cells they add
-    up to decide the banding; each band then deposits and resolves its
-    own rows (`_area_band`). Deciding on the bounding box instead
-    fanned a thin diagonal out over every core for a few thousand
-    cells of work.
+    The banding is decided from an estimate of the cells the rows'
+    spans add up to (`_estimate_cells`), and each band then finds its
+    own rows' exact spans, deposits and resolves (`_area_band`).
+    Deciding on the bounding box instead fanned a thin diagonal out
+    over every core for a few thousand cells of work; finding every
+    row's exact span first, as this once did, put a walk over every
+    edge-row ahead of the first task, 675 us of a dashed series'
+    3.5 ms at 64 workers (#383).
     """
     # `clamp_lo`/`clamp_hi` bound the rows written, past the outward
     # padding above. A batch that bands the canvas needs that: the
@@ -426,21 +508,17 @@ def _area_edges_aa(
     if row_count <= 0 or row_width <= 0:
         return
 
-    var spans = _row_spans(
-        edges, first_row, last_row, row_first_px, row_width + 2
-    )
-    var bands = _bands_for(spans.cells(), row_count, canvas.max_workers())
+    # The bounding box bounds the cells, so below the parallel
+    # threshold there is nothing to estimate.
+    var bands = 1
+    if row_count * row_width >= _MIN_PARALLEL_PIXELS:
+        var cells = _estimate_cells(
+            edges, first_row, last_row, row_first_px, row_width + 2
+        )
+        bands = _bands_for(cells, row_count, canvas.max_workers())
     if bands == 1:
         _area_band(
-            canvas,
-            edges,
-            spans,
-            first_row,
-            first_row,
-            last_row,
-            row_first_px,
-            row_width,
-            color,
+            canvas, edges, first_row, last_row, row_first_px, row_width, color
         )
         return
 
@@ -457,8 +535,6 @@ def _area_edges_aa(
             _area_band_async(
                 canvas,
                 edges,
-                spans,
-                first_row,
                 band_start,
                 band_end,
                 row_first_px,
@@ -467,12 +543,6 @@ def _area_edges_aa(
             )
         )
     tg.wait()
-    # Mojo destroys a value right after its last use, and the tasks
-    # borrow `spans` without the compiler counting that as one: named
-    # for the last time inside the loop, it would be freed before
-    # `wait` returned. Naming it here moves its last use past
-    # the tasks.
-    _ = len(spans.lo)
 
 
 def _resolve_mask_rows(
@@ -499,8 +569,8 @@ def _resolve_mask_rows(
     var mp = mask.unsafe_ptr()
     for r in range(acc.rows):
         var py = first_row + r
-        var span_lo = spans.lo[acc.first + r]
-        var span_hi = spans.hi[acc.first + r]
+        var span_lo = spans.lo[r]
+        var span_hi = spans.hi[r]
         if span_hi < span_lo:
             continue
         var row_base = (py - origin_y) * mask_width
@@ -529,8 +599,6 @@ def _area_mask_band(
     origin_x: Int,
     origin_y: Int,
     edges: _EdgeTable,
-    spans: _RowSpans,
-    region_first_row: Int,
     band_start: Int,
     band_end: Int,
     row_first_px: Int,
@@ -538,12 +606,9 @@ def _area_mask_band(
     full_coverage: Int,
 ):
     """`_area_band` writing into a mask."""
-    var acc = _Accumulator(
-        spans,
-        band_start - region_first_row,
-        band_end - band_start,
-        row_width + 2,
-    )
+    var acc_width = row_width + 2
+    var spans = _row_spans(edges, band_start, band_end, row_first_px, acc_width)
+    var acc = _Accumulator(spans, band_end - band_start, acc_width)
     _deposit_all(acc, edges, band_start, band_end, row_first_px)
     _resolve_mask_rows(
         mask,
@@ -565,8 +630,6 @@ async def _area_mask_band_async(
     origin_x: Int,
     origin_y: Int,
     edges: _EdgeTable,
-    spans: _RowSpans,
-    region_first_row: Int,
     band_start: Int,
     band_end: Int,
     row_first_px: Int,
@@ -580,8 +643,6 @@ async def _area_mask_band_async(
         origin_x,
         origin_y,
         edges,
-        spans,
-        region_first_row,
         band_start,
         band_end,
         row_first_px,
@@ -605,8 +666,8 @@ def _area_edges_to_mask(
     max_workers: Int = 0,
 ):
     """`_area_edges_aa` writing coverage into a mask instead of
-    blending onto a canvas: the same spans first, and the same banding
-    of the deposit and resolve by the cells they add up to.
+    blending onto a canvas: the same estimate to band by, and each
+    band finding its own spans.
     """
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px
@@ -616,10 +677,12 @@ def _area_edges_to_mask(
     if row_count <= 0 or row_width <= 0:
         return
 
-    var spans = _row_spans(
-        edges, first_row, last_row, row_first_px, row_width + 2
-    )
-    var bands = _bands_for(spans.cells(), row_count, max_workers)
+    var bands = 1
+    if row_count * row_width >= _MIN_PARALLEL_PIXELS:
+        var cells = _estimate_cells(
+            edges, first_row, last_row, row_first_px, row_width + 2
+        )
+        bands = _bands_for(cells, row_count, max_workers)
     if bands == 1:
         _area_mask_band(
             mask,
@@ -627,8 +690,6 @@ def _area_edges_to_mask(
             origin_x,
             origin_y,
             edges,
-            spans,
-            first_row,
             first_row,
             last_row,
             row_first_px,
@@ -653,8 +714,6 @@ def _area_edges_to_mask(
                 origin_x,
                 origin_y,
                 edges,
-                spans,
-                first_row,
                 band_start,
                 band_end,
                 row_first_px,
@@ -663,7 +722,6 @@ def _area_edges_to_mask(
             )
         )
     tg.wait()
-    _ = len(spans.lo)  # last use past the tasks; see `_area_edges_aa`
 
 
 def _rect_coverage_to_mask(

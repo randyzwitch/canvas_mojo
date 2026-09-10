@@ -814,10 +814,7 @@ def _add_quad(
     -- overlapping pieces reinforce rather than cancel, and every pixel
     is still written exactly once.
     """
-    edges.add_edge(ax + nx, ay + ny, bx + nx, by + ny)
-    edges.add_edge(bx + nx, by + ny, bx - nx, by - ny)
-    edges.add_edge(bx - nx, by - ny, ax - nx, ay - ny)
-    edges.add_edge(ax - nx, ay - ny, ax + nx, ay + ny)
+    edges.add_rect(ax, ay, bx, by, nx, ny)
 
 
 def _add_disk(mut edges: _EdgeTable, cx: Float64, cy: Float64, radius: Float64):
@@ -1126,12 +1123,7 @@ def _signed_angle(
 
 def _emit_ring(mut edges: _EdgeTable, xs: List[Float64], ys: List[Float64]):
     """One closed outline into the edge table."""
-    var n = len(xs)
-    if n < 2:
-        return
-    for i in range(n):
-        var j = (i + 1) % n
-        edges.add_edge(xs[i], ys[i], xs[j], ys[j])
+    edges.add_ring(xs, ys)
 
 
 def _inner_crossing(
@@ -1737,7 +1729,15 @@ def _stroke_edges(
 
     # Dashed: walk the segments, collecting runs. Each run is a slice
     # of run_x/run_y; run_starts_path/run_ends_path say whether it
-    # begins at the path's start or finishes at its end.
+    # begins at the path's start or finishes at its end. An open path's
+    # runs are emitted as the walk closes each one (`_emit_run`), in
+    # the order they are met, and the lists hold one run at a time; a
+    # closed path keeps every run, since its last may continue into
+    # its first.
+    var edges = _EdgeTable(8 * count + 32)
+    edges.set_map(matrix)
+    var xs = List[Float64]()
+    var ys = List[Float64]()
     var run_x = List[Float64]()
     var run_y = List[Float64]()
     var run_first = List[Int]()
@@ -1765,6 +1765,36 @@ def _stroke_edges(
             if on:
                 var t0 = (d - distance) / length
                 var t1 = (boundary - distance) / length
+                if (
+                    not in_run
+                    and not closed
+                    and boundary < seg_end
+                    and not (seg == 0 and d == 0.0)
+                ):
+                    # A dash inside one segment of an open path, which
+                    # is most of a dashed series: its rectangle goes
+                    # straight into the table, at the numbers
+                    # `_emit_run` computes for a two-point run, without
+                    # the run lists. Both ends are dash boundaries, so
+                    # both are butt; two equal points draw nothing.
+                    var sx = ax + dx * t0
+                    var sy = ay + dy * t0
+                    var ex = ax + dx * t1
+                    var ey = ay + dy * t1
+                    if sx != ex or sy != ey:
+                        var ddx = ex - sx
+                        var ddy = ey - sy
+                        var l = sqrt(ddx * ddx + ddy * ddy)
+                        edges.add_rect(
+                            sx,
+                            sy,
+                            ex,
+                            ey,
+                            -ddy / l * half_width,
+                            ddx / l * half_width,
+                        )
+                    d = boundary
+                    continue
                 if not in_run:
                     run_first.append(len(run_x))
                     run_starts_path.append(seg == 0 and d == 0.0)
@@ -1778,23 +1808,78 @@ def _stroke_edges(
                 if boundary < seg_end:
                     run_ends_path.append(False)
                     in_run = False
+                    if not closed:
+                        _emit_open_run(
+                            edges,
+                            run_x,
+                            run_y,
+                            run_starts_path,
+                            run_ends_path,
+                            run_first,
+                            end_cap,
+                            half_width,
+                            join,
+                            miter_limit,
+                            xs,
+                            ys,
+                        )
             elif in_run:
                 run_ends_path.append(False)
                 in_run = False
+                if not closed:
+                    _emit_open_run(
+                        edges,
+                        run_x,
+                        run_y,
+                        run_starts_path,
+                        run_ends_path,
+                        run_first,
+                        end_cap,
+                        half_width,
+                        join,
+                        miter_limit,
+                        xs,
+                        ys,
+                    )
             d = boundary
         distance = seg_end
     if in_run:
         run_ends_path.append(not closed)
+        if not closed:
+            _emit_open_run(
+                edges,
+                run_x,
+                run_y,
+                run_starts_path,
+                run_ends_path,
+                run_first,
+                end_cap,
+                half_width,
+                join,
+                miter_limit,
+                xs,
+                ys,
+            )
+    if not closed:
+        return _finish_stroke(
+            edges^,
+            exact,
+            points,
+            closed,
+            half_width,
+            cap,
+            dashes,
+            dash_offset,
+            join,
+            miter_limit,
+            matrix,
+        )
     var runs = len(run_first)
     if runs == 0:
         return _StrokeShape(_EdgeTable(), True)
     # A closed path drawn all the way round is a solid ring after all.
-    if closed and runs == 1 and run_starts_path[0] and pattern.is_on(distance):
-        var xs = List[Float64]()
-        var ys = List[Float64]()
+    if runs == 1 and run_starts_path[0] and pattern.is_on(distance):
         _append_distinct(xs, ys, run_x, run_y, 0, len(run_x), True)
-        var edges = _EdgeTable(8 * count + 32)
-        edges.set_map(matrix)
         exact = _outline_closed(edges, xs, ys, half_width, join, miter_limit)
         return _finish_stroke(
             edges^,
@@ -1810,51 +1895,35 @@ def _stroke_edges(
             matrix,
         )
     # A closed path whose pattern is on across its starting vertex:
-    # the last run continues into the first.
-    var merge_last = closed and runs >= 2 and run_starts_path[0] and in_run
-    var edges = _EdgeTable(8 * count + 32)
-    edges.set_map(matrix)
-    # One pair of scratch lists for every run: a dashed series is
-    # thousands of runs, and a list per run was most of the walk's
-    # cost once every run built its outline.
-    var xs = List[Float64]()
-    var ys = List[Float64]()
+    # the last run continues into the first. A closed path has no
+    # ends, so every run's ends are butt.
+    var merge_last = runs >= 2 and run_starts_path[0] and in_run
     for r in range(runs):
         if merge_last and r == 0:
             continue
         var first = run_first[r]
         var last = len(run_x) if r == runs - 1 else run_first[r + 1]
-        xs.clear()
-        ys.clear()
-        _append_distinct(xs, ys, run_x, run_y, first, last, False)
-        var starts_path = run_starts_path[r] and not closed
+        var first2 = 0
+        var last2 = 0
         if merge_last and r == runs - 1:
-            _append_distinct(
-                xs, ys, run_x, run_y, run_first[0], run_first[1], False
-            )
-        var cap_s = end_cap if starts_path else LineCap.BUTT
-        var cap_e = end_cap if (
-            run_ends_path[r] and not closed
-        ) else LineCap.BUTT
-        if len(xs) == 2 and cap_s == LineCap.BUTT and cap_e == LineCap.BUTT:
-            # A dash inside one segment, which is most of them: a
-            # rectangle, emitted in the order `_outline_open` would --
-            # left offset forward, right offset backward -- so the
-            # edges are the ones it builds, without its lists. The two
-            # points are distinct, so the length is not zero.
-            var dx = xs[1] - xs[0]
-            var dy = ys[1] - ys[0]
-            var length = sqrt(dx * dx + dy * dy)
-            var nx = -dy / length * half_width
-            var ny = dx / length * half_width
-            edges.add_edge(xs[0] + nx, ys[0] + ny, xs[1] + nx, ys[1] + ny)
-            edges.add_edge(xs[1] + nx, ys[1] + ny, xs[1] - nx, ys[1] - ny)
-            edges.add_edge(xs[1] - nx, ys[1] - ny, xs[0] - nx, ys[0] - ny)
-            edges.add_edge(xs[0] - nx, ys[0] - ny, xs[0] + nx, ys[0] + ny)
-        elif len(xs) > 0:
-            _outline_open(
-                edges, xs, ys, half_width, cap_s, cap_e, join, miter_limit
-            )
+            first2 = run_first[0]
+            last2 = run_first[1]
+        _emit_run(
+            edges,
+            run_x,
+            run_y,
+            first,
+            last,
+            first2,
+            last2,
+            LineCap.BUTT,
+            LineCap.BUTT,
+            half_width,
+            join,
+            miter_limit,
+            xs,
+            ys,
+        )
     return _finish_stroke(
         edges^,
         exact,
@@ -1868,6 +1937,96 @@ def _stroke_edges(
         miter_limit,
         matrix,
     )
+
+
+def _emit_run(
+    mut edges: _EdgeTable,
+    run_x: List[Float64],
+    run_y: List[Float64],
+    first: Int,
+    last: Int,
+    first2: Int,
+    last2: Int,
+    cap_s: LineCap,
+    cap_e: LineCap,
+    half_width: Float64,
+    join: LineJoin,
+    miter_limit: Float64,
+    mut xs: List[Float64],
+    mut ys: List[Float64],
+):
+    """One drawn run of a dashed stroke into `edges`: the points
+    run[first:last], then run[first2:last2] when that range is not
+    empty (a closed path's last run continuing into its first), with
+    repeats dropped, outlined with the caps given. `xs`/`ys` are
+    scratch the caller keeps across runs: a dashed series is thousands
+    of runs, and a list per run was most of what the walk cost.
+    """
+    xs.clear()
+    ys.clear()
+    _append_distinct(xs, ys, run_x, run_y, first, last, False)
+    if last2 > first2:
+        _append_distinct(xs, ys, run_x, run_y, first2, last2, False)
+    if len(xs) == 2 and cap_s == LineCap.BUTT and cap_e == LineCap.BUTT:
+        # A dash inside one segment, which is most of them: a
+        # rectangle, emitted in the order `_outline_open` would --
+        # left offset forward, right offset backward -- so the edges
+        # are the ones it builds, without its lists. The two points
+        # are distinct, so the length is not zero.
+        var dx = xs[1] - xs[0]
+        var dy = ys[1] - ys[0]
+        var length = sqrt(dx * dx + dy * dy)
+        var nx = -dy / length * half_width
+        var ny = dx / length * half_width
+        edges.add_rect(xs[0], ys[0], xs[1], ys[1], nx, ny)
+    elif len(xs) > 0:
+        _outline_open(
+            edges, xs, ys, half_width, cap_s, cap_e, join, miter_limit
+        )
+
+
+def _emit_open_run(
+    mut edges: _EdgeTable,
+    mut run_x: List[Float64],
+    mut run_y: List[Float64],
+    mut run_starts_path: List[Bool],
+    mut run_ends_path: List[Bool],
+    mut run_first: List[Int],
+    end_cap: LineCap,
+    half_width: Float64,
+    join: LineJoin,
+    miter_limit: Float64,
+    mut xs: List[Float64],
+    mut ys: List[Float64],
+):
+    """The one run an open path's walk has just closed, held whole in
+    the run lists, into `edges`; then the lists are cleared for the
+    next. The path's own two ends take `end_cap`, a dash boundary is
+    butt.
+    """
+    var cap_s = end_cap if run_starts_path[0] else LineCap.BUTT
+    var cap_e = end_cap if run_ends_path[0] else LineCap.BUTT
+    _emit_run(
+        edges,
+        run_x,
+        run_y,
+        0,
+        len(run_x),
+        0,
+        0,
+        cap_s,
+        cap_e,
+        half_width,
+        join,
+        miter_limit,
+        xs,
+        ys,
+    )
+    run_x.clear()
+    run_y.clear()
+    run_first.clear()
+    run_starts_path.clear()
+    run_ends_path.clear()
 
 
 def _finish_stroke(
