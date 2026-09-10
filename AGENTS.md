@@ -95,7 +95,12 @@ resolves.
   anyway so the diff you review is the diff that lands.
 - Releases: `pixi run bench-check` and `pixi run bench-verify` clean,
   the check on a quiet machine, then bump the version in `pixi.toml`
-  (two places: `[workspace]` and `[package]`) and tag. A perf change
+  (two places: `[workspace]` and `[package]`) and tag. Every tag gets
+  a GitHub release object with notes (`gh release create <tag>
+  --verify-tag --notes-file -`) in the shape of v0.27.0's: what
+  changed since the last tag, a breaking change first with what an
+  out-of-repo `DrawTarget` must add, rendered-output changes,
+  measured numbers in tables, then an "Also" list. A perf change
   that moved rows on purpose re-records the reference in the same PR.
 
 ## Mojo 1.0 traps, each with its fix
