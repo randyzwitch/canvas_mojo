@@ -6,11 +6,11 @@
 # Written by `pixi run bench-record-digests`; read by `pixi run bench-verify`.
 rect fills and blend modes	cd3c1f81228a097a
 aa circles, ellipse, arc, ring	66e240b6db57a608
-path fill, even-odd	d2fe45df10ca1a6d
+path fill, even-odd	b2fd08aaf5ca7c97
 path fill, nonzero	b2fd08aaf5ca7c97
 path stroke	1670d5590e8cd35d
 lines and dashed polyline	75ac1af1a6e24751
-clip rect and clip path	16942c461a2573bd
+clip rect and clip path	cc00041b12358d7c
 linear gradient path	1823086e51d4702e
 radial gradient path	4f1d5ce55aa85ed2
 conic gradient path	affaec97ebd63521
