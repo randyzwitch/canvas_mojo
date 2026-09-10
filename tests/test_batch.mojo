@@ -341,6 +341,34 @@ def test_batch_of_disks_matches_the_batched_marker_entry_point() raises:
         _assert_same(by_entry, by_batch, "markers r=" + String(radius))
 
 
+def test_batch_of_path_markers_builds_their_edges_in_parallel() raises:
+    # Two thousand small paths: far past the geometry threshold, so
+    # `end_batch` flattens and builds them across tasks, and the
+    # pixels still match drawing them one at a time. The translation
+    # is on the canvas, so each is recorded in device space.
+    var diamond = Path()
+    diamond.move_to(0.0, -4.0)
+    diamond.line_to(4.0, 0.0)
+    diamond.line_to(0.0, 4.0)
+    diamond.line_to(-4.0, 0.0)
+    diamond.close()
+    var tint = Color(220, 60, 40, 120)
+    var direct = Canvas(W, H, BG)
+    var batched = Canvas(W, H, BG)
+    batched.begin_batch()
+    for i in range(2000):
+        var fx = 8.0 + Float64((i * 37) % 3800) * 0.1
+        var fy = 8.0 + Float64((i * 53) % 2800) * 0.1
+        direct.translate(fx, fy)
+        fill_path_aa(direct, diamond, tint, FillRule.NONZERO)
+        direct.translate(-fx, -fy)
+        batched.translate(fx, fy)
+        fill_path_aa(batched, diamond, tint, FillRule.NONZERO)
+        batched.translate(-fx, -fy)
+    batched.end_batch()
+    _assert_same(direct, batched, "path markers")
+
+
 def _generic_scene[T: DrawTarget](mut target: T) raises:
     target.begin_batch()
     target.fill_circle_aa(30, 30, 10, Color(0, 0, 0, 255))

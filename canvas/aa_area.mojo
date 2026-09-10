@@ -35,6 +35,17 @@ struct _RowSpans(Movable):
         self.lo = List[Int](length=rows, fill=width)
         self.hi = List[Int](length=rows, fill=-1)
 
+    def reset(mut self, rows: Int, width: Int):
+        """Back to `rows` empty rows, reusing the lists' storage: a
+        batch band walks many ops with one of these."""
+        self.lo.resize(unsafe_uninit_length=rows)
+        self.hi.resize(unsafe_uninit_length=rows)
+        var lp = self.lo.unsafe_ptr()
+        var hp = self.hi.unsafe_ptr()
+        for r in range(rows):  # r < rows
+            lp[unsafe_offset=r] = width
+            hp[unsafe_offset=r] = -1
+
     def cells(self) -> Int:
         """Cells across every row's span: the resolve's work."""
         var total = 0
@@ -68,27 +79,55 @@ def _row_spans(
     last_row: Int,
     row_first_px: Int,
     acc_width: Int,
+    first_edge: Int = 0,
+    last_edge: Int = -1,
 ) -> _RowSpans:
     """The span of cells each row's deposits will reach, for rows
-    [first_row, last_row): the walk `_deposit_edge` makes over every
-    edge's rows, keeping only the columns it lands in. The half-pixel
-    shift and the clamps are the ones `_deposit_all` and
-    `_deposit_edge` apply, so the spans are exact.
+    [first_row, last_row) and edges [first_edge, last_edge) -- every
+    edge when `last_edge` is left at -1: the walk `_deposit_edge`
+    makes over every edge's rows, keeping only the columns it lands
+    in. The half-pixel shift and the clamps are the ones
+    `_deposit_all` and `_deposit_edge` apply, so the spans are exact.
     """
     var spans = _RowSpans(last_row - first_row, acc_width)
+    _row_spans_into(
+        spans,
+        edges,
+        first_row,
+        last_row,
+        row_first_px,
+        acc_width,
+        first_edge,
+        last_edge,
+    )
+    return spans^
+
+
+def _row_spans_into(
+    mut spans: _RowSpans,
+    edges: _EdgeTable,
+    first_row: Int,
+    last_row: Int,
+    row_first_px: Int,
+    acc_width: Int,
+    first_edge: Int = 0,
+    last_edge: Int = -1,
+):
+    """`_row_spans` into an existing `spans`, reset first."""
+    spans.reset(last_row - first_row, acc_width)
     var lo = spans.lo.unsafe_ptr()
     var hi = spans.hi.unsafe_ptr()
     var limit = acc_width - 1
     # Read through pointers: seven checked reads per edge were most
     # of what this walk cost on a table of short edges. i < n.
-    var n = len(edges.y_lo)
+    var n = len(edges.y_lo) if last_edge < 0 else last_edge
     var ey_lo = edges.y_lo.unsafe_ptr()
     var ey_hi = edges.y_hi.unsafe_ptr()
     var ex0 = edges.x0.unsafe_ptr()
     var ey0 = edges.y0.unsafe_ptr()
     var edx = edges.dx.unsafe_ptr()
     var edy = edges.dy.unsafe_ptr()
-    for i in range(n):
+    for i in range(first_edge, n):
         var y_lo = ey_lo[unsafe_offset=i] + 0.5
         var y_hi = ey_hi[unsafe_offset=i] + 0.5
         if y_hi <= Float64(first_row) or y_lo >= Float64(last_row):
@@ -113,7 +152,6 @@ def _row_spans(
                 lo[unsafe_offset=row] = c0
             if c1 > hi[unsafe_offset=row]:
                 hi[unsafe_offset=row] = c1
-    return spans^
 
 
 # Rows sampled, one in this many, to estimate a region's cells before
@@ -127,6 +165,8 @@ def _estimate_cells(
     last_row: Int,
     row_first_px: Int,
     acc_width: Int,
+    first_edge: Int = 0,
+    last_edge: Int = -1,
 ) -> Int:
     """About how many cells the spans of rows [first_row, last_row)
     add up to: `_row_spans` over every `_SPAN_SAMPLE_STRIDE`th row,
@@ -148,14 +188,14 @@ def _estimate_cells(
     var lp = lo.unsafe_ptr()
     var hp = hi.unsafe_ptr()
     var limit = acc_width - 1
-    var n = len(edges.y_lo)
+    var n = len(edges.y_lo) if last_edge < 0 else last_edge
     var ey_lo = edges.y_lo.unsafe_ptr()
     var ey_hi = edges.y_hi.unsafe_ptr()
     var ex0 = edges.x0.unsafe_ptr()
     var ey0 = edges.y0.unsafe_ptr()
     var edx = edges.dx.unsafe_ptr()
     var edy = edges.dy.unsafe_ptr()
-    for i in range(n):  # i < n
+    for i in range(first_edge, n):  # i < n
         var y_lo = ey_lo[unsafe_offset=i] + 0.5
         var y_hi = ey_hi[unsafe_offset=i] + 0.5
         if y_hi <= Float64(first_row) or y_lo >= Float64(last_row):
@@ -206,10 +246,29 @@ struct _Accumulator(Movable):
     var width: Int
     var rows: Int
 
+    def __init__(out self):
+        """Empty, for `reset` to size."""
+        self.width = 0
+        self.rows = 0
+        self.cells = List[Float32]()
+
     def __init__(out self, spans: _RowSpans, rows: Int, width: Int):
         self.width = width
         self.rows = rows
         self.cells = List[Float32](unsafe_uninit_length=rows * width)
+        self._zero_spans(spans)
+
+    def reset(mut self, spans: _RowSpans, rows: Int, width: Int):
+        """Resize to `rows * width` cells, reusing the storage, and
+        zero each row's span."""
+        self.width = width
+        self.rows = rows
+        self.cells.resize(unsafe_uninit_length=rows * width)
+        self._zero_spans(spans)
+
+    def _zero_spans(mut self, spans: _RowSpans):
+        var rows = self.rows
+        var width = self.width
         var p = self.cells.unsafe_ptr()
         for r in range(rows):
             var lo = spans.lo[r]
@@ -301,14 +360,18 @@ def _deposit_all(
     first_row: Int,
     last_row: Int,
     row_first_px: Int,
+    first_edge: Int = 0,
+    last_edge: Int = -1,
 ):
-    """Every edge of `edges` into `acc`, rows [first_row, last_row).
+    """Edges [first_edge, last_edge) of `edges` -- every edge when
+    `last_edge` is left at -1 -- into `acc`, rows [first_row,
+    last_row).
 
     The half-pixel shift is what puts the edges in cell coordinates:
     pixel py's square starts at py - 0.5 in the path's space, which is
     cell row py's start once 0.5 is added; likewise for columns.
     """
-    var n = len(edges.y_lo)
+    var n = len(edges.y_lo) if last_edge < 0 else last_edge
     var ey_lo = edges.y_lo.unsafe_ptr()
     var ey_hi = edges.y_hi.unsafe_ptr()
     var ex0 = edges.x0.unsafe_ptr()
@@ -316,7 +379,7 @@ def _deposit_all(
     var edx = edges.dx.unsafe_ptr()
     var edy = edges.dy.unsafe_ptr()
     var edir = edges.direction.unsafe_ptr()
-    for i in range(n):  # i < n
+    for i in range(first_edge, n):  # i < n
         var y_lo = ey_lo[unsafe_offset=i] + 0.5
         var y_hi = ey_hi[unsafe_offset=i] + 0.5
         if y_hi <= Float64(first_row):
@@ -423,6 +486,20 @@ def _resolve_rows(
             c = end
 
 
+struct _AreaScratch(Movable):
+    """A band's spans and accumulator, kept across the ops a batch
+    band draws so that thousands of small ops do not allocate and free
+    three lists each -- allocation across many threads was most of
+    what a batch of tiny shapes cost."""
+
+    var spans: _RowSpans
+    var acc: _Accumulator
+
+    def __init__(out self):
+        self.spans = _RowSpans(0, 0)
+        self.acc = _Accumulator()
+
+
 def _area_band(
     mut canvas: Canvas,
     edges: _EdgeTable,
@@ -437,12 +514,64 @@ def _area_band(
     resolve onto `canvas`. Bands write disjoint rows and share nothing
     but the edge table, which they only read.
     """
+    var scratch = _AreaScratch()
+    _area_band_with(
+        canvas,
+        edges,
+        band_start,
+        band_end,
+        row_first_px,
+        row_width,
+        color,
+        0,
+        -1,
+        scratch,
+    )
+
+
+def _area_band_with(
+    mut canvas: Canvas,
+    edges: _EdgeTable,
+    band_start: Int,
+    band_end: Int,
+    row_first_px: Int,
+    row_width: Int,
+    color: Color,
+    first_edge: Int,
+    last_edge: Int,
+    mut scratch: _AreaScratch,
+):
+    """`_area_band` over edges [first_edge, last_edge) of `edges`,
+    with the caller's scratch."""
     var acc_width = row_width + 2
-    var spans = _row_spans(edges, band_start, band_end, row_first_px, acc_width)
-    var acc = _Accumulator(spans, band_end - band_start, acc_width)
-    _deposit_all(acc, edges, band_start, band_end, row_first_px)
+    _row_spans_into(
+        scratch.spans,
+        edges,
+        band_start,
+        band_end,
+        row_first_px,
+        acc_width,
+        first_edge,
+        last_edge,
+    )
+    scratch.acc.reset(scratch.spans, band_end - band_start, acc_width)
+    _deposit_all(
+        scratch.acc,
+        edges,
+        band_start,
+        band_end,
+        row_first_px,
+        first_edge,
+        last_edge,
+    )
     _resolve_rows(
-        canvas, acc, spans, band_start, row_first_px, row_width, color
+        canvas,
+        scratch.acc,
+        scratch.spans,
+        band_start,
+        row_first_px,
+        row_width,
+        color,
     )
 
 
@@ -548,6 +677,8 @@ def _area_edges_aa(
 def _area_edges_rows(
     mut canvas: Canvas,
     edges: _EdgeTable,
+    first_edge: Int,
+    last_edge: Int,
     min_x: Int,
     min_y: Int,
     max_x: Int,
@@ -555,12 +686,14 @@ def _area_edges_rows(
     color: Color,
     row_lo: Int,
     row_hi: Int,
+    mut scratch: _AreaScratch,
 ):
-    """`_area_edges_aa` for rows [row_lo, row_hi) only, on the calling
-    thread: what a batch band draws of one recorded op. The rows are
-    the ones `_area_edges_aa` visits under those clamps, and the bytes
-    are the same, since a row's result does not depend on which band
-    computes it.
+    """`_area_edges_aa` over edges [first_edge, last_edge) of `edges`,
+    for rows [row_lo, row_hi) only, on the calling thread: what a
+    batch band draws of one recorded op. The rows are the ones
+    `_area_edges_aa` visits under those clamps, and the bytes are the
+    same, since a row's result does not depend on which band computes
+    it.
     """
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px
@@ -568,8 +701,17 @@ def _area_edges_rows(
     var last_row = min(min(max_y + 2, canvas.height), row_hi)
     if last_row - first_row <= 0 or row_width <= 0:
         return
-    _area_band(
-        canvas, edges, first_row, last_row, row_first_px, row_width, color
+    _area_band_with(
+        canvas,
+        edges,
+        first_row,
+        last_row,
+        row_first_px,
+        row_width,
+        color,
+        first_edge,
+        last_edge,
+        scratch,
     )
 
 
