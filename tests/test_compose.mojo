@@ -700,5 +700,139 @@ def test_singular_matrix_raises() raises:
         draw_canvas(dst, src, Matrix2D.scaling(0.0, 1.0))
 
 
+def _reference_blit(
+    dst_w: Int, dst_h: Int, bg: Color, src: Canvas, ox: Int, oy: Int
+) raises -> Canvas:
+    """`draw_canvas` computed the slow way, one `set_pixel` per source
+    pixel, for the wide classification path to be checked against.
+    """
+    var out = Canvas(dst_w, dst_h, bg)
+    for sy in range(src.height):
+        for sx in range(src.width):
+            out.set_pixel(ox + sx, oy + sy, src.get_pixel(sx, sy))
+    return out^
+
+
+def _assert_same(a: Canvas, b: Canvas, what: String) raises:
+    for i in range(len(a.pixels)):
+        if a.pixels[i] != b.pixels[i]:
+            raise Error(
+                what
+                + ": byte "
+                + String(i)
+                + " (pixel "
+                + String(i // 4)
+                + ", channel "
+                + String(i % 4)
+                + "): got "
+                + String(a.pixels[i])
+                + ", want "
+                + String(b.pixels[i])
+            )
+
+
+def test_one_translucent_pixel_anywhere_in_a_wide_block() raises:
+    # The compositor classifies 32 pixels with a single reduction and
+    # copies all of them when every alpha is 255. A single pixel that is
+    # not opaque has to break that, wherever it sits, so this walks one
+    # such pixel across every column of a row wider than the block and
+    # compares every byte against a per-pixel reference.
+    var widths: List[Int] = [31, 32, 33, 64, 65, 97]
+    var alphas: List[UInt8] = [0, 1, 127, 254]
+    for wi in range(len(widths)):
+        var w = widths[wi]
+        for ai in range(len(alphas)):
+            var a = alphas[ai]
+            for bad in range(w):
+                var src = Canvas(w, 3, Color(200, 100, 50, 255))
+                src.set_pixel(bad, 1, Color(10, 220, 90, a))
+                var dst = Canvas(w + 8, 5, Color(30, 60, 90))
+                draw_canvas(dst, src, 4, 1)
+                var want = _reference_blit(
+                    w + 8, 5, Color(30, 60, 90), src, 4, 1
+                )
+                _assert_same(
+                    dst,
+                    want,
+                    "w="
+                    + String(w)
+                    + " alpha="
+                    + String(a)
+                    + " at col "
+                    + String(bad),
+                )
+
+
+def _pattern(kind: Int, w: Int, h: Int) raises -> Canvas:
+    """One of the alpha layouts #351 asks to be compared: 0 fully
+    opaque, 1 alternating, 2 sparse, 3 transparent border, 4 fully
+    transparent.
+    """
+    if kind == 4:
+        return Canvas(w, h, Color(200, 100, 50, 0))
+    var c = Canvas(w, h, Color(200, 100, 50, 255))
+    if kind == 1:
+        for y in range(h):
+            for x in range(0, w, 2):
+                c.set_pixel(x, y, Color(10, 220, 90, 128))
+    elif kind == 2:
+        for y in range(h):
+            c.set_pixel((y * 37) % w, y, Color(10, 220, 90, 7))
+    elif kind == 3:
+        for x in range(w):
+            c.set_pixel(x, 0, Color(0, 0, 0, 0))
+            c.set_pixel(x, h - 1, Color(0, 0, 0, 0))
+        for y in range(h):
+            c.set_pixel(0, y, Color(0, 0, 0, 0))
+            c.set_pixel(w - 1, y, Color(0, 0, 0, 0))
+    return c^
+
+
+def test_alpha_patterns_across_the_wide_block() raises:
+    # The four patterns #351 asks for, plus fully transparent. Each has
+    # to reproduce the per-pixel reference byte for byte, at offsets
+    # that put the wide block in and out of phase with the source.
+    var w = 100
+    var h = 6
+    var names: List[String] = [
+        "opaque",
+        "alternating",
+        "sparse",
+        "border",
+        "transparent",
+    ]
+    for kind in range(5):
+        for oi in range(3):
+            var ox = -3 + oi * 4
+            var src = _pattern(kind, w, h)
+            var dst = Canvas(w + 10, h + 4, Color(30, 60, 90))
+            draw_canvas(dst, src, ox, 2)
+            var want = _reference_blit(
+                w + 10, h + 4, Color(30, 60, 90), src, ox, 2
+            )
+            _assert_same(dst, want, names[kind] + " at offset " + String(ox))
+
+
+def test_wide_block_under_a_clip_rect() raises:
+    # A clip narrows the run the compositor walks, so the wide block can
+    # start mid-source and end mid-block.
+    var src = Canvas(97, 5, Color(200, 100, 50, 255))
+    src.set_pixel(40, 2, Color(10, 220, 90, 100))
+    for ci in range(4):
+        var cx = 3 + ci * 7
+        var dst = Canvas(110, 9, Color(30, 60, 90))
+        dst.push_clip(cx, 1, 61, 6)
+        draw_canvas(dst, src, 5, 2)
+        dst.pop_clip()
+
+        var want = Canvas(110, 9, Color(30, 60, 90))
+        want.push_clip(cx, 1, 61, 6)
+        for sy in range(src.height):
+            for sx in range(src.width):
+                want.set_pixel(5 + sx, 2 + sy, src.get_pixel(sx, sy))
+        want.pop_clip()
+        _assert_same(dst, want, "clip at x=" + String(cx))
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

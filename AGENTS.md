@@ -271,6 +271,13 @@ resolves.
 - Golden tests fail on any pixel change. Regenerate with
   `CANVAS_REGEN_GOLDEN=1` only when the new output is known correct,
   and say why in the PR.
+- A horizontal reduction is a dependency the branch waits on, and it is
+  usually the whole cost of a classify-then-act loop. Copying an 800x600
+  canvas is 39.9 us; with a `reduce_min` per eight pixels it is 80.6 us;
+  with four groups AND-ed together and reduced once it is 40.0 us. Widen
+  the block until the reduce is amortized rather than trying to make the
+  reduce cheaper -- AND/OR between vectors is vertical work the pipeline
+  absorbs. See `_WIDE` in compose.mojo (#351).
 - `bench-check` passing does not mean nothing moved. It fails only past
   1.5x; it reports a row past 1.35x and the median ratio, and is blind
   below that. #370 slowed four rows by 1.11x-1.44x and printed "ok" for
