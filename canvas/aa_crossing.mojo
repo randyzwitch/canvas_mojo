@@ -82,6 +82,12 @@ struct _EdgeTable(Movable):
     # whole row their top lands in, and that row for each entry.
     var order: List[Int]
     var order_row: List[Int]
+    # Whether `order`/`order_row` describe the current edges. Set by
+    # `sort_by_top`, cleared by `add_edge`, so a second sort of an
+    # unchanged table costs nothing. An even-odd fill sorts twice
+    # otherwise: once in `_rules_agree` and again in the sampled sweep
+    # it falls back to (#373).
+    var _sorted: Bool
     # Set by `set_map`: a transform every edge passes through as it is
     # added, for a stroke built in user space and swept in device
     # space.
@@ -114,6 +120,7 @@ struct _EdgeTable(Movable):
         # no benefit to reserving these up front.
         self.order = List[Int]()
         self.order_row = List[Int]()
+        self._sorted = False
         self._map = Matrix2D.identity()
         self._mapped = False
 
@@ -223,6 +230,7 @@ struct _EdgeTable(Movable):
         self.dx.append(x_b - x_a)
         self.dy.append(y_b - y_a)
         self.direction.append(1 if y_b > y_a else -1)
+        self._sorted = False
 
     def sort_by_top(mut self):
         """Fill `order` with the edge indices bucketed by the whole row
@@ -232,7 +240,13 @@ struct _EdgeTable(Movable):
 
         Edges are sorted to whole rows; `crossings_at` ignores an
         admitted edge until `fy` reaches its exact `y_lo`.
+
+        A no-op when the table has not changed since the last call, so
+        a caller that sorts defensively pays nothing.
         """
+        if self._sorted:
+            return
+        self._sorted = True
         var n = len(self.y_lo)
         self.order = List[Int](length=n, fill=0)
         self.order_row = List[Int](length=n, fill=0)
