@@ -3,66 +3,66 @@
 # workers: 64
 # version: 0.28.0
 # Written by `pixi run bench-record`; read by `pixi run bench-check`.
-Canvas(800x600) construct+fill	23.788
-Canvas.fill opaque	23.483
-Canvas(2400x1800) allocate and clear	585.364
-Canvas.fill translucent (blend)	101.363
-fill_rect 600x400 opaque	15.741
-fill_rect 600x400 multiply	90.918
-fill_circle_aa x2000 markers (r=3.5)	2987.894
-fill_circles_aa x2000 markers batched (r=3.5)	307.579
-fill_circles_aa x2000 markers batched (r=10.5)	1370.524
-fill_circle_aa one large (r=250)	115.250
-fill_ellipse_aa one large (340x220)	113.430
-fill_ellipse_aa x2000 small (5x3)	3539.208
-fill_ellipses_aa x2000 markers batched (5x3)	263.454
-fill_arc_aa large pie wedge (r=260)	73.049
-fill_ring_sector_aa large donut (150-260)	75.972
-fill_arc_aa x2000 small (r=4)	2691.301
-fill_arcs_aa x2000 wedges batched (r=4)	524.333
-fill_polygon_aa 64-gon	126.951
-fill_path_aa glyph-sized	7.795
-fill_path_aa glyph-sized (nonzero)	5.013
-fill_path_aa large 39-curve	636.244
-fill_path_aa large 39-curve (nonzero)	385.358
-fill_path_aa large under a clip rect	567.424
-fill_path_gradient_aa glyph-sized	13.920
-fill_path_gradient_aa large 39-curve	1205.080
-fill_path_gradient_aa 39-curve, clip misses the path	51.446
-fill_path_gradient_aa 39-curve under a small clip	529.256
-fill_path_radial_gradient_aa glyph-sized	14.827
-fill_path_radial_gradient_aa large 39-curve	1255.882
-fill_path_conic_gradient_aa glyph-sized	22.177
-fill_path_conic_gradient_aa large 39-curve	1365.557
-draw_line_aa full diagonal (w=2)	46.547
-draw_polyline_aa 3000-segment series	1754.074
-draw_polyline_aa 3000-segment smooth series	1048.559
-draw_polyline_aa 3000-segment dashed	3478.898
-draw_line dashed full diagonal	7.822
-draw_line solid full diagonal	4.673
-stroke_path_aa 39-curve path	1497.785
-draw_text 3 lines @13px (cached)	98.906
-draw_text 3 lines @13px (uncached)	1740.243
-draw_text_on_path 20 glyphs on an arc	113.946
+Canvas(800x600) construct+fill	23.758
+Canvas.fill opaque	22.832
+Canvas(2400x1800) allocate and clear	659.011
+Canvas.fill translucent (blend)	113.593
+fill_rect 600x400 opaque	15.863
+fill_rect 600x400 multiply	96.144
+fill_circle_aa x2000 markers (r=3.5)	2957.581
+fill_circles_aa x2000 markers batched (r=3.5)	281.651
+fill_circles_aa x2000 markers batched (r=10.5)	954.686
+fill_circle_aa one large (r=250)	98.256
+fill_ellipse_aa one large (340x220)	93.503
+fill_ellipse_aa x2000 small (5x3)	3486.399
+fill_ellipses_aa x2000 markers batched (5x3)	281.331
+fill_arc_aa large pie wedge (r=260)	66.680
+fill_ring_sector_aa large donut (150-260)	67.279
+fill_arc_aa x2000 small (r=4)	2334.221
+fill_arcs_aa x2000 wedges batched (r=4)	387.854
+fill_polygon_aa 64-gon	123.140
+fill_path_aa glyph-sized	6.926
+fill_path_aa glyph-sized (nonzero)	4.132
+fill_path_aa large 39-curve	610.561
+fill_path_aa large 39-curve (nonzero)	283.493
+fill_path_aa large under a clip rect	532.424
+fill_path_gradient_aa glyph-sized	12.950
+fill_path_gradient_aa large 39-curve	1175.756
+fill_path_gradient_aa 39-curve, clip misses the path	23.388
+fill_path_gradient_aa 39-curve under a small clip	484.114
+fill_path_radial_gradient_aa glyph-sized	13.697
+fill_path_radial_gradient_aa large 39-curve	1216.418
+fill_path_conic_gradient_aa glyph-sized	21.446
+fill_path_conic_gradient_aa large 39-curve	1348.179
+draw_line_aa full diagonal (w=2)	45.434
+draw_polyline_aa 3000-segment series	1124.555
+draw_polyline_aa 3000-segment smooth series	780.196
+draw_polyline_aa 3000-segment dashed	2628.222
+draw_line dashed full diagonal	7.834
+draw_line solid full diagonal	4.622
+stroke_path_aa 39-curve path	1111.137
+draw_text 3 lines @13px (cached)	99.212
+draw_text 3 lines @13px (uncached)	1705.319
+draw_text_on_path 20 glyphs on an arc	101.581
 FontCache() font scan	0.054
-write_png 800x600 (deflate)	4151.209
-read_png 800x600 (inflate)	612.216
-downsample 1600x1200 -> 2x	208.272
-downsample 2400x1800 -> 3x	519.725
-resize 1600x1200 -> 800x600	210.397
-resize 1600x1200 -> 741x533	1088.914
-blur 800x600 r=4	1210.744
-blur 800x600 r=16	2363.035
-push_clip_path rect mask	12.418
-fill_circle_aa x2000 under a clip path	3258.418
-fill_circle_aa x2000 under a clip rect	2922.404
-draw_canvas 800x600 opaque	57.788
-draw_canvas 800x600 translucent	267.883
-draw_canvas 800x600 at half opacity	297.530
-draw_canvas 800x600 through a mask	395.233
-draw_canvas 200x200 1.7x rot 30 nearest	182.278
-draw_canvas 200x200 1.7x rot 30 bilinear	316.584
-measure_text one label (cached)	2.642
-measure_text_block 3 lines (cached)	21.529
-measure then draw 3 lines (laid out twice)	121.300
-measure then draw 3 lines (prepared once)	99.594
+write_png 800x600 (deflate)	4127.438
+read_png 800x600 (inflate)	614.815
+downsample 1600x1200 -> 2x	198.082
+downsample 2400x1800 -> 3x	445.601
+resize 1600x1200 -> 800x600	203.864
+resize 1600x1200 -> 741x533	1051.125
+blur 800x600 r=4	1174.173
+blur 800x600 r=16	2303.181
+push_clip_path rect mask	12.523
+fill_circle_aa x2000 under a clip path	3343.210
+fill_circle_aa x2000 under a clip rect	2913.584
+draw_canvas 800x600 opaque	57.072
+draw_canvas 800x600 translucent	267.637
+draw_canvas 800x600 at half opacity	293.185
+draw_canvas 800x600 through a mask	390.472
+draw_canvas 200x200 1.7x rot 30 nearest	171.862
+draw_canvas 200x200 1.7x rot 30 bilinear	295.065
+measure_text one label (cached)	2.808
+measure_text_block 3 lines (cached)	21.610
+measure then draw 3 lines (laid out twice)	121.119
+measure then draw 3 lines (prepared once)	96.798
