@@ -119,6 +119,24 @@ def _lpad(text: String, width: Int) -> String:
     return out
 
 
+def _median_of(var values: List[Float64]) -> Float64:
+    """The median of `values`, which it sorts in place. Used on the
+    ratio of every comparable row against its reference: a systematic
+    shift shows up there when no single row crosses a threshold, which
+    is what separates "the machine was busy" from "the code changed".
+    """
+    if len(values) == 0:
+        return 1.0
+    for i in range(1, len(values)):
+        var v = values[i]
+        var j = i - 1
+        while j >= 0 and values[j] > v:
+            values[j + 1] = values[j]
+            j -= 1
+        values[j + 1] = v
+    return values[len(values) // 2]
+
+
 def _fixed(value: Float64, places: Int) -> String:
     """`value` rendered with exactly `places` decimals. Mojo's default
     Float64 formatting is full precision, which makes a column of
@@ -1074,12 +1092,48 @@ def _survey() raises -> List[_Row]:
 # the regression this exists to catch was 2.3x.
 comptime _REGRESSION_FACTOR = 1.5
 
+# A row this many times slower than its reference is *reported* without
+# failing the check. The band between this and _REGRESSION_FACTOR is
+# where an ordinary regression lands: #370 slowed four rows by 1.11x to
+# 1.44x and every one printed "ok", so the change reached a tagged
+# release (#374).
+#
+# The value is set by noise, not by taste. Three consecutive runs of
+# *identical* code against the same reference flagged 4, then 1, then 6
+# different rows at a 1.15 threshold, reaching 1.32 -- all of them
+# banded rows, whose run-to-run swing is the ~20% AGENTS.md records.
+# Anything below this reports mostly noise, and a check that cries wolf
+# is one readers learn to skip.
+#
+# That leaves a real gap: #370's 1.11x and 1.19x rows still would not
+# be reported. A single run cannot separate those from noise, which is
+# what `compare` mode below is for -- it is the tool that caught them.
+comptime _MOVED_FACTOR = 1.35
+
 # Rows faster than this are not compared. A case measuring tens of
 # nanoseconds -- the cached font scan is one -- swings by a factor on
 # timer granularity alone, and reporting that as a regression trains
 # the reader to ignore the check.
 comptime _MIN_COMPARABLE_US = 1.0
 comptime _REFERENCE_PATH = "benchmarks/reference.txt"
+
+
+def _reference_path() -> String:
+    """Where `check` reads its reference from: `CANVAS_BENCH_REFERENCE`
+    when set, else `benchmarks/reference.txt`.
+
+    The override is what makes a same-day A/B possible. Committed
+    numbers carry the conditions they were recorded under, so a row that
+    moved can be the code or can be the machine that day, and the two
+    are not separable from one file. Recording the previous tag in its
+    own worktree and pointing this at it compares two builds under one
+    set of conditions, which is how #370's four slowed rows were
+    identified after `bench-check` had passed them.
+    """
+    var override = getenv("CANVAS_BENCH_REFERENCE")
+    if override.byte_length() > 0:
+        return override
+    return String(_REFERENCE_PATH)
 
 
 def _machine_id() -> String:
@@ -1152,7 +1206,7 @@ def _record(rows: List[_Row]) raises:
 
 
 def _check(rows: List[_Row]) raises:
-    var f = open(_REFERENCE_PATH, "r")
+    var f = open(_reference_path(), "r")
     var text = f.read()
     f.close()
     var machine = String("")
@@ -1183,7 +1237,7 @@ def _check(rows: List[_Row]) raises:
         )
         return
     print("")
-    print("bench-check against", _REFERENCE_PATH, "(version", version + ")")
+    print("bench-check against", _reference_path(), "(version", version + ")")
     var here_workers = String(parallelism_level())
     if workers != "" and workers != here_workers:
         # Banding decisions read the worker count, so a reference taken
@@ -1206,6 +1260,8 @@ def _check(rows: List[_Row]) raises:
         "  verdict",
     )
     var regressions = 0
+    var moved = 0
+    var ratios = List[Float64]()
     for i in range(len(rows)):
         ref r = rows[i]
         var now = r.ns_per_iter / 1000.0
@@ -1233,10 +1289,14 @@ def _check(rows: List[_Row]) raises:
             )
             continue
         var ratio = now / ref_us
+        ratios.append(ratio)
         var verdict = String("ok")
         if ratio > _REGRESSION_FACTOR:
             verdict = "REGRESSION"
             regressions += 1
+        elif ratio > _MOVED_FACTOR:
+            verdict = "moved, not failing"
+            moved += 1
         elif ratio < 1.0 / _REGRESSION_FACTOR:
             verdict = "faster; re-record when intended"
         print(
@@ -1268,6 +1328,36 @@ def _check(rows: List[_Row]) raises:
             stale,
             "reference row(s) no longer measured; re-record to drop them",
         )
+    # The median across every comparable row. A change to one code path
+    # moves a few rows and leaves this at 1.00; a busy machine or a
+    # reference recorded under load moves all of them together and shows
+    # up here. Read it before reading any single row's ratio.
+    var compared = len(ratios)
+    if compared > 0:
+        var median = _median_of(ratios^)
+        var note = String("")
+        if median > _MOVED_FACTOR or median < 1.0 / _MOVED_FACTOR:
+            note = "  -- a collective shift; suspect the machine or the"
+            note += " reference's own recording conditions before the code"
+        print(
+            "bench-check: median ratio",
+            _fixed(median, 3),
+            "across",
+            compared,
+            "comparable rows" + note,
+        )
+
+    if moved > 0:
+        # Reported, never fatal. These are the rows worth a second look
+        # before tagging; see _MOVED_FACTOR.
+        print(
+            "bench-check:",
+            moved,
+            "row(s) moved more than",
+            _MOVED_FACTOR,
+            "x without failing -- check each against its own history",
+        )
+
     if regressions > 0:
         raise Error(
             String(

@@ -36,7 +36,20 @@ test = "bash scripts/run_tests.sh tests/test_text.mojo tests/test_text_path.mojo
 # for what the numbers do and don't mean.
 bench = "mojo run -I . benchmarks/bench_canvas.mojo"
 # Two survey runs, each row at its faster time, against benchmarks/
-# reference.txt; fails on a row 1.5x slower. Run before tagging.
+# reference.txt; fails on a row 1.5x slower, and reports (without
+# failing) a row past 1.35x and the median ratio across every row.
+#
+# `CANVAS_BENCH_REFERENCE=<path>` reads a different reference, which is
+# how to A/B two builds under one set of conditions:
+#
+#   git worktree add /tmp/prev <previous tag>
+#   cd /tmp/prev && pixi run bench-record
+#   cd <your worktree> && CANVAS_BENCH_REFERENCE=/tmp/prev/benchmarks/reference.txt \
+#       pixi run bench-check
+#
+# Committed numbers carry the conditions they were recorded under, so a
+# single run cannot tell a 1.2x row from the machine that day. Two
+# builds surveyed the same hour can. Run before tagging.
 bench-check = "CANVAS_BENCH_MODE=check mojo run -I . benchmarks/bench_canvas.mojo"
 # Rewrite the reference from this machine; commit the result.
 bench-record = "CANVAS_BENCH_MODE=record mojo run -I . benchmarks/bench_canvas.mojo"

@@ -262,6 +262,14 @@ resolves.
 - Golden tests fail on any pixel change. Regenerate with
   `CANVAS_REGEN_GOLDEN=1` only when the new output is known correct,
   and say why in the PR.
+- `bench-check` passing does not mean nothing moved. It fails only past
+  1.5x; it reports a row past 1.35x and the median ratio, and is blind
+  below that. #370 slowed four rows by 1.11x-1.44x and printed "ok" for
+  all four. Before tagging, A/B against the previous tag with
+  `CANVAS_BENCH_REFERENCE=<path>` -- record it in its own worktree, then
+  point a check at that file, so both builds meet the same conditions.
+  Read the median ratio first: a real change moves a few rows, a bad
+  recording moves all of them.
 - Reading one pixel of a buffer the optimizer can follow does not keep
   the fill alive. `Canvas(800x600) construct+fill` dropped from 44 us
   to 0.3 us purely because the constructor's fill moved into a local

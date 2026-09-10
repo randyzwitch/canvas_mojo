@@ -601,6 +601,30 @@ The reference is keyed to the machine it was recorded on, so on other
 hardware it reports that and passes; `pixi run bench-record` rewrites
 it, which a change that moved rows on purpose does in its own PR.
 
+`bench-check` fails only past 1.5x, because a banded row swings about
+20% run to run and gating tighter would be noise. It also *reports*,
+without failing, any row past 1.35x and the median ratio across every
+comparable row. Read the median first: a change to one code path moves
+a few rows and leaves it at 1.00, while a busy machine or a reference
+recorded under load moves all of them together.
+
+A row between 1.0x and 1.35x is invisible to a single run, and that is
+not a threshold that can be tuned — identical code run three times
+flagged 4, then 1, then 6 different rows at a 1.15x threshold, reaching
+1.32x. To see a change that size, A/B two builds under one set of
+conditions:
+
+```
+git worktree add /tmp/prev <previous tag>
+cd /tmp/prev && pixi run bench-record
+cd <your worktree> && CANVAS_BENCH_REFERENCE=/tmp/prev/benchmarks/reference.txt \
+    pixi run bench-check
+```
+
+Do this before tagging. It is what identified the four rows #370 had
+slowed by 1.11x to 1.44x, after `bench-check` against the committed
+reference had passed them and the change had shipped.
+
 Run `pixi run bench-verify` too. It renders each verification scene
 outside any timed region and digests every byte against
 `benchmarks/digests.txt`, which is what catches a rendering change the
