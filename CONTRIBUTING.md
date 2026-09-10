@@ -481,6 +481,31 @@ raises the floor every later check compares against.
 Docstrings are rendered into the docs site by `mojo doc` + modo, so
 public ones are user-facing documentation, not just internal notes.
 
+### Documentation checks and illustrations
+
+After rendering examples, `pixi run docs` runs complete Mojo programs
+from `README.md` and the hand-written pages in `docs/src/`, renders the
+guide illustrations, builds the site, and checks its local links,
+images, and HTML anchors. These checks also run in the docs CI build.
+External URLs are not checked.
+
+Use a fenced `mojo` block with a top-level `def main()` for a complete
+program. `scripts/check_doc_snippets.sh` extracts and executes those
+blocks in temporary directories. Fragments without `main()` are not
+executed; accompany a fragment with a complete example when it teaches
+an operation readers should be able to run. Generated gallery examples
+are already exercised by `pixi run example`.
+
+`pixi run docs-snippets` checks just the complete programs, while
+`pixi run docs-links` checks an already-built site. The link checker
+uses the Go standard library from the existing docs environment.
+
+The guide diagrams are rendered by `scripts/render_guide_figures.mojo`.
+Their PNGs and downloadable source are generated under
+`docs/site/static/guide-figures/`; edit the script, run
+`pixi run docs-figures`, and inspect the resulting images. The first
+drawing image comes directly from the Getting Started code block.
+
 ### Formatting
 
 ```sh

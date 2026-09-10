@@ -9,17 +9,40 @@ same drawing routine targets SVG and PDF.
 
 ## Install the package
 
-Add canvas_mojo as a Git dependency in your project's `pixi.toml`:
+Start with Pixi installed and available as `pixi` in your terminal. The
+package supports Linux x86-64 and macOS Apple Silicon and requires
+Mojo 1.x. Pixi installs the Mojo compiler along with the library.
+
+Create a directory for your project:
+
+```sh
+mkdir first-drawing
+cd first-drawing
+```
+
+Save this complete configuration as `pixi.toml`:
 
 ```toml
 [workspace]
+name = "first-drawing"
+version = "0.1.0"
+channels = ["https://conda.modular.com/max", "conda-forge"]
+platforms = ["linux-64", "osx-arm64"]
 preview = ["pixi-build"]
 
 [dependencies]
+mojo = ">=1.0.0,<2"
 canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", branch = "main" }
 ```
 
-Run `pixi install`. The importable package is named `canvas`:
+Run `pixi install` in that directory. The first installation builds the
+package from its Git source and can take a few minutes. The configuration
+tracks `main`; use a release tag instead of `branch` when you need to pin
+the library version. Commit your project's `pixi.lock` to share its
+resolved environment.
+
+The dependency is named `canvas_mojo`, but the importable package is
+named `canvas`:
 
 ```mojo
 from canvas import Canvas, Color
@@ -46,12 +69,25 @@ Run it from your project:
 pixi run mojo run first_drawing.mojo
 ```
 
+Open `first_drawing.png` in the same directory. It should look like this:
+
+![A blue rectangle and a translucent green circle on a pale background](/guide-figures/first_drawing.png)
+
 `Canvas` owns an RGBA pixel buffer. The constructor fills the entire
 buffer with the supplied color, drawing calls modify it, and `write_png`
 writes those pixels to disk.
 
 Functions ending in `_aa` draw anti-aliased edges. Plain variants such
 as `fill_circle` and `draw_line` are hard-edged.
+
+## Methods and free functions
+
+`canvas.fill_circle_aa(...)` and `fill_circle_aa(canvas, ...)` both draw
+on a raster `Canvas`. Free functions take the canvas as their first
+argument and must be imported separately. Methods are also the interface
+for drawing through `DrawTarget`: use `target.fill_circle_aa(...)` when
+the target might be raster, SVG, or PDF. The shared trait covers only
+part of each backend's API.
 
 ## Render SVG and PDF
 

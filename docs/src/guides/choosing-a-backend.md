@@ -58,12 +58,18 @@ embedded in subsets with a ToUnicode map so viewers can extract text.
 Accept a `DrawTarget` when a function only needs the common drawing contract:
 
 ```mojo
-from canvas import Color, DrawTarget
+from canvas import Canvas, Color, DrawTarget, write_png
 
-fn draw_badge[T: DrawTarget](mut target: T):
+def draw_badge[T: DrawTarget](mut target: T) raises:
     target.fill_circle_aa(24.0, 24.0, 20.0, Color(40, 110, 220))
     target.draw_line_aa(15.0, 24.0, 22.0, 31.0, Color(255, 255, 255), width=3.0)
     target.draw_line_aa(22.0, 31.0, 34.0, 17.0, Color(255, 255, 255), width=3.0)
+
+
+def main() raises:
+    var canvas = Canvas(48, 48, Color(250, 250, 252))
+    draw_badge(canvas)
+    write_png(canvas, "badge.png")
 ```
 
 Text is intentionally outside `DrawTarget` because its representation and

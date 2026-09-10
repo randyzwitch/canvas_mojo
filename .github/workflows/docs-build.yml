@@ -52,7 +52,7 @@ jobs:
       - name: Render examples
         run: pixi run example
 
-      - name: Build docs site
+      - name: Check snippets, render guide figures, build site, and check local links
         run: pixi run docs
 
       # The same "built against Node.js 20" story as ci.yml's own

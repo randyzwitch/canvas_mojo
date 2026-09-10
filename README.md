@@ -1,8 +1,8 @@
 [![A bar chart, pie wedge, donut segment, scatter plot with an error ellipse, and a filled area shape, all drawn by canvas_mojo itself](docs/hero.svg)](https://randyzwitch.com/canvas_mojo/)
 
 A 2D drawing engine written entirely in Mojo: pixel buffers, shape and
-path primitives, gradients, real system-font text, PNG/BMP/SVG output
-and PNG/JPEG input — no Cairo, no FreeType, no libpng or libjpeg, no
+path primitives, gradients, real system-font text, PNG/BMP/SVG/PDF output
+and PNG/BMP/JPEG input — no Cairo, no FreeType, no libpng or libjpeg, no
 other C library anywhere in the pipeline.
 
 ## Why canvas_mojo?
@@ -28,7 +28,7 @@ know what you're doing and want to contribute, let's chat.
 examples:
 
 ```sh
-pixi run example   # renders examples/*.mojo to examples/out_*.{bmp,png}
+pixi run example   # renders examples/*.mojo to examples/out_*.{bmp,png,svg,pdf}
 ```
 
 Open any `examples/out_*.png` to see the picture next to the code that
@@ -36,6 +36,10 @@ drew it. [Examples](https://randyzwitch.com/canvas_mojo/examples/)
 walks through every one, source alongside its actual output.
 
 **Use it in your own project** — add it as a git dependency:
+
+The snippet below extends an existing Pixi project. For a complete
+configuration and commands starting from an empty directory, follow
+[Getting Started](https://randyzwitch.com/canvas_mojo/getting-started/).
 
 ```toml
 [workspace]
@@ -131,7 +135,7 @@ them.
 
 ```sh
 pixi run test      # tests/*.mojo
-pixi run example   # examples/*.mojo, writes examples/out_*.{bmp,png}
+pixi run example   # examples/*.mojo, writes examples/out_*.{bmp,png,svg,pdf}
 pixi run docs      # regenerates docs/ (served via GitHub Pages) -- run `example` first
 ```
 

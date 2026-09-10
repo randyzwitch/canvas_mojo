@@ -8,7 +8,7 @@ specified in user space and mapped through that transform when drawn.
 
 ## Compose transforms
 
-Transform calls compose in call order:
+Each transform changes the coordinate system for subsequent drawing:
 
 ```mojo
 canvas.translate(200.0, 120.0)
@@ -17,10 +17,22 @@ canvas.scale(2.0, 2.0)
 canvas.fill_rect(-40, -20, 80, 40, color)
 ```
 
-This establishes a local origin, rotates around it, scales the local
-coordinates, and then draws the rectangle. Stroke widths, caps, and
-dashes are constructed in user space and therefore scale with the
-geometry.
+This establishes a local origin, rotates its axes, scales the local
+coordinates, and then draws the rectangle. Applied to a point, the
+resulting map scales first, then rotates, then translates. Stroke
+widths, caps, and dashes are constructed in user space and therefore
+scale with the geometry.
+
+Order matters. With `translate(60.0, 0.0)` followed by
+`scale(2.0, 2.0)`, a point at local x = 20 lands at x = 100:
+`60 + 2 * 20`. Reverse the calls and the translation is scaled too,
+placing that point at x = 160: `2 * (60 + 20)`.
+
+![Two local coordinate frames show the same rectangle and point after translation and scaling in opposite orders](/guide-figures/transforms.png)
+
+Each panel starts from its own labeled origin. The rectangle has the
+same size in both; its position changes with the transform order.
+[Illustration source](/guide-figures/render_guide_figures.mojo)
 
 Use `transform(matrix)` to append a `Matrix2D`, `set_transform(matrix)`
 to replace the current map, and `reset_transform()` to return to the
