@@ -21,7 +21,15 @@ from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.color import _div255
-from canvas.compose import Filter, draw_canvas, draw_image
+from canvas.color import ColorSpace
+from canvas.compose import (
+    Filter,
+    _cell_edges,
+    _draw_image_block,
+    _draw_image_cells,
+    draw_canvas,
+    draw_image,
+)
 from canvas.geometry import Matrix2D
 from canvas.mask import Mask
 from canvas.path import Path
@@ -960,6 +968,48 @@ def test_draw_image_under_a_rotation_takes_the_cell_under_each_center() raises:
                 "pixel (" + String(px) + ", " + String(py) + ")",
             )
     assert_true(covered == 54, "a 9 x 6 block rotated covers 54 pixels")
+
+
+def test_draw_image_cell_fills_and_the_block_write_the_same_bytes() raises:
+    # draw_image picks the per-cell fill or the block by cell size, so
+    # the two have to agree on every input either could see: opaque
+    # and translucent cells, a clip path, and linear light. Both are
+    # given the same snapped edges here, whatever the threshold.
+    var src = _varied_source(5, 4, 160)
+    src.set_pixel(2, 1, Color(30, 200, 90, 255))
+    src.set_pixel(0, 3, Color(0, 0, 0, 0))
+    for linear in [False, True]:
+        var by_cells = Canvas(70, 50, WHITE)
+        var by_block = Canvas(70, 50, WHITE)
+        var blob = Path()
+        blob.move_to(5.0, 5.0)
+        blob.line_to(65.0, 12.0)
+        blob.line_to(40.0, 48.0)
+        blob.close()
+        by_cells.push_clip_path(blob)
+        by_block.push_clip_path(blob)
+        if linear:
+            by_cells.set_color_space(ColorSpace.LINEAR)
+            by_block.set_color_space(ColorSpace.LINEAR)
+        by_cells.translate(2.0, 1.0)
+        by_cells.scale(1.5, 1.2)
+        by_block.translate(2.0, 1.0)
+        by_block.scale(1.5, 1.2)
+        var m = by_cells.current_transform()
+        var cols = _cell_edges(m.a, m.e, 3.3, 40.0, 5)
+        var rows = _cell_edges(m.d, m.f, 4.1, 30.0, 4)
+        _draw_image_cells(by_cells, src, cols, rows)
+        _draw_image_block(
+            by_block,
+            src,
+            cols,
+            rows,
+            max(cols[0], 0),
+            max(rows[0], 0),
+            min(cols[5], 70),
+            min(rows[4], 50),
+        )
+        _assert_same_bytes(by_cells, by_block, "linear" if linear else "sRGB")
 
 
 def test_draw_image_draws_a_pending_batch_first() raises:

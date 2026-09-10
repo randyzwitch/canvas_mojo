@@ -862,6 +862,45 @@ def _survey() raises -> List[_Row]:
         sink += Int(odd.get_pixel(10, 10).r)
     _report(rows, "resize 1600x1200 -> 741x533", perf_counter_ns() - t0, iters)
 
+    # An image plot's cells through draw_image, over the box a chart
+    # gives it at supersample 3 (#394): a few large cells, which fill
+    # as rectangles, and cells near pixel size, which resample into a
+    # block. Neither had a row until a consumer measured the first at
+    # several milliseconds.
+    var plot = Canvas(1920, 1260, WHITE)
+    plot.translate(1.0, 1.0)
+    plot.scale(3.0, 3.0)
+    var cells3 = Canvas(3, 3, WHITE)
+    var cells256 = Canvas(256, 256, WHITE)
+    for cy in range(256):
+        for cx in range(256):
+            var shade = Color(UInt8(cx), UInt8(cy), UInt8((cx + cy) % 256))
+            cells256.set_pixel(cx, cy, shade)
+            if cx < 3 and cy < 3:
+                cells3.set_pixel(cx, cy, shade)
+    iters = 20
+    t0 = perf_counter_ns()
+    for i in range(iters):
+        plot.draw_image(cells3, 100.0, 50.0, 430.0, 350.0)
+        sink += Int(plot.get_pixel(400 + i % 3, 300).r)
+    _report(
+        rows,
+        "draw_image 3x3 over 1290x1050 device px",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    t0 = perf_counter_ns()
+    for i in range(iters):
+        plot.draw_image(cells256, 100.0, 50.0, 430.0, 350.0)
+        sink += Int(plot.get_pixel(400 + i % 3, 300).r)
+    _report(
+        rows,
+        "draw_image 256x256 over 1290x1050 device px",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     # --- blur ------------------------------------------------------
     # blur() runs the same three box-blur passes whatever the radius --
     # only the derived box widths change, and each pass is a sliding
