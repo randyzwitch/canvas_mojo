@@ -3,10 +3,10 @@ from canvas.blur import blur, draw_shadowed
 from canvas.color import Color, ColorSpace
 from canvas.named_colors import *
 from canvas.buffer import Canvas
-from canvas.compose import Filter, draw_canvas
+from canvas.compose import Filter, draw_canvas, draw_image
 from canvas.resize import downsample, resize
 from canvas.io.bmp import read_bmp, write_bmp
-from canvas.io.png import PngLevel, read_png, write_png
+from canvas.io.png import PngLevel, encode_png, read_png, write_png
 from canvas.vector.draw_target import DrawTarget
 from canvas.vector.pdf import PdfCanvas, write_pdf
 from canvas.vector.svg import SvgCanvas, write_svg

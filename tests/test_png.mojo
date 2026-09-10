@@ -31,6 +31,7 @@ from canvas.io.deflate import deflate, inflate
 from canvas.io.png import (
     PngLevel,
     decode_png,
+    encode_png,
     read_png,
     write_png,
     _adler32,
@@ -648,6 +649,17 @@ def test_the_default_encoding_level_is_the_default() raises:
     assert_equal(len(implicit), len(explicit))
     for i in range(len(implicit)):
         assert_equal(implicit[i], explicit[i], String("byte ", i))
+
+
+def test_encode_png_is_what_write_png_writes() raises:
+    var written = _write_sample()
+    var c = Canvas(2, 1, Color(255, 255, 255))
+    c.set_pixel(0, 0, Color(10, 20, 30))
+    c.set_pixel(1, 0, Color(40, 50, 60))
+    var encoded = encode_png(c)
+    assert_equal(len(encoded), len(written), "the same file")
+    for i in range(len(written)):
+        assert_equal(encoded[i], written[i], "byte " + String(i))
 
 
 def main() raises:

@@ -46,6 +46,7 @@ from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import draw_circle_aa, fill_circle_aa
 from canvas.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
 from canvas.shapes.rects import fill_rect, fill_rect_gradient
+from canvas.compose import draw_image
 
 
 struct _ClipRect(ImplicitlyCopyable, Movable):
@@ -1000,7 +1001,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         would have written.
 
         Everything else -- text, gradient and pattern fills, the
-        hard-edged primitives, `draw_canvas`, `blur`, `fill`, and the
+        hard-edged primitives, `draw_canvas`, `draw_image`, `blur`,
+        `fill`, and the
         `fill_circles_aa`-style batches -- first draws what is
         pending and then draws itself, so it stays in order. So does a
         change of clip, blend mode or color space, and `restore`. Two
@@ -1700,6 +1702,32 @@ struct Canvas(Copyable, DrawTarget, Movable):
             p[unsafe_offset=idx + 2],
             p[unsafe_offset=idx + 3],
         )
+
+    def draw_image(
+        mut self,
+        image: Canvas,
+        x: Float64,
+        y: Float64,
+        width: Float64 = 0.0,
+        height: Float64 = 0.0,
+    ) raises:
+        """Draw `image` as a block of cells with its top-left at
+        (x, y), scaled to `width x height` (its own pixel size when
+        0), under the current transform: `DrawTarget`'s image
+        primitive, the method form of `draw_image` in
+        canvas/compose.mojo, which says how the cells land.
+
+        Args:
+            image: The cells to draw. Unchanged.
+            x: Left edge, in user coordinates.
+            y: Top edge.
+            width: Drawn width, or 0 for `image.width`.
+            height: Drawn height, or 0 for `image.height`.
+
+        Raises:
+            Error: The canvas transform is singular.
+        """
+        draw_image(self, image, x, y, width, height)
 
     def fill(mut self, color: Color):
         """Fill the whole canvas (or the active clip region, if any)

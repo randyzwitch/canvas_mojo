@@ -1790,8 +1790,8 @@ struct PdfCanvas(DrawTarget, Movable):
         """Draw `image` with its top-left at (x, y), scaled to
         `width x height` points (its own pixel size when 0), as an
         image XObject; a pixel that is not opaque gives the image a
-        soft mask. The `draw_canvas` of this backend, though not on
-        `DrawTarget`.
+        soft mask. `DrawTarget`'s image primitive, and the
+        `draw_canvas` of this backend.
 
         Args:
             image: The pixels to draw. Unchanged.

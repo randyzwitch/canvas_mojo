@@ -27,6 +27,7 @@ from canvas.io.deflate import inflate
 from canvas.path import Path
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
+from canvas.vector.draw_target import DrawTarget
 from canvas.vector.pdf import PdfCanvas, write_pdf, _pdf_string
 
 comptime INK = Color(30, 60, 120)
@@ -549,6 +550,19 @@ def test_write_pdf_round_trips_through_the_file() raises:
     var back = f.read_bytes()
     f.close()
     assert_equal(len(back), len(pdf.to_bytes()), "the file is the bytes")
+
+
+def _place_block[T: DrawTarget](mut target: T, img: Canvas) raises:
+    target.draw_image(img, 1.0, 2.0, 3.0, 4.0)
+
+
+def test_draw_image_is_reachable_through_the_trait() raises:
+    var pdf = PdfCanvas(50, 50)
+    _place_block(pdf, Canvas(2, 2, Color(255, 0, 0)))
+    assert_true(
+        "3.000 0.000 0.000 -4.000 1.000 6.000 cm /Im1 Do" in pdf.content(),
+        "the XObject placed by the generic call",
+    )
 
 
 def main() raises:

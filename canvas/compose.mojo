@@ -835,6 +835,168 @@ def draw_canvas(
     _draw_canvas_mapped(dst, src, sx, sy, sw, sh, matrix, opacity, filter)
 
 
+def draw_image(
+    mut dst: Canvas,
+    image: Canvas,
+    x: Float64,
+    y: Float64,
+    width: Float64 = 0.0,
+    height: Float64 = 0.0,
+) raises:
+    """Draw `image` as a block of cells with its top-left at (x, y),
+    scaled to `width x height` (its own pixel size when 0), in the
+    coordinates the shapes use and under the canvas transform:
+    `DrawTarget.draw_image` on the raster backend, and the call for a
+    heatmap, an image plot, or a rendered panel placed in a figure.
+
+    Each image pixel is one cell of the block. A canvas pixel takes
+    the cell its center falls in, so cells stay hard-edged at any
+    scale and no color the image did not hold appears; a translucent
+    cell blends source-over, as a shape would, and a clip applies. The
+    matrix overloads of `draw_canvas` place a source by its pixel
+    corners and this places one by the shapes' rule, pixel k spanning
+    k - 0.5 to k + 0.5: under a scale and translation, including the
+    supersampling recipe on `downsample`, every cell edge snaps as
+    `fill_rect` snaps a rectangle's edge at the same coordinate, so
+    the block covers the pixels a `fill_rect` per cell would. Under a
+    rotation or shear the block is sampled through the matrix path
+    with `Filter.NEAREST`, on the same convention.
+
+    Args:
+        dst: Canvas drawn onto.
+        image: The cells to draw. Unchanged.
+        x: Left edge, in user coordinates.
+        y: Top edge.
+        width: Drawn width, or 0 for `image.width`.
+        height: Drawn height, or 0 for `image.height`.
+
+    Raises:
+        Error: The canvas transform is singular.
+    """
+    if image.width <= 0 or image.height <= 0:
+        return
+    var w = width if width > 0.0 else Float64(image.width)
+    var h = height if height > 0.0 else Float64(image.height)
+    dst._flush_batch()
+    var m = Matrix2D.identity()
+    if dst.has_transform():
+        m = dst.current_transform()
+
+    if not m.is_axis_aligned():
+        # Cell (i, j) is the unit square at (i, j) in texel space; the
+        # first map spreads the cells over the box, the second places
+        # the box, the third is the canvas frame, and the last half
+        # pixel moves from the shapes' pixel-center convention to the
+        # corner convention the sampler works in.
+        var texel = (
+            Matrix2D.scaling(
+                w / Float64(image.width), h / Float64(image.height)
+            )
+            .then(Matrix2D.translation(x, y))
+            .then(m)
+            .then(Matrix2D.translation(0.5, 0.5))
+        )
+        _draw_canvas_matrix(
+            dst,
+            image,
+            0,
+            0,
+            image.width,
+            image.height,
+            texel,
+            1.0,
+            Filter.NEAREST,
+        )
+        return
+
+    # Axis-aligned: every cell edge lands on a device column or row
+    # boundary by `fill_rect`'s snap, and the cells tile the snapped
+    # box, so the block is one nearest-cell resample followed by the
+    # blit. Only the part on the canvas is built, since a cell can be
+    # scaled far past the edges.
+    var cols = _cell_edges(m.a, m.e, x, w, image.width)
+    var rows = _cell_edges(m.d, m.f, y, h, image.height)
+    var left = min(cols[0], cols[image.width])
+    var right = max(cols[0], cols[image.width])
+    var top = min(rows[0], rows[image.height])
+    var bottom = max(rows[0], rows[image.height])
+    if _cells_are_pixels(cols) and _cells_are_pixels(rows):
+        _draw_canvas_device(dst, image, left, top, 255)
+        return
+    var x0 = max(left, 0)
+    var x1 = min(right, dst.width)
+    var y0 = max(top, 0)
+    var y1 = min(bottom, dst.height)
+    if x1 <= x0 or y1 <= y0:
+        return
+    var col_of = _cell_of_each(cols, x0, x1)
+    var row_of = _cell_of_each(rows, y0, y1)
+    var bw = x1 - x0
+    var bh = y1 - y0
+    var block = List[UInt8](unsafe_uninit_length=bw * bh * BYTES_PER_PIXEL)
+    var bp = block.unsafe_ptr()
+    var sp = image.pixels.unsafe_ptr()
+    var stride = image.width * BYTES_PER_PIXEL
+    var o = 0
+    # Every (row_of, col_of) pair indexes a cell of `image`, since each
+    # came from an edge list over its cells; the writes cover the
+    # block exactly once, in order.
+    for j in range(bh):
+        var row_start = row_of[j] * stride
+        for i in range(bw):
+            bp.unsafe_offset(o).unsafe_store(
+                sp.unsafe_offset(
+                    row_start + col_of[i] * BYTES_PER_PIXEL
+                ).unsafe_load[width=BYTES_PER_PIXEL]()
+            )
+            o += BYTES_PER_PIXEL
+    var resampled = Canvas(bw, bh, block^)
+    _draw_canvas_device(dst, resampled, x0, y0, 255)
+
+
+def _cell_edges(
+    scale: Float64, offset: Float64, start: Float64, span: Float64, n: Int
+) -> List[Int]:
+    """The device pixel boundary each of the `n + 1` cell edges of a
+    block `span` wide from `start` snaps to, along one axis of an
+    axis-aligned map `scale * u + offset`. The snap is `_snap_rect`'s:
+    pixel k spans k - 0.5 to k + 0.5, so an edge rounds to the nearest
+    half-integer boundary and the pixels from one edge's boundary to
+    the next are the cell's. A mirroring scale gives the edges in
+    descending order.
+    """
+    var edges = List[Int](capacity=n + 1)
+    for i in range(n + 1):
+        var u = start + span * Float64(i) / Float64(n)
+        edges.append(round_to_int(scale * u + offset + 0.5))
+    return edges^
+
+
+def _cells_are_pixels(edges: List[Int]) -> Bool:
+    """Whether every cell is exactly one device pixel in ascending
+    order, so the block is the image itself and a blit places it.
+    """
+    for i in range(1, len(edges)):
+        if edges[i] != edges[i - 1] + 1:
+            return False
+    return True
+
+
+def _cell_of_each(edges: List[Int], v0: Int, v1: Int) -> List[Int]:
+    """For each device column (or row) in [v0, v1), the index of the
+    cell whose snapped edges enclose it. Consecutive cells share an
+    edge, so the cells tile the range and every entry is written; the
+    range is inside the block's snapped box.
+    """
+    var cell = List[Int](length=v1 - v0, fill=0)
+    for i in range(len(edges) - 1):
+        var c0 = max(min(edges[i], edges[i + 1]), v0)
+        var c1 = min(max(edges[i], edges[i + 1]), v1)
+        for k in range(c0, c1):
+            cell[k - v0] = i
+    return cell^
+
+
 struct _MappedDraw(ImplicitlyCopyable, Movable):
     """What every band of a transformed draw needs but the rows it
     covers: the inverse map, where the source rectangle sits, and how a
@@ -939,9 +1101,31 @@ def _draw_canvas_mapped(
     filter: Filter,
 ) raises:
     """The body both matrix overloads land in: compose with the canvas
-    transform, take the blit when the result is a whole-pixel shift of
-    the whole source, and otherwise inverse-map the mapped rectangle's
-    bounding box row by row.
+    transform, then `_draw_canvas_matrix`.
+    """
+    var m = matrix
+    if dst.has_transform():
+        # The caller's map first, the canvas's frame second, so
+        # `matrix` is read in the coordinates the caller draws in.
+        m = matrix.then(dst.current_transform())
+    _draw_canvas_matrix(dst, src, sx, sy, sw, sh, m, opacity, filter)
+
+
+def _draw_canvas_matrix(
+    mut dst: Canvas,
+    src: Canvas,
+    sx: Int,
+    sy: Int,
+    sw: Int,
+    sh: Int,
+    m: Matrix2D,
+    opacity: Float64,
+    filter: Filter,
+) raises:
+    """Draw through `m`, a map from the source rectangle's texel space
+    straight to device pixels on the corner convention: take the blit
+    when it is a whole-pixel shift of the whole source, and otherwise
+    inverse-map the mapped rectangle's bounding box row by row.
     """
     if opacity <= 0.0 or sw <= 0 or sh <= 0:
         return
@@ -954,12 +1138,6 @@ def _draw_canvas_mapped(
     var ch = min(sy + sh, src.height) - cy
     if cw <= 0 or ch <= 0:
         return
-
-    var m = matrix
-    if dst.has_transform():
-        # The caller's map first, the canvas's frame second, so
-        # `matrix` is read in the coordinates the caller draws in.
-        m = matrix.then(dst.current_transform())
 
     var scale = opacity
     if scale > 1.0:

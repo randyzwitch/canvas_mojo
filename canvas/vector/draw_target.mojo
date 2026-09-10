@@ -22,6 +22,17 @@ square-capped rule renders the same way on every backend.
 Circle and ellipse outlines take sub-pixel centers and radii plus a
 stroke width. They do not support dashes.
 
+`draw_image` is the one primitive that is not a shape: a block of
+pixels, a `Canvas`, placed with its top-left at a user-space point and
+scaled to a user-space box, so it lands where a `fill_rect` at the
+same coordinates would on every backend, under the transform. It is
+on the trait because the shapes cannot express a raster block: an
+image plot drawn as a `fill_rect` per cell is fine on `Canvas` and
+megabytes of `<rect>` elements on `SvgCanvas`, where the same block
+as one `<image>` holding a PNG is kilobytes (#392). `Canvas` resamples
+nearest-cell, `SvgCanvas` embeds a PNG data URI and `PdfCanvas` an
+image XObject; a translucent pixel blends source-over on each.
+
 Method parameters mirror the same-named function in
 `canvas.shapes`/`canvas.path`, minus `supersample`: a raster
 implementation picks its own supersample factor, and a vector one has
@@ -89,6 +100,7 @@ declaration.
 """
 
 from canvas.blend import BlendMode
+from canvas.buffer import Canvas
 from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Matrix2D
@@ -586,6 +598,31 @@ trait DrawTarget:
             color: Fill color.
             fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
                 The same rule on every backend.
+        """
+        ...
+
+    def draw_image(
+        mut self,
+        image: Canvas,
+        x: Float64,
+        y: Float64,
+        width: Float64 = 0.0,
+        height: Float64 = 0.0,
+    ) raises:
+        """Draw a block of pixels with its top-left at (x, y), scaled
+        to `width x height` in user space (the image's own pixel size
+        when 0), under the current transform, each image pixel one
+        hard-edged cell of the block.
+
+        Args:
+            image: The pixels to draw. Unchanged.
+            x: Left edge.
+            y: Top edge.
+            width: Drawn width, or 0 for `image.width`.
+            height: Drawn height, or 0 for `image.height`.
+
+        Raises:
+            Error: Backend-specific; see each implementation.
         """
         ...
 
