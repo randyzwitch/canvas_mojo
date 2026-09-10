@@ -545,6 +545,34 @@ def _area_edges_aa(
     tg.wait()
 
 
+def _area_edges_rows(
+    mut canvas: Canvas,
+    edges: _EdgeTable,
+    min_x: Int,
+    min_y: Int,
+    max_x: Int,
+    max_y: Int,
+    color: Color,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_area_edges_aa` for rows [row_lo, row_hi) only, on the calling
+    thread: what a batch band draws of one recorded op. The rows are
+    the ones `_area_edges_aa` visits under those clamps, and the bytes
+    are the same, since a row's result does not depend on which band
+    computes it.
+    """
+    var row_first_px = min_x - 1
+    var row_width = (max_x + 2) - row_first_px
+    var first_row = max(max(min_y - 1, 0), row_lo)
+    var last_row = min(min(max_y + 2, canvas.height), row_hi)
+    if last_row - first_row <= 0 or row_width <= 0:
+        return
+    _area_band(
+        canvas, edges, first_row, last_row, row_first_px, row_width, color
+    )
+
+
 def _resolve_mask_rows(
     mut mask: List[UInt8],
     mask_width: Int,

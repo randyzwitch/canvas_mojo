@@ -162,6 +162,15 @@ addition:
   of the marker loop that drifts from the first (#333). A performance
   contract a generic caller cannot otherwise obtain is a reason to
   add; a faster way to draw the same shape, by itself, is not.
+- **`begin_batch`/`end_batch` are that same contract, generalized.**
+  On `Canvas` they defer every anti-aliased shape called between them
+  and draw the lot in one banded pass at `end_batch`, in order, with
+  the pixels drawing each at once would write; the vector backends
+  write every element in order regardless and treat both as no-ops.
+  Like the annotated group it is lossless to drop, and like
+  `fill_circles_aa` it is the only way a generic caller reaches the
+  raster backend's parallel pass -- for any mix of shapes rather than
+  one shape at one size (#382).
 - **The ellipse is where "use `fill_path_aa`/`stroke_path_aa`" stops
   being the answer.** Every other shape left off the trait is left off
   because one of those two covers it. An ellipse is the case where

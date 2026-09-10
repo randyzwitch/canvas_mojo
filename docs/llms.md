@@ -38,6 +38,10 @@ from canvas import Canvas, Color, Path, fill_circle_aa, write_png
   operations to any backend.
 - Free drawing functions take their target first. `Canvas` also exposes
   the core operations as methods.
+- `begin_batch()` / `end_batch()` on any target defer the anti-aliased
+  shapes between them and draw them in one parallel pass, in order,
+  with the same pixels; the vector backends treat both as no-ops. Wrap
+  a loop of markers, gridlines or bars in one.
 
 ## Coordinate and color conventions
 

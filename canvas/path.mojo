@@ -1436,6 +1436,7 @@ def fill_path(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_device(
@@ -2142,6 +2143,7 @@ def fill_path_gradient(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source(
@@ -2175,6 +2177,7 @@ def fill_path_radial_gradient(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source(
@@ -2208,6 +2211,7 @@ def fill_path_conic_gradient(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source(
@@ -2243,6 +2247,7 @@ def fill_path_pattern(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source(
@@ -2282,6 +2287,7 @@ def fill_path_gradient_aa(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source_aa(
@@ -2326,6 +2332,7 @@ def fill_path_radial_gradient_aa(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source_aa(
@@ -2370,6 +2377,7 @@ def fill_path_conic_gradient_aa(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source_aa(
@@ -2414,6 +2422,7 @@ def fill_path_pattern_aa(
         curve_steps: Straight-line segments per quad/cubic Bezier;
             0 (the default) chooses per segment.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_path_source_aa(
@@ -2459,6 +2468,7 @@ def stroke_path(
         dash_offset: Distance into the dash pattern the stroke starts
             at.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas._take_transform()
         var s = m.scale_factor()

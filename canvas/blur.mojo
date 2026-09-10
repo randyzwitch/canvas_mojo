@@ -498,6 +498,7 @@ def blur(mut canvas: Canvas, radius: Float64):
         canvas: Canvas blurred in place.
         radius: Blur radius; `radius <= 0` is a no-op.
     """
+    canvas._flush_batch()
     if radius <= 0.0:
         return
     var w = canvas.width
@@ -639,6 +640,7 @@ def draw_shadowed(
         Error: `layer`'s dimensions are negative once padded (does not
             happen for a `layer` that was itself validly constructed).
     """
+    dst._flush_batch()
     var pad = _shadow_pad(blur_radius)
     var shadow = Canvas(
         layer.width + 2 * pad, layer.height + 2 * pad, Color(0, 0, 0, 0)

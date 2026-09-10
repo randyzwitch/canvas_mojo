@@ -138,6 +138,7 @@ def fill_polygon(
         color: Fill color.
         fill_rule: EVEN_ODD (default) or NONZERO -- see FillRule.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         _fill_polygon_device(

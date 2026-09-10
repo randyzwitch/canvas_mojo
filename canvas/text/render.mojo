@@ -1155,6 +1155,7 @@ def draw_layout(
         color: Text color.
         cache: The same cache `prepare_text` was given.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if not m.is_translation():
@@ -1321,6 +1322,7 @@ def draw_text(
             Arabic contextual forms. False lays out one glyph per
             character.
     """
+    canvas._flush_batch()
     var cache = FontCache()
     draw_text(
         canvas,
@@ -1379,6 +1381,7 @@ def draw_text(
             character.
         cache: Shared cache for font resolution and parsed faces.
     """
+    canvas._flush_batch()
     draw_text(
         canvas,
         Float64(x),
@@ -1431,6 +1434,7 @@ def draw_text(
             Arabic contextual forms. False lays out one glyph per
             character.
     """
+    canvas._flush_batch()
     var cache = FontCache()
     draw_text(
         canvas,
@@ -1958,6 +1962,7 @@ def draw_text(
             character.
         cache: Shared cache for font resolution and parsed faces.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if not m.is_translation():
@@ -2151,6 +2156,7 @@ def stroke_text(
             Arabic contextual forms. False lays out one glyph per
             character.
     """
+    canvas._flush_batch()
     var cache = FontCache()
     stroke_text(
         canvas,
@@ -2241,6 +2247,7 @@ def stroke_text(
             character.
         cache: Shared cache for font resolution and parsed faces.
     """
+    canvas._flush_batch()
     if text == "":
         return
     var block = _layout_block(
@@ -2602,6 +2609,7 @@ def draw_text_on_path(
             Arabic contextual forms. False lays out one glyph per
             character.
     """
+    canvas._flush_batch()
     var cache = FontCache()
     draw_text_on_path(
         canvas,
@@ -2677,6 +2685,7 @@ def draw_text_on_path(
             character.
         cache: Shared cache for font resolution and parsed faces.
     """
+    canvas._flush_batch()
     if text == "":
         return
     var placements = _text_on_path_placements(

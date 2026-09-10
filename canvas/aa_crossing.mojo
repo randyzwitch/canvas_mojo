@@ -6,7 +6,7 @@ from std.runtime.asyncrt import TaskGroup
 from canvas.workers import _MIN_PARALLEL_WORK, _bands_for
 
 from canvas.aa_area import _area_edges_aa, _area_edges_to_mask
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, _edges_op
 from canvas.color import Color
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.geometry import FPoint, Matrix2D
@@ -68,7 +68,7 @@ def _sample_x(x0: Float64, g: Int, s: Int) -> Float64:
     return x0 + (Float64(g) + 0.5) / Float64(s)
 
 
-struct _EdgeTable(Movable):
+struct _EdgeTable(Copyable, Movable):
     """Non-horizontal shape edges and their scan order."""
 
     var y_lo: List[Float64]
@@ -854,7 +854,30 @@ def _sweep_edges_aa(
     the even-odd rule as such. A stroke calls the sampled sweep directly
     for the one shape `_stroke_edges` builds as overlapping pieces.
     """
-    if fill_rule == FillRule.NONZERO or _rules_agree(edges, min_y, max_y):
+    var exact = fill_rule == FillRule.NONZERO or _rules_agree(
+        edges, min_y, max_y
+    )
+    if canvas._batching() and clamp_lo == 0 and clamp_hi < 0:
+        # Inside a `begin_batch`: recorded, with the rasterizer already
+        # chosen, for `end_batch` to draw. A clamped call is already a
+        # band of a batched shape and draws.
+        if not exact:
+            edges.sort_by_top()
+        canvas._record(
+            _edges_op(
+                edges.copy(),
+                min_x,
+                min_y,
+                max_x,
+                max_y,
+                color,
+                fill_rule,
+                supersample,
+                exact,
+            )
+        )
+        return
+    if exact:
         _area_edges_aa(
             canvas,
             edges,
@@ -973,6 +996,44 @@ def _sweep_edges_sampled_aa(
             )
         )
     tg.wait()
+
+
+def _sweep_edges_sampled_rows(
+    mut canvas: Canvas,
+    edges: _EdgeTable,
+    min_x: Int,
+    min_y: Int,
+    max_x: Int,
+    max_y: Int,
+    color: Color,
+    fill_rule: FillRule,
+    supersample: Int,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """`_sweep_edges_sampled_aa` for rows [row_lo, row_hi) only, on
+    the calling thread: what a batch band draws of one recorded op.
+    `edges` is already top-sorted, which the batch does as it records.
+    Each row derives its own crossings, so the bytes are those of the
+    whole sweep.
+    """
+    var row_first_px = min_x - 1
+    var row_width = (max_x + 2) - row_first_px
+    var first_row = max(min_y - 1, row_lo)
+    var last_row = min(max_y + 2, row_hi)
+    if last_row - first_row <= 0 or row_width <= 0:
+        return
+    _sweep_band(
+        canvas,
+        edges,
+        first_row,
+        last_row,
+        row_first_px,
+        row_width,
+        color,
+        fill_rule,
+        supersample,
+    )
 
 
 async def _sweep_band_async(

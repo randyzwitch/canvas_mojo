@@ -1554,6 +1554,18 @@ struct SvgCanvas(DrawTarget, Movable):
         self._body += "</g>\n"
         self._clip_depth -= 1
 
+    def begin_batch(mut self):
+        """Nothing to defer: every element goes into the markup in
+        order as it is drawn. Here so a caller generic over
+        `DrawTarget` can batch for the raster backend; see
+        `Canvas.begin_batch`.
+        """
+        pass
+
+    def end_batch(mut self):
+        """The other half of `begin_batch`, also nothing."""
+        pass
+
     def begin_annotated_group(mut self, title: String):
         """Open `<g><title>title</title>`, labeling every element
         emitted until `end_annotated_group`. Browsers show a `<title>`

@@ -215,6 +215,7 @@ def fill_mask(
         x: Canvas column of the mask's left edge.
         y: Canvas row of the mask's top edge.
     """
+    canvas._flush_batch()
     var m = mask.coverage.unsafe_ptr()
     for j in range(mask.height):
         var py = y + j
@@ -274,6 +275,7 @@ def push_clip_mask(mut canvas: Canvas, mask: Mask, x: Int = 0, y: Int = 0):
         x: Canvas column of the mask's left edge.
         y: Canvas row of the mask's top edge.
     """
+    canvas._flush_batch()
     var coverage = List[UInt8](length=canvas.width * canvas.height, fill=0)
     var m = mask.coverage.unsafe_ptr()
     var d = coverage.unsafe_ptr()

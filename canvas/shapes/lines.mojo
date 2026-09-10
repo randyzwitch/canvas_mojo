@@ -18,7 +18,7 @@ Bresenham is definitionally 1px and takes no `width`.
 from std.math import atan2, ceil, cos, floor, pi, sin, sqrt
 
 from canvas.color import Color
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, _edges_op
 from canvas.geometry import (
     Matrix2D,
     Point,
@@ -174,6 +174,7 @@ def draw_line(
             line. Empty (default) draws a solid line.
         dash_offset: Distance into the dash pattern the line starts at.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         var p0 = m.apply(Float64(x0), Float64(y0))
@@ -355,6 +356,7 @@ def draw_polyline(
         dash_offset: Distance into the dash pattern the polyline
             starts at.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         var s = m.scale_factor()
@@ -421,6 +423,7 @@ def draw_polygon(
         dash_offset: Distance into the dash pattern the polygon starts
             at.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         var s = m.scale_factor()
@@ -690,6 +693,23 @@ def _rasterize_stroke(
     if len(shape.edges.y_lo) == 0:
         return
     var b = shape.edges.bounds()
+    if canvas._batching():
+        if not shape.exact:
+            shape.edges.sort_by_top()
+        canvas._record(
+            _edges_op(
+                shape.edges.copy(),
+                b[0],
+                b[1],
+                b[2],
+                b[3],
+                color,
+                FillRule.NONZERO,
+                supersample,
+                shape.exact,
+            )
+        )
+        return
     if shape.exact:
         _area_edges_aa(canvas, shape.edges, b[0], b[1], b[2], b[3], color)
         return

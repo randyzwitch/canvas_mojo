@@ -98,6 +98,7 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int):
         x: Destination column for `src`'s left edge.
         y: Destination row for `src`'s top edge.
     """
+    dst._flush_batch()
     draw_canvas(dst, src, x, y, 255)
 
 
@@ -122,6 +123,7 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, opacity: UInt8):
     through the transform and `src` is composited there unscaled and
     unrotated. Pass a `Matrix2D` instead to draw it scaled or rotated.
     """
+    dst._flush_batch()
     if dst.has_transform():
         var m = dst.current_transform()
         var p = m.apply(Float64(x), Float64(y))
@@ -146,6 +148,7 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, mask: Mask):
         y: Destination row for `src`'s top edge.
         mask: Coverage over `src`, see `canvas.mask`.
     """
+    dst._flush_batch()
     if dst.has_transform():
         var m = dst.current_transform()
         var p = m.apply(Float64(x), Float64(y))
@@ -782,6 +785,7 @@ def draw_canvas(
         Error: `matrix`, composed with the canvas transform, is
             singular, so it collapses the source to a line or a point.
     """
+    dst._flush_batch()
     _draw_canvas_mapped(
         dst, src, 0, 0, src.width, src.height, matrix, opacity, filter
     )
@@ -827,6 +831,7 @@ def draw_canvas(
         Error: `matrix`, composed with the canvas transform, is
             singular, so it collapses the source to a line or a point.
     """
+    dst._flush_batch()
     _draw_canvas_mapped(dst, src, sx, sy, sw, sh, matrix, opacity, filter)
 
 

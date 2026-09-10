@@ -73,7 +73,13 @@ count. Reuse one `FontCache` across text calls; the first call on a
 fresh cache scans the system fonts, and the cache bounds its glyph
 masks by bytes, releasing the least recently used generation rather
 than everything. For thousands of small markers, `fill_circle_aa` is
-cheap; prefer it to a path per marker. Read PNG and JPEG with
+cheap; prefer it to a path per marker, and wrap the loop in
+`canvas.begin_batch()` / `canvas.end_batch()`: a shape too small to
+split across cores runs on one core when drawn alone, and a batch
+draws everything inside it in one parallel pass, in order, with the
+same pixels. Gridlines, ticks, markers and bars all batch; text and
+gradients inside a batch draw immediately, in order, and reads see the
+batch only after `end_batch`. Read PNG and JPEG with
 `read_png`/`read_jpeg` (baseline JPEG only). `write_png` takes an
 optional `PngLevel`: `FAST` for export throughput, `SMALL` for a
 smaller file, and every level decodes to the same pixels.
