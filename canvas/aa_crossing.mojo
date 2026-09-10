@@ -6,7 +6,7 @@ from std.runtime.asyncrt import TaskGroup
 from canvas.workers import _MIN_PARALLEL_WORK, _bands_for
 
 from canvas.aa_area import _area_edges_aa, _area_edges_to_mask
-from canvas.buffer import Canvas, _edges_op
+from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule, _is_inside
 from canvas.geometry import FPoint, Matrix2D
@@ -131,14 +131,18 @@ struct _EdgeTable(Copyable, Movable):
         self._map = matrix
         self._mapped = not matrix.is_identity()
 
-    def bounds(self) -> Tuple[Int, Int, Int, Int]:
-        """The whole-pixel box every edge lies in, as (min_x, min_y,
-        max_x, max_y): `extent` widened outward with floor/ceil.
-        (0, 0, 0, 0) for an empty table.
+    def bounds(
+        self, first: Int = 0, last: Int = -1
+    ) -> Tuple[Int, Int, Int, Int]:
+        """The whole-pixel box edges [first, last) lie in -- every
+        edge when `last` is left at -1 -- as (min_x, min_y, max_x,
+        max_y): `extent` widened outward with floor/ceil. (0, 0, 0, 0)
+        for an empty range.
         """
-        if len(self.y_lo) == 0:
+        var hi = len(self.y_lo) if last < 0 else last
+        if hi <= first:
             return (0, 0, 0, 0)
-        var e = self.extent()
+        var e = self.extent(first, last)
         return (
             Int(floor(e[0])),
             Int(floor(e[1])),
@@ -146,22 +150,25 @@ struct _EdgeTable(Copyable, Movable):
             Int(ceil(e[3])),
         )
 
-    def extent(self) -> Tuple[Float64, Float64, Float64, Float64]:
-        """The exact box every edge lies in, as (min_x, min_y, max_x,
-        max_y). All zeros for an empty table.
+    def extent(
+        self, first: Int = 0, last: Int = -1
+    ) -> Tuple[Float64, Float64, Float64, Float64]:
+        """The exact box edges [first, last) lie in -- every edge when
+        `last` is left at -1 -- as (min_x, min_y, max_x, max_y). All
+        zeros for an empty range.
         """
-        var n = len(self.y_lo)
-        if n == 0:
+        var n = len(self.y_lo) if last < 0 else last
+        if n <= first:
             return (0.0, 0.0, 0.0, 0.0)
         var x0 = self.x0.unsafe_ptr()
         var dx = self.dx.unsafe_ptr()
         var y_lo = self.y_lo.unsafe_ptr()
         var y_hi = self.y_hi.unsafe_ptr()
-        var min_x = x0[unsafe_offset=0]
+        var min_x = x0[unsafe_offset=first]
         var max_x = min_x
-        var min_y = y_lo[unsafe_offset=0]
-        var max_y = y_hi[unsafe_offset=0]
-        for i in range(n):
+        var min_y = y_lo[unsafe_offset=first]
+        var max_y = y_hi[unsafe_offset=first]
+        for i in range(first, n):
             var xa = x0[unsafe_offset=i]
             var xb = xa + dx[unsafe_offset=i]
             if xa < min_x:
@@ -277,6 +284,42 @@ struct _EdgeTable(Copyable, Movable):
         self.dx.unsafe_ptr()[unsafe_offset=k] = x_b - x_a
         self.dy.unsafe_ptr()[unsafe_offset=k] = y_b - y_a
         self.direction.unsafe_ptr()[unsafe_offset=k] = 1 if y_b > y_a else -1
+
+    def extend(mut self, other: _EdgeTable, first: Int = 0, last: Int = -1):
+        """Append edges [first, last) of `other` -- all of it when
+        `last` is left at -1 -- as they are, unmapped: what a batch does
+        to gather the tables its ops built into one table per task,
+        so the ops share a few allocations instead of owning one each.
+        """
+        var hi = len(other.y_lo) if last < 0 else last
+        var n = hi - first
+        if n <= 0:
+            return
+        var base = len(self.y_lo)
+        self._grow(base + n)
+        var d_ylo = self.y_lo.unsafe_ptr()
+        var d_yhi = self.y_hi.unsafe_ptr()
+        var d_x0 = self.x0.unsafe_ptr()
+        var d_y0 = self.y0.unsafe_ptr()
+        var d_dx = self.dx.unsafe_ptr()
+        var d_dy = self.dy.unsafe_ptr()
+        var d_dir = self.direction.unsafe_ptr()
+        var s_ylo = other.y_lo.unsafe_ptr()
+        var s_yhi = other.y_hi.unsafe_ptr()
+        var s_x0 = other.x0.unsafe_ptr()
+        var s_y0 = other.y0.unsafe_ptr()
+        var s_dx = other.dx.unsafe_ptr()
+        var s_dy = other.dy.unsafe_ptr()
+        var s_dir = other.direction.unsafe_ptr()
+        for k in range(n):  # base + k < grown length, first + k < hi
+            d_ylo[unsafe_offset=base + k] = s_ylo[unsafe_offset=first + k]
+            d_yhi[unsafe_offset=base + k] = s_yhi[unsafe_offset=first + k]
+            d_x0[unsafe_offset=base + k] = s_x0[unsafe_offset=first + k]
+            d_y0[unsafe_offset=base + k] = s_y0[unsafe_offset=first + k]
+            d_dx[unsafe_offset=base + k] = s_dx[unsafe_offset=first + k]
+            d_dy[unsafe_offset=base + k] = s_dy[unsafe_offset=first + k]
+            d_dir[unsafe_offset=base + k] = s_dir[unsafe_offset=first + k]
+        self._sorted = False
 
     def add_ring(mut self, points: List[FPoint]):
         """Every edge of the closed polygon `points` in order, the
@@ -863,18 +906,16 @@ def _sweep_edges_aa(
         # band of a batched shape and draws.
         if not exact:
             edges.sort_by_top()
-        canvas._record(
-            _edges_op(
-                edges.copy(),
-                min_x,
-                min_y,
-                max_x,
-                max_y,
-                color,
-                fill_rule,
-                supersample,
-                exact,
-            )
+        canvas._record_edges(
+            edges,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            color,
+            fill_rule,
+            supersample,
+            exact,
         )
         return
     if exact:

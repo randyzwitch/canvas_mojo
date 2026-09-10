@@ -1153,6 +1153,51 @@ def _survey() raises -> List[_Row]:
         iters,
     )
 
+    # Markers that are paths -- a diamond each -- where the batch also
+    # builds the outlines in parallel instead of one at a time at the
+    # call.
+    var diamond = Path()
+    diamond.move_to(0.0, -4.0)
+    diamond.line_to(4.0, 0.0)
+    diamond.line_to(0.0, 4.0)
+    diamond.line_to(-4.0, 0.0)
+    diamond.close()
+    iters = 20
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        for i in range(2000):
+            var fx = 20.0 + Float64((i * 37) % 7600) * 0.1
+            var fy = 20.0 + Float64((i * 53) % 5600) * 0.1
+            canvas.save()
+            canvas.translate(fx, fy)
+            fill_path_aa(canvas, diamond, INK, FillRule.NONZERO)
+            canvas.restore()
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "fill_path_aa x2000 diamond markers (one call each)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        canvas.begin_batch()
+        for i in range(2000):
+            var fx = 20.0 + Float64((i * 37) % 7600) * 0.1
+            var fy = 20.0 + Float64((i * 53) % 5600) * 0.1
+            canvas.translate(fx, fy)
+            fill_path_aa(canvas, diamond, INK, FillRule.NONZERO)
+            canvas.translate(-fx, -fy)
+        canvas.end_batch()
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "fill_path_aa x2000 diamond markers in a batch",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     # Printed so nothing above can be optimized away as unused. The
     # value itself is not meaningful; only that it was computed is.
     print("checksum:", sink)

@@ -246,81 +246,164 @@ async def _fill_region_band_async(
     canvas._fill_region(rx, ry, rw, rh, color)
 
 
-# What a `_BatchOp` holds: an edge table to rasterize, a closed-form
-# disk or ellipse, or a solid rectangle.
+# What a `_BatchOp` holds: edges to rasterize, a closed-form disk or
+# ellipse, a solid rectangle, or a stroke or path still to be built
+# into edges when the batch is drawn.
 comptime _OP_EDGES = 0
 comptime _OP_DISK = 1
 comptime _OP_ELLIPSE = 2
 comptime _OP_RECT = 3
+comptime _OP_STROKE = 4
+comptime _OP_PATH = 5
 
 
-struct _BatchOp(Copyable, Movable):
+struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
     """One primitive recorded between `Canvas.begin_batch` and
-    `end_batch`: its device-space geometry and paint, and the canvas
-    rows it can touch, which a band reads to skip it. The geometry is
-    what the primitive's raster stage would have consumed at the
-    moment it was called -- an edge table (`_OP_EDGES`, exact area or
-    the sampled sweep), a disk or ellipse small enough for the closed
-    form, or a rectangle already intersected with the clip -- so
-    rendering an op later, on any band, writes the pixels the call
-    would have. `canvas.batch` renders a list of these.
+    `end_batch`: its paint, the canvas rows it can touch (which a band
+    reads to skip it), and either its closed-form parameters or
+    indices into the batch's side lists (`_Batch`) for its geometry.
+    Scalars only, so recording an op is an append and a batch of
+    thousands owns a few allocations rather than one per op --
+    allocation across many threads was most of what a batch of tiny
+    shapes cost when each op held its own lists.
+
+    An op is recorded as early in its primitive's pipeline as the
+    canvas state allows, so that what follows can run in parallel when
+    the batch is drawn: a stroke as its device-space points and stroke
+    style (`_OP_STROKE`), a path fill as the path (`_OP_PATH`), both
+    turned into edges by `canvas.batch` before the band pass; a
+    polygon fill as the edges it already built (`_OP_EDGES`, exact
+    area or the sampled sweep); a disk or ellipse small enough for the
+    closed form; a rectangle already intersected with the clip. Each
+    is what the primitive's raster stage would have consumed at the
+    call, under the transform, clip, blend mode and color space then
+    in force, so rendering it later, on any band, writes the pixels
+    the call would have.
     """
 
     var kind: Int
-    var edges: _EdgeTable
+    var color: Color
     var exact: Bool
     var fill_rule: FillRule
     var supersample: Int
-    # An edge table's unpadded bounds; a rectangle's x, y and the
+    # An edge range's unpadded bounds; a rectangle's x, y and the
     # exclusive x + width, y + height; a disk's or ellipse's box.
     var min_x: Int
     var min_y: Int
     var max_x: Int
     var max_y: Int
+    # The closed forms.
     var cx: Float64
     var cy: Float64
     var rx: Float64
     var ry: Float64
-    var color: Color
-    # Rows [first_row, last_row) the op can write, in canvas rows.
+    # `_OP_EDGES`: edges [first_edge, last_edge) of the batch's table
+    # `table`. A sampled op has a table of its own, whole.
+    var table: Int
+    var first_edge: Int
+    var last_edge: Int
+    # `_OP_STROKE`: `point_count` of the batch's points from
+    # `first_point`, `dash_count` of its dashes from `first_dash`, and
+    # the style, in the space `matrix` maps to the device.
+    var first_point: Int
+    var point_count: Int
+    var closed: Bool
+    var half_width: Float64
+    var first_dash: Int
+    var dash_count: Int
+    var dash_offset: Float64
+    var cap: LineCap
+    var join: LineJoin
+    var miter_limit: Float64
+    var matrix: Matrix2D
+    # `_OP_PATH`: the batch's path `path`, its flattening, and about
+    # how many vertices it flattens to.
+    var path: Int
+    var curve_steps: Int
+    var path_work: Int
+    # Rows [first_row, last_row) the op can write, in canvas rows;
+    # empty until a stroke or path is built.
     var first_row: Int
     var last_row: Int
 
-    def __init__(
-        out self,
-        kind: Int,
-        var edges: _EdgeTable,
-        exact: Bool,
-        fill_rule: FillRule,
-        supersample: Int,
+    def __init__(out self, kind: Int, color: Color):
+        """An op of `kind` with nothing else set; the builders below
+        fill in what the kind needs."""
+        self.kind = kind
+        self.color = color
+        self.exact = True
+        self.fill_rule = FillRule.NONZERO
+        self.supersample = 0
+        self.min_x = 0
+        self.min_y = 0
+        self.max_x = 0
+        self.max_y = 0
+        self.cx = 0.0
+        self.cy = 0.0
+        self.rx = 0.0
+        self.ry = 0.0
+        self.table = 0
+        self.first_edge = 0
+        self.last_edge = 0
+        self.first_point = 0
+        self.point_count = 0
+        self.closed = False
+        self.half_width = 0.0
+        self.first_dash = 0
+        self.dash_count = 0
+        self.dash_offset = 0.0
+        self.cap = LineCap.ROUND
+        self.join = LineJoin.ROUND
+        self.miter_limit = 4.0
+        self.matrix = Matrix2D.identity()
+        self.path = -1
+        self.curve_steps = 0
+        self.path_work = 0
+        self.first_row = 0
+        self.last_row = 0
+
+    def set_edges(
+        mut self,
+        table: Int,
+        first_edge: Int,
+        last_edge: Int,
         min_x: Int,
         min_y: Int,
         max_x: Int,
         max_y: Int,
-        cx: Float64,
-        cy: Float64,
-        rx: Float64,
-        ry: Float64,
-        color: Color,
-        first_row: Int,
-        last_row: Int,
+        exact: Bool,
     ):
-        self.kind = kind
-        self.edges = edges^
+        """Make the op an `_OP_EDGES` over that range of that table,
+        with the unpadded bounds the sweep pads: the rows are the ones
+        `_area_edges_aa` and the sampled sweep visit. An empty range
+        leaves the op touching no row.
+        """
+        self.kind = _OP_EDGES
         self.exact = exact
-        self.fill_rule = fill_rule
-        self.supersample = supersample
+        self.table = table
+        self.first_edge = first_edge
+        self.last_edge = last_edge
+        if last_edge <= first_edge:
+            self.first_row = 0
+            self.last_row = 0
+            return
         self.min_x = min_x
         self.min_y = min_y
         self.max_x = max_x
         self.max_y = max_y
-        self.cx = cx
-        self.cy = cy
-        self.rx = rx
-        self.ry = ry
-        self.color = color
-        self.first_row = first_row
-        self.last_row = last_row
+        self.first_row = min_y - 1
+        self.last_row = max_y + 2
+
+    def geometry_work(self) -> Int:
+        """How much building the op's edges will cost, in vertices:
+        what the batch weighs against splitting the build across
+        tasks. Zero for an op with nothing to build.
+        """
+        if self.kind == _OP_STROKE:
+            return self.point_count
+        if self.kind == _OP_PATH:
+            return self.path_work
+        return 0
 
     def work(self) -> Int:
         """About how many pixels rendering the op visits: its box.
@@ -333,39 +416,122 @@ struct _BatchOp(Copyable, Movable):
         return rows * cols
 
 
-def _edges_op(
-    var edges: _EdgeTable,
-    min_x: Int,
-    min_y: Int,
-    max_x: Int,
-    max_y: Int,
-    color: Color,
-    fill_rule: FillRule,
-    supersample: Int,
-    exact: Bool,
-) -> _BatchOp:
-    """An edge table to rasterize, by exact area when `exact` and by
-    the sampled sweep otherwise (already top-sorted then). The rows
-    are the padded ones `_area_edges_aa` and the sampled sweep visit.
+struct _Batch(Copyable, Movable):
+    """Everything recorded since the outermost `Canvas.begin_batch`:
+    the ops, and the side lists their indices point into -- the
+    strokes' points and dash patterns, the paths, and the edge tables.
+    Table 0 gathers the edges recorded ready-made (polygon fills and
+    the strokes that reach `_rasterize_stroke` already built); a
+    sampled op gets a table of its own, since the sampled sweep sorts
+    and seeds a whole table; and drawing the batch adds one table per
+    build task. `canvas.batch` renders one of these.
     """
-    return _BatchOp(
-        _OP_EDGES,
-        edges^,
-        exact,
-        fill_rule,
-        supersample,
-        min_x,
-        min_y,
-        max_x,
-        max_y,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        color,
-        min_y - 1,
-        max_y + 2,
-    )
+
+    var ops: List[_BatchOp]
+    var points: List[FPoint]
+    var dashes: List[Float64]
+    var paths: List[Path]
+    var tables: List[_EdgeTable]
+
+    def __init__(out self):
+        self.ops = List[_BatchOp]()
+        self.points = List[FPoint]()
+        self.dashes = List[Float64]()
+        self.paths = List[Path]()
+        self.tables = List[_EdgeTable]()
+        self.tables.append(_EdgeTable())
+
+    def reserve_like(mut self, other: _Batch):
+        """Room for a batch the size of `other`: the next one usually
+        is."""
+        self.ops.reserve(len(other.ops))
+        self.points.reserve(len(other.points))
+        self.paths.reserve(len(other.paths))
+
+    def record_edges(
+        mut self,
+        edges: _EdgeTable,
+        min_x: Int,
+        min_y: Int,
+        max_x: Int,
+        max_y: Int,
+        color: Color,
+        fill_rule: FillRule,
+        supersample: Int,
+        exact: Bool,
+    ):
+        """Edges already built, appended to table 0 when they
+        rasterize by exact area and copied into a table of their own
+        when they take the sampled sweep (already top-sorted then)."""
+        var op = _BatchOp(_OP_EDGES, color)
+        op.fill_rule = fill_rule
+        op.supersample = supersample
+        var table = 0
+        var first = 0
+        var last = len(edges.y_lo)
+        if exact:
+            first = len(self.tables[0].y_lo)
+            self.tables[0].extend(edges)
+            last = len(self.tables[0].y_lo)
+        else:
+            self.tables.append(edges.copy())
+            table = len(self.tables) - 1
+        op.set_edges(table, first, last, min_x, min_y, max_x, max_y, exact)
+        self.ops.append(op)
+
+    def record_stroke(
+        mut self,
+        points: List[FPoint],
+        closed: Bool,
+        half_width: Float64,
+        cap: LineCap,
+        dashes: List[Float64],
+        dash_offset: Float64,
+        join: LineJoin,
+        miter_limit: Float64,
+        matrix: Matrix2D,
+        supersample: Int,
+        color: Color,
+    ):
+        """A stroke as `_stroke_edges` takes it, to be built when the
+        batch is drawn."""
+        var op = _BatchOp(_OP_STROKE, color)
+        op.first_point = len(self.points)
+        op.point_count = len(points)
+        for i in range(len(points)):
+            self.points.append(points[i])
+        op.closed = closed
+        op.half_width = half_width
+        op.cap = cap
+        op.first_dash = len(self.dashes)
+        op.dash_count = len(dashes)
+        for i in range(len(dashes)):
+            self.dashes.append(dashes[i])
+        op.dash_offset = dash_offset
+        op.join = join
+        op.miter_limit = miter_limit
+        op.matrix = matrix
+        op.supersample = supersample
+        self.ops.append(op)
+
+    def record_path(
+        mut self,
+        path: Path,
+        fill_rule: FillRule,
+        supersample: Int,
+        curve_steps: Int,
+        color: Color,
+    ):
+        """A device-space path to fill, flattened and built when the
+        batch is drawn."""
+        var op = _BatchOp(_OP_PATH, color)
+        self.paths.append(path.copy())
+        op.path = len(self.paths) - 1
+        op.path_work = len(path.commands) * 4
+        op.fill_rule = fill_rule
+        op.supersample = supersample
+        op.curve_steps = curve_steps
+        self.ops.append(op)
 
 
 def _disk_op(
@@ -373,24 +539,16 @@ def _disk_op(
 ) -> _BatchOp:
     """A closed-form disk; its rows are the ones `_fill_circle_aa_rows`
     visits."""
-    return _BatchOp(
-        _OP_DISK,
-        _EdgeTable(),
-        True,
-        FillRule.NONZERO,
-        0,
-        Int(floor(cx - radius)) - 1,
-        Int(floor(cy - radius)) - 1,
-        Int(ceil(cx + radius)) + 2,
-        Int(ceil(cy + radius)) + 2,
-        cx,
-        cy,
-        radius,
-        radius,
-        color,
-        Int(floor(cy - radius)) - 1,
-        Int(ceil(cy + radius)) + 2,
-    )
+    var op = _BatchOp(_OP_DISK, color)
+    op.cx = cx
+    op.cy = cy
+    op.rx = radius
+    op.ry = radius
+    op.min_x = Int(floor(cx - radius)) - 1
+    op.max_x = Int(ceil(cx + radius)) + 2
+    op.first_row = Int(floor(cy - radius)) - 1
+    op.last_row = Int(ceil(cy + radius)) + 2
+    return op
 
 
 def _ellipse_op(
@@ -398,47 +556,29 @@ def _ellipse_op(
 ) -> _BatchOp:
     """A closed-form ellipse; its rows are the ones
     `_fill_ellipse_aa_rows` visits."""
-    return _BatchOp(
-        _OP_ELLIPSE,
-        _EdgeTable(),
-        True,
-        FillRule.NONZERO,
-        0,
-        Int(floor(cx - rx)) - 1,
-        Int(floor(cy - ry)) - 1,
-        Int(ceil(cx + rx)) + 2,
-        Int(ceil(cy + ry)) + 2,
-        cx,
-        cy,
-        rx,
-        ry,
-        color,
-        Int(floor(cy - ry)) - 1,
-        Int(ceil(cy + ry)) + 2,
-    )
+    var op = _BatchOp(_OP_ELLIPSE, color)
+    op.cx = cx
+    op.cy = cy
+    op.rx = rx
+    op.ry = ry
+    op.min_x = Int(floor(cx - rx)) - 1
+    op.max_x = Int(ceil(cx + rx)) + 2
+    op.first_row = Int(floor(cy - ry)) - 1
+    op.last_row = Int(ceil(cy + ry)) + 2
+    return op
 
 
 def _rect_op(x: Int, y: Int, width: Int, height: Int, color: Color) -> _BatchOp:
     """A solid rectangle already intersected with the canvas and the
     rectangle clip, as `_fill_region` takes it."""
-    return _BatchOp(
-        _OP_RECT,
-        _EdgeTable(),
-        True,
-        FillRule.NONZERO,
-        0,
-        x,
-        y,
-        x + width,
-        y + height,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        color,
-        y,
-        y + height,
-    )
+    var op = _BatchOp(_OP_RECT, color)
+    op.min_x = x
+    op.min_y = y
+    op.max_x = x + width
+    op.max_y = y + height
+    op.first_row = y
+    op.last_row = y + height
+    return op
 
 
 def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
@@ -505,7 +645,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     var _saved: List[_CanvasState]
     # Primitives recorded since the outermost `begin_batch`, and how
     # many `begin_batch` calls are open; see `begin_batch`.
-    var _batch: List[_BatchOp]
+    var _batch: _Batch
     var _batch_depth: Int
 
     def __init__(
@@ -567,7 +707,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._max_workers = 0
         self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
-        self._batch = List[_BatchOp]()
+        self._batch = _Batch()
         self._batch_depth = 0
 
     def __init__(
@@ -619,7 +759,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._max_workers = 0
         self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
-        self._batch = List[_BatchOp]()
+        self._batch = _Batch()
         self._batch_depth = 0
 
     def save(mut self):
@@ -850,11 +990,14 @@ struct Canvas(Copyable, DrawTarget, Movable):
         `draw_line_aa`, `draw_polyline_aa`, `draw_polygon_aa`,
         `fill_circle_aa`, `fill_ellipse_aa`, `fill_arc_aa`,
         `fill_ring_sector_aa`, `draw_circle_aa`, `draw_ellipse_aa`,
-        `draw_arc_aa`, and the solid `fill_rect`. Each is recorded in
-        device space at the call, under the transform, clip, blend
-        mode and color space in force then, and rendered by the same
-        row-restricted code its batched relatives use, so the pixels
-        are exactly the ones drawing it at once would have written.
+        `draw_arc_aa`, and the solid `fill_rect`. Each is recorded at
+        the call, under the transform, clip, blend mode and color
+        space in force then -- a stroke as its points and style, a
+        path as the path, so that `end_batch` can build their outlines
+        and edge tables in parallel before it rasterizes -- and
+        rendered by the same row-restricted code its batched relatives
+        use, so the pixels are exactly the ones drawing it at once
+        would have written.
 
         Everything else -- text, gradient and pattern fills, the
         hard-edged primitives, `draw_canvas`, `blur`, `fill`, and the
@@ -887,9 +1030,79 @@ struct Canvas(Copyable, DrawTarget, Movable):
         itself instead of drawing."""
         return self._batch_depth > 0
 
-    def _record(mut self, var op: _BatchOp):
-        """Append one recorded primitive; see `_BatchOp`."""
-        self._batch.append(op^)
+    def _record(mut self, op: _BatchOp):
+        """Append one recorded closed-form primitive; see
+        `_BatchOp`."""
+        self._batch.ops.append(op)
+
+    def _record_edges(
+        mut self,
+        edges: _EdgeTable,
+        min_x: Int,
+        min_y: Int,
+        max_x: Int,
+        max_y: Int,
+        color: Color,
+        fill_rule: FillRule,
+        supersample: Int,
+        exact: Bool,
+    ):
+        """Record edges already built; see `_Batch.record_edges`."""
+        self._batch.record_edges(
+            edges,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            color,
+            fill_rule,
+            supersample,
+            exact,
+        )
+
+    def _record_stroke(
+        mut self,
+        points: List[FPoint],
+        closed: Bool,
+        half_width: Float64,
+        cap: LineCap,
+        dashes: List[Float64],
+        dash_offset: Float64,
+        join: LineJoin,
+        miter_limit: Float64,
+        matrix: Matrix2D,
+        supersample: Int,
+        color: Color,
+    ):
+        """Record a stroke to build when the batch is drawn; see
+        `_Batch.record_stroke`."""
+        self._batch.record_stroke(
+            points,
+            closed,
+            half_width,
+            cap,
+            dashes,
+            dash_offset,
+            join,
+            miter_limit,
+            matrix,
+            supersample,
+            color,
+        )
+
+    def _record_path(
+        mut self,
+        path: Path,
+        fill_rule: FillRule,
+        supersample: Int,
+        curve_steps: Int,
+        color: Color,
+    ):
+        """Record a path to build when the batch is drawn; see
+        `_Batch.record_path`."""
+        self._batch.record_path(
+            path, fill_rule, supersample, curve_steps, color
+        )
 
     def _flush_batch(mut self):
         """Draw the pending batch now, keeping any open `begin_batch`
@@ -901,14 +1114,15 @@ struct Canvas(Copyable, DrawTarget, Movable):
         draw rather than record, and the list is taken whole so a
         band never sees an appending list.
         """
-        if len(self._batch) == 0:
+        if len(self._batch.ops) == 0:
             return
-        var ops = self._batch^
-        self._batch = List[_BatchOp]()
+        var batch = self._batch^
+        self._batch = _Batch()
         var depth = self._batch_depth
         self._batch_depth = 0
-        _render_batch(self, ops)
+        _render_batch(self, batch)
         self._batch_depth = depth
+        self._batch.reserve_like(batch)
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.

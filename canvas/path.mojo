@@ -152,7 +152,7 @@ struct PathCommand(ImplicitlyCopyable, Movable):
         self.p3 = p3
 
 
-struct Path(Movable):
+struct Path(Copyable, Movable):
     """Build with move_to/line_to/quad_curve_to/cubic_curve_to/arc_to/
     close, then hand to fill_path/stroke_path/stroke_path_aa. No
     chaining: each call is `mut self` returning nothing, like Canvas's
@@ -1627,6 +1627,11 @@ def _fill_path_aa_device(
     loops compile with nothing ahead of them and it never calls
     back into the public function.
     """
+    if canvas._batching():
+        # Recorded before it is flattened: `end_batch` flattens and
+        # builds the edge tables of every recorded path in parallel.
+        canvas._record_path(path, fill_rule, supersample, curve_steps, color)
+        return
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return

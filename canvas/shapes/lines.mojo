@@ -18,7 +18,7 @@ Bresenham is definitionally 1px and takes no `width`.
 from std.math import atan2, ceil, cos, floor, pi, sin, sqrt
 
 from canvas.color import Color
-from canvas.buffer import Canvas, _edges_op
+from canvas.buffer import Canvas
 from canvas.geometry import (
     Matrix2D,
     Point,
@@ -538,6 +538,23 @@ def _draw_polyline_core_aa(
         )
         return
 
+    if canvas._batching():
+        # Recorded before the outline is built: `end_batch` builds the
+        # outlines of every recorded stroke in parallel.
+        canvas._record_stroke(
+            points,
+            closed,
+            width / 2.0,
+            cap,
+            dashes,
+            dash_offset,
+            join,
+            miter_limit,
+            Matrix2D.identity(),
+            supersample,
+            color,
+        )
+        return
     # Every stroke, dashed or not, goes through the path fill --
     # exact area for the outline, the sampled sweep for the one shape
     # `_stroke_edges` builds as pieces. Both are parallel across cores.
@@ -583,6 +600,21 @@ def _stroke_transformed(
     if count == 1:
         var p = matrix.apply(points[0].x, points[0].y)
         canvas.set_pixel(round_to_int(p.x), round_to_int(p.y), color)
+        return
+    if canvas._batching():
+        canvas._record_stroke(
+            points,
+            closed,
+            width / 2.0,
+            cap,
+            dashes,
+            dash_offset,
+            join,
+            miter_limit,
+            matrix,
+            supersample,
+            color,
+        )
         return
 
     var shape = _stroke_edges(
@@ -696,18 +728,16 @@ def _rasterize_stroke(
     if canvas._batching():
         if not shape.exact:
             shape.edges.sort_by_top()
-        canvas._record(
-            _edges_op(
-                shape.edges.copy(),
-                b[0],
-                b[1],
-                b[2],
-                b[3],
-                color,
-                FillRule.NONZERO,
-                supersample,
-                shape.exact,
-            )
+        canvas._record_edges(
+            shape.edges,
+            b[0],
+            b[1],
+            b[2],
+            b[3],
+            color,
+            FillRule.NONZERO,
+            supersample,
+            shape.exact,
         )
         return
     if shape.exact:
