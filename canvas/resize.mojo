@@ -131,8 +131,36 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     # appending is inherently sequential -- it is the order of the
     # calls that decides where a pixel lands. Indexing lets output rows
     # be computed independently, which is what the banding below needs.
+    #
+    # Uninitialized, not cleared. The bands below partition every output
+    # row between them and each kernel writes all four channels of every
+    # pixel in its rows before anything reads them, so clearing first
+    # changes nothing (#348).
+    #
+    # What it costs is not the clearing. A zero fill of this buffer is
+    # 23 us at 82 GB/s, and at one worker the two versions are within
+    # that of each other. The cost is that filling it here leaves every
+    # line of the output owned by *this* thread's CCX, so each band's
+    # first write to a line has to take ownership across Infinity
+    # Fabric. Measured on a 1600x1200 source, downsample by 2:
+    #
+    #     workers   uninit    zero-filled
+    #           1   720.2 us      744.8 us
+    #           2   366.9 us      830.5 us
+    #          64   195.3 us      361.3 us
+    #
+    # Serial, the fill is what it looks like. Banded, it is 1.85x. So
+    # do not pre-touch a buffer that band tasks are about to write --
+    # the same slice-locality rule as `_MIN_PARALLEL_CLEAR`, here about
+    # who owns a line rather than whether it fits.
+    #
+    # `test_every_downsample_kernel_writes_every_output_byte` and its
+    # transparent-block companion are the complete-write guarantee, and
+    # both were run against a buffer poisoned to 0xCD rather than
+    # zeroed, so an unwritten byte shows up as a wrong value rather
+    # than as a plausible zero.
     var pixels = List[UInt8](
-        length=out_width * out_height * BYTES_PER_PIXEL, fill=0
+        unsafe_uninit_length=out_width * out_height * BYTES_PER_PIXEL
     )
 
     # Output rows are the most independent loop in this package: each

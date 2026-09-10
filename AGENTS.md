@@ -173,6 +173,15 @@ resolves.
   store-only pass of the same size would have lost. So classify by what
   the pass does per pixel, not by how many bytes it touches --
   `Canvas._fill_region_top` splits on exactly that test.
+- Do not pre-touch a buffer that band tasks are about to write. Zeroing
+  `downsample`'s output on the calling thread costs 23 us of actual
+  filling and 166 us of cross-CCX ownership transfer, because every
+  line then belongs to the caller's slice and each band has to take it:
+  1.85x at 64 workers, and *nothing* at one worker, which is how to
+  tell this apart from the fill itself. Allocate uninitialized and let
+  each band first-touch its own rows -- with a complete-write proof,
+  which means a test run against a buffer poisoned to a non-zero byte,
+  not against zeros.
 - A pass that reads a lot and computes little sits between those two,
   and there the runtime's default worker count can be the *worst*
   available choice. `downsample` of a 7.7 MB source measured 718 us at

@@ -566,5 +566,68 @@ def test_capped_downsample_matches_an_uncapped_one_byte_for_byte() raises:
         assert_equal(many.pixels[i], one.pixels[i])
 
 
+def test_every_downsample_kernel_writes_every_output_byte() raises:
+    # The output buffer is allocated without being cleared, on the
+    # grounds that every byte is written before anything reads it. That
+    # is only true if each kernel covers its whole band, so this walks
+    # the factors that select different kernels -- 2, 3 and 4 are
+    # compile-time block sizes, 5 and 7 take the general path -- and
+    # checks the result against the block average computed here.
+    var factors: List[Int] = [2, 3, 4, 5, 7]
+    for fi in range(len(factors)):
+        var f = factors[fi]
+        var w = f * 5
+        var h = f * 3
+        var src = Canvas(w, h, Color(0, 0, 0))
+        for y in range(h):
+            for x in range(w):
+                src.set_pixel(
+                    x, y, Color(UInt8((x * 7 + y * 13) % 256), 90, 40, 255)
+                )
+        var out = downsample(src, f)
+        assert_equal(out.width, 5)
+        assert_equal(out.height, 3)
+        for oy in range(3):
+            for ox in range(5):
+                var total = 0
+                for dy in range(f):
+                    for dx in range(f):
+                        total += Int(src.get_pixel(ox * f + dx, oy * f + dy).r)
+                var want = (total + (f * f) // 2) // (f * f)
+                var got = Int(out.get_pixel(ox, oy).r)
+                if got != want:
+                    raise Error(
+                        "factor "
+                        + String(f)
+                        + " at ("
+                        + String(ox)
+                        + ","
+                        + String(oy)
+                        + "): got "
+                        + String(got)
+                        + ", want "
+                        + String(want)
+                    )
+                assert_equal(out.get_pixel(ox, oy).a, 255)
+
+
+def test_fully_transparent_blocks_downsample_to_transparent_black() raises:
+    # The zero-alpha branch writes all four channels explicitly rather
+    # than relying on the buffer arriving cleared, which matters now
+    # that it does not.
+    var factors: List[Int] = [2, 3, 5]
+    for fi in range(len(factors)):
+        var f = factors[fi]
+        var src = Canvas(f * 4, f * 2, Color(200, 100, 50, 0))
+        var out = downsample(src, f)
+        for oy in range(2):
+            for ox in range(4):
+                var p = out.get_pixel(ox, oy)
+                assert_equal(p.r, 0)
+                assert_equal(p.g, 0)
+                assert_equal(p.b, 0)
+                assert_equal(p.a, 0)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
