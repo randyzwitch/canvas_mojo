@@ -9,7 +9,7 @@ from canvas.color import Color
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, _rect_op
 from canvas.geometry import (
     Matrix2D,
     Point,
@@ -47,6 +47,7 @@ def draw_rect(
         height: Rectangle's height.
         color: Outline color.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         if canvas.current_transform().is_axis_aligned():
             var m = canvas.current_transform()
@@ -172,6 +173,12 @@ def _fill_rect_device(
         return
 
     var region = canvas.effective_fill_rect(x, y, width, height)
+    if canvas._batching():
+        if region[2] > 0 and region[3] > 0:
+            canvas._record(
+                _rect_op(region[0], region[1], region[2], region[3], color)
+            )
+        return
     canvas._fill_region_top(region[0], region[1], region[2], region[3], color)
 
 
@@ -294,6 +301,7 @@ def fill_rect_gradient(
         height: Rectangle's height.
         gradient: Fill source, projected across the rectangle.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_axis_aligned():
@@ -336,6 +344,7 @@ def fill_rect_gradient(
         height: Height.
         gradient: Fill source, projected across the rectangle.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_axis_aligned():
@@ -381,6 +390,7 @@ def fill_rect_radial_gradient(
         height: Rectangle's height.
         gradient: Fill source, projected across the rectangle.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_axis_aligned():
@@ -426,6 +436,7 @@ def fill_rect_pattern(
         height: Rectangle's height.
         pattern: Fill source, sampled across the rectangle.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_axis_aligned():

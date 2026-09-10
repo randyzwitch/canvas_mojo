@@ -1081,6 +1081,78 @@ def _survey() raises -> List[_Row]:
         iters,
     )
 
+    # --- batches ---------------------------------------------------
+    # What a chart draws between axes and text: markers of mixed size,
+    # which no `fill_circles_aa` call can take, and gridlines with
+    # tick marks. One call each runs on one core; the same calls
+    # inside `begin_batch`/`end_batch` become one banded pass. Both
+    # forms draw identical pixels (tests/test_batch.mojo).
+    iters = 20
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        for i in range(2000):
+            var fx = 20.0 + Float64((i * 37) % 7600) * 0.1
+            var fy = 20.0 + Float64((i * 53) % 5600) * 0.1
+            fill_circle_aa(canvas, fx, fy, 2.0 + Float64(i % 5), INK)
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "fill_circle_aa x2000 mixed radii (one call each)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        canvas.begin_batch()
+        for i in range(2000):
+            var fx = 20.0 + Float64((i * 37) % 7600) * 0.1
+            var fy = 20.0 + Float64((i * 53) % 5600) * 0.1
+            fill_circle_aa(canvas, fx, fy, 2.0 + Float64(i % 5), INK)
+        canvas.end_batch()
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "fill_circle_aa x2000 mixed radii in a batch",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    iters = 40
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        for i in range(100):
+            var y = 20.0 + Float64(i) * 5.6
+            draw_line_aa(canvas, 40.0, y, 780.0, y, INK, width=1.0)
+            var x = 40.0 + Float64(i) * 7.4
+            draw_line_aa(canvas, x, 20.0, x, 580.0, INK, width=1.0)
+            fill_rect(canvas, 38 + i * 7, 578, 2, 8, INK)
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "draw_line_aa x200 gridlines + 100 ticks (one call each)",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
+    t0 = perf_counter_ns()
+    for _ in range(iters):
+        canvas.begin_batch()
+        for i in range(100):
+            var y = 20.0 + Float64(i) * 5.6
+            draw_line_aa(canvas, 40.0, y, 780.0, y, INK, width=1.0)
+            var x = 40.0 + Float64(i) * 7.4
+            draw_line_aa(canvas, x, 20.0, x, 580.0, INK, width=1.0)
+            fill_rect(canvas, 38 + i * 7, 578, 2, 8, INK)
+        canvas.end_batch()
+        sink += Int(canvas.get_pixel(100, 100).r)
+    _report(
+        rows,
+        "draw_line_aa x200 gridlines + 100 ticks in a batch",
+        perf_counter_ns() - t0,
+        iters,
+    )
+
     # Printed so nothing above can be optimized away as unused. The
     # value itself is not meaningful; only that it was computed is.
     print("checksum:", sink)

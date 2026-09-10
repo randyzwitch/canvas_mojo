@@ -10,7 +10,7 @@ from std.math import ceil, floor, sqrt
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.color import Color
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, _ellipse_op
 from canvas.geometry import FPoint, round_to_int
 from canvas.fill_rule import FillRule
 from canvas.path import (
@@ -84,6 +84,7 @@ def draw_ellipse(
         ry: Vertical radius in pixels.
         color: Outline color.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_axis_aligned():
@@ -175,6 +176,7 @@ def fill_ellipse(
         ry: Vertical radius in pixels.
         color: Fill color.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_axis_aligned():
@@ -379,6 +381,9 @@ def _fill_ellipse_aa_device(
         _fill_polygon_aa_device(
             canvas, _ellipse_fpoints(cx, cy, rx, ry), color, FillRule.NONZERO
         )
+        return
+    if canvas._batching():
+        canvas._record(_ellipse_op(cx, cy, rx, ry, color))
         return
     var alpha_scale = Float64(color.a)
     var inv_rx = 1.0 / rx
@@ -695,6 +700,7 @@ def fill_ellipses_aa(
     Raises:
         Error: Propagated from the per-ellipse path.
     """
+    canvas._flush_batch()
     _fill_ellipses_aa_impl(canvas, centers, List[Color](), rx, ry, color)
 
 
@@ -718,6 +724,7 @@ def fill_ellipses_aa(
         Error: If `colors` is not the same length as `centers`, or
             propagated from the per-ellipse path.
     """
+    canvas._flush_batch()
     if len(colors) != len(centers):
         raise Error(
             String(

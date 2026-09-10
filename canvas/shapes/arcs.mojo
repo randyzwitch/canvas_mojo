@@ -494,6 +494,7 @@ def draw_arc(
             other way round, over the same points in reverse.
         color: Outline color.
     """
+    canvas._flush_batch()
     if radius <= 0.0:
         canvas.set_pixel(round_to_int(cx), round_to_int(cy), color)
         return
@@ -589,6 +590,7 @@ def fill_arc(
         end_angle: Sweep end, radians. Must be >= start_angle.
         color: Fill color.
     """
+    canvas._flush_batch()
     if radius <= 0.0:
         return
     var points = _arc_points(cx, cy, radius, start_angle, end_angle)
@@ -713,6 +715,7 @@ def fill_ring_sector(
         end_angle: Sweep end, radians. Must be >= start_angle.
         color: Fill color.
     """
+    canvas._flush_batch()
     if (
         outer_radius <= 0.0
         or inner_radius < 0.0
@@ -978,6 +981,7 @@ def fill_arcs_aa(
     Raises:
         Error: Propagated from the per-wedge path.
     """
+    canvas._flush_batch()
     _fill_arcs_aa_impl(
         canvas, centers, List[Color](), radius, start_angle, end_angle, color
     )
@@ -1005,6 +1009,7 @@ def fill_arcs_aa(
         Error: If `colors` is not the same length as `centers`, or
             propagated from the per-wedge path.
     """
+    canvas._flush_batch()
     if len(colors) != len(centers):
         raise Error(
             String(

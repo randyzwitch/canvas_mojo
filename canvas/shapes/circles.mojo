@@ -13,7 +13,7 @@ from std.math import asin, ceil, floor, sqrt
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.color import Color
-from canvas.buffer import Canvas
+from canvas.buffer import Canvas, _disk_op
 from canvas.geometry import FPoint, round_to_int
 from canvas.fill_rule import FillRule
 from canvas.path import (
@@ -50,6 +50,7 @@ def draw_circle(
         radius: Circle radius in pixels.
         color: Outline color.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_similarity():
@@ -133,6 +134,7 @@ def fill_circle(
         radius: Circle radius in pixels.
         color: Fill color.
     """
+    canvas._flush_batch()
     if canvas.has_transform():
         var m = canvas.current_transform()
         if m.is_similarity():
@@ -420,6 +422,9 @@ def _fill_circle_aa_device(
             color,
             FillRule.NONZERO,
         )
+        return
+    if canvas._batching():
+        canvas._record(_disk_op(cx, cy, radius, color))
         return
     var r2 = radius * radius
     var inv_r = 1.0 / radius
@@ -709,6 +714,7 @@ def fill_circles_aa(
         radius: Radius shared by every marker, in pixels.
         color: Fill color shared by every marker.
     """
+    canvas._flush_batch()
     _fill_circles_aa_impl(canvas, centers, List[Color](), radius, color)
 
 
@@ -730,6 +736,7 @@ def fill_circles_aa(
     Raises:
         Error: If `colors` is not the same length as `centers`.
     """
+    canvas._flush_batch()
     if len(colors) != len(centers):
         raise Error(
             String(

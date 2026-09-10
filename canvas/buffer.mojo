@@ -13,6 +13,7 @@
 # and would change what every existing caller of `get_pixel` sees.
 comptime BYTES_PER_PIXEL = 4
 
+from std.math import ceil, floor
 from std.sys import size_of
 from std.runtime.asyncrt import TaskGroup
 
@@ -29,6 +30,8 @@ from canvas.gradient import LinearGradient
 from canvas.vector.draw_target import DrawTarget
 from canvas.workers import _bands_for, _worker_limit
 from canvas.fill_rule import FillRule
+from canvas.aa_crossing import _EdgeTable
+from canvas.batch import _render_batch
 from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
     Path,
@@ -243,6 +246,201 @@ async def _fill_region_band_async(
     canvas._fill_region(rx, ry, rw, rh, color)
 
 
+# What a `_BatchOp` holds: an edge table to rasterize, a closed-form
+# disk or ellipse, or a solid rectangle.
+comptime _OP_EDGES = 0
+comptime _OP_DISK = 1
+comptime _OP_ELLIPSE = 2
+comptime _OP_RECT = 3
+
+
+struct _BatchOp(Copyable, Movable):
+    """One primitive recorded between `Canvas.begin_batch` and
+    `end_batch`: its device-space geometry and paint, and the canvas
+    rows it can touch, which a band reads to skip it. The geometry is
+    what the primitive's raster stage would have consumed at the
+    moment it was called -- an edge table (`_OP_EDGES`, exact area or
+    the sampled sweep), a disk or ellipse small enough for the closed
+    form, or a rectangle already intersected with the clip -- so
+    rendering an op later, on any band, writes the pixels the call
+    would have. `canvas.batch` renders a list of these.
+    """
+
+    var kind: Int
+    var edges: _EdgeTable
+    var exact: Bool
+    var fill_rule: FillRule
+    var supersample: Int
+    # An edge table's unpadded bounds; a rectangle's x, y and the
+    # exclusive x + width, y + height; a disk's or ellipse's box.
+    var min_x: Int
+    var min_y: Int
+    var max_x: Int
+    var max_y: Int
+    var cx: Float64
+    var cy: Float64
+    var rx: Float64
+    var ry: Float64
+    var color: Color
+    # Rows [first_row, last_row) the op can write, in canvas rows.
+    var first_row: Int
+    var last_row: Int
+
+    def __init__(
+        out self,
+        kind: Int,
+        var edges: _EdgeTable,
+        exact: Bool,
+        fill_rule: FillRule,
+        supersample: Int,
+        min_x: Int,
+        min_y: Int,
+        max_x: Int,
+        max_y: Int,
+        cx: Float64,
+        cy: Float64,
+        rx: Float64,
+        ry: Float64,
+        color: Color,
+        first_row: Int,
+        last_row: Int,
+    ):
+        self.kind = kind
+        self.edges = edges^
+        self.exact = exact
+        self.fill_rule = fill_rule
+        self.supersample = supersample
+        self.min_x = min_x
+        self.min_y = min_y
+        self.max_x = max_x
+        self.max_y = max_y
+        self.cx = cx
+        self.cy = cy
+        self.rx = rx
+        self.ry = ry
+        self.color = color
+        self.first_row = first_row
+        self.last_row = last_row
+
+    def work(self) -> Int:
+        """About how many pixels rendering the op visits: its box.
+        What the batch weighs against the parallel threshold.
+        """
+        var rows = self.last_row - self.first_row
+        var cols = self.max_x - self.min_x + 3
+        if rows <= 0 or cols <= 0:
+            return 0
+        return rows * cols
+
+
+def _edges_op(
+    var edges: _EdgeTable,
+    min_x: Int,
+    min_y: Int,
+    max_x: Int,
+    max_y: Int,
+    color: Color,
+    fill_rule: FillRule,
+    supersample: Int,
+    exact: Bool,
+) -> _BatchOp:
+    """An edge table to rasterize, by exact area when `exact` and by
+    the sampled sweep otherwise (already top-sorted then). The rows
+    are the padded ones `_area_edges_aa` and the sampled sweep visit.
+    """
+    return _BatchOp(
+        _OP_EDGES,
+        edges^,
+        exact,
+        fill_rule,
+        supersample,
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        color,
+        min_y - 1,
+        max_y + 2,
+    )
+
+
+def _disk_op(
+    cx: Float64, cy: Float64, radius: Float64, color: Color
+) -> _BatchOp:
+    """A closed-form disk; its rows are the ones `_fill_circle_aa_rows`
+    visits."""
+    return _BatchOp(
+        _OP_DISK,
+        _EdgeTable(),
+        True,
+        FillRule.NONZERO,
+        0,
+        Int(floor(cx - radius)) - 1,
+        Int(floor(cy - radius)) - 1,
+        Int(ceil(cx + radius)) + 2,
+        Int(ceil(cy + radius)) + 2,
+        cx,
+        cy,
+        radius,
+        radius,
+        color,
+        Int(floor(cy - radius)) - 1,
+        Int(ceil(cy + radius)) + 2,
+    )
+
+
+def _ellipse_op(
+    cx: Float64, cy: Float64, rx: Float64, ry: Float64, color: Color
+) -> _BatchOp:
+    """A closed-form ellipse; its rows are the ones
+    `_fill_ellipse_aa_rows` visits."""
+    return _BatchOp(
+        _OP_ELLIPSE,
+        _EdgeTable(),
+        True,
+        FillRule.NONZERO,
+        0,
+        Int(floor(cx - rx)) - 1,
+        Int(floor(cy - ry)) - 1,
+        Int(ceil(cx + rx)) + 2,
+        Int(ceil(cy + ry)) + 2,
+        cx,
+        cy,
+        rx,
+        ry,
+        color,
+        Int(floor(cy - ry)) - 1,
+        Int(ceil(cy + ry)) + 2,
+    )
+
+
+def _rect_op(x: Int, y: Int, width: Int, height: Int, color: Color) -> _BatchOp:
+    """A solid rectangle already intersected with the canvas and the
+    rectangle clip, as `_fill_region` takes it."""
+    return _BatchOp(
+        _OP_RECT,
+        _EdgeTable(),
+        True,
+        FillRule.NONZERO,
+        0,
+        x,
+        y,
+        x + width,
+        y + height,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        color,
+        y,
+        y + height,
+    )
+
+
 def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
     """The overlapping region of two clip rects. This is what keeps a
     nested clip from escaping an ancestor's: a rect extending past the
@@ -305,6 +503,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
     var _max_workers: Int
     var _transfer: _Transfer
     var _saved: List[_CanvasState]
+    # Primitives recorded since the outermost `begin_batch`, and how
+    # many `begin_batch` calls are open; see `begin_batch`.
+    var _batch: List[_BatchOp]
+    var _batch_depth: Int
 
     def __init__(
         out self, width: Int, height: Int, fill: Color = Color(255, 255, 255)
@@ -365,6 +567,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._max_workers = 0
         self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
+        self._batch = List[_BatchOp]()
+        self._batch_depth = 0
 
     def __init__(
         out self, width: Int, height: Int, var pixels: List[UInt8]
@@ -415,6 +619,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._max_workers = 0
         self._transfer = _Transfer()
         self._saved = List[_CanvasState]()
+        self._batch = List[_BatchOp]()
+        self._batch_depth = 0
 
     def save(mut self):
         """Push the current transform, blend mode and clip state, for
@@ -444,6 +650,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         rectangle or path -- is popped. A no-op with nothing saved,
         matching `pop_clip`.
         """
+        self._flush_batch()
         if len(self._saved) == 0:
             return
         var state = self._saved.pop()
@@ -558,6 +765,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Args:
             mode: The blend mode later calls use.
         """
+        self._flush_batch()
         self._blend = mode
 
     def blend_mode(self) -> BlendMode:
@@ -617,6 +825,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Args:
             space: The color space later blends use.
         """
+        self._flush_batch()
         self._space = space
         if space.is_linear():
             self._transfer.build()
@@ -629,6 +838,77 @@ struct Canvas(Copyable, DrawTarget, Movable):
             `set_color_space` says otherwise.
         """
         return self._space
+
+    def begin_batch(mut self):
+        """Start deferring anti-aliased shapes so that `end_batch` can
+        draw them all in one parallel pass, in the order they were
+        called: what a chart's gridlines, ticks and markers want, where
+        each shape is far too small to split across cores on its own
+        and drawing them one call at a time runs on one core.
+
+        Deferred: `fill_path_aa`, `stroke_path_aa`, `fill_polygon_aa`,
+        `draw_line_aa`, `draw_polyline_aa`, `draw_polygon_aa`,
+        `fill_circle_aa`, `fill_ellipse_aa`, `fill_arc_aa`,
+        `fill_ring_sector_aa`, `draw_circle_aa`, `draw_ellipse_aa`,
+        `draw_arc_aa`, and the solid `fill_rect`. Each is recorded in
+        device space at the call, under the transform, clip, blend
+        mode and color space in force then, and rendered by the same
+        row-restricted code its batched relatives use, so the pixels
+        are exactly the ones drawing it at once would have written.
+
+        Everything else -- text, gradient and pattern fills, the
+        hard-edged primitives, `draw_canvas`, `blur`, `fill`, and the
+        `fill_circles_aa`-style batches -- first draws what is
+        pending and then draws itself, so it stays in order. So does a
+        change of clip, blend mode or color space, and `restore`. Two
+        things are not ordered against a pending batch: `set_pixel`
+        and `write_pixel`, whose per-pixel cost a check would double,
+        and reads -- `get_pixel`, `write_png`, `draw_canvas` with this
+        canvas as the source -- which see the canvas without the
+        pending shapes until `end_batch`.
+
+        Calls nest; only the outermost `end_batch` draws.
+        """
+        self._batch_depth += 1
+
+    def end_batch(mut self):
+        """Draw everything recorded since the matching `begin_batch`.
+        A no-op with no batch open, like `pop_clip` with nothing to
+        pop.
+        """
+        if self._batch_depth == 0:
+            return
+        self._batch_depth -= 1
+        if self._batch_depth == 0:
+            self._flush_batch()
+
+    def _batching(self) -> Bool:
+        """Whether a `begin_batch` is open, so a primitive records
+        itself instead of drawing."""
+        return self._batch_depth > 0
+
+    def _record(mut self, var op: _BatchOp):
+        """Append one recorded primitive; see `_BatchOp`."""
+        self._batch.append(op^)
+
+    def _flush_batch(mut self):
+        """Draw the pending batch now, keeping any open `begin_batch`
+        open. What `end_batch` calls, and what every primitive or
+        state change that cannot be recorded calls first so that it
+        lands after the shapes recorded before it.
+
+        The batch depth is zeroed while rendering so the row bodies
+        draw rather than record, and the list is taken whole so a
+        band never sees an appending list.
+        """
+        if len(self._batch) == 0:
+            return
+        var ops = self._batch^
+        self._batch = List[_BatchOp]()
+        var depth = self._batch_depth
+        self._batch_depth = 0
+        _render_batch(self, ops)
+        self._batch_depth = depth
 
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.
@@ -664,6 +944,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             width: Clip rectangle's width.
             height: Clip rectangle's height.
         """
+        self._flush_batch()
         if self._transformed:
             if self._transform.is_axis_aligned():
                 var r = _mapped_rect(self._transform, x, y, width, height)
@@ -704,6 +985,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         in_bounds' handling of out-of-range requests: a stack alone
         cannot distinguish an unbalanced pop from "nothing to undo".
         """
+        self._flush_batch()
         if len(self._clip_stack) == 0:
             return
         var top = self._clip_stack.pop()
@@ -740,6 +1022,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             curve_steps: Straight-line segments per quad/cubic Bezier.
                 0 (the default) picks a count from the curvature.
         """
+        self._flush_batch()
         if self._transformed:
             self._push_clip_mask(
                 _through(path, self._transform),
@@ -779,6 +1062,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Args:
             mask: `width * height` coverage bytes, taken by value.
         """
+        self._flush_batch()
         if self._clip_mask_count > 0:
             # Intersect with the parent by multiplying coverages: a
             # pixel half-covered by an outer clip and half by an inner
@@ -815,6 +1099,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
 
         A no-op on an empty stack, matching `pop_clip`.
         """
+        self._flush_batch()
         if self._clip_mask_count > 0:
             _ = self.clip_masks.pop()
             self._clip_mask_count -= 1
@@ -1210,6 +1495,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             color: Color to fill with, blended over existing pixels if
                 translucent.
         """
+        self._flush_batch()
         var region = self.effective_fill_rect(0, 0, self.width, self.height)
         # The whole buffer, opaque, source-over, no clip path: the fill
         # is one contiguous run of stores, which is the one shape that

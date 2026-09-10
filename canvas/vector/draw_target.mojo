@@ -73,6 +73,13 @@ in sRGB or linear light.
 drawing. SVG and PDF preserve the label; `Canvas` treats both calls as
 no-ops.
 
+`begin_batch` and `end_batch` are the mirror image: `Canvas` defers
+the anti-aliased shapes between them and draws them in one parallel
+pass at `end_batch`, in order, which is the only way a caller generic
+over the trait can reach that pass; `SvgCanvas` and `PdfCanvas` draw
+nothing until serialized anyway and treat both calls as no-ops. Both
+pairs are lossless to drop, which is what admits them here.
+
 Text is backend-specific and is not part of this trait.
 
 Conformance is nominal, not structural: `Canvas` (`canvas/buffer.mojo`),
@@ -608,6 +615,24 @@ trait DrawTarget:
         if none is open -- matching `Canvas.pop_clip`, which also
         treats an unbalanced close as nothing to undo rather than an
         error.
+        """
+        ...
+
+    def begin_batch(mut self):
+        """Start deferring anti-aliased shapes so that `end_batch` can
+        draw them in one parallel pass, in the order they were called.
+        `Canvas.begin_batch` says which primitives are deferred and
+        what happens to everything else in between; on `SvgCanvas` and
+        `PdfCanvas` this does nothing, since every element is written
+        into the document in order regardless.
+
+        Calls nest; only the outermost `end_batch` draws.
+        """
+        ...
+
+    def end_batch(mut self):
+        """Draw everything deferred since the matching `begin_batch`;
+        a no-op with none open.
         """
         ...
 
