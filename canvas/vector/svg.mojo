@@ -25,10 +25,12 @@ rest -- emit no attribute and render as ordinary source-over.
 from std.math import cos, pi, sin
 
 from canvas.blend import BlendMode, _css_blend_name
+from canvas.buffer import Canvas
 from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint, Matrix2D, _snap_rect
 from canvas.gradient import GradientStops, LinearGradient, RadialGradient
+from canvas.io.png import encode_png
 from canvas.vector.draw_target import DrawTarget
 from canvas.geometry import round_to_int
 from canvas.path import (
@@ -63,6 +65,38 @@ def _write_svg_float(mut out: String, value: Float64):
     if frac < 10:
         out.write("0")
     out.write(frac)
+
+
+def _base64(data: List[UInt8]) -> String:
+    """`data` as RFC 4648 base64, padded and unbroken: the payload of
+    a `data:` URI.
+    """
+    comptime alphabet: StaticString = (
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    )
+    var table = alphabet.as_bytes()
+    var n = len(data)
+    var encoded = List[UInt8](capacity=(n + 2) // 3 * 4)
+    var p = data.unsafe_ptr()
+    var i = 0
+    # Three bytes make four characters; the last group of one or two
+    # bytes is padded with `=` to keep the length a multiple of four.
+    while i < n:
+        var b0 = Int(p[unsafe_offset=i])
+        var b1 = Int(p[unsafe_offset=i + 1]) if i + 1 < n else 0
+        var b2 = Int(p[unsafe_offset=i + 2]) if i + 2 < n else 0
+        encoded.append(table[b0 >> 2])
+        encoded.append(table[((b0 & 3) << 4) | (b1 >> 4)])
+        if i + 1 < n:
+            encoded.append(table[((b1 & 15) << 2) | (b2 >> 6)])
+        else:
+            encoded.append(UInt8(61))  # =
+        if i + 2 < n:
+            encoded.append(table[b2 & 63])
+        else:
+            encoded.append(UInt8(61))
+        i += 3
+    return String(unsafe_from_utf8=Span(encoded))
 
 
 def _format_svg_float(value: Float64) -> String:
@@ -355,19 +389,28 @@ struct SvgCanvas(DrawTarget, Movable):
         self._write_matrix()
         self._body.write('"')
 
-    def _write_blend(mut self):
+    def _write_blend(mut self, style: String = ""):
         """Append the attributes an element drawn now carries for its
         blend mode and color space: `style="mix-blend-mode:..."` for a
         blend mode (nothing under SOURCE_OVER, and nothing under a
         Porter-Duff mode, which CSS cannot express), and
         `color-interpolation="linearRGB"` under `ColorSpace.LINEAR`.
+        `style` is a declaration of the element's own that shares the
+        one `style` attribute, since an element may carry only one.
         """
         var name = _css_blend_name(self._blend)
         if self._space.is_linear():
             self._body.write(' color-interpolation="linearRGB"')
-        if name == "":
+        if name == "" and style == "":
             return
-        self._body.write(' style="mix-blend-mode:', name, '"')
+        self._body.write(' style="')
+        if style != "":
+            self._body.write(style)
+            if name != "":
+                self._body.write(";")
+        if name != "":
+            self._body.write("mix-blend-mode:", name)
+        self._body.write('"')
 
     def _write_matrix(mut self):
         """`matrix(a b c d e f)` for the current transform, appended."""
@@ -1553,6 +1596,56 @@ struct SvgCanvas(DrawTarget, Movable):
         self.end_annotated_group()
         self._body += "</g>\n"
         self._clip_depth -= 1
+
+    def draw_image(
+        mut self,
+        image: Canvas,
+        x: Float64,
+        y: Float64,
+        width: Float64 = 0.0,
+        height: Float64 = 0.0,
+    ) raises:
+        """Emit an `<image>` element with `image` as a PNG in a base64
+        `data:` URI, its top-left at (x, y), scaled to `width x height`
+        (its own pixel size when 0): `DrawTarget`'s image primitive.
+        `preserveAspectRatio="none"` stretches the pixels to the box,
+        and `image-rendering:pixelated` keeps the cells hard-edged when
+        a viewer scales them, so a heatmap reads as it does on the
+        raster backend. The transform and blend attributes are the
+        ones every element carries. A 512x512 array is tens of
+        kilobytes this way against megabytes as a `<rect>` per cell,
+        which is the case the primitive exists for.
+
+        Args:
+            image: The pixels to draw. Unchanged.
+            x: Left edge.
+            y: Top edge.
+            width: Drawn width, or 0 for `image.width`.
+            height: Drawn height, or 0 for `image.height`.
+
+        Raises:
+            Error: Never in practice; the PNG encoder's signature.
+        """
+        if image.width <= 0 or image.height <= 0:
+            return
+        var w = width if width > 0.0 else Float64(image.width)
+        var h = height if height > 0.0 else Float64(image.height)
+        self._body.write('<image x="')
+        _write_svg_float(self._body, x)
+        self._body.write('" y="')
+        _write_svg_float(self._body, y)
+        self._body.write('" width="')
+        _write_svg_float(self._body, w)
+        self._body.write('" height="')
+        _write_svg_float(self._body, h)
+        self._body.write(
+            '" preserveAspectRatio="none" href="data:image/png;base64,',
+            _base64(encode_png(image)),
+            '"',
+        )
+        self._write_transform()
+        self._write_blend("image-rendering:pixelated")
+        self._body.write("/>\n")
 
     def begin_batch(mut self):
         """Nothing to defer: every element goes into the markup in

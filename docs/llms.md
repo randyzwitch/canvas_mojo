@@ -42,6 +42,11 @@ from canvas import Canvas, Color, Path, fill_circle_aa, write_png
   shapes between them and draw them in one parallel pass, in order,
   with the same pixels; the vector backends treat both as no-ops. Wrap
   a loop of markers, gridlines or bars in one.
+- `draw_image(image, x, y, width, height)` on any target places a
+  `Canvas` as a block of hard-edged cells in user space, where a
+  `fill_rect` at the same box would land: a heatmap or image plot is
+  one `<image>` in SVG and one XObject in PDF rather than a rectangle
+  per cell.
 
 ## Coordinate and color conventions
 
@@ -137,6 +142,6 @@ def main() raises:
     write_pdf(pdf, "scene.pdf")
 ```
 
-Text, clipping, image placement, and some paint operations are
-backend-specific rather than part of `DrawTarget`. Use the relevant
-backend method when a shared trait operation is unavailable.
+Text, clipping, and some paint operations are backend-specific rather
+than part of `DrawTarget`. Use the relevant backend method when a
+shared trait operation is unavailable.

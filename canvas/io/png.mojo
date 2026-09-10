@@ -293,11 +293,10 @@ def _finish_png(
     crc_table: List[UInt32],
     var compressed: List[UInt8],
     adler: UInt32,
-    path: String,
-) raises:
+) -> List[UInt8]:
     """Wrap the DEFLATE stream in zlib, chunk it as IDAT, close the
-    file. Shared by the two routes `write_png` takes through the
-    filter choice.
+    file with IEND. Shared by the two routes `encode_png` takes
+    through the filter choice.
     """
     var zlib_stream = List[UInt8]()
     # zlib header (RFC 1950 2.2): CMF=0x78 (deflate, 32K window),
@@ -311,10 +310,7 @@ def _finish_png(
 
     _write_chunk(file_buf, crc_table, "IDAT", zlib_stream)
     _write_chunk(file_buf, crc_table, "IEND", List[UInt8]())
-
-    var f = open(path, "w")
-    f.write_bytes(Span(file_buf))
-    f.close()
+    return file_buf^
 
 
 def write_png(
@@ -322,7 +318,7 @@ def write_png(
 ) raises:
     """Write `canvas` to `path` as an 8-bit, non-interlaced PNG --
     color type 6 (truecolor + alpha) if any pixel is not fully opaque,
-    color type 2 (truecolor) otherwise.
+    color type 2 (truecolor) otherwise. The bytes are `encode_png`'s.
 
     Args:
         canvas: Canvas to write.
@@ -333,6 +329,27 @@ def write_png(
 
     Raises:
         Error: `path` can't be opened for writing.
+    """
+    var data = encode_png(canvas, level)
+    var f = open(path, "w")
+    f.write_bytes(Span(data))
+    f.close()
+
+
+def encode_png(
+    canvas: Canvas, level: PngLevel = PngLevel.DEFAULT
+) raises -> List[UInt8]:
+    """The PNG file `write_png` would write, as bytes: for embedding a
+    raster in an SVG's data URI, sending over a socket, or hashing,
+    without a file in between.
+
+    Args:
+        canvas: Canvas to encode.
+        level: How hard to work at making the file small, as for
+            `write_png`.
+
+    Returns:
+        The complete file, signature through IEND.
     """
     var w = canvas.width
     var h = canvas.height
@@ -430,8 +447,7 @@ def write_png(
         # neither the Sub pass nor the sample compression happens at
         # all. This is where FAST's time goes.
         var only = deflate(raw, max_chain, max_lazy)
-        _finish_png(file_buf^, crc_table, only^, _adler32(raw), path)
-        return
+        return _finish_png(file_buf^, crc_table, only^, _adler32(raw))
     var sub = _sub_filtered(raw, h, row_bytes, channels)
     var filtered: Bool
     var compressed: List[UInt8]
@@ -454,12 +470,11 @@ def write_png(
             raw, max_chain, max_lazy
         )
 
-    _finish_png(
+    return _finish_png(
         file_buf^,
         crc_table,
         compressed^,
         _adler32(sub) if filtered else _adler32(raw),
-        path,
     )
 
 

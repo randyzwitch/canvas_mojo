@@ -46,9 +46,9 @@ defaults in `text/font_discovery.mojo` do not cover yours.
 ## The DrawTarget trait, and why the package works
 
 `DrawTarget` (`canvas/vector/draw_target.mojo`) is the load-bearing
-idea in this package. It declares twelve drawing primitives, two
-methods that label rather than draw, and the drawing state those
-primitives read:
+idea in this package. It declares twelve drawing primitives, one
+image primitive, two methods that label rather than draw, and the
+drawing state those primitives read:
 
 ```mojo
 trait DrawTarget:
@@ -66,6 +66,9 @@ trait DrawTarget:
     def fill_ring_sector_aa(mut self, ...): ...
     def stroke_path_aa(mut self, path: Path, color: Color, width: Float64 = 1.0, dashes: ..., dash_offset: ..., cap: ..., join: ..., miter_limit: ...): ...
     def fill_path_aa(mut self, path: Path, color: Color, fill_rule: FillRule = FillRule.EVEN_ODD): ...
+
+    # One image primitive: a block of pixels placed in user space
+    def draw_image(mut self, image: Canvas, x: Float64, y: Float64, width: Float64 = 0.0, height: Float64 = 0.0) raises: ...
 
     # Two that label rather than draw
     def begin_annotated_group(mut self, title: String): ...
@@ -162,6 +165,15 @@ addition:
   of the marker loop that drifts from the first (#333). A performance
   contract a generic caller cannot otherwise obtain is a reason to
   add; a faster way to draw the same shape, by itself, is not.
+- **`draw_image` is the other exception, for the other reason.** A
+  block of pixels is not a shape, and no shape expresses one: an image
+  plot drawn as a `fill_rect` per cell is fine on `Canvas` and an
+  8.5 MB file of 179,000 `<rect>` elements for a 512x512 array on
+  `SvgCanvas`, where the same block as one `<image>` holding a PNG is
+  tens of kilobytes (#392). It is on the trait because the vector
+  backends need an element the caller cannot reach through shapes,
+  and it lands where a `fill_rect` at the same coordinates would on
+  every backend, so a mark can switch between the two.
 - **`begin_batch`/`end_batch` are that same contract, generalized.**
   On `Canvas` they defer every anti-aliased shape called between them
   and draw the lot in one banded pass at `end_batch`, in order, with

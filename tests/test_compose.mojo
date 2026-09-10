@@ -14,17 +14,18 @@ place, and a half-pixel shift has to produce the mean of two known
 neighbors.
 """
 
-from std.math import pi
+from std.math import floor, pi
 from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.color import _div255
-from canvas.compose import Filter, draw_canvas
+from canvas.compose import Filter, draw_canvas, draw_image
 from canvas.geometry import Matrix2D
 from canvas.mask import Mask
 from canvas.path import Path
+from canvas.resize import downsample
 from canvas.shapes.rects import fill_rect
 
 comptime CLEAR = Color(0, 0, 0, 0)
@@ -832,6 +833,144 @@ def test_wide_block_under_a_clip_rect() raises:
                 want.set_pixel(5 + sx, 2 + sy, src.get_pixel(sx, sy))
         want.pop_clip()
         _assert_same(dst, want, "clip at x=" + String(cx))
+
+
+def test_draw_image_at_its_pixel_size_is_the_blit() raises:
+    # Geometric (3.5, 4.5) is the top-left corner of pixel (4, 5),
+    # where fill_rect(3.5, 4.5, ...) starts as well; the image's own
+    # size, given or defaulted, puts one cell on each pixel.
+    for alpha in [UInt8(255), UInt8(96)]:
+        var src = _varied_source(6, 5, alpha)
+        var placed = Canvas(12, 10, WHITE)
+        placed.draw_image(src, 3.5, 4.5)
+        var sized = Canvas(12, 10, WHITE)
+        draw_image(sized, src, 3.5, 4.5, 6.0, 5.0)
+        var blit = Canvas(12, 10, WHITE)
+        draw_canvas(blit, src, 4, 5)
+        _assert_same_bytes(blit, placed, "the image's own size")
+        _assert_same_bytes(blit, sized, "the same size given explicitly")
+
+
+def _fill_rect_per_cell(
+    mut dst: Canvas,
+    src: Canvas,
+    x: Float64,
+    y: Float64,
+    w: Float64,
+    h: Float64,
+) raises:
+    """The block as a chart draws it without an image primitive: one
+    fill_rect per cell at the cell's geometric box.
+    """
+    var n = src.width
+    var m = src.height
+    for j in range(m):
+        for i in range(n):
+            var x0 = x + w * Float64(i) / Float64(n)
+            var x1 = x + w * Float64(i + 1) / Float64(n)
+            var y0 = y + h * Float64(j) / Float64(m)
+            var y1 = y + h * Float64(j + 1) / Float64(m)
+            fill_rect(dst, x0, y0, x1 - x0, y1 - y0, src.get_pixel(i, j))
+
+
+def _frame(mut c: Canvas, variant: Int):
+    """Four axis-aligned frames a block can be drawn under: none, a
+    scale that runs the block off the canvas, a mirrored scale, and a
+    scale inside a clip rectangle.
+    """
+    if variant == 1:
+        c.translate(1.2, -0.4)
+        c.scale(2.5, 1.7)
+    elif variant == 2:
+        c.translate(58.0, 0.0)
+        c.scale(-1.3, 1.9)
+    elif variant == 3:
+        c.push_clip(15, 10, 20, 12)
+        c.scale(1.4, 1.2)
+
+
+def test_draw_image_covers_the_pixels_a_fill_rect_per_cell_would() raises:
+    for variant in range(4):
+        for alpha in [UInt8(255), UInt8(160)]:
+            var src = _varied_source(7, 5, alpha)
+            var by_image = Canvas(60, 40, WHITE)
+            var by_rects = Canvas(60, 40, WHITE)
+            _frame(by_image, variant)
+            _frame(by_rects, variant)
+            by_image.draw_image(src, 10.3, 7.7, 33.0, 19.5)
+            _fill_rect_per_cell(by_rects, src, 10.3, 7.7, 33.0, 19.5)
+            _assert_same_bytes(
+                by_rects,
+                by_image,
+                "frame " + String(variant) + " alpha " + String(alpha),
+            )
+
+
+def test_draw_image_under_supersampling_matches_the_fill_rect_recipe() raises:
+    # The recipe on `downsample`: draw at f times the size, shifted by
+    # (f - 1) / 2, then downsample. Every cell edge of a block at
+    # integer coordinates then lands on a pixel center, the tie both
+    # snaps must break the same way.
+    var src = Canvas(2, 2, RED)
+    src.set_pixel(1, 0, BLUE)
+    src.set_pixel(0, 1, Color(0, 200, 0, 128))
+    for f in [1, 3]:
+        var by_image = Canvas(40 * f, 30 * f, WHITE)
+        var by_rects = Canvas(40 * f, 30 * f, WHITE)
+        var shift = Float64(f - 1) / 2.0
+        by_image.translate(shift, shift)
+        by_image.scale(Float64(f), Float64(f))
+        by_rects.translate(shift, shift)
+        by_rects.scale(Float64(f), Float64(f))
+        by_image.draw_image(src, 4.0, 5.0, 20.0, 10.0)
+        _fill_rect_per_cell(by_rects, src, 4.0, 5.0, 20.0, 10.0)
+        _assert_same_bytes(
+            downsample(by_rects, f),
+            downsample(by_image, f),
+            "supersample factor " + String(f),
+        )
+
+
+def test_draw_image_under_a_rotation_takes_the_cell_under_each_center() raises:
+    # Off the axis-aligned path the block goes through the sampler,
+    # which reads pixel corners; the half-pixel shift in draw_image is
+    # what puts it back on the shapes' convention. The oracle maps each
+    # pixel's center (px, py) back into user space and picks the cell.
+    var src = _varied_source(3, 2, 255)
+    var dst = Canvas(50, 40, WHITE)
+    dst.translate(30.2, 10.6)
+    dst.rotate(pi / 2.0)
+    dst.draw_image(src, 2.3, 1.1, 9.0, 6.0)
+    var inv = dst.current_transform().inverse()
+    var covered = 0
+    for py in range(40):
+        for px in range(50):
+            var u = inv.apply(Float64(px), Float64(py))
+            var expected = WHITE
+            if u.x >= 2.3 and u.x < 11.3 and u.y >= 1.1 and u.y < 7.1:
+                var i = Int(floor((u.x - 2.3) / 3.0))
+                var j = Int(floor((u.y - 1.1) / 3.0))
+                expected = src.get_pixel(i, j)
+                covered += 1
+            _assert_rgb(
+                dst,
+                px,
+                py,
+                expected,
+                "pixel (" + String(px) + ", " + String(py) + ")",
+            )
+    assert_true(covered == 54, "a 9 x 6 block rotated covers 54 pixels")
+
+
+def test_draw_image_draws_a_pending_batch_first() raises:
+    var dst = Canvas(20, 20, WHITE)
+    dst.begin_batch()
+    dst.fill_circle_aa(10, 10, 8, RED)
+    var block = Canvas(4, 4, BLUE)
+    dst.draw_image(block, 7.5, 7.5)
+    dst.end_batch()
+    _assert_rgb(dst, 9, 9, BLUE, "the image lands over the disk recorded first")
+    _assert_rgb(dst, 4, 10, RED, "the disk is still drawn")
 
 
 def main() raises:

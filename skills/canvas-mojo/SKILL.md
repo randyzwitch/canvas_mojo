@@ -41,9 +41,12 @@ package is `canvas`; subpackages are `canvas.shapes`, `canvas.path`,
 3. `fill_path_aa` defaults to `FillRule.EVEN_ODD`, which punches holes
    where sub-paths overlap; pass `FillRule.NONZERO` for a union.
    TrueType glyph outlines from `text_path` need `NONZERO`.
-4. Text, clipping, gradient path fills and images are backend methods,
-   not trait methods. Write the shared drawing against `DrawTarget`,
-   then call those on the concrete backend.
+4. Text, clipping and gradient path fills are backend methods, not
+   trait methods. Write the shared drawing against `DrawTarget`, then
+   call those on the concrete backend. `draw_image` is on the trait:
+   it places a `Canvas` as a block of cells where a `fill_rect` at the
+   same box would land, one `<image>` in SVG rather than a `<rect>`
+   per cell, so draw a heatmap or image plot through it.
 5. Mojo: `Path` builder calls raise (a segment or arc before any
    `move_to` is an error), so a function building one is `raises`; a `List[FPoint]` literal needs the type annotation; strings
    slice with `s[byte = a:b]`.

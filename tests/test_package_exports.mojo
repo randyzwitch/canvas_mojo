@@ -29,7 +29,9 @@ from canvas import (
     blur,
     downsample,
     draw_canvas,
+    draw_image,
     draw_shadowed,
+    encode_png,
     fill_mask,
     fill_path_aa,
     fill_path_pattern,
@@ -186,6 +188,9 @@ def test_root_exports_draw_and_round_trip() raises:
     var layer = Canvas(2, 2, Color(0, 255, 0))
     draw_canvas(canvas, layer, 2, 2)
     assert_equal(canvas.get_pixel(3, 3).g, 255)
+    draw_image(canvas, layer, 1.5, 1.5)
+    assert_equal(canvas.get_pixel(2, 2).g, 255)
+    assert_true(len(encode_png(layer)) > 8, "a PNG in memory")
 
     var small = downsample(canvas, 2)
     assert_equal(small.width, 2)

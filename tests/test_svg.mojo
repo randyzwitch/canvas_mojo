@@ -9,15 +9,17 @@ reads no font files, never canvas.text.render.
 from std.math import pi
 from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
+from canvas.blend import BlendMode
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.geometry import Matrix2D
 from canvas.gradient import LinearGradient, RadialGradient
+from canvas.io.png import encode_png
 from canvas.path import Path
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.vector.draw_target import DrawTarget
-from canvas.vector.svg import SvgCanvas
+from canvas.vector.svg import SvgCanvas, _base64
 from canvas.text.font_discovery import FontWeight
 from canvas.text.text_align import TextAlign
 
@@ -1536,6 +1538,120 @@ def test_draw_text_on_path_escapes_content_and_carries_transform() raises:
         in svg.to_string(),
         "content escaped, canvas transform on the <text> element",
     )
+
+
+def _base64_decode(text: String) -> List[UInt8]:
+    """The inverse of `_base64`, for reading a data URI back."""
+    var out = List[UInt8]()
+    var acc = 0
+    var bits = 0
+    for b in text.as_bytes():
+        var c = Int(b)
+        var v: Int
+        if c >= ord("A") and c <= ord("Z"):
+            v = c - ord("A")
+        elif c >= ord("a") and c <= ord("z"):
+            v = c - ord("a") + 26
+        elif c >= ord("0") and c <= ord("9"):
+            v = c - ord("0") + 52
+        elif c == ord("+"):
+            v = 62
+        elif c == ord("/"):
+            v = 63
+        else:
+            break  # padding
+        acc = (acc << 6) | v
+        bits += 6
+        if bits >= 8:
+            bits -= 8
+            out.append(UInt8((acc >> bits) & 255))
+    return out^
+
+
+def test_base64_matches_the_rfc_4648_vectors() raises:
+    var inputs: List[String] = ["", "f", "fo", "foo", "foob", "fooba", "foobar"]
+    var expected: List[String] = [
+        "",
+        "Zg==",
+        "Zm8=",
+        "Zm9v",
+        "Zm9vYg==",
+        "Zm9vYmE=",
+        "Zm9vYmFy",
+    ]
+    for k in range(len(inputs)):
+        var data = List[UInt8]()
+        for b in inputs[k].as_bytes():
+            data.append(UInt8(b))
+        assert_equal(_base64(data), expected[k], inputs[k])
+
+
+def test_draw_image_emits_an_image_element_holding_the_png() raises:
+    var img = Canvas(2, 1, Color(10, 20, 30))
+    img.set_pixel(1, 0, Color(40, 50, 60))
+    var svg = SvgCanvas(100, 80)
+    svg.draw_image(img, 10.5, 20.25, 40.0, 30.0)
+    var s = svg.to_string()
+    var head = String(
+        '<image x="10.500" y="20.250" width="40.000" height="30.000"'
+        ' preserveAspectRatio="none" href="data:image/png;base64,'
+    )
+    assert_true(head in s, "placement, stretch and the data URI's type")
+    var start = s.find(head) + head.byte_length()
+    var end = s.find('"', start)
+    var tail = String(s[byte = end : s.byte_length()])
+    assert_true(
+        tail.startswith('" style="image-rendering:pixelated"/>\n'),
+        "cells stay crisp when a viewer scales the element",
+    )
+    var decoded = _base64_decode(String(s[byte=start:end]))
+    var png = encode_png(img)
+    assert_equal(len(decoded), len(png), "the payload is the PNG")
+    for i in range(len(png)):
+        assert_equal(decoded[i], png[i], "byte " + String(i))
+
+
+def test_draw_image_defaults_to_the_pixel_size() raises:
+    var img = Canvas(3, 2, Color(1, 2, 3))
+    var svg = SvgCanvas(10, 10)
+    svg.draw_image(img, 1.0, 2.0)
+    assert_true(
+        '<image x="1.000" y="2.000" width="3.000" height="2.000"'
+        in svg.to_string(),
+        "width and height 0 mean the image's own",
+    )
+
+
+def test_draw_image_carries_the_transform_and_shares_the_style() raises:
+    var img = Canvas(1, 1, Color(1, 2, 3))
+    var svg = SvgCanvas(10, 10)
+    svg.translate(10.0, 5.0)
+    svg.set_blend_mode(BlendMode.MULTIPLY)
+    svg.draw_image(img, 0.0, 0.0)
+    assert_true(
+        ' transform="matrix(1.000 0.000 0.000 1.000 10.000 5.000)"'
+        ' style="image-rendering:pixelated;mix-blend-mode:multiply"/>'
+        in svg.to_string(),
+        "one style attribute carries both declarations",
+    )
+
+
+def _place_block[T: DrawTarget](mut target: T, img: Canvas) raises:
+    target.draw_image(img, 1.0, 2.0, 3.0, 4.0)
+
+
+def test_draw_image_is_reachable_through_the_trait() raises:
+    var img = Canvas(1, 1, Color(255, 0, 0))
+    var svg = SvgCanvas(8, 8)
+    _place_block(svg, img)
+    assert_true('<image x="1.000" y="2.000"' in svg.to_string(), "SVG")
+    var raster = Canvas(8, 8, Color(255, 255, 255))
+    _place_block(raster, img)
+    # Edges 1.0 to 4.0 snap to pixels 2 through 4, as fill_rect's do.
+    assert_equal(raster.get_pixel(2, 3).g, 0, "inside the block")
+    assert_equal(raster.get_pixel(1, 3).g, 255, "left of the block")
+    assert_equal(raster.get_pixel(4, 6).g, 0, "the last row and column")
+    assert_equal(raster.get_pixel(5, 6).g, 255, "past the block")
 
 
 def main() raises:
