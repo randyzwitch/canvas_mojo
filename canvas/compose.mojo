@@ -159,6 +159,21 @@ def draw_canvas(mut dst: Canvas, src: Canvas, x: Int, y: Int, mask: Mask):
 # Groups skipped before testing again for a copyable source run.
 comptime _COPY_RETRY = 15
 
+# Groups classified by one horizontal reduction instead of one each.
+#
+# The reduction is the whole cost of classifying, not the loads and not
+# the compare: a copy of an 800x600 canvas is 39.9 us, the same copy
+# with a per-group `reduce_min` is 80.6 us, and the same copy with the
+# four groups AND-ed together and reduced once is 40.0 us. So the check
+# goes from doubling the copy to costing 0.1 us (#351).
+#
+# AND-ing vectors is vertical work the pipeline absorbs; the horizontal
+# reduce is a dependency the branch waits on. Four is enough to hide it
+# and keeps the fallback cheap when a block is mixed.
+comptime _WIDE = 4
+comptime _WIDE_PX = _GROUP * _WIDE
+comptime _WIDE_BYTES = _GROUP_BYTES * _WIDE
+
 
 # Eight pixels' worth of lane masks, used to ask two questions of a
 # loaded group at once: OR-ing `_NOT_ALPHA` in leaves an all-255
@@ -535,6 +550,55 @@ def _draw_canvas_device[
         var col = 0
         var retry = 0
         while col < rw:
+            # Four groups at once, classified by a single reduction.
+            # Only without a mask: a mask asks a second question of its
+            # own coverage bytes, and answering both wide is a separate
+            # change. `retry` gates this the same way it gates the
+            # per-group test, so a layer that is translucent throughout
+            # stops paying for either.
+            comptime if not with_mask:
+                if fast and retry == 0 and rw - col >= _WIDE_PX:
+                    var w0 = sp.unsafe_offset(s_idx).unsafe_load[
+                        width=GROUP_BYTES
+                    ]()
+                    var w1 = sp.unsafe_offset(s_idx + GROUP_BYTES).unsafe_load[
+                        width=GROUP_BYTES
+                    ]()
+                    var w2 = sp.unsafe_offset(
+                        s_idx + 2 * GROUP_BYTES
+                    ).unsafe_load[width=GROUP_BYTES]()
+                    var w3 = sp.unsafe_offset(
+                        s_idx + 3 * GROUP_BYTES
+                    ).unsafe_load[width=GROUP_BYTES]()
+                    if ((w0 & w1 & w2 & w3) | not_alpha).reduce_min() == 255:
+                        # Every one of the 32 alphas is 255, so this is
+                        # a copy, exactly as the per-group path would
+                        # have decided four times over.
+                        dp.unsafe_offset(d_idx).unsafe_store(w0)
+                        dp.unsafe_offset(d_idx + GROUP_BYTES).unsafe_store(w1)
+                        dp.unsafe_offset(d_idx + 2 * GROUP_BYTES).unsafe_store(
+                            w2
+                        )
+                        dp.unsafe_offset(d_idx + 3 * GROUP_BYTES).unsafe_store(
+                            w3
+                        )
+                        s_idx += _WIDE_BYTES
+                        d_idx += _WIDE_BYTES
+                        m_idx += _WIDE_PX
+                        col += _WIDE_PX
+                        continue
+                    if ((w0 | w1 | w2 | w3) & alpha_only).reduce_or() == 0:
+                        # Every one of the 32 alphas is zero: nothing to
+                        # composite, and nothing written.
+                        s_idx += _WIDE_BYTES
+                        d_idx += _WIDE_BYTES
+                        m_idx += _WIDE_PX
+                        col += _WIDE_PX
+                        continue
+                    # Mixed somewhere in the 32. Fall through and let
+                    # the per-group path find which groups are still
+                    # uniform; it sets `retry` if they are not.
+
             var take = min(GROUP, rw - col)
             if take == GROUP:
                 if retry > 0:
