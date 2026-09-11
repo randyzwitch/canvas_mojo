@@ -38,6 +38,7 @@ from std.memory import unsafe_memcpy
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
+from canvas.blend import BlendMode
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, _DIV255_MUL, _DIV255_SHIFT, _div255
 from canvas.geometry import Matrix2D, round_to_int
@@ -911,9 +912,12 @@ def draw_image(
 
     # Axis-aligned: every cell edge lands on a device column or row
     # boundary by `fill_rect`'s snap, and the cells tile the snapped
-    # box, so the block is one nearest-cell resample followed by the
-    # blit. Only the part on the canvas is built, since a cell can be
-    # scaled far past the edges.
+    # box. Cells near pixel size are a nearest-cell resample into a
+    # block followed by the blit; cells of many pixels each are a
+    # rectangle fill per cell, since building a block the size of the
+    # box to hold nine colors costs more than nine fills (#394). Only
+    # the part on the canvas is built, since a cell can be scaled far
+    # past the edges.
     var cols = _cell_edges(m.a, m.e, x, w, image.width)
     var rows = _cell_edges(m.d, m.f, y, h, image.height)
     var left = min(cols[0], cols[image.width])
@@ -929,6 +933,87 @@ def draw_image(
     var y1 = min(bottom, dst.height)
     if x1 <= x0 or y1 <= y0:
         return
+    var per_cell = ((x1 - x0) * (y1 - y0)) // (image.width * image.height)
+    if per_cell >= _CELL_FILL_MIN_PIXELS and (
+        dst.blend_mode() == BlendMode.SOURCE_OVER
+    ):
+        _draw_image_cells(dst, image, cols, rows)
+        return
+    _draw_image_block(dst, image, cols, rows, x0, y0, x1, y1)
+
+
+# Visible device pixels per cell from which `draw_image` fills each
+# cell as a rectangle instead of resampling the box into a block: the
+# measured crossover on the 3970X, where a fill per cell and the block
+# cost the same (see the Changelog for the table).
+comptime _CELL_FILL_MIN_PIXELS = 64
+
+
+def _draw_image_cells(
+    mut dst: Canvas, image: Canvas, cols: List[Int], rows: List[Int]
+):
+    """`draw_image`'s axis-aligned path for large cells: each cell is
+    the device rectangle between its snapped edges, filled through
+    the region fill `fill_rect` lands in, so the bytes are a
+    `fill_rect` per cell by construction. Source-over only, which is
+    the compositing `_draw_canvas_device` applies, so the two paths
+    agree whichever the cell size picks; a transparent cell is
+    skipped, as the blit skips a transparent pixel.
+    """
+    var p = image.pixels.unsafe_ptr()
+    var stride = image.width * BYTES_PER_PIXEL
+    # `rows` and `cols` have one entry past the last cell, so j + 1
+    # and i + 1 are in range.
+    var rp = rows.unsafe_ptr()
+    var cp = cols.unsafe_ptr()
+    for j in range(image.height):
+        var y0 = min(rp[unsafe_offset=j], rp[unsafe_offset=j + 1])
+        var y1 = max(rp[unsafe_offset=j], rp[unsafe_offset=j + 1])
+        if y1 <= y0:
+            continue
+        var row_start = j * stride
+        for i in range(image.width):
+            var x0 = min(cp[unsafe_offset=i], cp[unsafe_offset=i + 1])
+            var x1 = max(cp[unsafe_offset=i], cp[unsafe_offset=i + 1])
+            if x1 <= x0:
+                continue
+            var idx = row_start + i * BYTES_PER_PIXEL
+            var a = p[unsafe_offset=idx + 3]
+            if a == 0:
+                continue
+            var region = dst.effective_fill_rect(x0, y0, x1 - x0, y1 - y0)
+            if region[2] <= 0 or region[3] <= 0:
+                continue
+            dst._fill_region_top(
+                region[0],
+                region[1],
+                region[2],
+                region[3],
+                Color(
+                    p[unsafe_offset=idx],
+                    p[unsafe_offset=idx + 1],
+                    p[unsafe_offset=idx + 2],
+                    a,
+                ),
+            )
+
+
+def _draw_image_block(
+    mut dst: Canvas,
+    image: Canvas,
+    cols: List[Int],
+    rows: List[Int],
+    x0: Int,
+    y0: Int,
+    x1: Int,
+    y1: Int,
+) raises:
+    """`draw_image`'s axis-aligned path for small cells: resample the
+    visible box [x0, x1) x [y0, y1) nearest-cell into a block and
+    blit it. A device row whose cell row is the one above is a copy
+    of the block row above rather than a second gather, which on
+    cells a few pixels tall is most rows.
+    """
     var col_of = _cell_of_each(cols, x0, x1)
     var row_of = _cell_of_each(rows, y0, y1)
     var bw = x1 - x0
@@ -936,17 +1021,34 @@ def draw_image(
     var block = List[UInt8](unsafe_uninit_length=bw * bh * BYTES_PER_PIXEL)
     var bp = block.unsafe_ptr()
     var sp = image.pixels.unsafe_ptr()
+    # `col_of` has `bw` entries and `row_of` has `bh`, one per device
+    # column and row of the block, each a cell index of `image`.
+    var cp = col_of.unsafe_ptr()
+    var rp = row_of.unsafe_ptr()
     var stride = image.width * BYTES_PER_PIXEL
-    var o = 0
-    # Every (row_of, col_of) pair indexes a cell of `image`, since each
-    # came from an edge list over its cells; the writes cover the
-    # block exactly once, in order.
+    var row_bytes = bw * BYTES_PER_PIXEL
+    comptime W = 16
     for j in range(bh):
-        var row_start = row_of[j] * stride
+        var o = j * row_bytes
+        if j > 0 and rp[unsafe_offset=j] == rp[unsafe_offset=j - 1]:
+            # The block rows are disjoint, so the loads read a row
+            # already written in full and the stores land below it.
+            var k = 0
+            var above = o - row_bytes
+            while k + W <= row_bytes:
+                bp.unsafe_offset(o + k).unsafe_store(
+                    bp.unsafe_offset(above + k).unsafe_load[width=W]()
+                )
+                k += W
+            while k < row_bytes:
+                bp[unsafe_offset=o + k] = bp[unsafe_offset=above + k]
+                k += 1
+            continue
+        var row_start = rp[unsafe_offset=j] * stride
         for i in range(bw):
             bp.unsafe_offset(o).unsafe_store(
                 sp.unsafe_offset(
-                    row_start + col_of[i] * BYTES_PER_PIXEL
+                    row_start + cp[unsafe_offset=i] * BYTES_PER_PIXEL
                 ).unsafe_load[width=BYTES_PER_PIXEL]()
             )
             o += BYTES_PER_PIXEL
