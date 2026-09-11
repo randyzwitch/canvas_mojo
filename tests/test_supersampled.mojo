@@ -242,5 +242,44 @@ def test_recordable_and_unrecordable_work_interleaved() raises:
     _assert_case_matches(3, "mixed")
 
 
+def test_repeated_renders_of_a_mixed_region() raises:
+    """A region drawn over and over, with recordable and unrecordable
+    work in it, which is what a program rendering many charts does.
+
+    This is #412: a clip records as an op, and when something else in
+    the region forces it to materialize, those ops replay onto one
+    canvas shared by every band. Applying them from parallel tasks
+    raced on its clip stack and crashed the runtime rather than
+    drawing wrongly, so a batch holding clip ops now renders on one
+    band. It took both a clip and a bulk marker call to show: either
+    alone is fine, and a single render always was.
+    """
+    var cache = FontCache()
+    for k in range(12):
+        var out = Canvas(200, 150, BG)
+        out.begin_supersampled(3, BG)
+        out.begin_batch()
+        for i in range(20):
+            var x = 20.0 + Float64(i) * 8.0
+            out.draw_line_aa(x, 10.0, x, 140.0, Color(225, 225, 225), 1.0)
+        out.end_batch()
+        out.push_clip(20, 10, 160, 130)
+        for i in range(60):
+            out.fill_circle_aa(
+                20.0 + Float64((i * 37) % 160),
+                10.0 + Float64((i * 53) % 130),
+                4.0,
+                INK,
+            )
+        out.pop_clip()
+        var pts: List[FPoint] = [FPoint(60.0, 40.0), FPoint(120.0, 90.0)]
+        fill_circles_aa(out, pts, 5.0, Color(200, 60, 60, 180))
+        draw_text(
+            out, 10.0, 145.0, "label", Color(40, 40, 40), 8.0, cache=cache
+        )
+        out.end_supersampled()
+        assert_true(out.width == 200, "render " + String(k) + " completed")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
