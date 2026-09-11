@@ -436,6 +436,14 @@ def _render_batch(mut canvas: Canvas, mut batch: _Batch):
     var bands = _bands_for_work(
         work, canvas.height, _CELLS_PER_BAND, canvas.max_workers()
     )
+    if batch.has_clip_ops:
+        # A clip op mutates the clip stack of the canvas it replays
+        # onto. Every band here shares one canvas, so applying them
+        # across tasks is a data race on that stack -- it crashed the
+        # runtime rather than drawing wrongly (#412). A supersampled
+        # region's own replay is unaffected: there each band owns its
+        # scratch, which is why the ops are recorded at all.
+        bands = 1
     if bands <= 1:
         _batch_band(canvas, batch, 0, canvas.height)
         return

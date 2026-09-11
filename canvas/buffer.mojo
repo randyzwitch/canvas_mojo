@@ -463,6 +463,12 @@ struct _Batch(Copyable, Movable):
     # Every recorded glyph's coverage bytes, end to end, each op
     # holding its own range (#391).
     var glyph_counts: List[UInt8]
+    # Whether any op changes the clip. Those mutate the clip stack of
+    # the canvas they replay onto, which is safe when every band has
+    # its own scratch (a supersampled region) and a data race when the
+    # bands share one canvas, so a batch holding them renders on one
+    # band (#412).
+    var has_clip_ops: Bool
     var tables: List[_EdgeTable]
 
     def __init__(out self):
@@ -471,6 +477,7 @@ struct _Batch(Copyable, Movable):
         self.dashes = List[Float64]()
         self.commands = List[PathCommand]()
         self.glyph_counts = List[UInt8]()
+        self.has_clip_ops = False
         self.tables = List[_EdgeTable]()
         self.tables.append(_EdgeTable())
 
@@ -1537,6 +1544,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 )
             )
             self._batch_clip_depth += 1
+            self._batch.has_clip_ops = True
         self._clip_stack.append(new_rect)
 
     def _recording_clips(self) -> Bool:
@@ -1584,6 +1592,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             and self._batch_clip_depth > 0
         ):
             self._record(_clip_op(_OP_POP_CLIP, 0, 0, 0, 0))
+            self._batch.has_clip_ops = True
             self._batch_clip_depth -= 1
         else:
             self._flush_batch()
