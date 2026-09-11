@@ -250,6 +250,21 @@ resolves.
   because the loop vectorizes and the call site does not. A polynomial
   `asin` measured 2.7x faster than the library's that way and 1.75x
   slower where it was actually used.
+- `append` into a `List` that already has capacity costs what a
+  pointer store costs: 24,000 of each measured 23.62 and 23.61 us,
+  1.0005x. So "write through a pre-counted layout" is not a fix for an
+  append-heavy builder, and the win in #385's `add_ring`/`add_rect` was
+  removing a call and its seven separate appends, not the appends
+  themselves. Reserve to avoid regrowth; do not replace a reserved
+  append with a pointer write and expect anything.
+- A stroke's outline build is transcendentals, not bookkeeping. The
+  smooth 3000-segment series builds in 319 us with ROUND joins, 260
+  with MITER and 219 with BEVEL; the noisy series 618, 278 and 248,
+  where ROUND also emits 23,606 edges against 12,254. What ROUND adds
+  is `cos`/`sin` per arc point, and `_arc_steps` already scales the
+  count with radius above a floor of sixteen per full turn that the
+  docstring justifies with a measured 0.076 px error. Cheaper points
+  mean different points, so anything here moves rendered bytes (#383).
 - A loop copying or combining two buffers a byte at a time will not
   vectorize: the compiler cannot know they do not overlap. Saying it
   with `unsafe_load[width=N]` and `unsafe_store` is worth 3x to 20x,
