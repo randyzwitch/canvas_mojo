@@ -45,6 +45,7 @@ from canvas.buffer import (
     _OP_EDGES,
     _OP_ELLIPSE,
     _OP_PATH,
+    _OP_GLYPH,
     _OP_RECT,
     _OP_STROKE,
 )
@@ -54,6 +55,8 @@ from canvas.path import Path, PathCommand, _FillEdges, _flatten_commands
 from canvas.shapes.circles import _fill_circle_aa_rows
 from canvas.shapes.ellipses import _fill_ellipse_aa_rows
 from canvas.shapes.lines import _stroke_edges
+from canvas.compose import draw_canvas, draw_image
+from canvas.resize import downsample
 from canvas.workers import _bands_for_work, _worker_limit
 
 # Below this many vertices across the batch's strokes and paths, they
@@ -334,6 +337,8 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
             _fill_ellipse_aa_rows(
                 canvas, op.cx, op.cy, op.rx, op.ry, op.color, row_lo, row_hi
             )
+        elif op.kind == _OP_GLYPH:
+            _glyph_rows(canvas, batch, op, row_lo, row_hi)
         elif op.kind == _OP_RECT:
             var y0 = max(op.min_y, row_lo)
             var y1 = min(op.max_y, row_hi)
@@ -341,6 +346,55 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
                 canvas._fill_region(
                     op.min_x, y0, op.max_x - op.min_x, y1 - y0, op.color
                 )
+
+
+def _glyph_rows(
+    mut canvas: Canvas,
+    batch: _Batch,
+    op: _BatchOp,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """A recorded glyph's coverage over rows [row_lo, row_hi), which
+    is `_composite_glyph_mask`'s loop restricted to a band. The mask's
+    bytes are `op.command_count` of `batch.glyph_counts` from
+    `op.first_command`, `op.max_x - op.min_x` to a row.
+    """
+    var width = op.max_x - op.min_x
+    if width <= 0:
+        return
+    var color = op.color
+    var total = Float64(op.supersample)
+    # For an opaque colour over an exact-area mask the count in 255ths
+    # is already the alpha, as in `_composite_glyph_mask`.
+    var direct = color.a == 255 and op.supersample == 255
+    var masked = canvas.has_clip_mask()
+    var cp = batch.glyph_counts.unsafe_ptr()
+    var first = op.first_command
+    var start = max(op.min_y, row_lo)
+    var stop = min(op.max_y, row_hi)
+    for py in range(start, stop):
+        var region = canvas.effective_fill_rect(op.min_x, py, width, 1)
+        if region[2] == 0 or region[3] == 0:
+            continue
+        var lo = region[0] - op.min_x
+        var hi = lo + region[2]
+        var base = first + (py - op.min_y) * width
+        for mx in range(lo, hi):
+            var covered = Int(cp[unsafe_offset=base + mx])
+            if covered == 0:
+                continue
+            var alpha: UInt8
+            if direct:
+                alpha = UInt8(covered)
+            else:
+                alpha = UInt8(
+                    Int(Float64(covered) / total * Float64(color.a) + 0.5)
+                )
+            if masked:
+                canvas.set_pixel(op.min_x + mx, py, color.with_alpha(alpha))
+            else:
+                canvas.write_pixel(op.min_x + mx, py, color.with_alpha(alpha))
 
 
 async def _batch_band_async(
@@ -383,4 +437,96 @@ def _render_batch(mut canvas: Canvas, mut batch: _Batch):
     tg.wait()
     # A task's borrow is not a use the compiler counts: named here so
     # the batch outlives the bands (#263).
+    _ = len(batch.ops)
+
+
+# Output rows per band of a supersampled replay. Each band holds a
+# scratch of `width * factor` by `rows * factor` pixels, so this trades
+# scratch size against the number of bands: twenty rows at factor 3
+# over an 800-wide canvas is a 576 KB scratch, which stays inside the
+# L2 the band's own core owns while giving a 600-row canvas thirty
+# bands to spread over.
+comptime _SUPERSAMPLE_BAND_ROWS = 20
+
+
+def _supersampled_band(
+    mut canvas: Canvas,
+    batch: _Batch,
+    factor: Int,
+    y0: Int,
+    rows: Int,
+    background: Color,
+) raises:
+    """One output band of a supersampled region: a scratch holding
+    only this band's enlarged rows, seeded with what the canvas
+    already shows there, drawn into by the recorded ops restricted to
+    those rows, downsampled, and written back.
+
+    Bands write disjoint output rows and read only their own, which is
+    the whole safety argument, the same one `_batch_band` makes.
+    """
+    # The band starts from the region's background, which is what the
+    # two-step recipe's own scratch starts from. Seeding it instead
+    # from what the canvas already shows costs more than the region
+    # saves: a copy per pixel and a nearest-neighbour upscale were
+    # both measured and both lost.
+    var scratch = Canvas(canvas.width * factor, rows * factor, background)
+    scratch.set_max_workers(1)
+    # The geometry was recorded in the enlarged space; this scratch
+    # holds the slice of it starting at `y0 * factor`.
+    scratch._row_origin = y0 * factor
+    scratch._virtual_width = canvas.width * factor
+    scratch._virtual_height = canvas.height * factor
+    _batch_band(scratch, batch, y0 * factor, (y0 + rows) * factor)
+    scratch._row_origin = 0
+    scratch._virtual_height = rows * factor
+
+    var small = downsample(scratch, factor)
+    draw_canvas(canvas, small, 0, y0)
+
+
+async def _supersampled_band_async(
+    mut canvas: Canvas,
+    batch: _Batch,
+    factor: Int,
+    y0: Int,
+    rows: Int,
+    background: Color,
+):
+    """`_supersampled_band` as a task; `batch` is borrowed, never
+    owned (canvas_mojo#97)."""
+    try:
+        _supersampled_band(canvas, batch, factor, y0, rows, background)
+    except:
+        pass
+
+
+def _replay_supersampled(
+    mut canvas: Canvas, mut batch: _Batch, factor: Int, background: Color
+) raises:
+    """Draw what `Canvas.begin_supersampled` recorded: the geometry is
+    in a space `factor` times this canvas, and never materializes at
+    that size. Each output band is one task, which is where the
+    parallelism belongs -- a band that fanned out inside its own
+    `downsample` measured 2.2x slower than not banding at all (#391).
+    """
+    if len(batch.ops) == 0:
+        return
+    _build_ops(batch, canvas.max_workers())
+    var bands = (canvas.height + _SUPERSAMPLE_BAND_ROWS - 1) // (
+        _SUPERSAMPLE_BAND_ROWS
+    )
+    if bands <= 1:
+        _supersampled_band(canvas, batch, factor, 0, canvas.height, background)
+        return
+    var tg = TaskGroup()
+    var y = 0
+    while y < canvas.height:
+        var rows = min(_SUPERSAMPLE_BAND_ROWS, canvas.height - y)
+        tg.create_task(
+            _supersampled_band_async(canvas, batch, factor, y, rows, background)
+        )
+        y += rows
+    tg.wait()
+    # A task's borrow is not a use the compiler counts (#263).
     _ = len(batch.ops)

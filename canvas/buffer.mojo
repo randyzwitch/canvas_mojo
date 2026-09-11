@@ -32,11 +32,12 @@ from canvas.vector.draw_target import DrawTarget
 from canvas.workers import _bands_for, _worker_limit
 from canvas.fill_rule import FillRule
 from canvas.aa_crossing import _EdgeTable
-from canvas.batch import _render_batch
+from canvas.batch import _render_batch, _replay_supersampled
 from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
     Path,
     PathCommand,
+    _CoverageMask,
     fill_path_aa,
     stroke_path_aa,
     _path_coverage_mask,
@@ -264,6 +265,10 @@ comptime _OP_ELLIPSE = 2
 comptime _OP_RECT = 3
 comptime _OP_STROKE = 4
 comptime _OP_PATH = 5
+# A cached glyph's coverage mask, recorded so that text inside a batch
+# replays per band like every other op rather than forcing a flush
+# (#391). The counts live in the batch's own `glyph_counts`.
+comptime _OP_GLYPH = 6
 
 
 struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
@@ -447,6 +452,9 @@ struct _Batch(Copyable, Movable):
     # instead of an allocation and a free each (#390), which is what
     # #387 did for edges and points.
     var commands: List[PathCommand]
+    # Every recorded glyph's coverage bytes, end to end, each op
+    # holding its own range (#391).
+    var glyph_counts: List[UInt8]
     var tables: List[_EdgeTable]
 
     def __init__(out self):
@@ -454,6 +462,7 @@ struct _Batch(Copyable, Movable):
         self.points = List[FPoint]()
         self.dashes = List[Float64]()
         self.commands = List[PathCommand]()
+        self.glyph_counts = List[UInt8]()
         self.tables = List[_EdgeTable]()
         self.tables.append(_EdgeTable())
 
@@ -463,6 +472,7 @@ struct _Batch(Copyable, Movable):
         self.ops.reserve(len(other.ops))
         self.points.reserve(len(other.points))
         self.commands.reserve(len(other.commands))
+        self.glyph_counts.reserve(len(other.glyph_counts))
 
     def record_edges(
         mut self,
@@ -561,6 +571,32 @@ struct _Batch(Copyable, Movable):
         self.ops.append(op)
 
 
+def _glyph_op(
+    first: Int,
+    count: Int,
+    width: Int,
+    height: Int,
+    left: Int,
+    top: Int,
+    total_samples: Int,
+    color: Color,
+) -> _BatchOp:
+    """A cached glyph's coverage mask placed at (left, top): `count`
+    bytes of the batch's `glyph_counts` from `first`, `width` wide.
+    """
+    var op = _BatchOp(_OP_GLYPH, color)
+    op.first_command = first
+    op.command_count = count
+    op.min_x = left
+    op.min_y = top
+    op.max_x = left + width
+    op.max_y = top + height
+    op.supersample = total_samples
+    op.first_row = top
+    op.last_row = top + height
+    return op
+
+
 def _disk_op(
     cx: Float64, cy: Float64, radius: Float64, color: Color
 ) -> _BatchOp:
@@ -636,6 +672,25 @@ struct Canvas(Copyable, DrawTarget, Movable):
     var width: Int
     var height: Int
     var pixels: List[UInt8]
+    # The size the coordinate space has, which is the buffer's size
+    # except inside a supersampled region: there the caller draws in a
+    # space `factor` times larger than the buffer that will hold the
+    # result, and nothing is drawn until `end_supersampled` replays it
+    # a band at a time (#391).
+    var _virtual_width: Int
+    var _virtual_height: Int
+    # The supersample factor of an open region, 0 when none is open,
+    # and what each of its bands starts from.
+    var _supersample: Int
+    var _supersample_bg: Color
+    # Which row of a larger virtual canvas this buffer's row 0 is.
+    # Zero for every ordinary canvas; a supersampled band sets it so
+    # that geometry recorded in the virtual canvas's coordinates draws
+    # into a buffer holding only that band's rows (#391). Only this
+    # struct's addressing honours it: code that walks `pixels` itself
+    # sees a plain buffer of `height` rows, which is what `downsample`
+    # and the encoders want.
+    var _row_origin: Int
     var _clip_stack: List[_ClipRect]
     # Coverage masks pushed by push_clip_path, innermost last. Each is
     # width*height bytes: 255 fully inside the clip, 0 fully outside,
@@ -704,6 +759,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
             )
         self.width = width
         self.height = height
+        self._row_origin = 0
+        self._virtual_width = width
+        self._virtual_height = height
+        self._supersample = 0
+        self._supersample_bg = Color(255, 255, 255)
 
         # One 32-bit store per pixel of the packed color (see
         # _pack_rgba and _store_packed). The buffer's base is
@@ -771,6 +831,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
             )
         self.width = width
         self.height = height
+        self._row_origin = 0
+        self._virtual_width = width
+        self._virtual_height = height
+        self._supersample = 0
+        self._supersample_bg = Color(255, 255, 255)
         self.pixels = pixels^
         self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
@@ -1053,6 +1118,76 @@ struct Canvas(Copyable, DrawTarget, Movable):
         if self._batch_depth == 0:
             self._flush_batch()
 
+    def begin_supersampled(
+        mut self, factor: Int, background: Color = Color(255, 255, 255)
+    ) raises:
+        """Draw the next region at `factor` times this canvas's
+        resolution without ever holding the enlarged buffer: every
+        shape between here and `end_supersampled` is recorded, and
+        `end_supersampled` replays it one output band at a time into a
+        scratch that holds only that band, downsamples each band and
+        writes it here.
+
+        Callers draw in this canvas's own coordinates. The half-pixel
+        that box-downsampling costs is applied here, so a rectangle
+        drawn at the same coordinates lands where it would have
+        without the region -- the recipe on `downsample`, which every
+        consumer would otherwise reimplement.
+
+        A factor of 1 or less opens nothing and draws directly.
+
+        Each band starts from `background`, as the recipe's own
+        scratch does; what this canvas already shows underneath is not
+        carried into the region. Seeding from it was measured both as
+        a copy per pixel and as a nearest-neighbour upscale, and both
+        cost more than the region saves, so a caller who needs to draw
+        over existing content wants the two-step recipe instead.
+
+        Args:
+            factor: Resolution multiplier, 1 for none.
+            background: What each band starts from.
+
+        Raises:
+            Error: A region is already open.
+        """
+        if self._supersample != 0:
+            raise Error("begin_supersampled: a region is already open")
+        if factor <= 1:
+            return
+        self.save()
+        self._supersample = factor
+        self._supersample_bg = background
+        var shift = Float64(factor - 1) / 2.0
+        self.translate(shift, shift)
+        self.scale(Float64(factor), Float64(factor))
+        # The coordinate space is the enlarged one while recording, so
+        # geometry past this buffer's own rows is kept rather than
+        # clipped away at the call.
+        self._virtual_width = self.width * factor
+        self._virtual_height = self.height * factor
+        self.begin_batch()
+
+    def end_supersampled(mut self) raises:
+        """Draw what `begin_supersampled` recorded, band by band, and
+        put the downsampled result on this canvas. A no-op when no
+        region is open.
+
+        Raises:
+            Error: The band scratch cannot be allocated.
+        """
+        if self._supersample == 0:
+            return
+        var factor = self._supersample
+        var bg = self._supersample_bg
+        var batch = self._batch^
+        self._batch = _Batch()
+        self._batch_depth = 0
+        self._supersample = 0
+        self._virtual_width = self.width
+        self._virtual_height = self.height
+        self.restore()
+        _replay_supersampled(self, batch, factor, bg)
+
     def _batching(self) -> Bool:
         """Whether a `begin_batch` is open, so a primitive records
         itself instead of drawing."""
@@ -1118,6 +1253,35 @@ struct Canvas(Copyable, DrawTarget, Movable):
             color,
         )
 
+    def _record_glyph(
+        mut self,
+        mask: _CoverageMask,
+        offset_x: Int,
+        offset_y: Int,
+        color: Color,
+    ):
+        """Record a cached glyph's coverage to composite when the
+        batch is drawn; see `_glyph_op`."""
+        if mask.width <= 0 or mask.height <= 0:
+            return
+        var first = len(self._batch.glyph_counts)
+        var n = mask.width * mask.height
+        var cp = mask.counts.unsafe_ptr()
+        for k in range(n):
+            self._batch.glyph_counts.append(cp[unsafe_offset=k])
+        self._batch.ops.append(
+            _glyph_op(
+                first,
+                n,
+                mask.width,
+                mask.height,
+                offset_x + mask.origin_x,
+                offset_y + mask.origin_y,
+                mask.total_samples,
+                color,
+            )
+        )
+
     def _record_path(
         mut self,
         path: Path,
@@ -1152,6 +1316,24 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._batch_depth = depth
         self._batch.reserve_like(batch)
 
+    def row_bounds(self) -> Tuple[Int, Int]:
+        """The rows this buffer holds, in the coordinates geometry is
+        drawn in: (0, height) for an ordinary canvas, and the band's
+        own slice of the enlarged space inside a supersampled replay
+        (#391). A rasterizer clamping to "the canvas" wants these
+        rather than 0 and `height`.
+
+        Returns:
+            The first row and one past the last.
+        """
+        if self._supersample != 0:
+            # Recording: nothing is written yet, so the bound is the
+            # enlarged space's, not this buffer's. Clamping to the
+            # buffer here would drop the part of a shape that falls
+            # below the output's own row count.
+            return (0, self._virtual_height)
+        return (self._row_origin, self._row_origin + self.height)
+
     def in_bounds(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is a real pixel on this canvas.
 
@@ -1160,9 +1342,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
             y: Row to check.
 
         Returns:
-            True if 0 <= x < width and 0 <= y < height.
+            True if the column is on the canvas and the row is one this
+            buffer holds -- normally 0 <= y < height, and the band's own
+            rows when `_row_origin` is set.
         """
-        return x >= 0 and x < self.width and y >= 0 and y < self.height
+        var rb = self.row_bounds()
+        return x >= 0 and x < self._virtual_width and y >= rb[0] and y < rb[1]
 
     def push_clip(mut self, x: Int, y: Int, width: Int, height: Int):
         """Restrict subsequent drawing to this sub-rectangle. Every
@@ -1365,7 +1550,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return 255
         if not self.in_bounds(x, y):
             return 0
-        return self.clip_masks[self._clip_mask_count - 1][y * self.width + x]
+        return self.clip_masks[self._clip_mask_count - 1][
+            (y - self._row_origin) * self.width + x
+        ]
 
     def in_clip(self, x: Int, y: Int) -> Bool:
         """Whether (x, y) is inside the active clip region.
@@ -1420,7 +1607,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         measurably slows every fill.
         """
         var coverage = self.clip_masks[self._clip_mask_count - 1][
-            y * self.width + x
+            (y - self._row_origin) * self.width + x
         ]
         if coverage == 0:
             return
@@ -1474,7 +1661,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             self._write_pixel_blended(x, y, color)
             return
 
-        var idx = (y * self.width + x) * BYTES_PER_PIXEL
+        var idx = ((y - self._row_origin) * self.width + x) * BYTES_PER_PIXEL
         var p = self.pixels.unsafe_ptr()
         if color.a == 255:
             p[unsafe_offset=idx] = color.r
@@ -1556,7 +1743,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
         var p = self.pixels.unsafe_ptr()
         var ap = alphas.unsafe_ptr()
-        var idx = (y * self.width + x) * BYTES_PER_PIXEL
+        var idx = ((y - self._row_origin) * self.width + x) * BYTES_PER_PIXEL
         for i in range(count):
             var a = ap[unsafe_offset=base + i]
             if a == 0:
@@ -1634,7 +1821,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         through it). So the general blend reads all four bytes and
         writes all four back.
         """
-        var idx = (y * self.width + x) * BYTES_PER_PIXEL
+        var idx = ((y - self._row_origin) * self.width + x) * BYTES_PER_PIXEL
         var p = self.pixels.unsafe_ptr()
         var blended = _blend_pixel(
             self._blend,
@@ -1676,9 +1863,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
             touchable, clamped to the canvas and the active clip.
         """
         var left = max(0, x)
-        var top = max(0, y)
-        var right = min(self.width, x + width)
-        var bottom = min(self.height, y + height)
+        # Rows are the virtual canvas's when a supersampled region is
+        # open or this is one of its bands, so the vertical clamp is
+        # whichever of those the canvas is in (#391).
+        var rb = self.row_bounds()
+        var top = max(rb[0], y)
+        var right = min(self._virtual_width, x + width)
+        var bottom = min(rb[1], y + height)
         if len(self._clip_stack) > 0:
             ref top_clip = self._clip_stack[len(self._clip_stack) - 1]
             left = max(left, top_clip.x)
@@ -1720,7 +1911,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         Returns:
             The pixel's color.
         """
-        var idx = (y * self.width + x) * BYTES_PER_PIXEL
+        var idx = ((y - self._row_origin) * self.width + x) * BYTES_PER_PIXEL
         var p = self.pixels.unsafe_ptr()
         return Color(
             p[unsafe_offset=idx],
@@ -1875,7 +2066,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
         if not self._blend.is_source_over():
             for y in range(ry, ry + rh):
                 _blend_span(
-                    self._blend, self.pixels, y * self.width + rx, rw, color
+                    self._blend,
+                    self.pixels,
+                    (y - self._row_origin) * self.width + rx,
+                    rw,
+                    color,
                 )
             return
 
@@ -1888,7 +2083,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
             # fill_ellipse_aa call this once per interior row.
             var packed = _pack_rgba(color)
             for y in range(ry, ry + rh):
-                self._store_packed(y * self.width + rx, rw, packed)
+                self._store_packed(
+                    (y - self._row_origin) * self.width + rx, rw, packed
+                )
             return
 
         if color.a == 0:
@@ -1926,7 +2123,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 # source-over weight on an opaque destination.
                 src_v[k] = UInt32(255 * sa)
         for y in range(ry, ry + rh):
-            var idx = y * stride + rx * BYTES_PER_PIXEL
+            var idx = (y - self._row_origin) * stride + rx * BYTES_PER_PIXEL
             var remaining = rw
             while remaining >= 4:
                 if not (
