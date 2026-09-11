@@ -12,7 +12,7 @@ Twelve drawing primitives are declared -- `fill_rect`,
 `stroke_path_aa` and `fill_path_aa` -- a subset of `canvas.shapes`.
 `fill_circles_aa` is the one that is not a distinct shape: it is
 `fill_circle_aa` in bulk, on the trait because a generic caller has no
-other way to reach the raster backend's batched path. `fill_polygon`, clipping, radial gradients and
+other way to reach the raster backend's batched path. `fill_polygon`, radial gradients and
 path-shaped gradients are not on the trait; each exists as a free
 function or a `Canvas` method instead. The two strokes, `draw_line_aa`
 and `stroke_path_aa`, take the full stroke style -- `dashes`,
@@ -79,6 +79,19 @@ since CSS has no keyword for them; `PdfCanvas` emits them as an
 `ExtGState` `/BM`. So is the color space -- `set_color_space` and
 `color_space` -- which decides whether a later source-over blend mixes
 in sRGB or linear light.
+
+`push_clip` and `pop_clip` restrict drawing to a rectangle and undo
+that, intersecting with whatever is already clipped so nested clips
+compose. They are here because a caller generic over the trait
+otherwise cannot clip at all: a chart's marks are drawn through one
+generic function, and with an axis domain narrower than the data they
+paint over the axis furniture and off the canvas, which clipping at
+the concrete backend outside that function cannot fix without
+clipping the axes too (#403). The rectangle is in user space and
+takes the current transform on every backend, as `fill_rect` does;
+only the rectangle is on the trait, since a path clip is what
+`Canvas` and `SvgCanvas` offer and `PdfCanvas` spells differently.
+Neither raises.
 
 `begin_annotated_group` and `end_annotated_group` label the enclosed
 drawing. SVG and PDF preserve the label; `Canvas` treats both calls as
@@ -623,6 +636,29 @@ trait DrawTarget:
 
         Raises:
             Error: Backend-specific; see each implementation.
+        """
+        ...
+
+    def push_clip(mut self, x: Int, y: Int, width: Int, height: Int):
+        """Restrict drawing to the pixels x through x + width - 1 by
+        y through y + height - 1, until the matching `pop_clip`.
+
+        Intersects with whatever is already clipped, so a nested clip
+        can restrict further but never escape its parent. The
+        rectangle is in user space and takes the current transform.
+
+        Args:
+            x: Left edge.
+            y: Top edge.
+            width: Width.
+            height: Height.
+        """
+        ...
+
+    def pop_clip(mut self):
+        """Undo the innermost `push_clip`, reverting to the clip
+        outside it or to no clip at all. A no-op when nothing is
+        pushed, on every backend.
         """
         ...
 

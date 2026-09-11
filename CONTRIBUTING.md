@@ -70,6 +70,10 @@ trait DrawTarget:
     # One image primitive: a block of pixels placed in user space
     def draw_image(mut self, image: Canvas, x: Float64, y: Float64, width: Float64 = 0.0, height: Float64 = 0.0) raises: ...
 
+    # A rectangle clip, which a generic caller cannot otherwise reach
+    def push_clip(mut self, x: Int, y: Int, width: Int, height: Int): ...
+    def pop_clip(mut self): ...
+
     # Two that label rather than draw
     def begin_annotated_group(mut self, title: String): ...
     def end_annotated_group(mut self): ...
@@ -150,8 +154,8 @@ first.
 Three further consequences worth knowing before you propose an
 addition:
 
-- **The trait is deliberately narrow.** No `fill_polygon`, clipping,
-  radial gradients, or path-shaped gradients. Each exists in the
+- **The trait is deliberately narrow.** No `fill_polygon`, radial
+  gradients, or path-shaped gradients. Each exists in the
   package as a free function or `Canvas` method; none has a concrete
   caller *through the trait*. Add to the trait when something concrete
   needs it, not before — every addition is a method all three backends
@@ -183,6 +187,13 @@ addition:
   `fill_circles_aa` it is the only way a generic caller reaches the
   raster backend's parallel pass -- for any mix of shapes rather than
   one shape at one size (#382).
+- **The rectangle clip is the rule working as intended.** Clipping sat
+  off the trait for exactly the reason above: no concrete caller went
+  through it. When one appeared -- a chart whose marks are drawn by a
+  single generic function, painting over the axis labels with no way
+  to clip (#403) -- the reason had expired, and `push_clip`/`pop_clip`
+  went on. Only the rectangle: a path clip has no concrete caller yet,
+  so it stays off by the same rule that put the rectangle on.
 - **The ellipse is where "use `fill_path_aa`/`stroke_path_aa`" stops
   being the answer.** Every other shape left off the trait is left off
   because one of those two covers it. An ellipse is the case where

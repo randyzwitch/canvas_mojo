@@ -41,8 +41,9 @@ package is `canvas`; subpackages are `canvas.shapes`, `canvas.path`,
 3. `fill_path_aa` defaults to `FillRule.EVEN_ODD`, which punches holes
    where sub-paths overlap; pass `FillRule.NONZERO` for a union.
    TrueType glyph outlines from `text_path` need `NONZERO`.
-4. Text, clipping and gradient path fills are backend methods, not
-   trait methods. Write the shared drawing against `DrawTarget`, then
+4. Text and gradient path fills are backend methods, not trait
+   methods; the rectangle clip `push_clip`/`pop_clip` is on the trait,
+   so a generic mark layer can keep its drawing inside a plot area. Write the shared drawing against `DrawTarget`, then
    call those on the concrete backend. `draw_image` is on the trait:
    it places a `Canvas` as a block of cells where a `fill_rect` at the
    same box would land, one `<image>` in SVG rather than a `<rect>`

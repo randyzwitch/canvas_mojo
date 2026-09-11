@@ -1408,27 +1408,46 @@ struct PdfCanvas(DrawTarget, Movable):
 
     # ---- clipping -------------------------------------------------
 
-    def push_clip(mut self, x: Int, y: Int, width: Int, height: Int) raises:
+    def push_clip(mut self, x: Int, y: Int, width: Int, height: Int):
         """Clip later drawing to a rectangle, intersected with any
         active clip, until `pop_clip`. Under a transform the rectangle
         is in the transformed space, as the other backends have it.
+
+        `DrawTarget`'s clip, and the reason this does not raise: an
+        affine map takes a rectangle to a parallelogram, whose four
+        corners are written directly rather than built as a `Path`
+        first. The `Path` was the only thing here that could raise,
+        and it never did for a rectangle.
 
         Args:
             x: Left edge.
             y: Top edge.
             width: Width.
             height: Height.
-
-        Raises:
-            Error: Never for a rectangle; the signature is the path
-                builder's.
         """
         self._content += "q "
         if self._transformed:
-            var p = Path()
-            p.rect(Float64(x), Float64(y), Float64(width), Float64(height))
             var m = self._transform
-            self._write_mapped_path(p, m)
+            var x1 = Float64(x)
+            var y1 = Float64(y)
+            var x2 = x1 + Float64(width)
+            var y2 = y1 + Float64(height)
+            var c0 = m.apply(x1, y1)
+            var c1 = m.apply(x2, y1)
+            var c2 = m.apply(x2, y2)
+            var c3 = m.apply(x1, y2)
+            _num(self._content, c0.x)
+            _num(self._content, c0.y)
+            self._content += "m "
+            _num(self._content, c1.x)
+            _num(self._content, c1.y)
+            self._content += "l "
+            _num(self._content, c2.x)
+            _num(self._content, c2.y)
+            self._content += "l "
+            _num(self._content, c3.x)
+            _num(self._content, c3.y)
+            self._content += "l h "
             self._content += "W n\n"
         else:
             _num(self._content, Float64(x))

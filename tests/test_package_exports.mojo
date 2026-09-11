@@ -282,5 +282,61 @@ def test_enum_likes_print_as_their_names() raises:
     assert_equal(String(BlendMode(99)), "BlendMode(99)", "an unknown value")
 
 
+def _marks_in_a_plot_rect[
+    T: DrawTarget
+](mut target: T, left: Int, top: Int, width: Int, height: Int) raises:
+    """A chart's mark layer: a clip to the plot rectangle, then marks
+    drawn in the coordinates the data maps to, some of which fall
+    outside it. The whole point of the clip being on the trait is that
+    this function cannot name the backend (#403).
+    """
+    target.push_clip(left, top, width, height)
+    # A line crossing both boundaries, and markers on either side.
+    target.draw_line_aa(0.0, 30.0, 100.0, 30.0, Color(200, 0, 0), 3.0)
+    target.fill_circle_aa(5.0, 30.0, 3.0, Color(0, 0, 200))
+    target.fill_circle_aa(50.0, 30.0, 3.0, Color(0, 0, 200))
+    target.pop_clip()
+
+
+def test_trait_clip_keeps_marks_inside_the_plot_rect() raises:
+    # The raster backend is where "outside" is countable, which is how
+    # the consumer reported it: pixels of a mark colour outside the
+    # plot rectangle.
+    var canvas = Canvas(100, 60, Color(255, 255, 255))
+    _marks_in_a_plot_rect(canvas, 20, 10, 60, 40)
+    var outside = 0
+    var inside = 0
+    for y in range(60):
+        for x in range(100):
+            var p = canvas.get_pixel(x, y)
+            if p.r == 255 and p.g == 255 and p.b == 255:
+                continue
+            if x >= 20 and x < 80 and y >= 10 and y < 50:
+                inside += 1
+            else:
+                outside += 1
+    assert_equal(outside, 0, "nothing drawn outside the clip rectangle")
+    assert_true(inside > 0, "the marks inside are still drawn")
+
+
+def test_trait_clip_reaches_both_vector_backends() raises:
+    var svg = SvgCanvas(100, 60)
+    _marks_in_a_plot_rect(svg, 20, 10, 60, 40)
+    var markup = svg.to_string()
+    assert_true('<clipPath id="clip' in markup, "SVG mints a clipPath")
+    assert_true('<g clip-path="url(#clip' in markup, "and wraps in it")
+    assert_equal(
+        markup.count("<g clip-path="),
+        markup.count("</g>"),
+        "every clip wrapper is closed",
+    )
+
+    var pdf = PdfCanvas(100, 60)
+    _marks_in_a_plot_rect(pdf, 20, 10, 60, 40)
+    var content = pdf.content()
+    assert_true("re W n" in content, "PDF clips to a rectangle")
+    assert_true(content.count("q ") >= 1 and "Q" in content, "and closes it")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
