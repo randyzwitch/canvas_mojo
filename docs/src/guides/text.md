@@ -55,6 +55,18 @@ box with `x`, `y`, `width`, and `height`.
 
 Neither function draws into a canvas.
 
+![The text Ag with its ink bounds in green, baseline and anchor in blue, and an advance marker that includes a trailing space](/guide-figures/text-bounds.png)
+
+The illustrated string is `"Ag "`, including a trailing space. The
+space increases the advance without enlarging the ink box. A descender
+such as `g` extends below the baseline, so the anchor is neither the
+top-left nor the bottom-left of the ink.
+
+To place an ink box on the canvas, add the anchor to its offsets:
+`(anchor_x + bounds.x, anchor_y + bounds.y)`. Use advance when placing
+the next run of text. Exact bounds depend on the font selected on your
+machine. [Illustration source](/guide-figures/render_guide_figures.mojo)
+
 ## Measure and draw one prepared layout
 
 Prepare text when the same layout must be measured and drawn:

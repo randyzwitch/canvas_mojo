@@ -87,6 +87,9 @@ fmt = "mojo format canvas/ tests/ examples/ scripts/"
 # The docs tasks live on the `docs` feature, so `pixi run docs` runs in
 # the environment that has hugo/go without anyone naming it.
 [feature.docs.tasks]
+docs-snippets = "bash scripts/check_doc_snippets.sh"
+docs-figures = { cmd = "mkdir -p docs/site/static/guide-figures && mojo run -I . scripts/render_guide_figures.mojo && cp scripts/render_guide_figures.mojo docs/site/static/guide-figures/", depends-on = ["docs-snippets"] }
+docs-links = "go run scripts/check_doc_links.go docs/site/public https://randyzwitch.com/canvas_mojo/"
 # Regenerates docs/site/content. Nothing this produces is committed;
 # .gitignore lists what is generated and what is real source.
 #
@@ -101,9 +104,10 @@ llms = "mkdir -p docs/site/static && mojo run -I . scripts/gen_llms_txt.mojo"
 docs-install = "bash scripts/install-modo.sh"
 docs-build = { cmd = "rm -rf docs/site/content docs/site/public docs/src/examples && mkdir -p docs/src/examples && mojo run -I . scripts/gen_example_docs.mojo && mkdir -p docs/site/static && mojo run -I . scripts/gen_llms_txt.mojo && cp examples/out_*.png docs/src/examples/ && cp examples/out_vector.svg docs/src/examples/ && mojo doc -I . -o docs/src/canvas.json canvas && .tools/modo build docs -c modo.yaml && sed -i 's/^weight: 400$/weight: 150/' docs/site/content/canvas/_index.md", depends-on = [
     "docs-install",
+    "docs-figures",
 ] }
 # One-shot build into docs/site/public, what docs-deploy.yml deploys.
-docs = { cmd = "hugo -s docs/site", depends-on = ["docs-build"] }
+docs = { cmd = "hugo -s docs/site && go run scripts/check_doc_links.go docs/site/public https://randyzwitch.com/canvas_mojo/", depends-on = ["docs-build"] }
 # Live preview at http://localhost:1313/canvas_mojo/. Edits under
 # docs/site/content rebuild automatically, but docs-build's steps
 # (mojo doc, gen_example_docs.mojo, modo build) do not -- re-run this

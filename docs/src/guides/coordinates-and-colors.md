@@ -29,6 +29,15 @@ Those two calls cover the same raster pixels. Other floating-point shape
 arguments, such as circle centers and path points, retain their subpixel
 positions.
 
+![An enlarged six-column raster: centers 2, 3, and 4 are filled between geometric edges 1.5 and 4.5](/guide-figures/pixels.png)
+
+The illustration enlarges a six-by-four canvas. Its blue rectangle is
+three pixels wide, although the first and last pixel centers are only
+two units apart. Count pixel squares when specifying an integer width;
+use their outer edges when specifying floating-point geometry.
+
+[Illustration source](/guide-figures/render_guide_figures.mojo)
+
 ## Angles
 
 Angles are radians. Because y increases downward, positive angles turn

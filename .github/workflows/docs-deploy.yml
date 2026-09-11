@@ -14,16 +14,21 @@ on:
   push:
     branches: [main]
     paths:
+      - "README.md"
       - "canvas/**"
       - "examples/**"
       - "docs/src/**"
       - "docs/site/hugo.yaml"
       - "docs/site/go.mod"
       - "docs/site/go.sum"
+      - "docs/site/layouts/**"
       - "docs/modo.yaml"
       - "pixi.toml"
       - "scripts/install-modo.sh"
       - "scripts/gen_example_docs.mojo"
+      - "scripts/check_doc_snippets.sh"
+      - "scripts/check_doc_links.go"
+      - "scripts/render_guide_figures.mojo"
       - ".github/workflows/docs-build.yml"
       - ".github/workflows/docs-deploy.yml"
   workflow_dispatch:

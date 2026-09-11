@@ -17,7 +17,8 @@ routine can target every backend.
 
 ## Quickstart
 
-Add the package to your project's `pixi.toml`:
+Add the package to your existing project's `pixi.toml`. For a complete
+configuration, start with [Getting Started](getting-started/).
 
 ```toml
 [workspace]
