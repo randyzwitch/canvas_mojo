@@ -142,6 +142,11 @@ def main() raises:
     write_pdf(pdf, "scene.pdf")
 ```
 
-Text, clipping, and some paint operations are backend-specific rather
+- `push_clip(x, y, width, height)` / `pop_clip()` on any target
+  restrict drawing to a rectangle and undo that, intersecting with any
+  clip already active. Wrap a chart's marks in one so they cannot
+  paint over the axes.
+
+Text and some paint operations are backend-specific rather
 than part of `DrawTarget`. Use the relevant backend method when a
 shared trait operation is unavailable.

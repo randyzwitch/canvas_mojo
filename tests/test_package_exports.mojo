@@ -282,5 +282,126 @@ def test_enum_likes_print_as_their_names() raises:
     assert_equal(String(BlendMode(99)), "BlendMode(99)", "an unknown value")
 
 
+def _marks_in_a_plot_rect[
+    T: DrawTarget
+](mut target: T, left: Int, top: Int, width: Int, height: Int) raises:
+    """A chart's mark layer: a clip to the plot rectangle, then marks
+    drawn in the coordinates the data maps to, some of which fall
+    outside it. The whole point of the clip being on the trait is that
+    this function cannot name the backend (#403).
+    """
+    target.push_clip(left, top, width, height)
+    # A line crossing both boundaries, and markers on either side.
+    target.draw_line_aa(0.0, 30.0, 100.0, 30.0, Color(200, 0, 0), 3.0)
+    target.fill_circle_aa(5.0, 30.0, 3.0, Color(0, 0, 200))
+    target.fill_circle_aa(50.0, 30.0, 3.0, Color(0, 0, 200))
+    target.pop_clip()
+
+
+def test_trait_clip_keeps_marks_inside_the_plot_rect() raises:
+    # The raster backend is where "outside" is countable, which is how
+    # the consumer reported it: pixels of a mark colour outside the
+    # plot rectangle.
+    var canvas = Canvas(100, 60, Color(255, 255, 255))
+    _marks_in_a_plot_rect(canvas, 20, 10, 60, 40)
+    var outside = 0
+    var inside = 0
+    for y in range(60):
+        for x in range(100):
+            var p = canvas.get_pixel(x, y)
+            if p.r == 255 and p.g == 255 and p.b == 255:
+                continue
+            if x >= 20 and x < 80 and y >= 10 and y < 50:
+                inside += 1
+            else:
+                outside += 1
+    assert_equal(outside, 0, "nothing drawn outside the clip rectangle")
+    assert_true(inside > 0, "the marks inside are still drawn")
+
+
+def _panel_inside_a_figure[T: DrawTarget](mut target: T) raises:
+    """A figure clip with a panel clip inside it, which is the shape
+    faceting has: the panel's rectangle deliberately reaches past the
+    figure's, and must not escape it.
+    """
+    target.push_clip(20, 10, 60, 40)  # the figure
+    target.push_clip(50, 20, 60, 40)  # a panel, off the figure's right
+    target.fill_rect(0, 0, 100, 60, Color(200, 0, 0))
+    target.pop_clip()
+    target.pop_clip()
+
+
+def _figure_after_a_panel[T: DrawTarget](mut target: T) raises:
+    """The same nesting, but drawing only after the inner clip is
+    popped: what lands says whether the figure's clip came back and
+    the panel's went away.
+    """
+    target.push_clip(20, 10, 60, 40)
+    target.push_clip(50, 20, 60, 40)
+    target.pop_clip()
+    target.fill_rect(0, 0, 100, 60, Color(0, 0, 200))
+    target.pop_clip()
+
+
+def _painted(canvas: Canvas) raises -> Tuple[Int, Int, Int, Int]:
+    """Count painted pixels and their bounding box."""
+    var n = 0
+    var x0 = canvas.width
+    var y0 = canvas.height
+    var x1 = -1
+    for y in range(canvas.height):
+        for x in range(canvas.width):
+            var p = canvas.get_pixel(x, y)
+            if p.r == 255 and p.g == 255 and p.b == 255:
+                continue
+            n += 1
+            x0 = min(x0, x)
+            y0 = min(y0, y)
+            x1 = max(x1, x)
+    return (n, x0, y0, x1)
+
+
+def test_trait_clips_nest() raises:
+    # The panel reaches past the figure on the right, so what it can
+    # paint is the intersection: x 50..79 by y 20..49, 30 x 30.
+    var canvas = Canvas(100, 60, Color(255, 255, 255))
+    _panel_inside_a_figure(canvas)
+    var got = _painted(canvas)
+    assert_equal(got[0], 30 * 30, "the inner clip is the intersection")
+    assert_equal(got[1], 50, "and starts where the panel does")
+    assert_equal(got[2], 20, "in both axes")
+    assert_equal(got[3], 79, "stopping at the figure's edge, not the panel's")
+
+
+def test_trait_clip_unwinds_to_the_one_outside_it() raises:
+    # After the panel is popped, the figure's clip is what remains:
+    # 60 x 40 from (20, 10), and nothing of the panel's restriction.
+    var canvas = Canvas(100, 60, Color(255, 255, 255))
+    _figure_after_a_panel(canvas)
+    var got = _painted(canvas)
+    assert_equal(got[0], 60 * 40, "the figure's clip is what is left")
+    assert_equal(got[1], 20, "including the part the panel had excluded")
+    assert_equal(got[2], 10, "in both axes")
+
+
+def test_trait_clip_reaches_both_vector_backends() raises:
+    var svg = SvgCanvas(100, 60)
+    _marks_in_a_plot_rect(svg, 20, 10, 60, 40)
+    var markup = svg.to_string()
+    assert_true('<clipPath id="clip' in markup, "SVG mints a clipPath")
+    assert_true('<g clip-path="url(#clip' in markup, "and wraps in it")
+    assert_equal(
+        markup.count("<g clip-path="),
+        markup.count("</g>"),
+        "every clip wrapper is closed",
+    )
+
+    var pdf = PdfCanvas(100, 60)
+    _marks_in_a_plot_rect(pdf, 20, 10, 60, 40)
+    var content = pdf.content()
+    assert_true("re W n" in content, "PDF clips to a rectangle")
+    assert_true(content.count("q ") >= 1 and "Q" in content, "and closes it")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
