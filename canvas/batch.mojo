@@ -54,6 +54,8 @@ from canvas.path import Path, PathCommand, _FillEdges, _flatten_commands
 from canvas.shapes.circles import _fill_circle_aa_rows
 from canvas.shapes.ellipses import _fill_ellipse_aa_rows
 from canvas.shapes.lines import _stroke_edges
+from canvas.compose import draw_canvas, draw_image
+from canvas.resize import downsample
 from canvas.workers import _bands_for_work, _worker_limit
 
 # Below this many vertices across the batch's strokes and paths, they
@@ -383,4 +385,96 @@ def _render_batch(mut canvas: Canvas, mut batch: _Batch):
     tg.wait()
     # A task's borrow is not a use the compiler counts: named here so
     # the batch outlives the bands (#263).
+    _ = len(batch.ops)
+
+
+# Output rows per band of a supersampled replay. Each band holds a
+# scratch of `width * factor` by `rows * factor` pixels, so this trades
+# scratch size against the number of bands: twenty rows at factor 3
+# over an 800-wide canvas is a 576 KB scratch, which stays inside the
+# L2 the band's own core owns while giving a 600-row canvas thirty
+# bands to spread over.
+comptime _SUPERSAMPLE_BAND_ROWS = 20
+
+
+def _supersampled_band(
+    mut canvas: Canvas,
+    batch: _Batch,
+    factor: Int,
+    y0: Int,
+    rows: Int,
+    background: Color,
+) raises:
+    """One output band of a supersampled region: a scratch holding
+    only this band's enlarged rows, seeded with what the canvas
+    already shows there, drawn into by the recorded ops restricted to
+    those rows, downsampled, and written back.
+
+    Bands write disjoint output rows and read only their own, which is
+    the whole safety argument, the same one `_batch_band` makes.
+    """
+    # The band starts from the region's background, which is what the
+    # two-step recipe's own scratch starts from. Seeding it instead
+    # from what the canvas already shows costs more than the region
+    # saves: a copy per pixel and a nearest-neighbour upscale were
+    # both measured and both lost.
+    var scratch = Canvas(canvas.width * factor, rows * factor, background)
+    scratch.set_max_workers(1)
+    # The geometry was recorded in the enlarged space; this scratch
+    # holds the slice of it starting at `y0 * factor`.
+    scratch._row_origin = y0 * factor
+    scratch._virtual_width = canvas.width * factor
+    scratch._virtual_height = canvas.height * factor
+    _batch_band(scratch, batch, y0 * factor, (y0 + rows) * factor)
+    scratch._row_origin = 0
+    scratch._virtual_height = rows * factor
+
+    var small = downsample(scratch, factor)
+    draw_canvas(canvas, small, 0, y0)
+
+
+async def _supersampled_band_async(
+    mut canvas: Canvas,
+    batch: _Batch,
+    factor: Int,
+    y0: Int,
+    rows: Int,
+    background: Color,
+):
+    """`_supersampled_band` as a task; `batch` is borrowed, never
+    owned (canvas_mojo#97)."""
+    try:
+        _supersampled_band(canvas, batch, factor, y0, rows, background)
+    except:
+        pass
+
+
+def _replay_supersampled(
+    mut canvas: Canvas, mut batch: _Batch, factor: Int, background: Color
+) raises:
+    """Draw what `Canvas.begin_supersampled` recorded: the geometry is
+    in a space `factor` times this canvas, and never materializes at
+    that size. Each output band is one task, which is where the
+    parallelism belongs -- a band that fanned out inside its own
+    `downsample` measured 2.2x slower than not banding at all (#391).
+    """
+    if len(batch.ops) == 0:
+        return
+    _build_ops(batch, canvas.max_workers())
+    var bands = (canvas.height + _SUPERSAMPLE_BAND_ROWS - 1) // (
+        _SUPERSAMPLE_BAND_ROWS
+    )
+    if bands <= 1:
+        _supersampled_band(canvas, batch, factor, 0, canvas.height, background)
+        return
+    var tg = TaskGroup()
+    var y = 0
+    while y < canvas.height:
+        var rows = min(_SUPERSAMPLE_BAND_ROWS, canvas.height - y)
+        tg.create_task(
+            _supersampled_band_async(canvas, batch, factor, y, rows, background)
+        )
+        y += rows
+    tg.wait()
+    # A task's borrow is not a use the compiler counts (#263).
     _ = len(batch.ops)

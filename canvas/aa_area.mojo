@@ -626,13 +626,12 @@ def _area_edges_aa(
     # row's winding prefix sum starts at zero at the shape's left
     # edge, so the rows written are the same whether the sweep is
     # given all of them or a slice.
-    var hi_bound = canvas.height if clamp_hi < 0 else min(
-        clamp_hi, canvas.height
-    )
+    var rb = canvas.row_bounds()
+    var hi_bound = rb[1] if clamp_hi < 0 else min(clamp_hi, rb[1])
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px
-    var first_row = max(max(min_y - 1, 0), clamp_lo)
-    var last_row = min(min(max_y + 2, canvas.height), hi_bound)
+    var first_row = max(max(min_y - 1, rb[0]), clamp_lo)
+    var last_row = min(min(max_y + 2, rb[1]), hi_bound)
     var row_count = last_row - first_row
     if row_count <= 0 or row_width <= 0:
         return
@@ -695,10 +694,11 @@ def _area_edges_rows(
     same, since a row's result does not depend on which band computes
     it.
     """
+    var rb = canvas.row_bounds()
     var row_first_px = min_x - 1
     var row_width = (max_x + 2) - row_first_px
-    var first_row = max(max(min_y - 1, 0), row_lo)
-    var last_row = min(min(max_y + 2, canvas.height), row_hi)
+    var first_row = max(max(min_y - 1, rb[0]), row_lo)
+    var last_row = min(min(max_y + 2, rb[1]), row_hi)
     if last_row - first_row <= 0 or row_width <= 0:
         return
     _area_band_with(
