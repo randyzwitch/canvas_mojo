@@ -50,7 +50,7 @@ from canvas.buffer import (
 )
 from canvas.fill_rule import FillRule
 from canvas.geometry import FPoint
-from canvas.path import Path, _FillEdges, _flatten
+from canvas.path import Path, PathCommand, _FillEdges, _flatten_commands
 from canvas.shapes.circles import _fill_circle_aa_rows
 from canvas.shapes.ellipses import _fill_ellipse_aa_rows
 from canvas.shapes.lines import _stroke_edges
@@ -93,7 +93,7 @@ def _build_geometry(
     op: _BatchOp,
     points: List[FPoint],
     dashes: List[Float64],
-    paths: List[Path],
+    commands: List[PathCommand],
 ) -> _Built:
     """The edges of a stroke or path op, built as its primitive would
     have built them ahead of the raster stage, with the same
@@ -124,7 +124,9 @@ def _build_geometry(
             shape.edges.sort_by_top()
         var b = shape.edges.bounds()
         return _Built(shape.edges.copy(), exact, b)
-    var subpaths = _flatten(paths[op.path], op.curve_steps)
+    var subpaths = _flatten_commands(
+        commands, op.first_command, op.command_count, op.curve_steps
+    )
     if len(subpaths) == 0:
         return _Built(_EdgeTable(), True, (0, 0, 0, 0))
     var fe = _FillEdges(subpaths)
@@ -145,7 +147,7 @@ def _build_into(
     table_index: Int,
     points: List[FPoint],
     dashes: List[Float64],
-    paths: List[Path],
+    commands: List[PathCommand],
 ) -> Bool:
     """Build op `i` and, when it rasterizes by exact area, append its
     edges to `table` and point the op at that range. A sampled result
@@ -153,7 +155,7 @@ def _build_into(
     has to be added to the batch, and a task cannot grow the batch's
     lists.
     """
-    var built = _build_geometry(ops[i], points, dashes, paths)
+    var built = _build_geometry(ops[i], points, dashes, commands)
     if len(built.edges.y_lo) == 0:
         ops[i].set_edges(table_index, 0, 0, 0, 0, 0, 0, True)
         return True
@@ -182,7 +184,7 @@ async def _build_task_async(
     tasks: Int,
     points: List[FPoint],
     dashes: List[Float64],
-    paths: List[Path],
+    commands: List[PathCommand],
 ):
     """Build the stroke and path ops whose index is `task` modulo
     `tasks` into `tables[table_index]`: the interleaving spreads a
@@ -195,7 +197,13 @@ async def _build_task_async(
     while i < n:
         if ops[i].geometry_work() > 0:
             _ = _build_into(
-                ops, i, tables[table_index], table_index, points, dashes, paths
+                ops,
+                i,
+                tables[table_index],
+                table_index,
+                points,
+                dashes,
+                commands,
             )
         i += tasks
 
@@ -235,7 +243,7 @@ def _build_ops(mut batch: _Batch, cap: Int):
                     base,
                     batch.points,
                     batch.dashes,
-                    batch.paths,
+                    batch.commands,
                 )
     else:
         var tg = TaskGroup()
@@ -249,7 +257,7 @@ def _build_ops(mut batch: _Batch, cap: Int):
                     tasks,
                     batch.points,
                     batch.dashes,
-                    batch.paths,
+                    batch.commands,
                 )
             )
         tg.wait()
@@ -260,7 +268,7 @@ def _build_ops(mut batch: _Batch, cap: Int):
         if batch.ops[i].geometry_work() == 0:
             continue
         var built = _build_geometry(
-            batch.ops[i], batch.points, batch.dashes, batch.paths
+            batch.ops[i], batch.points, batch.dashes, batch.commands
         )
         var n = len(built.edges.y_lo)
         var min_x = built.min_x

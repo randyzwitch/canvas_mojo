@@ -36,6 +36,7 @@ from canvas.batch import _render_batch
 from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
     Path,
+    PathCommand,
     fill_path_aa,
     stroke_path_aa,
     _path_coverage_mask,
@@ -326,7 +327,8 @@ struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
     var matrix: Matrix2D
     # `_OP_PATH`: the batch's path `path`, its flattening, and about
     # how many vertices it flattens to.
-    var path: Int
+    var first_command: Int
+    var command_count: Int
     var curve_steps: Int
     var path_work: Int
     # Rows [first_row, last_row) the op can write, in canvas rows;
@@ -364,7 +366,8 @@ struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
         self.join = LineJoin.ROUND
         self.miter_limit = 4.0
         self.matrix = Matrix2D.identity()
-        self.path = -1
+        self.first_command = 0
+        self.command_count = 0
         self.curve_steps = 0
         self.path_work = 0
         self.first_row = 0
@@ -438,14 +441,19 @@ struct _Batch(Copyable, Movable):
     var ops: List[_BatchOp]
     var points: List[FPoint]
     var dashes: List[Float64]
-    var paths: List[Path]
+    # Every recorded path's commands, end to end, each op holding its
+    # own range. One list of commands rather than a `Path` per op, so
+    # a batch of thousands of markers costs a few amortized growths
+    # instead of an allocation and a free each (#390), which is what
+    # #387 did for edges and points.
+    var commands: List[PathCommand]
     var tables: List[_EdgeTable]
 
     def __init__(out self):
         self.ops = List[_BatchOp]()
         self.points = List[FPoint]()
         self.dashes = List[Float64]()
-        self.paths = List[Path]()
+        self.commands = List[PathCommand]()
         self.tables = List[_EdgeTable]()
         self.tables.append(_EdgeTable())
 
@@ -454,7 +462,7 @@ struct _Batch(Copyable, Movable):
         is."""
         self.ops.reserve(len(other.ops))
         self.points.reserve(len(other.points))
-        self.paths.reserve(len(other.paths))
+        self.commands.reserve(len(other.commands))
 
     def record_edges(
         mut self,
@@ -531,11 +539,22 @@ struct _Batch(Copyable, Movable):
         color: Color,
     ):
         """A device-space path to fill, flattened and built when the
-        batch is drawn."""
+        batch is drawn. The commands are appended to the batch's own
+        list and the op keeps their range, so recording a path is an
+        extend rather than an allocation (#390)."""
         var op = _BatchOp(_OP_PATH, color)
-        self.paths.append(path.copy())
-        op.path = len(self.paths) - 1
-        op.path_work = len(path.commands) * 4
+        op.first_command = len(self.commands)
+        op.command_count = len(path.commands)
+        # Appended through the source's pointer: `extend` would take a
+        # copy of the whole list first, which is the allocation this
+        # change exists to remove. No `reserve` per record -- reserving
+        # to an exact length every time grows the list by a few
+        # commands at a time instead of geometrically, which made the
+        # record slower than the copy it replaced.
+        var cp = path.commands.unsafe_ptr()
+        for k in range(op.command_count):
+            self.commands.append(cp[unsafe_offset=k])
+        op.path_work = op.command_count * 4
         op.fill_rule = fill_rule
         op.supersample = supersample
         op.curve_steps = curve_steps
