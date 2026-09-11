@@ -73,4 +73,4 @@ fill_circle_aa x2000 mixed radii in a batch	771.833
 draw_line_aa x200 gridlines + 100 ticks (one call each)	2613.097
 draw_line_aa x200 gridlines + 100 ticks in a batch	792.500
 fill_path_aa x2000 diamond markers (one call each)	2911.578
-fill_path_aa x2000 diamond markers in a batch	2137.667
+fill_path_aa x2000 diamond markers in a batch	1910.404

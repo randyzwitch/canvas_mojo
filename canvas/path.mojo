@@ -1067,6 +1067,29 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
     for every quad/cubic. Nothing is rounded here; `_rounded_points` is
     what the hard-edged callers use.
     """
+    return _flatten_commands(path.commands, 0, len(path.commands), curve_steps)
+
+
+def _flatten_commands(
+    commands: List[PathCommand],
+    first: Int,
+    count: Int,
+    curve_steps: Int = 0,
+) -> List[_Subpath]:
+    """`_flatten` over `count` commands of `commands` from `first`,
+    for a caller whose path's commands live in a list it shares with
+    others -- a batch gathers every recorded path's commands into one
+    (#390), so there is no `Path` to hand over.
+
+    Args:
+        commands: The list holding the commands.
+        first: Index of this path's first command.
+        count: How many commands it has.
+        curve_steps: As `_flatten`.
+
+    Returns:
+        One `_Subpath` per sub-path.
+    """
     var subpaths = List[_Subpath]()
     var current = List[FPoint]()
     var current_closed = False
@@ -1075,7 +1098,10 @@ def _flatten(path: Path, curve_steps: Int = 0) -> List[_Subpath]:
     var start_x = 0.0
     var start_y = 0.0
 
-    for cmd in path.commands:
+    # `first` and `count` are the caller's range, checked there.
+    var cp = commands.unsafe_ptr()
+    for ci in range(first, first + count):
+        ref cmd = cp[unsafe_offset=ci]
         if cmd.op == PathOp.MOVE_TO:
             if len(current) > 0:
                 subpaths.append(_Subpath(current^, current_closed))
