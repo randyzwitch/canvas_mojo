@@ -57,7 +57,7 @@ from canvas.path import Path, PathCommand, _FillEdges, _flatten_commands
 from canvas.shapes.circles import _fill_circle_aa_rows
 from canvas.shapes.ellipses import _fill_ellipse_aa_rows
 from canvas.shapes.lines import _stroke_edges
-from canvas.compose import draw_canvas, draw_image
+from canvas.compose import _draw_canvas_device, draw_canvas, draw_image
 from canvas.resize import downsample
 from canvas.workers import _bands_for_work, _worker_limit
 
@@ -503,7 +503,12 @@ def _supersampled_band(
     scratch._virtual_height = rows * factor
 
     var small = downsample(scratch, factor)
-    draw_canvas(canvas, small, 0, y0)
+    # The device-level body, not the public `draw_canvas`: that one
+    # draws what is pending on `canvas` first, and `canvas` is shared
+    # by every band here, so thirty tasks would touch its batch state
+    # at once. Nothing is pending anyway -- the batch was taken before
+    # the replay began (#412).
+    _draw_canvas_device(canvas, small, 0, y0, 255)
 
 
 async def _supersampled_band_async(
