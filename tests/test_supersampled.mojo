@@ -14,6 +14,9 @@ from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.resize import downsample
+from canvas.geometry import FPoint
+from canvas.gradient import LinearGradient
+from canvas.shapes.circles import fill_circles_aa
 from canvas.text.font_cache import FontCache
 from canvas.text.render import draw_text
 
@@ -168,6 +171,75 @@ def _text_scene(mut c: Canvas, mut cache: FontCache) raises:
     draw_text(c, 6.0, 40.0, "Axis label 123", INK, 11.0, cache=cache)
     draw_text(c, 6.0, 58.0, "Another line gjpq", INK, 9.0, cache=cache)
     draw_text(c, 6.0, 76.0, "Tick 0.75", Color(90, 90, 90), 8.0, cache=cache)
+
+
+def _draw_case(mut c: Canvas, which: Int) raises:
+    """The scenes below, by number, so both renders draw the same one
+    without a function parameter."""
+    if which == 0:
+        # `fill_circles_aa` draws rather than records, so a region
+        # containing it gives up its banded replay (#409). It is on
+        # `DrawTarget`, so a generic caller reaches it.
+        var centres: List[FPoint] = [
+            FPoint(50.0, 40.0),
+            FPoint(100.0, 60.0),
+            FPoint(150.0, 80.0),
+        ]
+        fill_circles_aa(c, centres, 6.0, INK)
+    elif which == 1:
+        # A clip is a state change, which also draws what is pending
+        # first; before #409 a region containing one came out blank.
+        c.push_clip(20, 20, 160, 80)
+        c.fill_circle_aa(100.0, 60.0, 20.0, INK)
+        c.pop_clip()
+    elif which == 2:
+        var ramp = LinearGradient(10.0, 10.0, 110.0, 60.0)
+        ramp.add_stop(0.0, Color(200, 30, 30))
+        ramp.add_stop(1.0, Color(30, 30, 200))
+        c.fill_rect_gradient(10, 10, 100, 50, ramp)
+    else:
+        # Recordable and unrecordable work interleaved, so the order
+        # the region gives up in is what decides the pixels.
+        c.fill_circle_aa(40.0, 30.0, 9.0, INK)
+        var pair: List[FPoint] = [FPoint(90.0, 40.0), FPoint(130.0, 70.0)]
+        fill_circles_aa(c, pair, 7.0, Color(200, 60, 60, 180))
+        c.fill_circle_aa(60.0, 80.0, 11.0, Color(0, 140, 90, 150))
+        c.push_clip(30, 30, 120, 60)
+        c.fill_circle_aa(100.0, 60.0, 22.0, Color(90, 40, 160, 170))
+        c.pop_clip()
+
+
+def _assert_case_matches(which: Int, label: String) raises:
+    comptime W = 200
+    comptime H = 120
+    var factor = 3
+    var scratch = Canvas(W * factor, H * factor, BG)
+    var shift = Float64(factor - 1) / 2.0
+    scratch.translate(shift, shift)
+    scratch.scale(Float64(factor), Float64(factor))
+    _draw_case(scratch, which)
+    var want = downsample(scratch, factor)
+    var got = Canvas(W, H, BG)
+    got.begin_supersampled(factor, BG)
+    _draw_case(got, which)
+    got.end_supersampled()
+    _assert_same(want, got, label)
+
+
+def test_a_bulk_marker_call_in_a_region_matches() raises:
+    _assert_case_matches(0, "fill_circles_aa")
+
+
+def test_a_clip_in_a_region_matches() raises:
+    _assert_case_matches(1, "push_clip")
+
+
+def test_a_gradient_in_a_region_matches() raises:
+    _assert_case_matches(2, "fill_rect_gradient")
+
+
+def test_recordable_and_unrecordable_work_interleaved() raises:
+    _assert_case_matches(3, "mixed")
 
 
 def main() raises:

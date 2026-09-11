@@ -33,6 +33,7 @@ from canvas.workers import _bands_for, _worker_limit
 from canvas.fill_rule import FillRule
 from canvas.aa_crossing import _EdgeTable
 from canvas.batch import _render_batch, _replay_supersampled
+from canvas.resize import downsample
 from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
     Path,
@@ -49,7 +50,7 @@ from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import draw_circle_aa, fill_circle_aa
 from canvas.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
 from canvas.shapes.rects import fill_rect, fill_rect_gradient
-from canvas.compose import draw_image
+from canvas.compose import draw_canvas, draw_image
 
 
 struct _ClipRect(ImplicitlyCopyable, Movable):
@@ -683,6 +684,17 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # and what each of its bands starts from.
     var _supersample: Int
     var _supersample_bg: Color
+    # A region gives up and holds the enlarged buffer when something
+    # inside it cannot be recorded -- a bulk marker call, a clip, a
+    # gradient, anything that draws what is pending and then itself.
+    # Those draw in the enlarged space, which the output buffer cannot
+    # address, so the canvas becomes the enlarged one until
+    # `end_supersampled` downsamples it back (#409). These hold what
+    # it was before.
+    var _region_materialized: Bool
+    var _region_pixels: List[UInt8]
+    var _region_width: Int
+    var _region_height: Int
     # Which row of a larger virtual canvas this buffer's row 0 is.
     # Zero for every ordinary canvas; a supersampled band sets it so
     # that geometry recorded in the virtual canvas's coordinates draws
@@ -764,6 +776,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._virtual_height = height
         self._supersample = 0
         self._supersample_bg = Color(255, 255, 255)
+        self._region_materialized = False
+        self._region_pixels = List[UInt8]()
+        self._region_width = 0
+        self._region_height = 0
 
         # One 32-bit store per pixel of the packed color (see
         # _pack_rgba and _store_packed). The buffer's base is
@@ -836,6 +852,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._virtual_height = height
         self._supersample = 0
         self._supersample_bg = Color(255, 255, 255)
+        self._region_materialized = False
+        self._region_pixels = List[UInt8]()
+        self._region_width = 0
+        self._region_height = 0
         self.pixels = pixels^
         self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
@@ -1183,6 +1203,34 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._batch = _Batch()
         self._batch_depth = 0
         self._supersample = 0
+        if self._region_materialized:
+            # The region gave up its banded replay when something
+            # inside it had to draw rather than record, so this canvas
+            # *is* the enlarged one: draw what is still pending into
+            # it, then downsample it back (#409).
+            self._virtual_width = self.width
+            self._virtual_height = self.height
+            if len(batch.ops) > 0:
+                _render_batch(self, batch)
+            # The enlarged buffer comes out and the output's goes
+            # back in one step, so `self` is never left with a field
+            # taken from it: the checker rejects reading one field of
+            # `self` while another is uninitialized.
+            var ew = self.width
+            var eh = self.height
+            var taken = self.pixels^
+            self.pixels = self._region_pixels^
+            self.width = self._region_width
+            self.height = self._region_height
+            self._virtual_width = self.width
+            self._virtual_height = self.height
+            self._region_materialized = False
+            self._region_pixels = List[UInt8]()
+            var enlarged = Canvas(ew, eh, taken^)
+            var small = downsample(enlarged, factor)
+            self.restore()
+            draw_canvas(self, small, 0, 0)
+            return
         self._virtual_width = self.width
         self._virtual_height = self.height
         self.restore()
@@ -1296,6 +1344,34 @@ struct Canvas(Copyable, DrawTarget, Movable):
             path, fill_rule, supersample, curve_steps, color
         )
 
+    def _materialize_region(mut self):
+        """Give up on replaying an open region a band at a time and
+        hold the enlarged buffer instead: this canvas becomes the
+        enlarged canvas until `end_supersampled` downsamples it back.
+
+        What forces it is anything inside the region that draws rather
+        than records -- `fill_circles_aa` and its relatives, a clip, a
+        gradient, `blur`, `draw_canvas`, a hard-edged primitive. Those
+        draw in the enlarged space, and before #409 they wrote it
+        into the output buffer, which cannot address those rows.
+
+        The result is the two-step recipe's, which is what the region
+        promises; only the memory and the speed are given up.
+        """
+        if self._supersample == 0 or self._region_materialized:
+            return
+        var w = self._virtual_width
+        var h = self._virtual_height
+        var buf = List[UInt8](unsafe_uninit_length=w * h * BYTES_PER_PIXEL)
+        _store_packed_span(buf, 0, w * h, _pack_rgba(self._supersample_bg))
+        self._region_pixels = self.pixels^
+        self.pixels = buf^
+        self._region_width = self.width
+        self._region_height = self.height
+        self.width = w
+        self.height = h
+        self._region_materialized = True
+
     def _flush_batch(mut self):
         """Draw the pending batch now, keeping any open `begin_batch`
         open. What `end_batch` calls, and what every primitive or
@@ -1305,7 +1381,14 @@ struct Canvas(Copyable, DrawTarget, Movable):
         The batch depth is zeroed while rendering so the row bodies
         draw rather than record, and the list is taken whole so a
         band never sees an appending list.
+
+        Inside a supersampled region this is the signal that something
+        cannot be recorded, so the region gives up its banded replay
+        first: what follows draws in the enlarged space and needs a
+        buffer that can hold it (#409).
         """
+        if self._supersample != 0 and not self._region_materialized:
+            self._materialize_region()
         if len(self._batch.ops) == 0:
             return
         var batch = self._batch^
