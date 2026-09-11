@@ -1524,6 +1524,13 @@ struct SvgCanvas(DrawTarget, Movable):
         popping a clip closes an open annotated group first, so the
         markup stays well-formed.
 
+        Known issue for anyone asserting on the markup: the
+        `<clipPath>`'s `<rect>` is an element of the document like any
+        other, so a test counting `<rect>` elements sees one more per
+        clip pushed. Count inside `<defs>` separately, or strip the
+        defs before counting; a consumer adopting the clip had eight
+        tests change their counts this way.
+
         Args:
             x: Clip rectangle's left edge.
             y: Clip rectangle's top edge.
