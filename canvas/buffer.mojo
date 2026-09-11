@@ -27,6 +27,7 @@ from canvas.color import (
     _DIV255_SHIFT,
 )
 from canvas.gradient import LinearGradient
+from canvas.machine import l3_slice_bytes
 from canvas.vector.draw_target import DrawTarget
 from canvas.workers import _bands_for, _worker_limit
 from canvas.fill_rule import FillRule
@@ -134,17 +135,23 @@ def _pack_rgba(color: Color) -> UInt32:
 # flight to fill the memory channels (16 MB clears at 16.5 GB/s), and
 # bands are worth 2.2x to 3.7x.
 #
-# So the threshold is one L3 slice, not a work count. Both constants
-# are properties of this CPU; another machine's slice size would move
-# them, and the sweep that produced them is in the #364 PR.
-comptime _L3_SLICE_BYTES = 16 << 20
-comptime _MIN_PARALLEL_CLEAR = _L3_SLICE_BYTES
+# So the threshold is one L3 slice, not a work count -- and it is that
+# machine's slice, which is why it is asked of the machine the process
+# is on rather than written here (`canvas.machine`, #399). The sweep
+# that produced the rule is in the #364 PR.
+def _min_parallel_clear() -> Int:
+    """Bytes from which banding a solid fill pays: one L3 slice."""
+    return l3_slice_bytes()
 
-# Half a slice per band, so each band's share still fits the slice of
-# whichever CCX runs it with room to spare. Two bands measured fastest
-# at 16 MB (3.66x) and the count matters far less than the threshold
-# does -- every count from 2 to 16 beat serial above the slice.
-comptime _CLEAR_BYTES_PER_BAND = _L3_SLICE_BYTES // 2
+
+def _clear_bytes_per_band() -> Int:
+    """Half a slice per band, so each band's share still fits the slice
+    of whichever CCX runs it with room to spare. Two bands measured
+    fastest at 16 MB (3.66x) and the count matters far less than the
+    threshold does -- every count from 2 to 16 beat serial above it.
+    """
+    return l3_slice_bytes() // 2
+
 
 # A cap for buffers large enough that the ratio would keep growing
 # after the memory channels are already saturated.
@@ -194,12 +201,12 @@ def _clear_bands(count: Int, cap: Int) -> Int:
         The band count, at least 1.
     """
     var total = count * BYTES_PER_PIXEL
-    if total < _MIN_PARALLEL_CLEAR:
+    if total < _min_parallel_clear():
         return 1
     # The floor of two applies before the cap, not after: past the
     # threshold even the smallest split is worth making, but a caller
     # that asked for one worker gets one band.
-    var bands = min(total // _CLEAR_BYTES_PER_BAND, _MAX_CLEAR_BANDS)
+    var bands = min(total // _clear_bytes_per_band(), _MAX_CLEAR_BANDS)
     return max(min(max(bands, 2), _worker_limit(cap)), 1)
 
 

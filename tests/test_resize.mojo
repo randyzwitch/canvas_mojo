@@ -10,11 +10,11 @@ from std.testing import (
     TestSuite,
 )
 
+from canvas.machine import l3_slice_bytes
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.resize import (
     _read_local_bands,
-    _L3_SLICE_BYTES,
     _MAX_LOCAL_BANDS,
     _resize_general,
     downsample,
@@ -536,7 +536,7 @@ def test_read_local_bands_caps_a_source_inside_one_l3_slice() raises:
     # Below the slice the source is already in one CCX's L3, and
     # spreading the read further costs more in cross-CCX traffic than
     # it buys -- 64 bands measured slower than 16 on a 7.7 MB source.
-    var small = _L3_SLICE_BYTES - 1
+    var small = l3_slice_bytes() - 1
     assert_equal(_read_local_bands(small, 64), _MAX_LOCAL_BANDS)
     assert_equal(_read_local_bands(small, 8), 8)
     assert_equal(_read_local_bands(small, 1), 1)
@@ -545,7 +545,7 @@ def test_read_local_bands_caps_a_source_inside_one_l3_slice() raises:
 def test_read_local_bands_leaves_a_source_past_the_slice_alone() raises:
     # Past the slice the read is going to DRAM whatever happens, and
     # more bands keep helping.
-    var big = _L3_SLICE_BYTES
+    var big = l3_slice_bytes()
     assert_equal(_read_local_bands(big, 64), 64)
     assert_equal(_read_local_bands(big, 8), 8)
 

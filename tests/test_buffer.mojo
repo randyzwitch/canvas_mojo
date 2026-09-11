@@ -12,7 +12,7 @@ from canvas.buffer import (
     Canvas,
     _clear_bands,
     _pack_rgba,
-    _MIN_PARALLEL_CLEAR,
+    _min_parallel_clear,
     BYTES_PER_PIXEL,
 )
 
@@ -170,14 +170,14 @@ def test_annotated_group_methods_are_no_ops_on_a_canvas() raises:
 def test_clear_bands_stays_serial_inside_one_l3_slice() raises:
     # The threshold is the point of the whole rule: below it a band
     # moves lines to another CCX's slice and costs more than it saves.
-    var under = (_MIN_PARALLEL_CLEAR // BYTES_PER_PIXEL) - 1
+    var under = (_min_parallel_clear() // BYTES_PER_PIXEL) - 1
     assert_equal(_clear_bands(under, 0), 1)
     assert_equal(_clear_bands(1, 0), 1)
     assert_equal(_clear_bands(0, 0), 1)
 
 
 def test_clear_bands_splits_past_the_slice_and_honors_the_cap() raises:
-    var over = _MIN_PARALLEL_CLEAR // BYTES_PER_PIXEL
+    var over = _min_parallel_clear() // BYTES_PER_PIXEL
     assert_true(_clear_bands(over, 0) >= 2)
     # A worker cap below the band count wins, but never drops the fill
     # to a band count of zero.
@@ -225,17 +225,17 @@ def _assert_uniform(c: Canvas, r: UInt8, g: UInt8, b: UInt8) raises:
 
 
 def test_constructor_fills_every_pixel_of_a_banded_canvas() raises:
-    # Wide enough to cross _MIN_PARALLEL_CLEAR, and with a pixel count
+    # Wide enough to cross the parallel-clear threshold, and with a pixel count
     # that is neither a multiple of the band count nor of the eight-lane
     # store, so both the band tail and the scalar tail run.
-    var px = _MIN_PARALLEL_CLEAR // BYTES_PER_PIXEL + 3
+    var px = _min_parallel_clear() // BYTES_PER_PIXEL + 3
     var c = Canvas(px, 1, Color(11, 22, 33))
     assert_true(_clear_bands(px, 0) >= 2)
     _assert_uniform(c, 11, 22, 33)
 
 
 def test_fill_covers_every_pixel_of_a_banded_canvas() raises:
-    var px = _MIN_PARALLEL_CLEAR // BYTES_PER_PIXEL + 3
+    var px = _min_parallel_clear() // BYTES_PER_PIXEL + 3
     var c = Canvas(px, 1, Color(0, 0, 0))
     c.fill(Color(44, 55, 66))
     _assert_uniform(c, 44, 55, 66)
@@ -245,7 +245,7 @@ def test_banded_fill_matches_a_serial_one_byte_for_byte() raises:
     # Same fill, once on a canvas past the threshold and once on one
     # capped to a single worker. The bytes must not depend on how the
     # work was divided.
-    var px = _MIN_PARALLEL_CLEAR // BYTES_PER_PIXEL + 7
+    var px = _min_parallel_clear() // BYTES_PER_PIXEL + 7
     var banded = Canvas(px, 1, Color(0, 0, 0))
     banded.fill(Color(77, 88, 99))
 
