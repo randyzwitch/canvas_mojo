@@ -37,6 +37,7 @@ from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
 from canvas.path import (
     Path,
     PathCommand,
+    _CoverageMask,
     fill_path_aa,
     stroke_path_aa,
     _path_coverage_mask,
@@ -264,6 +265,10 @@ comptime _OP_ELLIPSE = 2
 comptime _OP_RECT = 3
 comptime _OP_STROKE = 4
 comptime _OP_PATH = 5
+# A cached glyph's coverage mask, recorded so that text inside a batch
+# replays per band like every other op rather than forcing a flush
+# (#391). The counts live in the batch's own `glyph_counts`.
+comptime _OP_GLYPH = 6
 
 
 struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
@@ -447,6 +452,9 @@ struct _Batch(Copyable, Movable):
     # instead of an allocation and a free each (#390), which is what
     # #387 did for edges and points.
     var commands: List[PathCommand]
+    # Every recorded glyph's coverage bytes, end to end, each op
+    # holding its own range (#391).
+    var glyph_counts: List[UInt8]
     var tables: List[_EdgeTable]
 
     def __init__(out self):
@@ -454,6 +462,7 @@ struct _Batch(Copyable, Movable):
         self.points = List[FPoint]()
         self.dashes = List[Float64]()
         self.commands = List[PathCommand]()
+        self.glyph_counts = List[UInt8]()
         self.tables = List[_EdgeTable]()
         self.tables.append(_EdgeTable())
 
@@ -463,6 +472,7 @@ struct _Batch(Copyable, Movable):
         self.ops.reserve(len(other.ops))
         self.points.reserve(len(other.points))
         self.commands.reserve(len(other.commands))
+        self.glyph_counts.reserve(len(other.glyph_counts))
 
     def record_edges(
         mut self,
@@ -559,6 +569,32 @@ struct _Batch(Copyable, Movable):
         op.supersample = supersample
         op.curve_steps = curve_steps
         self.ops.append(op)
+
+
+def _glyph_op(
+    first: Int,
+    count: Int,
+    width: Int,
+    height: Int,
+    left: Int,
+    top: Int,
+    total_samples: Int,
+    color: Color,
+) -> _BatchOp:
+    """A cached glyph's coverage mask placed at (left, top): `count`
+    bytes of the batch's `glyph_counts` from `first`, `width` wide.
+    """
+    var op = _BatchOp(_OP_GLYPH, color)
+    op.first_command = first
+    op.command_count = count
+    op.min_x = left
+    op.min_y = top
+    op.max_x = left + width
+    op.max_y = top + height
+    op.supersample = total_samples
+    op.first_row = top
+    op.last_row = top + height
+    return op
 
 
 def _disk_op(
@@ -1215,6 +1251,35 @@ struct Canvas(Copyable, DrawTarget, Movable):
             matrix,
             supersample,
             color,
+        )
+
+    def _record_glyph(
+        mut self,
+        mask: _CoverageMask,
+        offset_x: Int,
+        offset_y: Int,
+        color: Color,
+    ):
+        """Record a cached glyph's coverage to composite when the
+        batch is drawn; see `_glyph_op`."""
+        if mask.width <= 0 or mask.height <= 0:
+            return
+        var first = len(self._batch.glyph_counts)
+        var n = mask.width * mask.height
+        var cp = mask.counts.unsafe_ptr()
+        for k in range(n):
+            self._batch.glyph_counts.append(cp[unsafe_offset=k])
+        self._batch.ops.append(
+            _glyph_op(
+                first,
+                n,
+                mask.width,
+                mask.height,
+                offset_x + mask.origin_x,
+                offset_y + mask.origin_y,
+                mask.total_samples,
+                color,
+            )
         )
 
     def _record_path(

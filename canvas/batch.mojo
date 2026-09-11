@@ -45,6 +45,7 @@ from canvas.buffer import (
     _OP_EDGES,
     _OP_ELLIPSE,
     _OP_PATH,
+    _OP_GLYPH,
     _OP_RECT,
     _OP_STROKE,
 )
@@ -336,6 +337,8 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
             _fill_ellipse_aa_rows(
                 canvas, op.cx, op.cy, op.rx, op.ry, op.color, row_lo, row_hi
             )
+        elif op.kind == _OP_GLYPH:
+            _glyph_rows(canvas, batch, op, row_lo, row_hi)
         elif op.kind == _OP_RECT:
             var y0 = max(op.min_y, row_lo)
             var y1 = min(op.max_y, row_hi)
@@ -343,6 +346,55 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
                 canvas._fill_region(
                     op.min_x, y0, op.max_x - op.min_x, y1 - y0, op.color
                 )
+
+
+def _glyph_rows(
+    mut canvas: Canvas,
+    batch: _Batch,
+    op: _BatchOp,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """A recorded glyph's coverage over rows [row_lo, row_hi), which
+    is `_composite_glyph_mask`'s loop restricted to a band. The mask's
+    bytes are `op.command_count` of `batch.glyph_counts` from
+    `op.first_command`, `op.max_x - op.min_x` to a row.
+    """
+    var width = op.max_x - op.min_x
+    if width <= 0:
+        return
+    var color = op.color
+    var total = Float64(op.supersample)
+    # For an opaque colour over an exact-area mask the count in 255ths
+    # is already the alpha, as in `_composite_glyph_mask`.
+    var direct = color.a == 255 and op.supersample == 255
+    var masked = canvas.has_clip_mask()
+    var cp = batch.glyph_counts.unsafe_ptr()
+    var first = op.first_command
+    var start = max(op.min_y, row_lo)
+    var stop = min(op.max_y, row_hi)
+    for py in range(start, stop):
+        var region = canvas.effective_fill_rect(op.min_x, py, width, 1)
+        if region[2] == 0 or region[3] == 0:
+            continue
+        var lo = region[0] - op.min_x
+        var hi = lo + region[2]
+        var base = first + (py - op.min_y) * width
+        for mx in range(lo, hi):
+            var covered = Int(cp[unsafe_offset=base + mx])
+            if covered == 0:
+                continue
+            var alpha: UInt8
+            if direct:
+                alpha = UInt8(covered)
+            else:
+                alpha = UInt8(
+                    Int(Float64(covered) / total * Float64(color.a) + 0.5)
+                )
+            if masked:
+                canvas.set_pixel(op.min_x + mx, py, color.with_alpha(alpha))
+            else:
+                canvas.write_pixel(op.min_x + mx, py, color.with_alpha(alpha))
 
 
 async def _batch_band_async(

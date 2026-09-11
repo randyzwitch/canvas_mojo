@@ -14,6 +14,8 @@ from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.resize import downsample
+from canvas.text.font_cache import FontCache
+from canvas.text.render import draw_text
 
 comptime BG = Color(255, 255, 255)
 comptime INK = Color(30, 60, 120, 200)
@@ -127,6 +129,45 @@ def test_the_transform_is_restored_after_the_region() raises:
     assert_equal(after.d, before.d, "scale y restored")
     assert_equal(after.e, before.e, "translation x restored")
     assert_equal(after.f, before.f, "translation y restored")
+
+
+def test_text_in_a_region_matches_the_recipe() raises:
+    """Text is what made this API worth having to a chart consumer:
+    labels are drawn into the enlarged space and shrunk with
+    everything else, so a region that could not hold them would be a
+    no-op for charts. A glyph's cached coverage mask is recorded and
+    composited per band, which is why this is exact rather than close:
+    routing text through the outline instead differed by one level on
+    227 pixels, because the mask cache quantizes sub-pixel placement.
+
+    No golden: the glyphs come from whatever fonts this machine has,
+    which is why both sides are rendered here and compared to each
+    other.
+    """
+    var cache = FontCache()
+    var factor = 3
+    var scratch = Canvas(160 * factor, 90 * factor, BG)
+    var shift = Float64(factor - 1) / 2.0
+    scratch.translate(shift, shift)
+    scratch.scale(Float64(factor), Float64(factor))
+    _text_scene(scratch, cache)
+    var want = downsample(scratch, factor)
+
+    var got = Canvas(160, 90, BG)
+    got.begin_supersampled(factor, BG)
+    _text_scene(got, cache)
+    got.end_supersampled()
+    _assert_same(want, got, "text in a region")
+
+
+def _text_scene(mut c: Canvas, mut cache: FontCache) raises:
+    for i in range(6):
+        c.fill_circle_aa(
+            12.0 + Float64(i) * 18.0, 20.0, 5.5, Color(200, 60, 60, 180)
+        )
+    draw_text(c, 6.0, 40.0, "Axis label 123", INK, 11.0, cache=cache)
+    draw_text(c, 6.0, 58.0, "Another line gjpq", INK, 9.0, cache=cache)
+    draw_text(c, 6.0, 76.0, "Tick 0.75", Color(90, 90, 90), 8.0, cache=cache)
 
 
 def main() raises:
