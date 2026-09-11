@@ -270,6 +270,13 @@ comptime _OP_PATH = 5
 # replays per band like every other op rather than forcing a flush
 # (#391). The counts live in the batch's own `glyph_counts`.
 comptime _OP_GLYPH = 6
+# A rectangle clip pushed and popped inside a batch. Recorded rather
+# than flushing, so a band applies it to its own clip stack and the
+# shapes after it are clipped where they are drawn (#409 follow-up).
+# A clip that is a coverage mask -- pushed under a rotation, or a path
+# clip -- still flushes; only the rectangle form records.
+comptime _OP_PUSH_CLIP = 7
+comptime _OP_POP_CLIP = 8
 
 
 struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
@@ -598,6 +605,19 @@ def _glyph_op(
     return op
 
 
+def _clip_op(kind: Int, x: Int, y: Int, width: Int, height: Int) -> _BatchOp:
+    """A recorded clip push or pop. The rows are the whole canvas, but
+    a band applies these whatever its rows are: skipping one would
+    leave the band's clip stack unbalanced for every op after it.
+    """
+    var op = _BatchOp(kind, Color(0, 0, 0, 0))
+    op.min_x = x
+    op.min_y = y
+    op.max_x = x + width
+    op.max_y = y + height
+    return op
+
+
 def _disk_op(
     cx: Float64, cy: Float64, radius: Float64, color: Color
 ) -> _BatchOp:
@@ -691,6 +711,10 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # address, so the canvas becomes the enlarged one until
     # `end_supersampled` downsamples it back (#409). These hold what
     # it was before.
+    # How many clip entries on `_clip_stack` were recorded as ops and
+    # so will be pushed again when the batch replays. A flush unwinds
+    # them first, or the replay would apply them on top of themselves.
+    var _batch_clip_depth: Int
     var _region_materialized: Bool
     var _region_pixels: List[UInt8]
     var _region_width: Int
@@ -776,6 +800,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._virtual_height = height
         self._supersample = 0
         self._supersample_bg = Color(255, 255, 255)
+        self._batch_clip_depth = 0
         self._region_materialized = False
         self._region_pixels = List[UInt8]()
         self._region_width = 0
@@ -852,6 +877,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._virtual_height = height
         self._supersample = 0
         self._supersample_bg = Color(255, 255, 255)
+        self._batch_clip_depth = 0
         self._region_materialized = False
         self._region_pixels = List[UInt8]()
         self._region_width = 0
@@ -1224,6 +1250,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             self.height = self._region_height
             self._virtual_width = self.width
             self._virtual_height = self.height
+            self._batch_clip_depth = 0
             self._region_materialized = False
             self._region_pixels = List[UInt8]()
             var enlarged = Canvas(ew, eh, taken^)
@@ -1389,6 +1416,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         if self._supersample != 0 and not self._region_materialized:
             self._materialize_region()
+        # The replay's clip ops push their entries again, so take the
+        # recorded ones off first and let it rebuild them in order.
+        while self._batch_clip_depth > 0 and len(self._clip_stack) > 0:
+            _ = self._clip_stack.pop()
+            self._batch_clip_depth -= 1
+        self._batch_clip_depth = 0
         if len(self._batch.ops) == 0:
             return
         var batch = self._batch^
@@ -1454,7 +1487,12 @@ struct Canvas(Copyable, DrawTarget, Movable):
             width: Clip rectangle's width.
             height: Clip rectangle's height.
         """
-        self._flush_batch()
+        # A rectangle clip records inside a banded supersampled region,
+        # where each band rebuilds its own clip stack from the ops; in
+        # every other case it draws what is pending first, as every
+        # state change does.
+        if not self._recording_clips():
+            self._flush_batch()
         if self._transformed:
             if self._transform.is_axis_aligned():
                 var r = _mapped_rect(self._transform, x, y, width, height)
@@ -1485,7 +1523,46 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 self._clip_stack[len(self._clip_stack) - 1], new_rect
             )
         new_rect.mask_depth = mask_depth
+        if self._recording_clips() and mask_depth < 0:
+            # The rect is already intersected with everything above it,
+            # so a band replaying this onto an empty stack arrives at
+            # the same clip. A mask-backed entry is not recordable.
+            self._record(
+                _clip_op(
+                    _OP_PUSH_CLIP,
+                    new_rect.x,
+                    new_rect.y,
+                    new_rect.width,
+                    new_rect.height,
+                )
+            )
+            self._batch_clip_depth += 1
         self._clip_stack.append(new_rect)
+
+    def _recording_clips(self) -> Bool:
+        """Whether a clip change records rather than drawing what is
+        pending. Only inside a supersampled region still replaying a
+        band at a time: there each band has its own clip stack, so the
+        ops rebuild it. A plain batch flushes as it always did,
+        because it replays onto this canvas, whose stack already holds
+        the entry.
+
+        Returns:
+            True when a clip change should record.
+        """
+        return (
+            self._batching()
+            and self._supersample != 0
+            and not self._region_materialized
+        )
+
+    def _pop_clip_rect(mut self):
+        """Remove the top clip rectangle without touching masks or the
+        batch: what a band does replaying a recorded pop, where the
+        entry is known to be a plain rectangle.
+        """
+        if len(self._clip_stack) > 0:
+            _ = self._clip_stack.pop()
 
     def pop_clip(mut self):
         """Remove the most recently pushed clip, reverting to the parent
@@ -1495,9 +1572,21 @@ struct Canvas(Copyable, DrawTarget, Movable):
         in_bounds' handling of out-of-range requests: a stack alone
         cannot distinguish an unbalanced pop from "nothing to undo".
         """
-        self._flush_batch()
         if len(self._clip_stack) == 0:
+            self._flush_batch()
             return
+        var recordable = (
+            self._clip_stack[len(self._clip_stack) - 1].mask_depth < 0
+        )
+        if (
+            self._recording_clips()
+            and recordable
+            and self._batch_clip_depth > 0
+        ):
+            self._record(_clip_op(_OP_POP_CLIP, 0, 0, 0, 0))
+            self._batch_clip_depth -= 1
+        else:
+            self._flush_batch()
         var top = self._clip_stack.pop()
         if top.mask_depth >= 0:
             while self._clip_mask_count > top.mask_depth:

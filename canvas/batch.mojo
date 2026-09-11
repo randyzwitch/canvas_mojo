@@ -45,6 +45,8 @@ from canvas.buffer import (
     _OP_EDGES,
     _OP_ELLIPSE,
     _OP_PATH,
+    _OP_POP_CLIP,
+    _OP_PUSH_CLIP,
     _OP_GLYPH,
     _OP_RECT,
     _OP_STROKE,
@@ -297,6 +299,17 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
         # 64 bands, where it was 128,000 copies; nothing on a batch of
         # a few hundred ops (#389).
         ref op = batch.ops[i]
+        # Clip changes apply whatever rows this band covers: skipping
+        # one because its rectangle misses the band would leave the
+        # stack unbalanced for every op after it.
+        if op.kind == _OP_PUSH_CLIP:
+            canvas._push_clip_rect(
+                op.min_x, op.min_y, op.max_x - op.min_x, op.max_y - op.min_y, -1
+            )
+            continue
+        if op.kind == _OP_POP_CLIP:
+            canvas._pop_clip_rect()
+            continue
         if op.last_row <= row_lo or op.first_row >= row_hi:
             continue
         if op.kind == _OP_EDGES:
