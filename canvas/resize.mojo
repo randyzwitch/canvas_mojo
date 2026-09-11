@@ -10,6 +10,7 @@ so every output pixel averages `factor * factor` real source samples.
 from std.math import floor
 from std.runtime.asyncrt import TaskGroup
 
+from canvas.machine import l3_slice_bytes
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.workers import _bands_for
 
@@ -27,7 +28,6 @@ comptime _MIN_PARALLEL_PIXELS = 40000
 # was the worst of them. A 2400x1800 source (17.3 MB, past the slice)
 # is DRAM-bound whatever happens and improves monotonically to 64, so
 # the cap only applies below the slice.
-comptime _L3_SLICE_BYTES = 16 << 20
 comptime _MAX_LOCAL_BANDS = 16
 
 
@@ -43,7 +43,7 @@ def _read_local_bands(source_bytes: Int, bands: Int) -> Int:
     Returns:
         The band count to use, at least 1.
     """
-    if source_bytes >= _L3_SLICE_BYTES:
+    if source_bytes >= l3_slice_bytes():
         return bands
     return max(min(bands, _MAX_LOCAL_BANDS), 1)
 
