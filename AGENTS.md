@@ -226,6 +226,26 @@ resolves.
   story that survives scrutiny. Keeping both paths reachable and
   interleaving them in one process put the real figure at 0.983x. If a
   refactor leaves both sides callable, that is the measurement to make.
+- A short parallel burst on this machine is bimodal between processes,
+  and that is not the clocks. A pure serial integer loop of the same
+  duration varies 1.6% run to run, and the batch's band pass on one
+  thread varies 4.5% measured homogeneously -- so neither the machine
+  nor the code's data structures are unstable. The same pass across
+  *64 threads* varies 1.3x to 4.6x within a process, and its median
+  moves by up to 2.3x between processes running the identical binary
+  on an idle machine (`fill_circles_aa` at r=3.5 measured medians of
+  312, 593, 669, 684 and 719 us; the 2,000-disk batch 752 to 1,062).
+  Idling the core between bursts does not fix it. That is the task
+  placement `roofline.md` prices at 1.7x-2x, decided per process and
+  outside the library's control, so it is a property of every row that
+  bands, not of any one of them (#398).
+- So an A/B on a banded row is only trustworthy paired inside one
+  process: record both arms per iteration and take the median of the
+  ratios, never the ratio of two medians. Unpaired, binding a batch op
+  by reference "measured" 1.26x; paired over 60 iterations it is
+  1.040, which is what the arithmetic predicts (#389, #397). Check a
+  measured effect against a back-of-envelope figure before believing
+  it.
 - A leaf function timed in a loop of its own can point the wrong way,
   because the loop vectorizes and the call site does not. A polynomial
   `asin` measured 2.7x faster than the library's that way and 1.75x
