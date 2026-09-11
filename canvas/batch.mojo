@@ -279,7 +279,13 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
     """
     var scratch = _AreaScratch()
     for i in range(len(batch.ops)):
-        var op = batch.ops[i]
+        # Bound by reference: most ops do not reach this band, so the
+        # loop is mostly a rejection scan, and binding by value copied
+        # the whole `_BatchOp` -- about 250 bytes -- to read two
+        # fields and skip. Worth about 4% of a flush of 2,000 disks at
+        # 64 bands, where it was 128,000 copies; nothing on a batch of
+        # a few hundred ops (#389).
+        ref op = batch.ops[i]
         if op.last_row <= row_lo or op.first_row >= row_hi:
             continue
         if op.kind == _OP_EDGES:
@@ -350,7 +356,8 @@ def _render_batch(mut canvas: Canvas, mut batch: _Batch):
     _build_ops(batch, canvas.max_workers())
     var work = 0
     for i in range(len(batch.ops)):
-        work += batch.ops[i].work()
+        ref op = batch.ops[i]
+        work += op.work()
     var bands = _bands_for_work(
         work, canvas.height, _CELLS_PER_BAND, canvas.max_workers()
     )
