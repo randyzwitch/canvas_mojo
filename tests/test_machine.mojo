@@ -16,6 +16,7 @@ from canvas.machine import (
     _init_l3_slice_bytes,
     _parse_cache_size,
     _probe_l3_slice_bytes,
+    _sysctl_int,
     l3_slice_bytes,
 )
 
@@ -51,6 +52,21 @@ def test_reports_what_this_platform_answered() raises:
     """
     var raw = _probe_l3_slice_bytes()
     var used = l3_slice_bytes()
+    # Which key answered matters on Apple Silicon, where there is no
+    # conventional L3 and the performance and efficiency clusters have
+    # different L2 sizes: a value describing the efficiency cluster
+    # would be the wrong threshold for work that runs on the
+    # performance cores. Both read 0 off macOS.
+    print("        hw.l3cachesize:", _sysctl_int("hw.l3cachesize"))
+    print("        hw.l2cachesize:", _sysctl_int("hw.l2cachesize"))
+    print(
+        "        hw.perflevel0.l2cachesize:",
+        _sysctl_int("hw.perflevel0.l2cachesize"),
+    )
+    print(
+        "        hw.perflevel1.l2cachesize:",
+        _sysctl_int("hw.perflevel1.l2cachesize"),
+    )
     print("        probe:", raw, "bytes")
     print("        in use:", used, "bytes")
     print("        fallback:", _L3_SLICE_FALLBACK, "bytes")
