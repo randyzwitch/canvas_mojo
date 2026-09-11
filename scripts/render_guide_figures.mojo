@@ -86,9 +86,7 @@ def transforms(mut cache: FontCache) raises:
         canvas.fill_circle_aa(20.0, 0.0, 3.0, Color(40, 100, 200))
         canvas.restore()
         label(canvas, origin - 4, 235, "0", cache)
-    label(
-        canvas, 30, 280, "x = 20 becomes 60 + 2 * 20 = 100", cache, 16.0
-    )
+    label(canvas, 30, 280, "x = 20 becomes 60 + 2 * 20 = 100", cache, 16.0)
     label(
         canvas,
         375,
