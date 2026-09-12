@@ -71,8 +71,19 @@ LIMIT="${CANVAS_TEST_TIMEOUT:-3600}"
 RUNNER=""
 if command -v timeout >/dev/null 2>&1; then
     RUNNER="timeout ${LIMIT}"
+    printf 'run_parallel: each file limited to %s s by timeout\n' "$LIMIT" >&2
 elif command -v gtimeout >/dev/null 2>&1; then
     RUNNER="gtimeout ${LIMIT}"
+    printf 'run_parallel: each file limited to %s s by gtimeout\n' "$LIMIT" >&2
+else
+    # Say so rather than fall through quietly. A guard that is not
+    # running looks exactly like a guard that is: the tell is a run
+    # that never ends, which is the thing the guard exists to prevent
+    # and the thing nobody watches for. A consumer of this package
+    # shipped the same fallback and found their macOS workers exiting
+    # 127 -- the opposite failure, loud instead of silent, and they
+    # found it in minutes because of that.
+    printf 'run_parallel: no timeout or gtimeout, files run unguarded\n' >&2
 fi
 
 printf '%s\n' "$@" | xargs -P "$CORES" -I {} bash -c '
