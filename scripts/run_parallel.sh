@@ -19,9 +19,24 @@
 # watched a `mojo run` sit for 27 minutes at zero CPU with every
 # thread parked on a futex, and a deadlocked module produces no exit
 # code at all: the suite stops, nothing fails, and there is nothing to
-# read. The limit is deliberately far above any real module -- the
-# slowest here runs about half an hour when fifty of them share the
-# machine -- since it only has to tell "wedged forever" from "slow".
+# read.
+#
+# The limit sits far above the slowest honest module rather than
+# anywhere near the hang, because the two errors do not cost the same.
+# A deadlocked module never finishes, so any finite limit catches it
+# and a generous one only delays the report. A limit that fires on
+# honest work produces a false failure, and a gate that fails at
+# random stops being read. So the number is chosen against the slowest
+# real module, with room over it.
+#
+# Measured here, warm, with fifty modules sharing this machine:
+# tests/test_lines.mojo takes 1855, 1898 and 2102 s across three runs.
+# Nobody had looked before, because the suite exits zero and only the
+# total gets read. What is NOT measured is a cold run under full
+# parallel load, which is plausibly the real worst case; the hour
+# leaves room for it rather than being known to fit. Raise
+# CANVAS_TEST_TIMEOUT if a real module ever trips it -- that is a
+# false failure, not a finding.
 #
 # `timeout` is GNU coreutils and absent on a stock macOS, so it is
 # used when present and skipped when not: the guard is best-effort
