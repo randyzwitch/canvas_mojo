@@ -218,6 +218,29 @@ def _draw_case(mut c: Canvas, which: Int) raises:
             FPoint(140.0, 80.0),
         ]
         fill_circles_aa(c, centres, 18.0, INK)
+    elif which == 6 or which == 7:
+        var pts = List[FPoint]()
+        for i in range(120):
+            pts.append(
+                FPoint(
+                    25.0 + Float64((i * 29) % 150),
+                    20.0 + Float64((i * 41) % 100),
+                )
+            )
+        var halo = Color(90, 140, 220, 90)
+        var dot = Color(20, 50, 120, 230)
+        c.push_clip(20, 15, 160, 110)
+        if which == 6:
+            fill_circles_aa(c, pts, 9.0, halo)
+            fill_circles_aa(c, pts, 3.5, dot)
+        else:
+            for i in range(len(pts)):
+                ref p = pts[i]
+                c.fill_circle_aa(p.x, p.y, 9.0, halo)
+            for i in range(len(pts)):
+                ref p = pts[i]
+                c.fill_circle_aa(p.x, p.y, 3.5, dot)
+        c.pop_clip()
     else:
         # Recordable and unrecordable work interleaved, so the order
         # the region gives up in is what decides the pixels.
@@ -267,6 +290,26 @@ def test_a_clip_in_a_region_matches() raises:
 
 def test_a_gradient_in_a_region_matches() raises:
     _assert_case_matches(2, "fill_rect_gradient")
+
+
+def test_two_bulk_marker_calls_layer_in_order() raises:
+    """An effect scatter: a translucent halo under every point, which
+    a chart draws as two bulk calls over the same centres.
+
+    Two recorded marker ops overlapping each other is what pins the
+    order, since the halo's alpha makes the result depend on which was
+    drawn first. A consumer flagged this as the case their own tests
+    were thinnest on, because such a mark never took the bulk path's
+    fallback and so was already recording before #414.
+    """
+    _assert_case_matches(6, "halo and point, two bulk calls")
+
+
+def test_a_layered_mark_matches_however_it_is_expressed() raises:
+    # The same picture drawn a marker at a time rather than in bulk.
+    # Both reach the region, by different routes, and must agree with
+    # the recipe and so with each other.
+    _assert_case_matches(7, "halo and point, per marker")
 
 
 def test_recordable_and_unrecordable_work_interleaved() raises:
