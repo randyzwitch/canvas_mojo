@@ -29,6 +29,16 @@
 # random stops being read. So the number is chosen against the slowest
 # real module, with room over it.
 #
+# What this covers, since the limit lives here rather than in a task:
+# `pixi run test` and `pixi run example` both fan out through this
+# script, so both are guarded. That the examples are covered is luck
+# rather than design -- the reason for the limit was a hung test
+# module, and the examples came along because they share the runner.
+# Worth knowing because a consumer's hang appeared in a generated
+# docs example rather than a test. NOT covered: the bare `mojo run`
+# calls in `docs-build` and `docs-figures`, which invoke the doc and
+# figure generators directly.
+#
 # The limit that matters in CI is probably a different number: there
 # this runs on a two-to-four core runner, so fifty files go through at
 # width two to four and each module gets most of a core, which is not
