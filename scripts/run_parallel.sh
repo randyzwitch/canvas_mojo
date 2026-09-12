@@ -13,13 +13,37 @@
 #
 # Exit status is nonzero if any file failed, so `pixi run test` fails
 # the CI job rather than reporting the last-finished job's status.
+#
+# Each file also gets a wall-clock limit, because the failure this
+# guards is not a slow test but a hung one. A consumer of this package
+# watched a `mojo run` sit for 27 minutes at zero CPU with every
+# thread parked on a futex, and a deadlocked module produces no exit
+# code at all: the suite stops, nothing fails, and there is nothing to
+# read. The limit is deliberately far above any real module -- the
+# slowest here runs about half an hour when fifty of them share the
+# machine -- since it only has to tell "wedged forever" from "slow".
+#
+# `timeout` is GNU coreutils and absent on a stock macOS, so it is
+# used when present and skipped when not: the guard is best-effort
+# rather than a portability regression.
 set -euo pipefail
 
 CORES="$(getconf _NPROCESSORS_ONLN)"
+LIMIT="${CANVAS_TEST_TIMEOUT:-3600}"
+
+RUNNER=""
+if command -v timeout >/dev/null 2>&1; then
+    RUNNER="timeout ${LIMIT}"
+elif command -v gtimeout >/dev/null 2>&1; then
+    RUNNER="gtimeout ${LIMIT}"
+fi
 
 printf '%s\n' "$@" | xargs -P "$CORES" -I {} bash -c '
-    out="$(mojo run -I . "$1" 2>&1)"
+    out="$($2 mojo run -I . "$1" 2>&1)"
     code=$?
     printf "%s\n" "$out"
+    if [ "$code" = "124" ]; then
+        printf "TIMEOUT after %s s: %s\n" "$3" "$1"
+    fi
     exit "$code"
-' _ {}
+' _ {} "$RUNNER" "$LIMIT"

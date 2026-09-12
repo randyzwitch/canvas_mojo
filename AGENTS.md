@@ -208,6 +208,24 @@ resolves.
   load put every row 15-40% high, which raises the floor `bench-check`
   compares against for good. The tell is rows the branch never touched
   moving, so diff a new recording against the old and read those first.
+- A suite can hang rather than fail, and a hang reports nothing at all.
+  A consumer of this package watched a `mojo run` sit 27 minutes at
+  zero CPU with all 65 of its threads parked on futexes, and traced an
+  earlier `exit 124` of theirs to the same thing rather than to the
+  slow module they had blamed. `scripts/run_parallel.sh` gives each
+  file a wall-clock limit (`CANVAS_TEST_TIMEOUT`, an hour by default)
+  so a wedged module fails loudly instead of stopping the run. The
+  limit sits far above any real module, since the slowest here takes
+  about half an hour when fifty share the machine, and it only has to
+  tell "wedged forever" from "slow".
+- Concurrency width, not the mix of work, is what that consumer's
+  crashes track: one module 64 ways in parallel segfaulted 6 times in
+  256 runs, and 0 times in 72 at width 8. Each `mojo` process sizes
+  its thread pool to the core count whatever else is running, so 64
+  processes on this machine is roughly 4,200 threads. A full suite
+  here is 50 files at a width of the core count, which is the same
+  neighbourhood -- so 14 clean runs of it in one day is evidence about
+  this workload at this width, not about concurrency being safe.
 - In a worktree, run each gate through exactly one `pixi run`. A nested
   one silently tests the main checkout: `pixi run --manifest-path <main>
   bash -c "cd <worktree> && pixi run ... test"` resets the cwd back to
