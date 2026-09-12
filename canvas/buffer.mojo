@@ -1185,11 +1185,22 @@ struct Canvas(Copyable, DrawTarget, Movable):
         mut self, factor: Int, background: Color = Color(255, 255, 255)
     ) raises:
         """Draw the next region at `factor` times this canvas's
-        resolution without ever holding the enlarged buffer: every
-        shape between here and `end_supersampled` is recorded, and
+        resolution without holding the enlarged buffer: drawing
+        between here and `end_supersampled` is recorded, and
         `end_supersampled` replays it one output band at a time into a
         scratch that holds only that band, downsamples each band and
         writes it here.
+
+        Not everything can be recorded. Anti-aliased fills, strokes,
+        paths, disks, ellipses, rects, bulk marker calls, glyphs and
+        rect clips all have a recorded form. A primitive with none --
+        a hard-edged shape, an image or canvas composite, a blur, a
+        mask-backed clip -- makes the region give up the banded replay
+        where it appears: the enlarged buffer is allocated, the rest of
+        the region draws into it, and the downsample happens at the
+        end. The pixels are the same either way. What is lost is the
+        memory the banded replay saves, and the speed with it, so a
+        region built from recordable drawing is the one that pays.
 
         Callers draw in this canvas's own coordinates. The half-pixel
         that box-downsampling costs is applied here, so a rectangle

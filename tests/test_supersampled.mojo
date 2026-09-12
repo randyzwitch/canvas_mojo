@@ -16,6 +16,7 @@ from canvas.color import Color
 from canvas.resize import downsample
 from canvas.geometry import FPoint
 from canvas.gradient import LinearGradient
+from canvas.blur import blur
 from canvas.shapes.circles import fill_circles_aa
 from canvas.text.font_cache import FontCache
 from canvas.text.render import draw_text
@@ -358,6 +359,74 @@ def test_repeated_renders_of_a_mixed_region() raises:
         )
         out.end_supersampled()
         assert_true(out.width == 200, "render " + String(k) + " completed")
+
+
+def test_a_recordable_scene_keeps_its_banded_replay() raises:
+    """The docstring on `begin_supersampled` promises the enlarged
+    buffer is not held for a scene it can record. Byte-identity cannot
+    check that: the pixels are the same whether the region replayed
+    band by band or gave up and materialized. So read the flag, which
+    is the only place the difference shows before `end_supersampled`
+    clears it."""
+    var out = Canvas(200, 150, BG)
+    out.begin_supersampled(3, BG)
+    _scene(out)
+    var pts: List[FPoint] = [FPoint(60.0, 40.0), FPoint(120.0, 90.0)]
+    fill_circles_aa(out, pts, 5.0, Color(200, 60, 60, 180))
+    out.push_clip(20, 10, 160, 130)
+    out.fill_circle_aa(70.0, 50.0, 6.0, INK)
+    out.pop_clip()
+    assert_equal(
+        out._region_materialized,
+        False,
+        "a recordable scene must not materialize the enlarged buffer",
+    )
+    out.end_supersampled()
+
+
+def test_bulk_markers_keep_the_banded_replay() raises:
+    """The whole point of #415, stated as a resource claim rather than
+    a timing one. A bulk marker call used to force materialization,
+    which is what a consumer's gate was written to avoid."""
+    var out = Canvas(200, 150, BG)
+    out.begin_supersampled(3, BG)
+    var pts = List[FPoint]()
+    for i in range(200):
+        pts.append(
+            FPoint(
+                10.0 + Float64((i * 37) % 180), 8.0 + Float64((i * 53) % 134)
+            )
+        )
+    fill_circles_aa(out, pts, 2.5, INK)
+    assert_equal(
+        out._region_materialized,
+        False,
+        "a bulk marker call must not materialize the enlarged buffer",
+    )
+    out.end_supersampled()
+
+
+def test_an_unrecordable_primitive_materializes() raises:
+    """The other half of the same claim, so the test above cannot pass
+    by the flag simply never being set. A blur has no recorded form,
+    so it gives up the banded replay where it appears -- and the
+    result is still correct, which is exactly why the fallback needs a
+    test rather than an eye."""
+    var out = Canvas(200, 150, BG)
+    out.begin_supersampled(3, BG)
+    _scene(out)
+    assert_equal(
+        out._region_materialized,
+        False,
+        "still recording before the blur",
+    )
+    blur(out, 2.0)
+    assert_equal(
+        out._region_materialized,
+        True,
+        "a blur has no recorded form, so the region must materialize",
+    )
+    out.end_supersampled()
 
 
 def main() raises:

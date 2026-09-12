@@ -70,6 +70,17 @@ resolves.
 - Docstrings and comments explain why, in prose a reader without the
   conversation can follow. Performance comparisons go to the wiki
   Changelog; an actionable warning stays in the code.
+- A docstring that promises a *resource* -- this does not allocate,
+  this stays banded, this is O(1) -- needs a test that reads the
+  resource, not the output. A stale comment about a mechanism misleads
+  someone reading the code; a stale guarantee misleads someone who
+  never reads it and only sees correct pixels. `begin_supersampled`
+  promised for two releases that the enlarged buffer is never held,
+  after #409 made 62 call sites give that up, and every byte-identity
+  test kept passing throughout: materializing changes no pixel. The
+  tests that pin it now assert `_region_materialized` in both
+  directions, and were checked by making the recorded path draw
+  instead -- which the four byte-identity tests did not notice.
 - U.S. spelling everywhere (color, center, gray, rasterize). Neutral
   tone: "known issue", not "defect that bites".
 - Every primitive writes each pixel exactly once, so a translucent color
