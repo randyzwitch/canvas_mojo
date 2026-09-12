@@ -246,6 +246,35 @@ resolves.
   1.040, which is what the arithmetic predicts (#389, #397). Check a
   measured effect against a back-of-envelope figure before believing
   it.
+- That pairing rule has a limit, and it is the opposite trap. It holds
+  when both arms do the same allocation work, which is the case for
+  two implementations of one pass. When the two paths *differ* in what
+  they allocate, interleaving them in one process makes each side's
+  allocator state a function of the other, and the side that allocates
+  more looks worse than it is. A bulk-marker scatter measured 1.41x
+  for the path that avoids a 16.5 MB buffer when the two were
+  interleaved, and 1.20x with each side in its own process, because
+  the two-step's own spread widens from 1.29 to 1.56 when region
+  passes run between its iterations (#414). Measure both ways, quote
+  the per-process figure -- a consumer picks one path, not both -- and
+  say which you are quoting. Anyone measuring an allocation-avoiding
+  change against what it replaces meets this, and the interleaved
+  harness is the obvious first thing to write.
+- A claim about *spread* needs the same care and more samples than one
+  about the mean. Five samples suggested that same change cut variance
+  as well as mean, which would have mattered more to a library
+  rendering in a loop; at 24 passes per side in their own processes
+  both sides spread about 1.3x, and the steadier-looking side was the
+  interleaving artefact again.
+- `bench-check` nominates rows for a direct A/B. It does not gate.
+  A contended run flagged two `fill_circles_aa` rows at 7.3x and 6.3x;
+  the same check idle flagged neither, and flagged `Canvas(2400x1800)
+  allocate and clear` at 1.75x instead -- a row that ranges 154 to
+  4,755 us within one process, and which a direct A/B showed *faster*
+  on the branch. Different rows flagging between runs means the flags
+  are draws from noise. The failure mode is that one row flags,
+  someone reasons about why that row is plausible, and a story gets
+  built on a coin flip.
 - A leaf function timed in a loop of its own can point the wrong way,
   because the loop vectorizes and the call site does not. A polynomial
   `asin` measured 2.7x faster than the library's that way and 1.75x
