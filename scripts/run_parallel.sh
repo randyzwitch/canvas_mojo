@@ -37,7 +37,14 @@
 # Worth knowing because a consumer's hang appeared in a generated
 # docs example rather than a test. NOT covered: the bare `mojo run`
 # calls in `docs-build` and `docs-figures`, which invoke the doc and
-# figure generators directly.
+# figure generators directly. Those run one at a time, which is not
+# the same as being safe: the deadlock behind this limit is
+# intra-process, and the runtime sizes its thread pool to the core
+# count inside every process, so a lone invocation still has ~65
+# threads that can park on each other. Nobody has observed a serial
+# invocation wedge; the point is only that running alone does not
+# rule it out. A guard there would be a different shape from a
+# limit inside a fan-out, which is why it is not in this change.
 #
 # The limit that matters in CI is probably a different number: there
 # this runs on a two-to-four core runner, so fifty files go through at
