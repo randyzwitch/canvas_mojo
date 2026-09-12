@@ -296,11 +296,16 @@ def test_two_bulk_marker_calls_layer_in_order() raises:
     """An effect scatter: a translucent halo under every point, which
     a chart draws as two bulk calls over the same centres.
 
-    Two recorded marker ops overlapping each other is what pins the
+    Two recorded marker ops covering the same pixels is what pins the
     order, since the halo's alpha makes the result depend on which was
-    drawn first. A consumer flagged this as the case their own tests
-    were thinnest on, because such a mark never took the bulk path's
-    fallback and so was already recording before #414.
+    drawn first. Nothing that paints disjoint areas would catch a
+    replay that reordered them, and the rest of this file paints
+    mostly disjoint marks.
+
+    It is also the shape a consumer's effect scatter has, and that
+    mark never took the bulk path's fallback -- it was already
+    recording before #414 -- so it exercises the half of the change
+    that is meant to be invisible.
     """
     _assert_case_matches(6, "halo and point, two bulk calls")
 
