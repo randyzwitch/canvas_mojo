@@ -60,21 +60,59 @@
 # CANVAS_TEST_TIMEOUT if a real module ever trips it -- that is a
 # false failure, not a finding.
 #
-# `timeout` is GNU coreutils and absent on a stock macOS, so it is
-# used when present and skipped when not: the guard is best-effort
-# rather than a portability regression.
+# `timeout` is GNU coreutils and a stock macOS has neither it nor
+# `gtimeout`, so macOS ran every file unguarded until #422 -- which
+# nobody could see until the line below started naming the guard.
+# The third choice is perl, which macOS does ship, so the guard needs
+# no dependency and no CI install step. Two defects in the obvious
+# version of it were found by testing rather than by reading, and
+# both are described where the program is defined below: a missing
+# interpreter exiting 0, and a wedged module's children surviving the
+# kill.
+#
+# All three forms exit 124 on a timeout and kill the wedged module's
+# whole process group, so nothing downstream has to know which fired.
 set -euo pipefail
 
 CORES="$(getconf _NPROCESSORS_ONLN)"
 LIMIT="${CANVAS_TEST_TIMEOUT:-3600}"
 
-RUNNER=""
+# A timeout in the perl every macOS ships. The one-line version of
+# this -- set an alarm, exec, let SIGALRM terminate the process -- is
+# wrong in a way that took a test to see: it kills the process and
+# not its children, so a module that forks leaves the pipe open and
+# the run blocks for the module's full duration while reporting a
+# timeout. Measured against `timeout` on the same wedged stub: 3 s
+# for `timeout`, 60 s for the one-liner. `timeout` puts the child in
+# its own process group and kills the group, so this does too, which
+# needs a parent that outlives the alarm and therefore a fork rather
+# than an exec.
+ALARM='
+    my $limit = shift @ARGV;
+    my $pid = fork();
+    exit 127 unless defined $pid;
+    if ($pid == 0) { setpgrp(0, 0); exec @ARGV; exit 127; }
+    my $fired = 0;
+    $SIG{ALRM} = sub { $fired = 1; kill "KILL", -$pid; };
+    alarm $limit;
+    waitpid $pid, 0;
+    my $status = $?;
+    alarm 0;
+    exit 124 if $fired;
+    exit 128 + ($status & 127) if ($status & 127);
+    exit $status >> 8;
+'
+
+MODE="none"
 if command -v timeout >/dev/null 2>&1; then
-    RUNNER="timeout ${LIMIT}"
+    MODE="timeout"
     printf 'run_parallel: each file limited to %s s by timeout\n' "$LIMIT" >&2
 elif command -v gtimeout >/dev/null 2>&1; then
-    RUNNER="gtimeout ${LIMIT}"
+    MODE="gtimeout"
     printf 'run_parallel: each file limited to %s s by gtimeout\n' "$LIMIT" >&2
+elif command -v perl >/dev/null 2>&1; then
+    MODE="perl"
+    printf 'run_parallel: each file limited to %s s by perl alarm\n' "$LIMIT" >&2
 else
     # Say so rather than fall through quietly. A guard that is not
     # running looks exactly like a guard that is: the tell is a run
@@ -83,15 +121,19 @@ else
     # shipped the same fallback and found their macOS workers exiting
     # 127 -- the opposite failure, loud instead of silent, and they
     # found it in minutes because of that.
-    printf 'run_parallel: no timeout or gtimeout, files run unguarded\n' >&2
+    printf 'run_parallel: no timeout, gtimeout or perl, files run unguarded\n' >&2
 fi
 
 printf '%s\n' "$@" | xargs -P "$CORES" -I {} bash -c '
-    out="$($2 mojo run -I . "$1" 2>&1)"
-    code=$?
+    case "$2" in
+        timeout)  out="$(timeout "$3" mojo run -I . "$1" 2>&1)"; code=$? ;;
+        gtimeout) out="$(gtimeout "$3" mojo run -I . "$1" 2>&1)"; code=$? ;;
+        perl)     out="$(perl -e "$4" "$3" mojo run -I . "$1" 2>&1)"; code=$? ;;
+        *)        out="$(mojo run -I . "$1" 2>&1)"; code=$? ;;
+    esac
     printf "%s\n" "$out"
     if [ "$code" = "124" ]; then
         printf "TIMEOUT after %s s: %s\n" "$3" "$1"
     fi
     exit "$code"
-' _ {} "$RUNNER" "$LIMIT"
+' _ {} "$MODE" "$LIMIT" "$ALARM"
