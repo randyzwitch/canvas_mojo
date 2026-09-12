@@ -29,6 +29,11 @@
 # random stops being read. So the number is chosen against the slowest
 # real module, with room over it.
 #
+# The limit that matters in CI is probably a different number: there
+# this runs on a two-to-four core runner, so fifty files go through at
+# width two to four and each module gets most of a core, which is not
+# the regime the figures below describe. Unmeasured as well.
+#
 # Measured here, warm, with fifty modules sharing this machine:
 # tests/test_lines.mojo takes 1855, 1898 and 2102 s across three runs.
 # Nobody had looked before, because the suite exits zero and only the

@@ -219,13 +219,18 @@ resolves.
   about half an hour when fifty share the machine, and it only has to
   tell "wedged forever" from "slow".
 - Concurrency width, not the mix of work, is what that consumer's
-  crashes track: one module 64 ways in parallel segfaulted 6 times in
-  256 runs, and 0 times in 72 at width 8. Each `mojo` process sizes
-  its thread pool to the core count whatever else is running, so 64
-  processes on this machine is roughly 4,200 threads. A full suite
-  here is 50 files at a width of the core count, which is the same
+  crashes track, and narrowing it is not a fix. One module run 256
+  times at each width segfaulted 6 times at 64, 0 at 32, once at 16
+  and 0 in 72 at width 8 -- so 64 is genuinely elevated, and below it
+  nothing separates at that sample size. The single crash at 16 is the
+  point: a lower width makes it rarer rather than absent, and their
+  deadlock turned up during the width-8 arm, the lowest tested. Each
+  `mojo` process sizes its thread pool to the core count whatever else
+  is running, so 64 processes here is roughly 4,200 threads. A full
+  suite is 50 files at a width of the core count, which is the same
   neighbourhood -- so 14 clean runs of it in one day is evidence about
-  this workload at this width, not about concurrency being safe.
+  this workload at this width, not about concurrency being safe, and
+  capping the fan-out would buy a lower rate rather than safety.
 - In a worktree, run each gate through exactly one `pixi run`. A nested
   one silently tests the main checkout: `pixi run --manifest-path <main>
   bash -c "cd <worktree> && pixi run ... test"` resets the cwd back to
