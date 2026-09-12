@@ -218,6 +218,25 @@ resolves.
   scripts/run_tests.sh <files>"`. The tell is the file count or the
   `Running N tests for <path>` line naming the wrong directory -- read
   that path, not just the totals.
+- A suite that did not finish looks almost exactly like a suite that
+  passed. Count the `Running N tests for` lines against the number of
+  files you asked for and read the exit status, both, before calling a
+  run green: a timeout reports zero failures, because the module that
+  never finished never failed. A consumer of this package hit exactly
+  that -- 34 of 35 modules clean, no failures anywhere, exit 124 --
+  and the missing module was invisible in everything except the count
+  and the code. Work that did not happen reads as success, the same
+  way work the optimizer deleted reads as speed.
+- Before timing a build, check it built, and check it built the tree
+  you meant. A failed build is fast and a fast failure reads as a
+  speedup; a warm cache is faster still and reads as a clean null
+  result -- 9.1 s and identical to three decimals on both arms, which
+  was a cache lookup being timed rather than a compile. Clear the
+  cache for a cold number, grep the tree for something only one side
+  has before each timed build, and where a size or digest of the
+  output is available, prefer it: identical artefact bytes say the
+  same code was generated, which is a stronger claim than any timing
+  at these sample sizes.
 - Compare two implementations inside one process, not across two runs
   of different builds. `resize 1600x1200 -> 741x533` swings 2487-2858
   us across fresh processes on an idle machine, so alternating builds
