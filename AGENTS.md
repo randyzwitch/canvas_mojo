@@ -218,6 +218,25 @@ resolves.
   scripts/run_tests.sh <files>"`. The tell is the file count or the
   `Running N tests for <path>` line naming the wrong directory -- read
   that path, not just the totals.
+
+  The same nesting has a second consequence worth knowing, because it
+  is silent in a different way: wrapping each *worker* in `pixi run`
+  serializes them. A consumer's probe meant to run 64 ways in parallel
+  ran 64 executions one after another, and every outward sign said it
+  was parallel; the tell was two mojo processes where there should
+  have been sixty-four. `scripts/run_parallel.sh` has the shape that
+  works -- one `pixi run` wraps the outer script and the workers call
+  the `mojo` binary directly.
+- Check the harness did the thing its name claims, not just that it
+  exited cleanly. Three failures of this shape turned up in one
+  afternoon: a suite that timed out reported no failures, a build
+  measured warm timed a cache lookup rather than a compile, and a
+  probe meant to run 64 ways in parallel ran serially. Each produced
+  output indistinguishable from the real thing. The cheapest check is
+  from outside while it runs -- count the processes, watch the clock,
+  look at what was produced -- because every in-band signal the
+  harness emits is exactly what it would emit if the work had
+  happened.
 - A suite that did not finish looks almost exactly like a suite that
   passed. Count the `Running N tests for` lines against the number of
   files you asked for and read the exit status, both, before calling a
