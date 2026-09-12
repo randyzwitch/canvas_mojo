@@ -328,13 +328,35 @@ resolves.
   allocator state a function of the other, and the side that allocates
   more looks worse than it is. A bulk-marker scatter measured 1.41x
   for the path that avoids a 16.5 MB buffer when the two were
-  interleaved, and 1.20x with each side in its own process, because
+  interleaved, and 1.08x to 1.54x with each side in its own process
+  (median 1.25x over eight paired runs), because
   the two-step's own spread widens from 1.29 to 1.56 when region
   passes run between its iterations (#414). Measure both ways, quote
   the per-process figure -- a consumer picks one path, not both -- and
   say which you are quoting. Anyone measuring an allocation-avoiding
   change against what it replaces meets this, and the interleaved
   harness is the obvious first thing to write.
+- Cross-process is not enough on its own: one paired run is not a
+  figure. That same scatter was published as "about 1.20x" from two
+  paired runs that both happened to land low. Eight paired runs of the
+  same harness on the same idle machine give 1.08, 1.19, 1.20, 1.23,
+  1.27, 1.30, 1.54, 1.54 -- a median of 1.25x and a range wide enough
+  that a consumer planning around 1.20x is planning around the bottom
+  of it. Quote the median and the range, and name which arm carries
+  the variance: here the two-step's medians span 3,734 to 4,815 us and
+  its within-run spread reached 2.88x, while the region arm stayed at
+  3,042 to 3,458 with spread 1.11x to 1.19x, because the arm that
+  allocates and downsamples 4.3 megapixels every pass is the one whose
+  cost moves. Ratios from different sessions are not comparable to
+  each other at all; only rows from one harness on one night are.
+- A ratio that depends on the size of the input is not one number.
+  The same scatter sweeps from 2.2x at 100 markers to 1.15x at 8,000,
+  because what the region avoids is a fixed allocate-and-downsample
+  cost that does not shrink with the data. Publishing the midpoint of
+  that curve as the figure tells a consumer with a sparse chart less
+  than they need and a consumer with a dense one more than is true.
+  Sweep the parameter a consumer varies before quoting a single
+  number.
 - A claim about *spread* needs the same care and more samples than one
   about the mean. Five samples suggested that same change cut variance
   as well as mean, which would have mattered more to a library
