@@ -233,10 +233,13 @@ resolves.
   result -- 9.1 s and identical to three decimals on both arms, which
   was a cache lookup being timed rather than a compile. Clear the
   cache for a cold number, grep the tree for something only one side
-  has before each timed build, and where a size or digest of the
-  output is available, prefer it: identical artefact bytes say the
-  same code was generated, which is a stronger claim than any timing
-  at these sample sizes.
+  has before each timed build, and stat the output to confirm one was
+  produced. That last check tends to hand you a better signal than the
+  timing for free: identical artefact bytes on both trees say the same
+  code was generated, which is a stronger claim than any six-sample
+  timing. The general form is that verifying the harness did real work
+  often yields a second, non-timing corroborator as a side effect --
+  so look at what the check gives you, not only at whether it passed.
 - Compare two implementations inside one process, not across two runs
   of different builds. `resize 1600x1200 -> 741x533` swings 2487-2858
   us across fresh processes on an idle machine, so alternating builds
