@@ -553,6 +553,9 @@ def _circles_band(
     color: Color,
     row_lo: Int,
     row_hi: Int,
+    first: Int = 0,
+    count: Int = -1,
+    first_color: Int = 0,
 ):
     """Every marker reaching rows [row_lo, row_hi), in submission
     order.
@@ -568,14 +571,18 @@ def _circles_band(
     # The radius is shared by the batch, so which coverage route to
     # take is decided once rather than per marker.
     var closed_form = radius <= _CLOSED_FORM_MAX_RADIUS
-    for i in range(len(centers)):
+    # `first` and `count` are the caller's range: a batch keeps every
+    # recorded call's centres in one shared list, so a band draws a
+    # slice of it rather than a list of its own (#414).
+    var stop = len(centers) if count < 0 else first + count
+    for i in range(first, stop):
         ref p = centers[i]
         # Cheap reject, before the fill re-derives the same bounds.
         if p.y + radius + 2.0 < Float64(row_lo):
             continue
         if p.y - radius - 1.0 >= Float64(row_hi):
             continue
-        var c = color if uniform else colors[i]
+        var c = color if uniform else colors[first_color + (i - first)]
         if closed_form:
             _fill_circle_aa_rows(canvas, p.x, p.y, radius, c, row_lo, row_hi)
         else:
@@ -620,6 +627,42 @@ def _fill_circles_sequential(
         fill_circle_aa(
             canvas, p.x, p.y, radius, color if uniform else colors[i]
         )
+
+
+def _fill_circles_aa_entry(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    colors: List[Color],
+    radius: Float64,
+    color: Color,
+) raises:
+    """Where both overloads land: record the whole call inside a
+    banded supersampled region, and draw it as before everywhere else.
+
+    Recording it keeps the region banded, where forcing it to
+    materialize costs the region its whole advantage; a consumer
+    measured their scatter regressing about 20% for exactly that
+    (#414). Outside a region the call's own banded path stays, being
+    about 1.18x a batch of single markers (#389).
+    """
+    if canvas._in_banded_region():
+        if canvas.has_transform():
+            # Recorded in device space, as every op is: the centres
+            # map and the radius takes the transform's scale.
+            var m = canvas.current_transform()
+            var mapped = List[FPoint](capacity=len(centers))
+            for i in range(len(centers)):
+                ref p = centers[i]
+                var q = m.apply(p.x, p.y)
+                mapped.append(FPoint(q.x, q.y))
+            canvas._record_markers(
+                mapped, colors, radius * m.scale_factor(), color
+            )
+            return
+        canvas._record_markers(centers, colors, radius, color)
+        return
+    canvas._flush_batch()
+    _fill_circles_aa_impl(canvas, centers, colors, radius, color)
 
 
 def _fill_circles_aa_impl(
@@ -714,8 +757,7 @@ def fill_circles_aa(
         radius: Radius shared by every marker, in pixels.
         color: Fill color shared by every marker.
     """
-    canvas._flush_batch()
-    _fill_circles_aa_impl(canvas, centers, List[Color](), radius, color)
+    _fill_circles_aa_entry(canvas, centers, List[Color](), radius, color)
 
 
 def fill_circles_aa(
@@ -747,7 +789,7 @@ def fill_circles_aa(
                 " centers",
             )
         )
-    _fill_circles_aa_impl(canvas, centers, colors, radius, Color(0, 0, 0))
+    _fill_circles_aa_entry(canvas, centers, colors, radius, Color(0, 0, 0))
 
 
 def draw_circle_aa(

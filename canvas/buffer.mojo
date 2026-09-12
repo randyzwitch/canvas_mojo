@@ -275,6 +275,12 @@ comptime _OP_GLYPH = 6
 # shapes after it are clipped where they are drawn (#409 follow-up).
 # A clip that is a coverage mask -- pushed under a rotation, or a path
 # clip -- still flushes; only the rectangle form records.
+# A whole bulk marker call: every centre of one `fill_circles_aa` as a
+# range of the batch's points, replayed per band through the same band
+# body the call's own threads use. One op rather than one per marker,
+# because 2,000 separate ops replayed across 30 bands cost more than
+# the buffer the region saves (#414).
+comptime _OP_MARKERS = 9
 comptime _OP_PUSH_CLIP = 7
 comptime _OP_POP_CLIP = 8
 
@@ -463,6 +469,8 @@ struct _Batch(Copyable, Movable):
     # Every recorded glyph's coverage bytes, end to end, each op
     # holding its own range (#391).
     var glyph_counts: List[UInt8]
+    # Per-marker colours for the recorded bulk calls that carry them.
+    var marker_colors: List[Color]
     # Whether any op changes the clip. Those mutate the clip stack of
     # the canvas they replay onto, which is safe when every band has
     # its own scratch (a supersampled region) and a data race when the
@@ -477,6 +485,7 @@ struct _Batch(Copyable, Movable):
         self.dashes = List[Float64]()
         self.commands = List[PathCommand]()
         self.glyph_counts = List[UInt8]()
+        self.marker_colors = List[Color]()
         self.has_clip_ops = False
         self.tables = List[_EdgeTable]()
         self.tables.append(_EdgeTable())
@@ -488,6 +497,7 @@ struct _Batch(Copyable, Movable):
         self.points.reserve(len(other.points))
         self.commands.reserve(len(other.commands))
         self.glyph_counts.reserve(len(other.glyph_counts))
+        self.marker_colors.reserve(len(other.marker_colors))
 
     def record_edges(
         mut self,
@@ -1335,6 +1345,45 @@ struct Canvas(Copyable, DrawTarget, Movable):
             color,
         )
 
+    def _record_markers(
+        mut self,
+        centers: List[FPoint],
+        colors: List[Color],
+        radius: Float64,
+        color: Color,
+    ):
+        """Record a whole bulk marker call: the centres go into the
+        batch's points and the op keeps their range, so a band draws
+        the slice rather than every marker as its own op. Centres and
+        radius are already in device space.
+        """
+        if len(centers) == 0:
+            return
+        var op = _BatchOp(_OP_MARKERS, color)
+        op.first_point = len(self._batch.points)
+        op.point_count = len(centers)
+        op.rx = radius
+        op.first_dash = len(self._batch.marker_colors)
+        op.dash_count = len(colors)
+        var min_y = centers[0].y
+        var max_y = centers[0].y
+        for i in range(len(centers)):
+            ref p = centers[i]
+            self._batch.points.append(p)
+            if p.y < min_y:
+                min_y = p.y
+            if p.y > max_y:
+                max_y = p.y
+        for i in range(len(colors)):
+            self._batch.marker_colors.append(colors[i])
+        # The rows any marker can touch, which is what a band rejects
+        # the whole call on.
+        op.first_row = Int(floor(min_y - radius)) - 1
+        op.last_row = Int(ceil(max_y + radius)) + 2
+        op.min_y = op.first_row
+        op.max_y = op.last_row
+        self._batch.ops.append(op)
+
     def _record_glyph(
         mut self,
         mask: _CoverageMask,
@@ -1498,7 +1547,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         # where each band rebuilds its own clip stack from the ops; in
         # every other case it draws what is pending first, as every
         # state change does.
-        if not self._recording_clips():
+        if not self._in_banded_region():
             self._flush_batch()
         if self._transformed:
             if self._transform.is_axis_aligned():
@@ -1530,7 +1579,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 self._clip_stack[len(self._clip_stack) - 1], new_rect
             )
         new_rect.mask_depth = mask_depth
-        if self._recording_clips() and mask_depth < 0:
+        if self._in_banded_region() and mask_depth < 0:
             # The rect is already intersected with everything above it,
             # so a band replaying this onto an empty stack arrives at
             # the same clip. A mask-backed entry is not recordable.
@@ -1547,7 +1596,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             self._batch.has_clip_ops = True
         self._clip_stack.append(new_rect)
 
-    def _recording_clips(self) -> Bool:
+    def _in_banded_region(self) -> Bool:
         """Whether a clip change records rather than drawing what is
         pending. Only inside a supersampled region still replaying a
         band at a time: there each band has its own clip stack, so the
@@ -1587,7 +1636,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
             self._clip_stack[len(self._clip_stack) - 1].mask_depth < 0
         )
         if (
-            self._recording_clips()
+            self._in_banded_region()
             and recordable
             and self._batch_clip_depth > 0
         ):

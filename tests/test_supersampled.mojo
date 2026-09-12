@@ -197,6 +197,27 @@ def _draw_case(mut c: Canvas, which: Int) raises:
         ramp.add_stop(0.0, Color(200, 30, 30))
         ramp.add_stop(1.0, Color(30, 30, 200))
         c.fill_rect_gradient(10, 10, 100, 50, ramp)
+    elif which == 4:
+        # A colour per marker, which travels in its own side list.
+        var centres = List[FPoint]()
+        var colours = List[Color]()
+        for i in range(24):
+            centres.append(
+                FPoint(
+                    20.0 + Float64((i * 31) % 160),
+                    15.0 + Float64((i * 17) % 90),
+                )
+            )
+            colours.append(
+                Color(UInt8(20 + i * 9), UInt8(200 - i * 7), 120, 190)
+            )
+        fill_circles_aa(c, centres, 5.5, colours)
+    elif which == 5:
+        var centres: List[FPoint] = [
+            FPoint(60.0, 50.0),
+            FPoint(140.0, 80.0),
+        ]
+        fill_circles_aa(c, centres, 18.0, INK)
     else:
         # Recordable and unrecordable work interleaved, so the order
         # the region gives up in is what decides the pixels.
@@ -228,6 +249,16 @@ def _assert_case_matches(which: Int, label: String) raises:
 
 def test_a_bulk_marker_call_in_a_region_matches() raises:
     _assert_case_matches(0, "fill_circles_aa")
+
+
+def test_a_bulk_marker_call_with_a_colour_each_matches() raises:
+    _assert_case_matches(4, "fill_circles_aa with colours")
+
+
+def test_bulk_markers_past_the_closed_form_radius_match() raises:
+    # Above the closed-form limit the band body takes the polygon
+    # route, which the recorded op has to reach as well.
+    _assert_case_matches(5, "fill_circles_aa large radius")
 
 
 def test_a_clip_in_a_region_matches() raises:
