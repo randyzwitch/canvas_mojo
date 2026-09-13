@@ -39,7 +39,8 @@ from canvas.path import (
     PathOp,
 )
 from canvas.shapes.lines import LineCap, LineJoin
-from canvas.text.font_discovery import FontWeight
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.text_align import TextAlign
 
 
@@ -170,6 +171,22 @@ def _join_name(join: LineJoin) -> StaticString:
     if join == LineJoin.MITER:
         return "miter"
     return "round"
+
+
+def _css_family(family: String) -> String:
+    """The CSS `font-family` for a family name given in the raster
+    backend's terms: the generic names fontconfig and `render.mojo`
+    use become the CSS generic keywords, and anything else, a face
+    name or an explicit CSS stack, passes through verbatim.
+    """
+    var key = family.lower()
+    if key == "sans" or key == "sans-serif" or key == "sansserif":
+        return "sans-serif"
+    if key == "serif":
+        return "serif"
+    if key == "monospace" or key == "mono":
+        return "monospace"
+    return family
 
 
 def _anchor_name(align: TextAlign) -> StaticString:
@@ -1803,18 +1820,19 @@ struct SvgCanvas(DrawTarget, Movable):
         rotation: Float64 = 0.0,
         weight: FontWeight = FontWeight.NORMAL,
     ):
-        """Draw a `<text>` element. Not part of `DrawTarget`, which
-        excludes text -- call this directly once a caller knows it holds
-        an `SvgCanvas`, the way raster code calls
-        `canvas.text.render.draw_text` on a `Canvas`.
+        """Draw a `<text>` element at a whole-pixel anchor with a
+        literal CSS `font-family`. The `DrawTarget` form below takes a
+        sub-pixel anchor, a slant and the raster backend's family
+        names; this one predates it and stays for callers that write
+        the CSS stack themselves.
 
         `family` is always emitted, defaulting to `"sans-serif"`, since
-        a viewer without one falls back to its own varying default. Note
-        it is a different kind of value from raster draw_text's `family`
+        a viewer without one falls back to its own varying default. It
+        is a different kind of value from raster draw_text's `family`
         despite the shared name: raster's resolves to one concrete font
-        *file*, while this is a literal CSS `font-family` -- keyword, face
-        name, or comma-separated stack -- interpreted by whatever renders
-        the SVG. A caller driving both backends maps between them itself.
+        *file*, while this is a literal CSS `font-family` -- keyword,
+        face name, or comma-separated stack -- interpreted by whatever
+        renders the SVG.
 
         `(x, y)` is the baseline anchor, matching raster draw_text, since
         SVG `<text>` anchors `y` to the alphabetic baseline already.
@@ -1844,11 +1862,111 @@ struct SvgCanvas(DrawTarget, Movable):
                 around (x, y).
             weight: Normal/bold weight.
         """
-        var escaped_family = _escape_xml_attr(family)
+        self._write_text(
+            String(x),
+            String(y),
+            text,
+            color,
+            size,
+            family,
+            FontSlant.NORMAL,
+            weight,
+            rotation,
+            align,
+        )
+
+    def draw_text(
+        mut self,
+        x: Float64,
+        y: Float64,
+        text: String,
+        color: Color,
+        size: Float64,
+        family: String = "Sans",
+        slant: FontSlant = FontSlant.NORMAL,
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """The `DrawTarget` form: a `<text>` element at a sub-pixel
+        anchor, with `family` in the raster backend's terms. The
+        generic names (`"Sans"`, `"Serif"`, `"Monospace"`, and their
+        CSS spellings) become the CSS generic keywords; a face name or
+        an explicit CSS stack passes through verbatim, so a caller can
+        still write the stack itself. `slant` emits `font-style`
+        (`italic` or `oblique`), omitted when upright.
+
+        `cache` is unused: a `<text>` element carries no glyphs, so
+        there is nothing to resolve. It is in the signature so one
+        generic call serves every backend.
+
+        Everything the whole-pixel overload says about the anchor,
+        `text-anchor`, `rotation` and `weight` holds here.
+
+        Args:
+            x: Anchor x, sub-pixel -- baseline left end for
+                TextAlign.LEFT.
+            y: Anchor y, sub-pixel -- baseline.
+            text: Text to draw. No line-break handling for embedded
+                "\\n".
+            color: Text color.
+            size: Font size in pixels.
+            family: Font family name or generic alias, as the raster
+                backend takes it.
+            slant: Upright, italic or oblique.
+            weight: Normal/bold weight.
+            rotation: Radians, rotating the whole `<text>` element
+                around (x, y).
+            align: Horizontal alignment relative to (x, y).
+            cache: Unused here; see above.
+
+        Raises:
+            Error: Never; the signature is the trait's.
+        """
+        var xs = String()
+        _write_svg_float(xs, x)
+        var ys = String()
+        _write_svg_float(ys, y)
+        self._write_text(
+            xs,
+            ys,
+            text,
+            color,
+            size,
+            _css_family(family),
+            slant,
+            weight,
+            rotation,
+            align,
+        )
+
+    def _write_text(
+        mut self,
+        x: String,
+        y: String,
+        text: String,
+        color: Color,
+        size: Float64,
+        css_family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        rotation: Float64,
+        align: TextAlign,
+    ):
+        """The `<text>` element both `draw_text` overloads write, with
+        the anchor already formatted the way each wants it."""
+        var escaped_family = _escape_xml_attr(css_family)
         var anchor = _anchor_name(align)
         var font_weight = ""
         if weight == FontWeight.BOLD:
             font_weight = ' font-weight="bold"'
+        var font_style = ""
+        if slant == FontSlant.ITALIC:
+            font_style = ' font-style="italic"'
+        elif slant == FontSlant.OBLIQUE:
+            font_style = ' font-style="oblique"'
         self._body.write('<text x="', x, '" y="', y, '" font-size="')
         _write_svg_float(self._body, size)
         self._body.write(
@@ -1856,6 +1974,7 @@ struct SvgCanvas(DrawTarget, Movable):
             escaped_family,
             '"',
             font_weight,
+            font_style,
             ' fill="',
             _to_hex(color),
             '"',
@@ -1896,8 +2015,8 @@ struct SvgCanvas(DrawTarget, Movable):
     ):
         """Draw a `<text>` element outlined rather than filled:
         `fill="none"` plus the stroke attributes. The vector
-        counterpart of raster `stroke_text`, and like `draw_text` not
-        part of `DrawTarget`.
+        counterpart of raster `stroke_text`; not part of `DrawTarget`,
+        which carries only the filled `draw_text`.
 
         Everything `draw_text` says about `(x, y)`, `family`, `align`,
         `rotation` and `weight` holds here unchanged; only the paint

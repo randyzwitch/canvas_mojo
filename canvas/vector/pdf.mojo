@@ -1807,7 +1807,8 @@ struct PdfCanvas(DrawTarget, Movable):
         """Draw `text` as real, selectable text in an embedded subset
         of the font, laid out exactly as the raster `draw_text` lays it
         out (shaping, kerning, line breaking, alignment, rotation about
-        the anchor). Not on `DrawTarget`, which excludes text.
+        the anchor). The overload below, with a `cache`, is the
+        `DrawTarget` form; this one is the same call without it.
 
         Args:
             x: Anchor x -- baseline left end for LEFT alignment.
@@ -1839,6 +1840,48 @@ struct PdfCanvas(DrawTarget, Movable):
             1.0,
             LineJoin.ROUND,
             4.0,
+        )
+
+    def draw_text(
+        mut self,
+        x: Float64,
+        y: Float64,
+        text: String,
+        color: Color,
+        size: Float64,
+        family: String = "Sans",
+        slant: FontSlant = FontSlant.NORMAL,
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """The `DrawTarget` form of `draw_text`: the same call with a
+        `cache`, which the document does not read. It keeps its own
+        `FontCache`, because the font subset it embeds is built from
+        the faces that cache resolved and has to outlive any one call;
+        resolving through a caller's cache instead would tie the
+        document's fonts to an object it does not own.
+
+        Args:
+            x: Anchor x -- baseline left end for LEFT alignment.
+            y: Anchor y -- baseline.
+            text: Text to draw, "\\n"-separated lines.
+            color: Fill color.
+            size: Font size in points.
+            family: Font family name or generic alias.
+            slant: Requested upright/italic/oblique style.
+            weight: Requested normal/bold weight.
+            rotation: Radians, rotating the block around the anchor.
+            align: Horizontal alignment of each line.
+            cache: Unused here; see above.
+
+        Raises:
+            Error: No font could be resolved for `family`.
+        """
+        self.draw_text(
+            x, y, text, color, size, family, slant, weight, rotation, align
         )
 
     def stroke_text(

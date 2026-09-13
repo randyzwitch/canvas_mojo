@@ -30,6 +30,7 @@ from canvas import (
     downsample,
     draw_canvas,
     draw_image,
+    draw_text,
     draw_shadowed,
     encode_png,
     fill_mask,
@@ -224,6 +225,85 @@ def test_a_colour_list_of_the_wrong_length_raises_on_every_backend() raises:
     except:
         raised += 1
     assert_equal(raised, 3, "every backend must reject a short color list")
+
+
+def _label[T: DrawTarget](mut target: T, mut cache: FontCache) raises:
+    """Written against the trait: a centered, rotated label at a
+    sub-pixel anchor, which is what a chart's axis title is."""
+    target.draw_text(
+        40.5,
+        30.25,
+        "Ag",
+        Color(0, 0, 0),
+        18.0,
+        align=TextAlign.CENTER,
+        rotation=0.3,
+        cache=cache,
+    )
+
+
+def test_text_reaches_every_backend_through_the_trait() raises:
+    """#431: the three backends each had a `draw_text` and a caller
+    generic over `DrawTarget` could reach none of them. Through the
+    trait the raster output is byte-identical to the free function's,
+    the SVG carries one `<text>` at the anchor with the rotation and
+    the mapped family, and the PDF is byte-identical to the direct
+    call."""
+    var cache = FontCache()
+    var via_trait = Canvas(80, 60, Color(255, 255, 255))
+    _label(via_trait, cache)
+    var direct = Canvas(80, 60, Color(255, 255, 255))
+    draw_text(
+        direct,
+        40.5,
+        30.25,
+        "Ag",
+        Color(0, 0, 0),
+        18.0,
+        align=TextAlign.CENTER,
+        rotation=0.3,
+        cache=cache,
+    )
+    var ink = 0
+    for y in range(60):
+        for x in range(80):
+            var a = via_trait.get_pixel(x, y)
+            var b = direct.get_pixel(x, y)
+            assert_true(
+                a.r == b.r and a.g == b.g and a.b == b.b and a.a == b.a,
+                String("raster text differs at (", x, ", ", y, ")"),
+            )
+            if a.r != 255:
+                ink += 1
+    assert_true(ink > 20, "the label left ink")
+
+    var svg = SvgCanvas(80, 60)
+    _label(svg, cache)
+    var markup = svg.to_string()
+    assert_true('<text x="40.500" y="30.250"' in markup, "sub-pixel anchor")
+    assert_true('text-anchor="middle"' in markup, "CENTER is middle")
+    assert_true("rotate(17.189 40.500 30.250)" in markup, "0.3 rad about it")
+    assert_true('font-family="sans-serif"' in markup, "Sans maps to CSS")
+    assert_true(">Ag</text>" in markup, "the text itself")
+
+    var pdf_a = PdfCanvas(80, 60)
+    _label(pdf_a, cache)
+    var pdf_b = PdfCanvas(80, 60)
+    pdf_b.draw_text(
+        40.5,
+        30.25,
+        "Ag",
+        Color(0, 0, 0),
+        18.0,
+        align=TextAlign.CENTER,
+        rotation=0.3,
+    )
+    var bytes_a = pdf_a.to_bytes(compress=False)
+    var bytes_b = pdf_b.to_bytes(compress=False)
+    assert_equal(len(bytes_a), len(bytes_b), "PDF length")
+    for i in range(len(bytes_a)):
+        assert_equal(bytes_a[i], bytes_b[i], String("PDF byte ", i))
+    assert_true("BT " in pdf_a.content(), "a text object was emitted")
 
 
 def _draw_scene[T: DrawTarget](mut target: T):

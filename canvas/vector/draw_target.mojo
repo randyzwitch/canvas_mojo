@@ -107,7 +107,19 @@ over the trait can reach that pass; `SvgCanvas` and `PdfCanvas` draw
 nothing until serialized anyway and treat both calls as no-ops. Both
 pairs are lossless to drop, which is what admits them here.
 
-Text is backend-specific and is not part of this trait.
+`draw_text` is on the trait. The three backends lay text out through
+the same shaping and line-breaking code and differ only in how they
+emit glyphs: `Canvas` composites masks, `SvgCanvas` writes a `<text>`
+element and leaves the glyphs to the viewer, `PdfCanvas` embeds a
+subset of the font. The one place they genuinely differ is `family`:
+the raster and PDF backends resolve it against the installed fonts,
+where SVG emits a CSS `font-family` and maps the generic names
+(`"Sans"`, `"Serif"`, `"Monospace"`) to their CSS spellings and passes
+anything else through verbatim. The `FontCache` every call takes is
+what the raster backend resolves through; SVG has no glyphs to cache
+and ignores it, and PDF keeps its own because the subset it embeds
+lives with the document. `measure_text` is not on the trait: it is
+backend-independent already.
 
 Conformance is nominal, not structural: `Canvas` (`canvas/buffer.mojo`),
 `SvgCanvas` (`canvas/vector/svg.mojo`) and `PdfCanvas`
@@ -123,6 +135,9 @@ from canvas.geometry import FPoint, Matrix2D
 from canvas.path import Path
 from canvas.gradient import LinearGradient
 from canvas.shapes.lines import LineCap, LineJoin
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
+from canvas.text.text_align import TextAlign
 
 
 trait DrawTarget:
@@ -716,6 +731,57 @@ trait DrawTarget:
 
         Raises:
             Error: Backend-specific; see each implementation.
+        """
+        ...
+
+    def draw_text(
+        mut self,
+        x: Float64,
+        y: Float64,
+        text: String,
+        color: Color,
+        size: Float64,
+        family: String = "Sans",
+        slant: FontSlant = FontSlant.NORMAL,
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """Draw `text`, one or more "\\n"-separated lines, anchored at
+        `(x, y)` on the first line's baseline, under the current
+        transform. `align` places each line against the anchor and
+        `rotation` turns the whole block about it, radians, clockwise
+        on screen. The same arguments as `canvas.text.render.draw_text`
+        less its kerning and ligature switches, so a label laid out for
+        one backend lands at the same anchor on the others.
+
+        `family` is a font-matching query on the raster and PDF
+        backends and a CSS `font-family` on SVG; the generic names
+        `"Sans"`, `"Serif"` and `"Monospace"` mean the same thing on
+        all three. Pass one `FontCache` to every call in a batch: the
+        raster backend resolves fonts and caches glyph masks through
+        it; the vector backends take it for the signature's sake and
+        do their own resolution.
+
+        Args:
+            x: Anchor x, sub-pixel: the baseline's left end for
+                `TextAlign.LEFT`.
+            y: Anchor y, sub-pixel: the first line's baseline.
+            text: Text to draw.
+            color: Fill color.
+            size: Font size in pixels.
+            family: Font family name or generic alias.
+            slant: Upright, italic or oblique.
+            weight: Normal or bold.
+            rotation: Radians about the anchor.
+            align: Horizontal alignment of each line.
+            cache: Shared font and glyph cache.
+
+        Raises:
+            Error: No font could be resolved for `family`, on the
+                backends that resolve one.
         """
         ...
 
