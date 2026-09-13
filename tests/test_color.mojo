@@ -125,5 +125,22 @@ def test_to_hex_leaves_alpha_out() raises:
     assert_equal(Color(255, 136, 0, 64).to_hex(), "#ff8800")
 
 
+def test_equal_when_every_channel_matches() raises:
+    assert_true(Color(1, 2, 3) == Color(1, 2, 3))
+    assert_true(Color(1, 2, 3, 4) == Color(1, 2, 3, 4))
+    assert_equal(Color("#0a141e"), Color(10, 20, 30))
+    assert_equal(String(Color(10, 20, 30)), "Color(10, 20, 30, 255)")
+
+
+def test_one_channel_apart_is_not_equal() raises:
+    var base = Color(1, 2, 3, 4)
+    assert_true(base != Color(0, 2, 3, 4))
+    assert_true(base != Color(1, 0, 3, 4))
+    assert_true(base != Color(1, 2, 0, 4))
+    # Alpha alone separates two colors: identity, not appearance.
+    assert_true(base != Color(1, 2, 3, 0))
+    assert_true(not (base == Color(1, 2, 3, 255)))
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

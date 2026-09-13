@@ -59,7 +59,7 @@ def _differing(a: Canvas, b: Canvas) -> Int:
         for x in range(a.width):
             var p = a.get_pixel(x, y)
             var q = b.get_pixel(x, y)
-            if p.r != q.r or p.g != q.g or p.b != q.b or p.a != q.a:
+            if p != q:
                 n += 1
     return n
 
