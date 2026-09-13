@@ -193,7 +193,9 @@ def test_a_mesh_reaches_every_backend_through_the_trait() raises:
         )
     var ss = SvgCanvas(24, 24)
     _draw_shaded_mesh(ss)
-    assert_equal(ss.to_string().count("<path"), 2, "SVG emits a flat path per face")
+    assert_equal(
+        ss.to_string().count("<path"), 2, "SVG emits a flat path per face"
+    )
     var sp = PdfCanvas(24, 24)
     _draw_shaded_mesh(sp)
     assert_equal(sp.content().count(" sh "), 1, "PDF paints one mesh shading")
