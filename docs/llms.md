@@ -67,6 +67,8 @@ from canvas import Canvas, Color, Path, fill_circle_aa, write_png
 Build a `Path` from `move_to`, `line_to`, `quad_curve_to`,
 `cubic_curve_to`, `arc_to`, and `close`. Every subpath begins with
 `move_to`, including one whose first segment is an arc.
+`rect`, `round_rect`, `ellipse` and `regular_polygon` add a whole closed
+shape as one subpath; `curve_through` adds a smooth open one.
 
 Use `fill_path_aa` for its interior or `stroke_path_aa` for its outline.
 `FillRule.EVEN_ODD` is the default; use `FillRule.NONZERO` when winding

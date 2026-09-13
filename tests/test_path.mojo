@@ -1808,5 +1808,87 @@ def test_stroke_hole_survives_where_only_the_ends_invert() raises:
     assert_equal(c.get_pixel(110, 20).r, 0, "the minor-axis top is inked")
 
 
+def test_regular_polygon_diamond_hits_its_four_fixed_points() raises:
+    # Unrotated, the first vertex is at three o'clock and a square's
+    # four vertices sit on the axis extremes: the diamond.
+    var d = Path()
+    d.regular_polygon(10.0, 20.0, 5.0, 4)
+    assert_equal(len(d.commands), 5)
+    assert_equal(d.commands[0].op, PathOp.MOVE_TO)
+    assert_almost_equal(d.commands[0].p1.x, 15.0, atol=1e-12)
+    assert_almost_equal(d.commands[0].p1.y, 20.0, atol=1e-12)
+    assert_almost_equal(d.commands[1].p1.x, 10.0, atol=1e-12)
+    assert_almost_equal(d.commands[1].p1.y, 25.0, atol=1e-12)
+    assert_almost_equal(d.commands[2].p1.x, 5.0, atol=1e-12)
+    assert_almost_equal(d.commands[2].p1.y, 20.0, atol=1e-12)
+    assert_almost_equal(d.commands[3].p1.x, 10.0, atol=1e-12)
+    assert_almost_equal(d.commands[3].p1.y, 15.0, atol=1e-12)
+    assert_equal(d.commands[4].op, PathOp.CLOSE)
+    # An eighth turn puts the vertices on the diagonals: the square.
+    var p = Path()
+    p.regular_polygon(10.0, 20.0, 5.0, 4, pi / 4.0)
+    var h = 5.0 * cos(pi / 4.0)
+    assert_almost_equal(p.commands[0].p1.x, 10.0 + h, atol=1e-12)
+    assert_almost_equal(p.commands[0].p1.y, 20.0 + h, atol=1e-12)
+    assert_almost_equal(p.commands[2].p1.x, 10.0 - h, atol=1e-12)
+    assert_almost_equal(p.commands[2].p1.y, 20.0 - h, atol=1e-12)
+
+
+def test_regular_polygon_hexagon_has_six_sides_and_closes() raises:
+    var p = Path()
+    p.regular_polygon(50.0, 50.0, 20.0, 6, -pi / 2.0)
+    assert_equal(len(p.commands), 7)
+    assert_equal(p.commands[0].op, PathOp.MOVE_TO)
+    var lines = 0
+    for i in range(1, 6):
+        if p.commands[i].op == PathOp.LINE_TO:
+            lines += 1
+    assert_equal(lines, 5)
+    assert_equal(p.commands[6].op, PathOp.CLOSE)
+    # Pointy-top: the first vertex is straight up from the center.
+    assert_almost_equal(p.commands[0].p1.x, 50.0, atol=1e-12)
+    assert_almost_equal(p.commands[0].p1.y, 30.0, atol=1e-12)
+    # Every vertex is `radius` from the center.
+    for i in range(6):
+        var dx = p.commands[i].p1.x - 50.0
+        var dy = p.commands[i].p1.y - 50.0
+        assert_almost_equal(sqrt(dx * dx + dy * dy), 20.0, atol=1e-12)
+
+
+def test_regular_polygon_rejects_fewer_than_three_sides() raises:
+    var p = Path()
+    with assert_raises(contains="at least 3 sides"):
+        p.regular_polygon(0.0, 0.0, 5.0, 2)
+    var q = Path()
+    q.regular_polygon(0.0, 0.0, 0.0, 5)
+    assert_equal(len(q.commands), 0)
+
+
+def test_regular_polygon_fills_like_the_same_vertices_by_hand() raises:
+    var built = Canvas(60, 60, BG)
+    var p = Path()
+    p.regular_polygon(30.0, 30.0, 22.0, 5, -pi / 2.0)
+    fill_path_aa(built, p, FG)
+
+    var by_hand = Canvas(60, 60, BG)
+    var q = Path()
+    for k in range(5):
+        var a = -pi / 2.0 + 2.0 * pi * Float64(k) / 5.0
+        var x = 30.0 + 22.0 * cos(a)
+        var y = 30.0 + 22.0 * sin(a)
+        if k == 0:
+            q.move_to(x, y)
+        else:
+            q.line_to(x, y)
+    q.close()
+    fill_path_aa(by_hand, q, FG)
+
+    for y in range(60):
+        for x in range(60):
+            var a = built.get_pixel(x, y)
+            var b = by_hand.get_pixel(x, y)
+            assert_true(a.r == b.r and a.g == b.g and a.b == b.b)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
