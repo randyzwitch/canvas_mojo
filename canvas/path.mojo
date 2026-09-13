@@ -154,7 +154,8 @@ struct PathCommand(ImplicitlyCopyable, Movable):
 
 struct Path(Copyable, Movable):
     """Build with move_to/line_to/quad_curve_to/cubic_curve_to/arc_to/
-    close, then hand to fill_path/stroke_path/stroke_path_aa. No
+    close, or a whole shape at once with rect/round_rect/ellipse/
+    regular_polygon, then hand to fill_path/stroke_path/stroke_path_aa. No
     chaining: each call is `mut self` returning nothing, like Canvas's
     push_clip/set_pixel.
 
@@ -463,6 +464,56 @@ struct Path(Copyable, Movable):
         self.cubic_curve_to(cx - ox, cy + ry, cx - rx, cy + oy, cx - rx, cy)
         self.cubic_curve_to(cx - rx, cy - oy, cx - ox, cy - ry, cx, cy - ry)
         self.cubic_curve_to(cx + ox, cy - ry, cx + rx, cy - oy, cx + rx, cy)
+        self.close()
+
+    def regular_polygon(
+        mut self,
+        cx: Float64,
+        cy: Float64,
+        radius: Float64,
+        sides: Int,
+        rotation: Float64 = 0.0,
+    ) raises:
+        """Add a closed regular polygon: `sides` vertices on the circle
+        of `radius` about `(cx, cy)`, vertex `k` at angle
+        `rotation + 2 * pi * k / sides`, in this package's angle
+        convention (0 along +x, increasing clockwise on screen because
+        y grows downward). `rotation = 0.0` puts the first vertex at
+        three o'clock; `-pi / 2` puts it at twelve, which makes a
+        pointy-top hexagon or an upright triangle, and `pi / 4` turns
+        a square into a diamond.
+
+        Wound the same way as `rect` and `ellipse`, so a polygon and a
+        hole cut from it behave under `FillRule.NONZERO` as those do.
+
+        A hexagon that is regular in data space and drawn through two
+        different axis scales is not regular in pixels: build it at
+        unit radius and map it with `transformed` and a `Transform2D`
+        carrying the two scales.
+
+        Args:
+            cx: Center x.
+            cy: Center y.
+            radius: Distance from the center to each vertex, in pixels.
+            sides: Vertex count, at least 3.
+            rotation: Angle of the first vertex, radians.
+
+        Raises:
+            Error: `sides` is less than 3.
+        """
+        if sides < 3:
+            raise Error(
+                "Path.regular_polygon(): a polygon needs at least 3 sides (got "
+                + String(sides)
+                + ")"
+            )
+        if radius <= 0.0:
+            return
+        var step = 2.0 * pi / Float64(sides)
+        self.move_to(cx + radius * cos(rotation), cy + radius * sin(rotation))
+        for k in range(1, sides):
+            var angle = rotation + step * Float64(k)
+            self.line_to(cx + radius * cos(angle), cy + radius * sin(angle))
         self.close()
 
     def curve_through(
