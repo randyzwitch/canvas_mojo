@@ -1890,5 +1890,63 @@ def test_regular_polygon_fills_like_the_same_vertices_by_hand() raises:
             assert_true(a.r == b.r and a.g == b.g and a.b == b.b)
 
 
+def test_arrow_head_along_x_has_its_base_behind_the_tip() raises:
+    var p = Path()
+    p.arrow_head(50.0, 20.0, 1.0, 0.0, 10.0, 4.0)
+    assert_equal(len(p.commands), 4)
+    assert_equal(p.commands[0].op, PathOp.MOVE_TO)
+    assert_almost_equal(p.commands[0].p1.x, 50.0, atol=1e-12)
+    assert_almost_equal(p.commands[0].p1.y, 20.0, atol=1e-12)
+    assert_almost_equal(p.commands[1].p1.x, 40.0, atol=1e-12)
+    assert_almost_equal(p.commands[1].p1.y, 24.0, atol=1e-12)
+    assert_almost_equal(p.commands[2].p1.x, 40.0, atol=1e-12)
+    assert_almost_equal(p.commands[2].p1.y, 16.0, atol=1e-12)
+    assert_equal(p.commands[3].op, PathOp.CLOSE)
+
+
+def test_arrow_head_normalizes_a_diagonal_direction() raises:
+    # (3, 4) has length 5; the head is the same for (0.6, 0.8).
+    var p = Path()
+    p.arrow_head(50.0, 50.0, 3.0, 4.0, 10.0, 4.0)
+    var q = Path()
+    q.arrow_head(50.0, 50.0, 0.6, 0.8, 10.0, 4.0)
+    for i in range(3):
+        assert_almost_equal(p.commands[i].p1.x, q.commands[i].p1.x, atol=1e-12)
+        assert_almost_equal(p.commands[i].p1.y, q.commands[i].p1.y, atol=1e-12)
+    # Base center is 10 back along (0.6, 0.8): (44, 42); the corners
+    # sit 4 to either side along the perpendicular (-0.8, 0.6).
+    assert_almost_equal(p.commands[1].p1.x, 44.0 - 3.2, atol=1e-12)
+    assert_almost_equal(p.commands[1].p1.y, 42.0 + 2.4, atol=1e-12)
+    assert_almost_equal(p.commands[2].p1.x, 44.0 + 3.2, atol=1e-12)
+    assert_almost_equal(p.commands[2].p1.y, 42.0 - 2.4, atol=1e-12)
+
+
+def test_arrow_head_rejects_a_zero_direction() raises:
+    var p = Path()
+    with assert_raises(contains="zero vector"):
+        p.arrow_head(0.0, 0.0, 0.0, 0.0, 10.0, 4.0)
+
+
+def test_arrow_head_over_a_shaft_stroked_to_the_tip_shows_no_seam() raises:
+    """The docstring's instruction, kept as an assertion: a shaft
+    stroked to the tip and the head filled over it leave no pixel
+    along the join lighter than the interior of either shape."""
+    var c = Canvas(80, 40, BG)
+    var shaft = Path()
+    shaft.move_to(10.0, 20.0)
+    shaft.line_to(60.0, 20.0)
+    stroke_path_aa(c, shaft, FG, 3.0)
+    var head = Path()
+    head.arrow_head(60.0, 20.0, 1.0, 0.0, 12.0, 6.0)
+    fill_path_aa(c, head, FG)
+    # The base sits at x = 48; the shaft's rows through it and one
+    # pixel to either side are fully covered.
+    for x in range(46, 51):
+        for y in range(19, 22):
+            assert_equal(c.get_pixel(x, y).r, 255)
+    # And deep inside the head too.
+    assert_equal(c.get_pixel(52, 20).r, 255)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

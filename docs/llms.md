@@ -69,6 +69,8 @@ Build a `Path` from `move_to`, `line_to`, `quad_curve_to`,
 `move_to`, including one whose first segment is an arc.
 `rect`, `round_rect`, `ellipse` and `regular_polygon` add a whole closed
 shape as one subpath; `curve_through` adds a smooth open one.
+`arrow_head` adds a closed arrowhead pointing along a direction; stroke the
+shaft to the tip so the head covers the join.
 
 Use `fill_path_aa` for its interior or `stroke_path_aa` for its outline.
 `FillRule.EVEN_ODD` is the default; use `FillRule.NONZERO` when winding
