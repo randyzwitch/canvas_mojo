@@ -1948,5 +1948,98 @@ def test_arrow_head_over_a_shaft_stroked_to_the_tip_shows_no_seam() raises:
     assert_equal(c.get_pixel(52, 20).r, 255)
 
 
+def _band_top() -> List[FPoint]:
+    return [
+        FPoint(0.0, 20.0),
+        FPoint(10.0, 12.0),
+        FPoint(20.0, 16.0),
+        FPoint(30.0, 8.0),
+    ]
+
+
+def _band_bottom() -> List[FPoint]:
+    """The band's lower edge, right to left, so it continues from the
+    top edge's last point."""
+    return [
+        FPoint(30.0, 28.0),
+        FPoint(20.0, 34.0),
+        FPoint(10.0, 30.0),
+        FPoint(0.0, 36.0),
+    ]
+
+
+def test_curve_to_through_continues_the_sub_path_without_a_move() raises:
+    var top = _band_top()
+    var bottom = _band_bottom()
+    var band = Path()
+    band.curve_through(top)
+    band.curve_to_through(bottom)
+    band.close()
+    var moves = 0
+    var cubics = 0
+    for cmd in band.commands:
+        if cmd.op == PathOp.MOVE_TO:
+            moves += 1
+        elif cmd.op == PathOp.CUBIC_TO:
+            cubics += 1
+    assert_equal(moves, 1)
+    # Three segments along the top, one across to the bottom's first
+    # point, three along the bottom.
+    assert_equal(cubics, 7)
+    assert_equal(band.commands[len(band.commands) - 1].op, PathOp.CLOSE)
+
+
+def test_curve_to_through_matches_curve_through_minus_its_move() raises:
+    var top = _band_top()
+    var bottom = _band_bottom()
+    var continued = Path()
+    continued.curve_through(top)
+    var before = len(continued.commands)
+    continued.curve_to_through(bottom, 0.7)
+
+    # The same curve as a fresh sub-path from the top's last point.
+    var through: List[FPoint] = [top[3]]
+    for p in bottom:
+        through.append(p)
+    var fresh = Path()
+    fresh.curve_through(through, 0.7)
+    assert_equal(fresh.commands[0].op, PathOp.MOVE_TO)
+    assert_equal(len(continued.commands) - before, len(fresh.commands) - 1)
+    for i in range(1, len(fresh.commands)):
+        var a = continued.commands[before + i - 1]
+        var b = fresh.commands[i]
+        assert_equal(a.op, b.op)
+        assert_equal(a.p1.x, b.p1.x)
+        assert_equal(a.p1.y, b.p1.y)
+        assert_equal(a.p2.x, b.p2.x)
+        assert_equal(a.p2.y, b.p2.y)
+        assert_equal(a.p3.x, b.p3.x)
+        assert_equal(a.p3.y, b.p3.y)
+
+
+def test_curve_to_through_at_zero_tension_emits_lines() raises:
+    var top = _band_top()
+    var bottom = _band_bottom()
+    var p = Path()
+    p.curve_through(top, 0.0)
+    p.curve_to_through(bottom, 0.0)
+    for i in range(1, len(p.commands)):
+        assert_equal(p.commands[i].op, PathOp.LINE_TO)
+    assert_equal(len(p.commands), 8)
+
+
+def test_curve_to_through_needs_a_current_point() raises:
+    var top = _band_top()
+    var bottom = _band_bottom()
+    var p = Path()
+    with assert_raises(contains="before any move_to"):
+        p.curve_to_through(bottom)
+    # Empty input adds nothing, with or without a current point.
+    var q = Path()
+    q.move_to(1.0, 2.0)
+    q.curve_to_through(List[FPoint]())
+    assert_equal(len(q.commands), 1)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

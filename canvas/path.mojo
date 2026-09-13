@@ -588,6 +588,10 @@ struct Path(Copyable, Movable):
         `line_to` builds rather than a flattened straight cubic, which
         samples at different intermediate points.
 
+        `curve_to_through` is the same curve continued from the
+        current point, for a shape with more than one smoothed edge on
+        one sub-path.
+
         Args:
             points: Points to pass through, in order. Empty adds
                 nothing; a single point adds only the move_to.
@@ -597,10 +601,59 @@ struct Path(Copyable, Movable):
             Error: Never in practice -- every internal call follows
                 this method's own move_to.
         """
-        var n = len(points)
-        if n == 0:
+        if len(points) == 0:
             return
         self.move_to(points[0].x, points[0].y)
+        self._curve_segments(points, tension)
+
+    def curve_to_through(
+        mut self, points: List[FPoint], tension: Float64 = 1.0
+    ) raises:
+        """Continue the current sub-path with a smooth curve from the
+        current point through `points`, with no move_to: the
+        continuation form of `curve_through`, whose tangents and
+        `tension` it shares. `line_to` is to `move_to` as this is to
+        `curve_through`.
+
+        For a closed shape with more than one smoothed edge, a band
+        between two series for instance: `curve_through` the top edge,
+        `curve_to_through` the bottom one back the other way, `close`.
+        One sub-path, so the fill is one shape and the two edges meet
+        without a seam.
+
+        The current point is the curve's first point, so the tangent
+        at the join is one-sided there, as `curve_through`'s is at its
+        first point. The commands are exactly those `curve_through`
+        would add for the current point followed by `points`, minus
+        its move_to.
+
+        Args:
+            points: Points to pass through after the current point, in
+                order. Empty adds nothing.
+            tension: Tangent scale, 1.0 for Catmull-Rom.
+
+        Raises:
+            Error: No move_to() has been called yet on this path.
+        """
+        if not self._has_current_point:
+            raise Error(
+                "Path.curve_to_through() called before any move_to() -- a"
+                " path needs a starting point first"
+            )
+        if len(points) == 0:
+            return
+        var through = List[FPoint](capacity=len(points) + 1)
+        through.append(FPoint(self._current_x, self._current_y))
+        for p in points:
+            through.append(p)
+        self._curve_segments(through, tension)
+
+    def _curve_segments(
+        mut self, points: List[FPoint], tension: Float64
+    ) raises:
+        """The cubics (or lines, at zero tension) from `points[0]`, which
+        must already be the current point, through the rest."""
+        var n = len(points)
         if tension <= 0.0:
             for i in range(1, n):
                 self.line_to(points[i].x, points[i].y)
