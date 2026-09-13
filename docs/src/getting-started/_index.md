@@ -124,9 +124,11 @@ def main() raises:
 when the output should be opaque. PDF dimensions are points; raster and
 SVG dimensions are pixels or user-space units.
 
-Not every feature belongs to `DrawTarget`. Text, clipping, image
-placement, and some paint operations are backend-specific. Use the
-concrete backend when the trait does not expose the operation you need.
+`DrawTarget` carries the shapes, paths, bulk markers, meshes,
+`draw_image`, rectangle clips, batches, and the transform, blend and
+color-space state. Text, path clips, and some paint operations are
+backend-specific. Use the concrete backend when the trait does not
+expose the operation you need.
 
 ## Next steps
 

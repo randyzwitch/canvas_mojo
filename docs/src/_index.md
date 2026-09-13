@@ -47,10 +47,12 @@ prefer them for normal rendered output.
 ## What it includes
 
 - Lines, rectangles, circles, ellipses, arcs, polygons, and Bezier paths
+- Bulk markers and seam-free meshes for scatter and surface plots
 - Linear, radial, and conic gradients, plus raster patterns
 - Transforms, clipping, masks, blend modes, blur, and shadows
-- Text using installed TrueType and OpenType fonts
+- Text using installed TrueType and OpenType fonts, including color emoji
 - PNG and BMP reading and writing, plus baseline and progressive JPEG reading
+- A batch that renders a scene across cores, and a supersampled region that anti-aliases without the enlarged buffer
 - Raster `Canvas`, `SvgCanvas`, and multipage `PdfCanvas` backends
 
 ## Where to go next
@@ -62,11 +64,12 @@ prefer them for normal rendered output.
 - **[Full package reference](canvas/)** contains every generated module and signature.
 - **[Architecture](https://github.com/randyzwitch/canvas_mojo/wiki/Architecture)** explains the rendering pipeline for contributors.
 
-The project is under active development. See the
-[Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog),
-[Backlog](https://github.com/randyzwitch/canvas_mojo/wiki/Backlog), and
-[GitHub repository](https://github.com/randyzwitch/canvas_mojo) for
-release and contribution details.
+Every tag has [release notes](https://github.com/randyzwitch/canvas_mojo/releases)
+with the measured numbers behind it. The
+[Changelog](https://github.com/randyzwitch/canvas_mojo/wiki/Changelog)
+records what was built and why, and the
+[Backlog](https://github.com/randyzwitch/canvas_mojo/wiki/Backlog) what
+was deliberately not.
 
 ## Development
 

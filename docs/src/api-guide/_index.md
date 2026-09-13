@@ -12,7 +12,7 @@ complete signatures, parameters, return values, and errors. See the
 ## Start here
 
 - [`buffer`](../canvas/buffer/) — `Canvas`, pixel access, drawing state,
-  transforms, and clipping.
+  transforms, clipping, batches, and supersampled regions.
 - [`color`](../canvas/color/) — `Color` and `ColorSpace`.
 - [`geometry`](../canvas/geometry/) — `Point`, `FPoint`, `Transform2D`,
   and `Matrix2D`.
@@ -36,6 +36,9 @@ from canvas import Canvas, Color, Path, fill_circle_aa, write_png
 - [`shapes.ellipses`](../canvas/shapes/ellipses/) — ellipse outlines and fills.
 - [`shapes.arcs`](../canvas/shapes/arcs/) — arcs, wedges, and ring sectors.
 - [`shapes.polygon_fill`](../canvas/shapes/polygon_fill/) — polygon fills.
+- [`shapes.mesh`](../canvas/shapes/mesh/) — `fill_mesh` and
+  `fill_mesh_shaded`: adjacent faces drawn as one seam-free shape, flat
+  or with a color per vertex.
 
 Hard-edged primitives have plain names such as `draw_line`; anti-aliased
 variants end in `_aa`.
@@ -93,10 +96,12 @@ box. When the same text must be measured and drawn, `prepare_text`,
   images, multiple pages, and `write_pdf`.
 - [`vector.pdf_font`](../canvas/vector/pdf_font/) — PDF font subsetting internals.
 
-`Canvas`, `SvgCanvas`, and `PdfCanvas` share the core `DrawTarget`
-primitives, transforms, blend state, and annotated groups. Text,
-clipping, images, and some paint operations remain backend-specific;
-consult each backend's generated reference for its supported surface.
+`Canvas`, `SvgCanvas`, and `PdfCanvas` share the `DrawTarget`
+primitives, bulk markers, meshes, `draw_image`, rectangle clips,
+batches, annotated groups, transforms, and blend and color-space
+state. Text, path clips, and some paint operations remain
+backend-specific; consult each backend's generated reference for its
+supported surface.
 
 ## Internal modules
 
