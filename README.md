@@ -60,7 +60,7 @@ configuration starting from an empty directory, follow
 preview = ["pixi-build"]  # git-source pixi dependencies are a preview feature
 
 [dependencies]
-canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", tag = "v0.34.0" }
+canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", tag = "v0.35.0" }
 ```
 
 Use `branch = "main"` instead of `tag` to track development.
@@ -185,7 +185,7 @@ page walks through each path and the rendering model behind it.
 
 ## Status
 
-Version 0.34.0, on Linux x86-64 and macOS Apple Silicon, with Mojo 1.x.
+Version 0.35.0, on Linux x86-64 and macOS Apple Silicon, with Mojo 1.x.
 CI runs the full suite on both platforms for every pull request, and a
 release runs the benchmark survey against its recorded reference and
 digests every verification scene byte for byte before tagging.
