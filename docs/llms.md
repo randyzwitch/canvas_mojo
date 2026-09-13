@@ -54,6 +54,11 @@ from canvas import Canvas, Color, Path, fill_circle_aa, write_png
 - Pixel `(x, y)` is centered at `(x, y)` and spans half a pixel on each side.
 - `Int` rectangle overloads identify covered pixels. `Float64` rectangle
   overloads describe geometric edges and snap them to pixel boundaries.
+- `round_to_int` is the package's rounding (halves away from zero).
+  `snap_to_pixel_edge` moves a coordinate to the nearest pixel boundary,
+  for a filled rectangle's edge; `snap_to_pixel_center` to the nearest
+  pixel center, for a hairline. Snap in user space before a supersampled
+  region so the edge stays hard after the downsample.
 - Angles are radians and clockwise-positive in the y-down coordinate system.
 - Functions ending in `_aa` are anti-aliased. Plain variants are hard-edged.
 - `Color(r, g, b, a=255)` uses 8-bit straight alpha.
