@@ -23,6 +23,16 @@ lengths, a dash offset, `LineCap`, `LineJoin`, and a miter limit.
 For a large set of equal-radius markers, use `fill_circles_aa` with a
 `List[FPoint]`. An overload accepts one `Color` per center.
 
+For faces that share edges, such as a surface plot's cells, use
+`fill_mesh` rather than one fill per face. Two anti-aliased fills that
+share an edge each blend their partial edge coverage against the
+background, so a light line shows along every shared edge; `fill_mesh`
+draws all the faces as one shape, seam-free inside and anti-aliased
+only at the outline. It takes the vertices as a `List[FPoint]`, the
+faces as a flat `List[Int]` of index triples in draw order, and one
+`Color` per triangle. Faces are drawn in the order given, so sort them
+far to near for a 3D surface.
+
 ## Construct a path
 
 Each subpath begins with `move_to`. Add segments, then optionally close

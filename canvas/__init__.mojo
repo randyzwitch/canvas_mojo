@@ -62,6 +62,7 @@ from canvas.shapes.circles import (
     fill_circles_aa,
     draw_circle_aa,
 )
+from canvas.shapes.mesh import fill_mesh
 from canvas.shapes.ellipses import (
     draw_ellipse,
     fill_ellipse,

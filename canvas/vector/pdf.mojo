@@ -45,6 +45,7 @@ from canvas.blend import BlendMode
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
+from canvas.shapes.mesh import _check_mesh
 from canvas.geometry import Matrix2D, FPoint
 from canvas.gradient import GradientStops, LinearGradient, RadialGradient
 from canvas.io.deflate import deflate
@@ -788,6 +789,55 @@ struct PdfCanvas(DrawTarget, Movable):
             )
         for i in range(len(centers)):
             self.fill_circle_aa(centers[i].x, centers[i].y, radius, colors[i])
+
+    def fill_mesh(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        colors: List[Color],
+    ) raises:
+        """`DrawTarget`'s mesh: one path per face. Viewers seam
+        adjacent anti-aliased fills as the raster backend did, so an
+        opaque face is filled and stroked together (`B`) in its own
+        color at width 0, which PDF defines as the thinnest line the
+        device can draw. A translucent face is filled only, for the
+        reason `SvgCanvas.fill_mesh` gives.
+
+        Args:
+            points: The vertices, in user space.
+            faces: Index triples into `points`, in draw order.
+            colors: One color per triangle.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `colors` is not one per triangle.
+        """
+        _check_mesh(points, faces, len(colors), True)
+        for f in range(0, len(faces), 3):
+            var color = colors[f // 3]
+            if color.a == 0:
+                continue
+            ref a = points[faces[f]]
+            ref b = points[faces[f + 1]]
+            ref c = points[faces[f + 2]]
+            var opaque = color.a == 255
+            self._begin(color, False)
+            if opaque:
+                _channel(self._content, color.r)
+                _channel(self._content, color.g)
+                _channel(self._content, color.b)
+                self._content += "RG 0 w 1 j "
+            _num(self._content, a.x)
+            _num(self._content, a.y)
+            self._content += "m "
+            _num(self._content, b.x)
+            _num(self._content, b.y)
+            self._content += "l "
+            _num(self._content, c.x)
+            _num(self._content, c.y)
+            self._content += "l h "
+            self._content += "B " if opaque else "f "
+            self._end()
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """A filled circle.

@@ -136,6 +136,34 @@ def test_batched_markers_reach_every_backend_through_the_trait() raises:
             assert_equal(a.a, b.a, String("large a at (", x, ", ", y, ")"))
 
 
+def _draw_mesh[T: DrawTarget](mut target: T) raises:
+    """A surface's faces through the trait, which is the only way a
+    chart library reaches the seam-free path (#425)."""
+    var pts: List[FPoint] = [
+        FPoint(4.0, 4.0),
+        FPoint(20.0, 4.0),
+        FPoint(20.0, 20.0),
+        FPoint(4.0, 20.0),
+    ]
+    var faces: List[Int] = [0, 1, 2, 0, 2, 3]
+    var cols: List[Color] = [Color(40, 90, 160), Color(40, 90, 160)]
+    target.fill_mesh(pts, faces, cols)
+
+
+def test_a_mesh_reaches_every_backend_through_the_trait() raises:
+    var c = Canvas(24, 24, Color(255, 255, 255))
+    _draw_mesh(c)
+    # Interior pixels on the shared diagonal are the fill, not a seam.
+    for k in range(7, 17):
+        assert_equal(c.get_pixel(k, k).r, 40, "diagonal at " + String(k))
+    var s = SvgCanvas(24, 24)
+    _draw_mesh(s)
+    assert_equal(s.to_string().count("<path"), 2, "SVG emits a path per face")
+    var p = PdfCanvas(24, 24)
+    _draw_mesh(p)
+    assert_true(len(p.to_bytes()) > 0, "PDF emits the faces")
+
+
 def test_a_colour_list_of_the_wrong_length_raises_on_every_backend() raises:
     var centers = List[FPoint]()
     centers.append(FPoint(5.0, 5.0))

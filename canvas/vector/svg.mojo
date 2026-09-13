@@ -28,6 +28,7 @@ from canvas.blend import BlendMode, _css_blend_name
 from canvas.buffer import Canvas
 from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
+from canvas.shapes.mesh import _check_mesh
 from canvas.geometry import FPoint, Matrix2D, _snap_rect
 from canvas.gradient import GradientStops, LinearGradient, RadialGradient
 from canvas.io.png import encode_png
@@ -1015,6 +1016,62 @@ struct SvgCanvas(DrawTarget, Movable):
             )
         for i in range(len(centers)):
             self.fill_circle_aa(centers[i].x, centers[i].y, radius, colors[i])
+
+    def fill_mesh(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        colors: List[Color],
+    ) raises:
+        """`DrawTarget`'s mesh: one `<path>` per face. Browsers seam
+        adjacent anti-aliased fills the way the raster backend did, so
+        an opaque face also carries `stroke` in its own color at half
+        a pixel, which covers the seam without changing the face's
+        extent by more than that. A translucent face is not stroked:
+        the stroke would double its alpha along every edge, which is
+        a darker seam in place of a lighter one.
+
+        Args:
+            points: The vertices, in user space.
+            faces: Index triples into `points`, in draw order.
+            colors: One color per triangle.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `colors` is not one per triangle.
+        """
+        _check_mesh(points, faces, len(colors), True)
+        for f in range(0, len(faces), 3):
+            var color = colors[f // 3]
+            if color.a == 0:
+                continue
+            ref a = points[faces[f]]
+            ref b = points[faces[f + 1]]
+            ref c = points[faces[f + 2]]
+            self._body.write('<path d="M')
+            _write_svg_float(self._body, a.x)
+            self._body.write(" ")
+            _write_svg_float(self._body, a.y)
+            self._body.write(" L")
+            _write_svg_float(self._body, b.x)
+            self._body.write(" ")
+            _write_svg_float(self._body, b.y)
+            self._body.write(" L")
+            _write_svg_float(self._body, c.x)
+            self._body.write(" ")
+            _write_svg_float(self._body, c.y)
+            self._body.write('Z" fill="', _to_hex(color), '"')
+            if color.a == 255:
+                self._body.write(
+                    ' stroke="',
+                    _to_hex(color),
+                    '" stroke-width="0.5" stroke-linejoin="round"',
+                )
+            else:
+                _write_opacity(self._body, "fill", color)
+            self._write_transform()
+            self._write_blend()
+            self._body.write("/>\n")
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """Emit a `<circle>` element.

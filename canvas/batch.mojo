@@ -49,6 +49,7 @@ from canvas.buffer import (
     _OP_PUSH_CLIP,
     _OP_GLYPH,
     _OP_MARKERS,
+    _OP_MESH,
     _OP_RECT,
     _OP_STROKE,
 )
@@ -57,6 +58,7 @@ from canvas.geometry import FPoint
 from canvas.path import Path, PathCommand, _FillEdges, _flatten_commands
 from canvas.shapes.circles import _circles_band, _fill_circle_aa_rows
 from canvas.shapes.ellipses import _fill_ellipse_aa_rows
+from canvas.shapes.mesh import _mesh_band
 from canvas.shapes.lines import _stroke_edges
 from canvas.compose import _draw_canvas_device, draw_canvas, draw_image
 from canvas.resize import downsample
@@ -362,6 +364,19 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
                 row_hi,
                 op.first_point,
                 op.point_count,
+                op.first_dash,
+            )
+        elif op.kind == _OP_MESH:
+            _mesh_band(
+                canvas,
+                batch.points,
+                batch.mesh_faces,
+                batch.marker_colors,
+                row_lo,
+                row_hi,
+                op.first_point,
+                op.first_face,
+                op.face_count,
                 op.first_dash,
             )
         elif op.kind == _OP_GLYPH:

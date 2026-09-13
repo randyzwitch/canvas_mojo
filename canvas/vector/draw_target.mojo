@@ -12,7 +12,10 @@ Twelve drawing primitives are declared -- `fill_rect`,
 `stroke_path_aa` and `fill_path_aa` -- a subset of `canvas.shapes`.
 `fill_circles_aa` is the one that is not a distinct shape: it is
 `fill_circle_aa` in bulk, on the trait because a generic caller has no
-other way to reach the raster backend's batched path. `fill_polygon`, radial gradients and
+other way to reach the raster backend's batched path. `fill_mesh` is
+on the trait for the stronger version of that reason: adjacent faces
+filled one at a time seam along every shared edge, and only a call
+that sees the whole mesh can draw it seam-free (#425). `fill_polygon`, radial gradients and
 path-shaped gradients are not on the trait; each exists as a free
 function or a `Canvas` method instead. The two strokes, `draw_line_aa`
 and `stroke_path_aa`, take the full stroke style -- `dashes`,
@@ -339,6 +342,45 @@ trait DrawTarget:
             centers: Sub-pixel centre of each marker, in draw order.
             radius: Radius shared by every marker, in pixels.
             colors: One color per centre, same length as `centers`.
+        """
+        ...
+
+    def fill_mesh(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        colors: List[Color],
+    ) raises:
+        """Many adjacent triangles in one call, drawn as one shape: no
+        seam along an edge two faces share, anti-aliasing only at the
+        outline of the whole. What a surface plot draws.
+
+        On the raster backend a face filled on its own leaves a light
+        line along every edge it shares with a neighbour, because each
+        face's edge coverage blends against the background rather
+        than against the other face (#425). Only a call that sees all
+        the faces can fix that, which is why this is on the trait
+        rather than a loop over `fill_path_aa`. The vector backends
+        emit one element per face; browsers and PDF viewers seam the
+        same way, so an opaque face there also carries a hairline
+        stroke in its own color, which is the standard remedy. A
+        translucent face is left unstroked, since the stroke would
+        double its alpha along the edge, and keeps the viewer's seam.
+
+        Faces are drawn in the order given -- a mesh sorted back to
+        front composites as the painter's algorithm expects where
+        faces overlap. Under a transform the vertices map through it.
+        A face of zero area draws nothing; winding does not matter.
+
+        Args:
+            points: The vertices, in user space.
+            faces: Index triples into `points`, one triangle each, in
+                draw order.
+            colors: One color per triangle, same count as triples.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `colors` is not one per triangle.
         """
         ...
 
