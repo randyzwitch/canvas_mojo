@@ -21,7 +21,11 @@ annotations can render through any backend.
 | Blend modes and color-space state | Yes | Yes, emitted as SVG/CSS | Yes, emitted as PDF graphics state |
 | Filled and stroked text | Rasterized glyphs | SVG text elements | Embedded font subsets |
 | Text on a path | Yes | Yes | No |
-| Raster image placement | Yes | No | Yes |
+| Raster image placement (`draw_image`) | Yes | Yes, as an embedded PNG | Yes, as an image XObject |
+| Bulk markers and meshes | Yes | Yes, one element per mark | Yes, one path per mark |
+| Smooth-shaded mesh (`fill_mesh_shaded`) | Interpolated per pixel | Flat, one color per face | Native mesh shading |
+| Batches (`begin_batch`) | Rendered across cores | Accepted, output unchanged | Accepted, output unchanged |
+| Supersampled region | Yes | Not applicable | Not applicable |
 | Annotated groups | Accepted as no-ops | Labeled SVG groups | Marked-content groups |
 | Multiple pages | No | No | Yes, with `new_page` |
 | Pixel reads and writes | Yes | No | No |
@@ -43,8 +47,8 @@ with other raster content.
 
 Use `SvgCanvas` for a single scalable graphic that should remain inspectable
 and editable as XML. Text stays as SVG text and therefore depends on the
-viewer's available fonts. SVG additionally supports text on a path. It does
-not currently provide raster image placement.
+viewer's available fonts. SVG additionally supports text on a path, and
+places a raster block as an embedded PNG.
 
 ## Use PdfCanvas for documents and printing
 
@@ -73,9 +77,9 @@ def main() raises:
 ```
 
 Text is intentionally outside `DrawTarget` because its representation and
-font behavior differ by backend. Image placement and backend-specific
-document features are outside it as well. Keep those operations at the layer
-that chooses the concrete target, or provide a separate path for each target.
+font behavior differ by backend. Path clips and document features such as
+pages are outside it as well. Keep those operations at the layer that
+chooses the concrete target, or provide a separate path for each target.
 
 See [Transforms and State](../transforms-and-state/) for the shared state
 model and [Text](../text/) for text measurement, caching, and backend

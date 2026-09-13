@@ -33,8 +33,7 @@ directly:
 pixi run mojo run -I . tests/test_circles.mojo
 ```
 
-There are no external library dependencies — nothing is linked, and
-nothing is dlopen'd. There is still an external *data* dependency:
+The package is pure Mojo. There is still an external *data* dependency:
 installed font files. Text tests need a `Sans`-resolvable system font,
 and the font-fallback tests additionally need the `Ubuntu` and `DejaVu
 Sans` families installed, since they turn on one having a glyph the
@@ -346,14 +345,14 @@ _ = acc.rows  # last use past the tasks
 Parameters of the function that waits are safe, since the caller's
 frame owns them for the whole call. Locals are not.
 
-### No FFI anywhere
+### Pure Mojo
 
-Nothing in this package links or dlopens a library. `text/
-font_discovery.mojo` turns a family name into a font file path by
-reading the installed fonts' own `name`/`OS/2`/`head`/`post` tables,
-the job `libfontconfig` would otherwise do. Keep it that way: a new
-external dependency needs a reason that survives "could this be a few
-hundred lines of table parsing instead?".
+`text/font_discovery.mojo` turns a family name into a font file path
+by reading the installed fonts' own `name`/`OS/2`/`head`/`post`
+tables, the job `libfontconfig` would otherwise do, and the codecs,
+the font parsers and the rasterizers are all written here. Keep it
+that way: a new external dependency needs a reason that survives
+"could this be a few hundred lines of Mojo instead?".
 
 If you work in `font_discovery.mojo`, the two things worth knowing are
 that matching is a score, never a filter (an unmatched family falls
