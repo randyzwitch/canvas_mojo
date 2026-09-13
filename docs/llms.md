@@ -73,7 +73,9 @@ Build a `Path` from `move_to`, `line_to`, `quad_curve_to`,
 `cubic_curve_to`, `arc_to`, and `close`. Every subpath begins with
 `move_to`, including one whose first segment is an arc.
 `rect`, `round_rect`, `ellipse` and `regular_polygon` add a whole closed
-shape as one subpath; `curve_through` adds a smooth open one.
+shape as one subpath. `curve_through` adds a smooth open subpath through
+points with Catmull-Rom tangents; `curve_to_through` continues the current
+subpath with the same curve, for a closed band with two smoothed edges.
 `arrow_head` adds a closed arrowhead pointing along a direction; stroke the
 shaft to the tip so the head covers the join.
 
