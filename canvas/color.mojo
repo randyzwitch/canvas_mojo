@@ -55,8 +55,11 @@ def _hex_byte(value: UInt8) -> String:
     return String(_HEX_DIGITS[byte=v // 16]) + String(_HEX_DIGITS[byte=v % 16])
 
 
-struct Color(ImplicitlyCopyable, Movable):
-    """An 8-bit-per-channel RGBA color."""
+struct Color(Equatable, ImplicitlyCopyable, Movable, Writable):
+    """An 8-bit-per-channel RGBA color. Two colors are equal when all
+    four channels are, alpha included; there is no tolerance. Prints as
+    `Color(r, g, b, a)`, so a failed `assert_equal` on two colors says
+    which channel differed."""
 
     var r: UInt8
     var g: UInt8
@@ -107,6 +110,43 @@ struct Color(ImplicitlyCopyable, Movable):
         self.g = UInt8(_hex_pair(bytes[2], bytes[3]))
         self.b = UInt8(_hex_pair(bytes[4], bytes[5]))
         self.a = UInt8(_hex_pair(bytes[6], bytes[7])) if count == 8 else 255
+
+    def __eq__(self, other: Self) -> Bool:
+        """Whether every channel matches, alpha included.
+
+        Exact on purpose: the caller merging same-colored cells into
+        one rectangle needs identity, and "close enough" would blur a
+        real boundary between two values. A caller who wants a
+        tolerance writes one against the channels.
+
+        Args:
+            other: The color to compare against.
+
+        Returns:
+            True when r, g, b and a all match.
+        """
+        return (
+            self.r == other.r
+            and self.g == other.g
+            and self.b == other.b
+            and self.a == other.a
+        )
+
+    def __ne__(self, other: Self) -> Bool:
+        return not self.__eq__(other)
+
+    def write_to[W: Writer](self, mut writer: W):
+        writer.write(
+            "Color(",
+            Int(self.r),
+            ", ",
+            Int(self.g),
+            ", ",
+            Int(self.b),
+            ", ",
+            Int(self.a),
+            ")",
+        )
 
     def with_alpha(self, a: UInt8) -> Color:
         """This color at a different alpha, its channels untouched --

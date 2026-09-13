@@ -106,7 +106,7 @@ def test_batched_markers_reach_every_backend_through_the_trait() raises:
         for x in range(40):
             var a = batched.get_pixel(x, y)
             var b = singly.get_pixel(x, y)
-            if a.r != b.r or a.g != b.g or a.b != b.b or a.a != b.a:
+            if a != b:
                 differing += 1
     assert_equal(differing, 0, "raster batch differs from the loop")
 

@@ -501,7 +501,7 @@ def _arc_same(a: Canvas, b: Canvas, label: String) raises:
         for x in range(a.width):
             var p = a.get_pixel(x, y)
             var q = b.get_pixel(x, y)
-            if p.r != q.r or p.g != q.g or p.b != q.b or p.a != q.a:
+            if p != q:
                 differing += 1
     assert_equal(differing, 0, label + ": differing pixels")
 
