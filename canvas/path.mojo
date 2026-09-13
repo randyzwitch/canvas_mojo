@@ -155,9 +155,9 @@ struct PathCommand(ImplicitlyCopyable, Movable):
 struct Path(Copyable, Movable):
     """Build with move_to/line_to/quad_curve_to/cubic_curve_to/arc_to/
     close, or a whole shape at once with rect/round_rect/ellipse/
-    regular_polygon, then hand to fill_path/stroke_path/stroke_path_aa. No
-    chaining: each call is `mut self` returning nothing, like Canvas's
-    push_clip/set_pixel.
+    regular_polygon/arrow_head, then hand to fill_path/stroke_path/
+    stroke_path_aa. No chaining: each call is `mut self` returning
+    nothing, like Canvas's push_clip/set_pixel.
 
     All coordinates are absolute. There are no relative-to-current-
     point variants (SVG/Cairo's rel_line_to and friends).
@@ -514,6 +514,62 @@ struct Path(Copyable, Movable):
         for k in range(1, sides):
             var angle = rotation + step * Float64(k)
             self.line_to(cx + radius * cos(angle), cy + radius * sin(angle))
+        self.close()
+
+    def arrow_head(
+        mut self,
+        tip_x: Float64,
+        tip_y: Float64,
+        direction_x: Float64,
+        direction_y: Float64,
+        length: Float64,
+        half_width: Float64,
+    ) raises:
+        """Add a closed arrowhead: the triangle whose tip is at
+        `(tip_x, tip_y)`, pointing along `(direction_x, direction_y)`,
+        with its base `length` back from the tip and `2 * half_width`
+        wide. The direction is normalized here, so a caller passes the
+        shaft's own vector.
+
+        One path filled once rather than three strokes, because an
+        anti-aliased edge is half-covered and pieces that meet along
+        one show a pale seam. The same applies where the shaft meets
+        the head: stroke the shaft to the *tip*, under the head, not to
+        the base, so the head covers the join and the seam has nowhere
+        to show.
+
+        A builder rather than a stroke cap so it serializes the same
+        way on every backend; an SVG `<marker>` would be one backend's
+        feature.
+
+        Args:
+            tip_x: The tip's x.
+            tip_y: The tip's y.
+            direction_x: x of the direction the arrow points in; any
+                length.
+            direction_y: y of that direction.
+            length: Tip-to-base distance in pixels.
+            half_width: Half the base width in pixels.
+
+        Raises:
+            Error: The direction is the zero vector.
+        """
+        var norm = sqrt(direction_x * direction_x + direction_y * direction_y)
+        if norm == 0.0:
+            raise Error(
+                "Path.arrow_head(): the direction is the zero vector, so the"
+                " head has nowhere to point"
+            )
+        var ux = direction_x / norm
+        var uy = direction_y / norm
+        var base_x = tip_x - ux * length
+        var base_y = tip_y - uy * length
+        # The base runs along the perpendicular.
+        var nx = -uy
+        var ny = ux
+        self.move_to(tip_x, tip_y)
+        self.line_to(base_x + nx * half_width, base_y + ny * half_width)
+        self.line_to(base_x - nx * half_width, base_y - ny * half_width)
         self.close()
 
     def curve_through(
