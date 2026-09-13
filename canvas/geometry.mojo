@@ -13,7 +13,7 @@ and `path.mojo` imports *from* arcs, so the shared type has to sit below
 both.
 """
 
-from std.math import atan2, cos, sin, sqrt
+from std.math import atan2, cos, floor, sin, sqrt
 
 
 struct Point(ImplicitlyCopyable, Movable):
@@ -80,6 +80,70 @@ def round_to_int(value: Float64) -> Int:
     if value >= 0.0:
         return Int(value + 0.5)
     return Int(value - 0.5)
+
+
+comptime _SNAP_TIE_TOLERANCE = 1e-9
+"""How far under a pixel center a coordinate may sit and still snap the
+way the center itself does. A pixel-scale coordinate is well under 1e5,
+so its ULP is under 1e-10 and a few of them fit; a real sub-pixel
+fraction is never this small."""
+
+
+def snap_to_pixel_edge(value: Float64) -> Float64:
+    """`value` moved to the nearest pixel boundary, for the edge of an
+    axis-aligned filled rectangle.
+
+    Pixel `k` spans `k - 0.5` to `k + 0.5`, so the boundaries are the
+    half-integers and this returns the nearest one. A rectangle edge
+    landing between two boundaries reads as a soft edge, and a hard
+    edge is worth more there than the fraction; paths, strokes and
+    text keep their exact geometry, which is what makes them sharp.
+
+    Snapping in user space matters under `begin_supersampled`: the
+    `Float64` `fill_rect` snaps in *device* space, which turns a
+    user-space fraction into an anti-aliased edge after the downsample
+    rather than removing it. A user-space snap puts the mapped edge on
+    a device block boundary, so the downsampled edge is hard. Both
+    place the edge on the same pixel; only the crispness differs.
+
+    The tie, a coordinate exactly on a pixel center, is equidistant
+    from the boundary on either side and is where data lands all the
+    time: a symmetric domain's midpoint, a category band's center. The
+    rule here sends it to the boundary above, and `_SNAP_TIE_TOLERANCE`
+    makes a coordinate one ULP under the center follow the same rule,
+    so `intercept + slope * v` landing at `2.4999999999999996` snaps
+    where `2.5` does rather than a whole pixel away, and two platforms
+    whose last bit differs agree.
+
+    Args:
+        value: A user-space coordinate.
+
+    Returns:
+        The nearest half-integer.
+    """
+    return floor(value + _SNAP_TIE_TOLERANCE) + 0.5
+
+
+def snap_to_pixel_center(value: Float64) -> Float64:
+    """`value` moved to the nearest pixel center, for the fixed
+    coordinate of a hairline.
+
+    The counterpart of `snap_to_pixel_edge`. A one-pixel line is drawn
+    about its centerline, so it covers exactly one row when that
+    centerline is a whole number and spreads across two half-covered
+    rows when it is not. A rectangle snaps to a boundary because it is
+    bounded by its edges; a line snaps to a center because it is
+    centered on its coordinate. Rounds as `round_to_int` does, halves
+    away from zero, so a line and a marker at the same coordinate land
+    on the same pixel.
+
+    Args:
+        value: A user-space coordinate.
+
+    Returns:
+        The nearest whole number, as a `Float64`.
+    """
+    return Float64(round_to_int(value))
 
 
 struct Transform2D(ImplicitlyCopyable, Movable):

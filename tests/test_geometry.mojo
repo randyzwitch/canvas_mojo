@@ -1,14 +1,23 @@
-"""Tests for geometry.mojo: Point and Transform2D."""
+"""Tests for geometry.mojo: Point, Transform2D and the pixel snaps."""
 
 from std.math import pi
 from std.testing import (
     assert_almost_equal,
     assert_equal,
     assert_raises,
+    assert_true,
     TestSuite,
 )
 
-from canvas.geometry import Point, Transform2D, round_to_int
+from canvas.buffer import Canvas
+from canvas.color import Color
+from canvas.geometry import (
+    Point,
+    Transform2D,
+    round_to_int,
+    snap_to_pixel_center,
+    snap_to_pixel_edge,
+)
 
 
 def test_round_to_int_rounds_half_away_from_zero() raises:
@@ -174,6 +183,93 @@ def test_inverse_point_raises_on_zero_scale_y() raises:
     var t = Transform2D(2.0, 0.0, 0.0, 0.0)
     with assert_raises():
         _ = t.inverse_point(0.0, 0.0)
+
+
+def test_snap_to_pixel_edge_finds_the_nearest_boundary() raises:
+    assert_equal(snap_to_pixel_edge(2.0), 2.5)
+    assert_equal(snap_to_pixel_edge(2.4), 2.5)
+    assert_equal(snap_to_pixel_edge(2.6), 2.5)
+    assert_equal(snap_to_pixel_edge(2.9), 2.5)
+    assert_equal(snap_to_pixel_edge(3.0), 3.5)
+    assert_equal(snap_to_pixel_edge(-0.4), -0.5)
+    assert_equal(snap_to_pixel_edge(-0.6), -0.5)
+    # A boundary stays put.
+    assert_equal(snap_to_pixel_edge(2.5), 2.5)
+
+
+def test_snap_to_pixel_edge_tie_goes_up_and_absorbs_an_ulp() raises:
+    # Exactly on a pixel center: the boundary above.
+    assert_equal(snap_to_pixel_edge(2.0), 2.5)
+    # One ULP under the center, the shape a scale's multiply-add
+    # produces, snaps where the center does rather than a pixel lower.
+    assert_equal(snap_to_pixel_edge(2.0 - 1e-12), 2.5)
+    assert_equal(snap_to_pixel_edge(2.5 - 1e-12), 2.5)
+    # A real fraction is far outside the tolerance.
+    assert_equal(snap_to_pixel_edge(2.0 - 1e-6), 1.5)
+
+
+def test_snap_to_pixel_center_rounds_like_round_to_int() raises:
+    assert_equal(snap_to_pixel_center(2.4), 2.0)
+    assert_equal(snap_to_pixel_center(2.5), 3.0)
+    assert_equal(snap_to_pixel_center(2.6), 3.0)
+    assert_equal(snap_to_pixel_center(-2.5), -3.0)
+    assert_equal(snap_to_pixel_center(-2.4), -2.0)
+    for i in range(-20, 21):
+        var v = Float64(i) * 0.37
+        assert_equal(snap_to_pixel_center(v), Float64(round_to_int(v)))
+
+
+def _assert_pixel(c: Canvas, x: Int, y: Int, color: Color) raises:
+    var p = c.get_pixel(x, y)
+    assert_true(
+        p.r == color.r and p.g == color.g and p.b == color.b,
+        "pixel (" + String(x) + ", " + String(y) + ") is not the color",
+    )
+
+
+def test_a_snapped_edge_stays_hard_under_supersampling() raises:
+    """The property the edge snap exists for: a rectangle whose edges
+    are snapped in user space downsamples to fully covered columns on
+    one side of each edge and empty ones on the other, where the same
+    rectangle unsnapped leaves a partially covered column."""
+    var bg = Color(255, 255, 255)
+    var fg = Color(0, 0, 0)
+    # Edges at 10.1 and 30.9 snap to 10.5 and 30.5: pixels 11..30 in.
+    var x0 = snap_to_pixel_edge(10.1)
+    var x1 = snap_to_pixel_edge(30.9)
+    var y0 = snap_to_pixel_edge(5.2)
+    var y1 = snap_to_pixel_edge(15.8)
+    assert_equal(x0, 10.5)
+    assert_equal(x1, 30.5)
+
+    var snapped = Canvas(40, 20, bg)
+    snapped.begin_supersampled(2, bg)
+    snapped.fill_rect(x0, y0, x1 - x0, y1 - y0, fg)
+    snapped.end_supersampled()
+    for y in range(6, 16):
+        _assert_pixel(snapped, 10, y, bg)
+        _assert_pixel(snapped, 11, y, fg)
+        _assert_pixel(snapped, 30, y, fg)
+        _assert_pixel(snapped, 31, y, bg)
+    for x in range(11, 31):
+        _assert_pixel(snapped, x, 5, bg)
+        _assert_pixel(snapped, x, 6, fg)
+        _assert_pixel(snapped, x, 15, fg)
+        _assert_pixel(snapped, x, 16, bg)
+
+    # The same rectangle unsnapped: at a factor of 2 an edge whose
+    # fraction is within a quarter pixel of a pixel center snaps, in
+    # device space, to the middle of a block, so the downsampled
+    # column is a mix of the two colors rather than either. That is
+    # the soft edge the user-space snap removes.
+    var unsnapped = Canvas(40, 20, bg)
+    unsnapped.begin_supersampled(2, bg)
+    unsnapped.fill_rect(10.1, y0, 30.9 - 10.1, y1 - y0, fg)
+    unsnapped.end_supersampled()
+    var left = unsnapped.get_pixel(10, 10)
+    assert_true(left.r != bg.r and left.r != fg.r)
+    var right = unsnapped.get_pixel(31, 10)
+    assert_true(right.r != bg.r and right.r != fg.r)
 
 
 def main() raises:

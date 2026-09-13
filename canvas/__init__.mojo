@@ -19,7 +19,14 @@ from canvas.text.font_discovery import (
     resolve_font_file,
     resolve_font_file_for_char,
 )
-from canvas.geometry import Matrix2D, Point, Transform2D, round_to_int
+from canvas.geometry import (
+    Matrix2D,
+    Point,
+    Transform2D,
+    round_to_int,
+    snap_to_pixel_center,
+    snap_to_pixel_edge,
+)
 from canvas.gradient import (
     ColorSource,
     ConicGradient,
