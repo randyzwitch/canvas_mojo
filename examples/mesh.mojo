@@ -5,6 +5,10 @@ background rather than against its neighbour. On the right the same
 faces go through `fill_mesh`, which draws them as one shape: full
 coverage inside, anti-aliasing only at the silhouette.
 
+The third panel is `fill_mesh_shaded`: the same faces with a color
+per vertex rather than per face, interpolated across each, so the
+surface reads as continuous rather than faceted.
+
 The surface is a height field over a grid, projected with a fixed
 oblique view and depth-sorted so nearer faces are drawn last, which is
 all the 3D a static plot needs; the projection and the sort are the
@@ -22,7 +26,7 @@ from canvas.geometry import FPoint
 from canvas.io.bmp import write_bmp
 from canvas.io.png import write_png
 from canvas.path import Path
-from canvas.shapes.mesh import fill_mesh
+from canvas.shapes.mesh import fill_mesh, fill_mesh_shaded
 from canvas.text.render import draw_text
 
 comptime N = 28
@@ -119,8 +123,21 @@ def _surface(
         colors.append(shades[t])
 
 
+def _vertex_colors(mut colors: List[Color]):
+    """A shade per vertex, from the height and slope there: what the
+    smooth panel interpolates."""
+    for j in range(N + 1):
+        for i in range(N + 1):
+            var u = Float64(i) / Float64(N) * 2.0 - 1.0
+            var v = Float64(j) / Float64(N) * 2.0 - 1.0
+            var e = 0.01
+            var nx = (_height(u + e, v) - _height(u - e, v)) / (2.0 * e)
+            var ny = (_height(u, v + e) - _height(u, v - e)) / (2.0 * e)
+            colors.append(_shade(_height(u, v), nx, ny))
+
+
 def main() raises:
-    var c = Canvas(960, 400, BG)
+    var c = Canvas(1440, 400, BG)
 
     # Left: one fill per face, which is what a loop over `fill_path_aa`
     # gives, and what leaves the mesh of light seams.
@@ -146,8 +163,18 @@ def main() raises:
     _surface(480.0, pts2, faces2, colors2)
     fill_mesh(c, pts2, faces2, colors2)
 
+    # Far right: a color per vertex, interpolated across each face.
+    var pts3 = List[FPoint]()
+    var faces3 = List[Int]()
+    var colors3 = List[Color]()
+    _surface(960.0, pts3, faces3, colors3)
+    var vertex = List[Color]()
+    _vertex_colors(vertex)
+    fill_mesh_shaded(c, pts3, faces3, vertex)
+
     draw_text(c, 40.0, 370.0, "one fill per face", Color(60, 60, 60), 16.0)
     draw_text(c, 520.0, 370.0, "fill_mesh", Color(60, 60, 60), 16.0)
+    draw_text(c, 1000.0, 370.0, "fill_mesh_shaded", Color(60, 60, 60), 16.0)
 
     write_bmp(c, "examples/out_mesh.bmp")
     write_png(c, "examples/out_mesh.png")

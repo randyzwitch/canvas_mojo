@@ -378,6 +378,7 @@ def _batch_band(mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int):
                 op.first_face,
                 op.face_count,
                 op.first_dash,
+                op.per_vertex,
             )
         elif op.kind == _OP_GLYPH:
             _glyph_rows(canvas, batch, op, row_lo, row_hi)

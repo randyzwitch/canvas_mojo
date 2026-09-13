@@ -129,6 +129,19 @@ def _pdf_string(text: String) -> String:
     return out
 
 
+struct _PdfMeshShading(Movable):
+    """A `fill_mesh_shaded` call as a Type 4 shading: the dictionary
+    entries and the packed vertex stream, written as its own object
+    since a stream cannot sit inline in the resources."""
+
+    var dict: String
+    var data: List[UInt8]
+
+    def __init__(out self, dict: String, var data: List[UInt8]):
+        self.dict = dict
+        self.data = data^
+
+
 struct _PdfImage(Movable):
     """A `Canvas` drawn onto a page: its RGB bytes and, when any
     pixel is not opaque, its alpha bytes for a soft mask."""
@@ -203,6 +216,9 @@ struct PdfCanvas(DrawTarget, Movable):
     var _gstates: List[String]
     # Shading dictionaries, one per gradient fill.
     var _shadings: List[String]
+    # Type 4 mesh shadings, one per `fill_mesh_shaded` call, each its
+    # own stream object (#426).
+    var _mesh_shadings: List[_PdfMeshShading]
     # Fonts the text used, and images drawn, in resource order.
     var _efonts: List[_EmbeddedFont]
     var _images: List[_PdfImage]
@@ -232,6 +248,7 @@ struct PdfCanvas(DrawTarget, Movable):
         self._page_heights = List[Int]()
         self._gstates = List[String]()
         self._shadings = List[String]()
+        self._mesh_shadings = List[_PdfMeshShading]()
         self._efonts = List[_EmbeddedFont]()
         self._images = List[_PdfImage]()
         self._transform = Matrix2D.identity()
@@ -838,6 +855,85 @@ struct PdfCanvas(DrawTarget, Movable):
             self._content += "l h "
             self._content += "B " if opaque else "f "
             self._end()
+
+    def fill_mesh_shaded(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        vertex_colors: List[Color],
+    ) raises:
+        """`DrawTarget`'s smooth-shaded mesh, as PDF has it natively: a
+        Type 4 shading, a free-form Gouraud triangle mesh, painted
+        with `sh`. Each vertex is a flag byte, two 32-bit coordinates
+        over the mesh's own bounding box and three color bytes, so
+        the viewer interpolates exactly the corners this was given.
+        The shading has no alpha per vertex; a translucent mesh takes
+        the mean of its vertices' alpha as a constant.
+
+        Args:
+            points: The vertices, in user space.
+            faces: Index triples into `points`, in draw order.
+            vertex_colors: One color per vertex.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `vertex_colors` is not one per vertex.
+        """
+        _check_mesh(points, faces, len(vertex_colors), False)
+        if len(faces) == 0:
+            return
+        var min_x = points[faces[0]].x
+        var max_x = min_x
+        var min_y = points[faces[0]].y
+        var max_y = min_y
+        var alpha_sum = 0
+        for i in range(len(faces)):
+            ref p = points[faces[i]]
+            if p.x < min_x:
+                min_x = p.x
+            if p.x > max_x:
+                max_x = p.x
+            if p.y < min_y:
+                min_y = p.y
+            if p.y > max_y:
+                max_y = p.y
+            alpha_sum += Int(vertex_colors[faces[i]].a)
+        # A degenerate range still has to decode: widen it by one.
+        if max_x <= min_x:
+            max_x = min_x + 1.0
+        if max_y <= min_y:
+            max_y = min_y + 1.0
+        var alpha = UInt8((alpha_sum + len(faces) // 2) // len(faces))
+        var sx = 4294967295.0 / (max_x - min_x)
+        var sy = 4294967295.0 / (max_y - min_y)
+        var data = List[UInt8](capacity=len(faces) * 12)
+        for i in range(len(faces)):
+            ref p = points[faces[i]]
+            var c = vertex_colors[faces[i]]
+            data.append(0)  # flag: a free triangle
+            _append_u32(data, UInt32((p.x - min_x) * sx + 0.5))
+            _append_u32(data, UInt32((p.y - min_y) * sy + 0.5))
+            data.append(c.r)
+            data.append(c.g)
+            data.append(c.b)
+        var dict = String(
+            " /ShadingType 4 /ColorSpace /DeviceRGB /BitsPerCoordinate 32"
+            " /BitsPerComponent 8 /BitsPerFlag 8 /Decode ["
+        )
+        _num(dict, min_x)
+        _num(dict, max_x)
+        _num(dict, min_y)
+        _num(dict, max_y)
+        dict += "0 1 0 1 0 1]"
+        self._mesh_shadings.append(_PdfMeshShading(dict, data^))
+        self._content += "q "
+        if self._transformed:
+            self._write_cm()
+        var gs = self._gstate(alpha, False)
+        if gs >= 0:
+            self._content += "/GS" + String(gs + 1) + " gs "
+        self._content += "/Msh" + String(len(self._mesh_shadings)) + " sh "
+        self._end()
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """A filled circle.
@@ -1954,7 +2050,8 @@ struct PdfCanvas(DrawTarget, Movable):
         var image_objects = 0
         for i in range(len(self._images)):
             image_objects += 2 if self._images[i].has_alpha else 1
-        var page_base = image_base + image_objects
+        var mesh_base = image_base + image_objects
+        var page_base = mesh_base + len(self._mesh_shadings)
         var page_count = len(self._pages) + 1
         var info_number = page_base + 2 * page_count
         var have_info = self._title != "" or self._author != ""
@@ -2067,6 +2164,18 @@ struct PdfCanvas(DrawTarget, Movable):
                 _append_stream(out, number, mask, img.alpha.copy(), compress)
                 number += 1
 
+        # Mesh shadings, one stream object each.
+        for i in range(len(self._mesh_shadings)):
+            offsets.append(len(out))
+            _append_stream(
+                out,
+                number,
+                self._mesh_shadings[i].dict,
+                self._mesh_shadings[i].data.copy(),
+                compress,
+            )
+            number += 1
+
         # Resources, shared by every page.
         var resources = String("/Resources << ")
         if len(self._gstates) > 0:
@@ -2076,11 +2185,19 @@ struct PdfCanvas(DrawTarget, Movable):
                     "/GS" + String(i + 1) + " << " + self._gstates[i] + ">> "
                 )
             resources += ">> "
-        if len(self._shadings) > 0:
+        if len(self._shadings) > 0 or len(self._mesh_shadings) > 0:
             resources += "/Shading << "
             for i in range(len(self._shadings)):
                 resources += (
                     "/Sh" + String(i + 1) + " " + self._shadings[i] + " "
+                )
+            for i in range(len(self._mesh_shadings)):
+                resources += (
+                    "/Msh"
+                    + String(i + 1)
+                    + " "
+                    + String(mesh_base + i)
+                    + " 0 R "
                 )
             resources += ">> "
         if len(self._efonts) > 0:
@@ -2202,6 +2319,14 @@ def _pad10(n: Int) -> String:
     for _ in range(10 - s.byte_length()):
         out += "0"
     return out + s
+
+
+def _append_u32(mut out: List[UInt8], v: UInt32):
+    """`v` big-endian, as a shading's coordinate is packed."""
+    out.append(UInt8((v >> 24) & 0xFF))
+    out.append(UInt8((v >> 16) & 0xFF))
+    out.append(UInt8((v >> 8) & 0xFF))
+    out.append(UInt8(v & 0xFF))
 
 
 def _append_text(mut out: List[UInt8], text: String):

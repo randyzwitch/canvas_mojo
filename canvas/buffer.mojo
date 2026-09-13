@@ -343,6 +343,9 @@ struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
     # of the batch's `mesh_faces`, relative to `first_point`.
     var first_face: Int
     var face_count: Int
+    # `_OP_MESH`: whether its colors are one per vertex, interpolated
+    # across each face, rather than one per face (#426).
+    var per_vertex: Bool
     var closed: Bool
     var half_width: Float64
     var first_dash: Int
@@ -386,6 +389,7 @@ struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
         self.point_count = 0
         self.first_face = 0
         self.face_count = 0
+        self.per_vertex = False
         self.closed = False
         self.half_width = 0.0
         self.first_dash = 0
@@ -1416,15 +1420,18 @@ struct Canvas(Copyable, DrawTarget, Movable):
         points: List[FPoint],
         faces: List[Int],
         colors: List[Color],
+        per_vertex: Bool,
     ):
-        """Record a whole `fill_mesh` call as one op: the vertices go
-        into the batch's points, the triples into `mesh_faces`, the
-        face colors into `marker_colors`, and the op keeps the three
+        """Record a whole `fill_mesh` or `fill_mesh_shaded` call as one
+        op: the vertices go into the batch's points, the triples into
+        `mesh_faces`, the colors (per face, or per vertex when
+        `per_vertex`) into `marker_colors`, and the op keeps the three
         ranges. Vertices are already in device space.
         """
         if len(faces) == 0:
             return
         var op = _BatchOp(_OP_MESH, Color(0, 0, 0))
+        op.per_vertex = per_vertex
         op.first_point = len(self._batch.points)
         op.point_count = len(points)
         op.first_face = len(self._batch.mesh_faces)
@@ -2718,6 +2725,29 @@ struct Canvas(Copyable, DrawTarget, Movable):
         from canvas.shapes.mesh import fill_mesh as _mesh
 
         _mesh(self, points, faces, colors)
+
+    def fill_mesh_shaded(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        vertex_colors: List[Color],
+    ) raises:
+        """`DrawTarget`'s smooth-shaded mesh: `fill_mesh` with a color
+        per vertex interpolated across each face, in this canvas's
+        color space. See `canvas.shapes.mesh`.
+
+        Args:
+            points: The vertices, in the canvas's coordinates.
+            faces: Index triples into `points`, in draw order.
+            vertex_colors: One color per vertex.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `vertex_colors` is not one per vertex.
+        """
+        from canvas.shapes.mesh import fill_mesh_shaded as _shaded
+
+        _shaded(self, points, faces, vertex_colors)
 
     def fill_circle_aa(
         mut self, cx: Float64, cy: Float64, radius: Float64, color: Color
