@@ -15,10 +15,11 @@ pixel through `set_pixel`, while vector emits a `fill-opacity`
 attribute and leaves compositing to whatever renders the markup.
 
 A title and tagline are drawn after draw_scene() returns, once per
-backend, rather than from inside it. Text is excluded from `DrawTarget`
-(see that trait's docstring), so there is no generic call `draw_scene`
-could make; a caller that knows its concrete backend calls
-`canvas.text.render.draw_text` or `SvgCanvas.draw_text` directly.
+backend, through each backend's own `draw_text`, to show the one
+place they differ: `SvgCanvas`'s whole-pixel overload takes a literal
+CSS `font-family`. `draw_text` is on `DrawTarget` too, so a scene that
+wants its label drawn generically calls `target.draw_text(...,
+cache=cache)` from inside `draw_scene` instead.
 
 Run with:
     pixi run example

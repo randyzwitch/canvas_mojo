@@ -50,6 +50,9 @@ from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import draw_circle_aa, fill_circle_aa
 from canvas.shapes.ellipses import draw_ellipse_aa, fill_ellipse_aa
 from canvas.shapes.rects import fill_rect, fill_rect_gradient
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
+from canvas.text.text_align import TextAlign
 from canvas.compose import draw_canvas, draw_image
 
 
@@ -2232,6 +2235,63 @@ struct Canvas(Copyable, DrawTarget, Movable):
             p[unsafe_offset=idx + 1],
             p[unsafe_offset=idx + 2],
             p[unsafe_offset=idx + 3],
+        )
+
+    def draw_text(
+        mut self,
+        x: Float64,
+        y: Float64,
+        text: String,
+        color: Color,
+        size: Float64,
+        family: String = "Sans",
+        slant: FontSlant = FontSlant.NORMAL,
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """`canvas.text.render.draw_text` as a method: the `DrawTarget`
+        form, so a caller generic over the trait can label what it
+        draws. Same pixels as the free function with the same
+        arguments; the free function keeps the kerning and ligature
+        switches and the whole-pixel and cache-less overloads.
+
+        Args:
+            x: Anchor x, sub-pixel.
+            y: Anchor y, the first line's baseline.
+            text: Text to draw, "\\n"-separated lines.
+            color: Fill color.
+            size: Font size in pixels.
+            family: Font family name or generic alias.
+            slant: Upright, italic or oblique.
+            weight: Normal or bold.
+            rotation: Radians about the anchor.
+            align: Horizontal alignment of each line.
+            cache: Shared font and glyph cache.
+
+        Raises:
+            Error: No font could be resolved for `family`.
+        """
+        # Local, as the batched marker import above is: render.mojo
+        # imports this module, and the method's own name is
+        # `draw_text`.
+        from canvas.text.render import draw_text as _draw_text
+
+        _draw_text(
+            self,
+            x,
+            y,
+            text,
+            color,
+            size,
+            family,
+            slant,
+            weight,
+            rotation,
+            align,
+            cache=cache,
         )
 
     def draw_image(

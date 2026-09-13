@@ -86,6 +86,8 @@ direction should determine the interior.
 `draw_text` anchors text at its baseline. `TextAlign.LEFT`, `CENTER`, and
 `RIGHT` control horizontal placement around the anchor. Fonts are resolved
 from those installed on the system, with fallback for missing glyphs.
+It is on `DrawTarget` as a method with a `cache=` keyword, so a function
+generic over the trait can label what it draws on all three backends.
 
 Create one `FontCache` and pass it through the `cache=` overloads when
 performing related text operations. Construction does not scan the system;
@@ -156,6 +158,11 @@ def main() raises:
   clip already active. Wrap a chart's marks in one so they cannot
   paint over the axes.
 
-Text and some paint operations are backend-specific rather
-than part of `DrawTarget`. Use the relevant backend method when a
-shared trait operation is unavailable.
+- `draw_text(x, y, text, color, size, ..., cache=cache)` on any target
+  draws a label at a sub-pixel baseline anchor with the same alignment
+  and rotation on every backend; `family` takes the raster names, and
+  SVG maps the generic ones to CSS.
+
+Gradient path fills, outlined text and text on a path are backend
+methods rather than part of `DrawTarget`. Use the relevant backend
+method when a shared trait operation is unavailable.

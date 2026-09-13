@@ -20,7 +20,8 @@ from canvas.path import Path
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.vector.draw_target import DrawTarget
 from canvas.vector.svg import SvgCanvas, _base64
-from canvas.text.font_discovery import FontWeight
+from canvas.text.font_cache import FontCache
+from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.text_align import TextAlign
 
 
@@ -1652,6 +1653,96 @@ def test_draw_image_is_reachable_through_the_trait() raises:
     assert_equal(raster.get_pixel(1, 3).g, 255, "left of the block")
     assert_equal(raster.get_pixel(4, 6).g, 0, "the last row and column")
     assert_equal(raster.get_pixel(5, 6).g, 255, "past the block")
+
+
+def test_trait_draw_text_maps_generic_families_and_emits_slant() raises:
+    """The `DrawTarget` overload takes `family` in the raster
+    backend's terms: the generic names become CSS keywords, a face
+    name passes through, and `slant` becomes `font-style`."""
+    var cache = FontCache()
+    var svg = SvgCanvas(100, 50)
+    svg.draw_text(10.0, 20.0, "a", Color(0, 0, 0), 12.0, cache=cache)
+    svg.draw_text(
+        10.0,
+        30.0,
+        "b",
+        Color(0, 0, 0),
+        12.0,
+        family="Serif",
+        slant=FontSlant.ITALIC,
+        cache=cache,
+    )
+    svg.draw_text(
+        10.0,
+        40.0,
+        "c",
+        Color(0, 0, 0),
+        12.0,
+        family="DejaVu Sans",
+        slant=FontSlant.OBLIQUE,
+        cache=cache,
+    )
+    svg.draw_text(
+        10.5,
+        45.25,
+        "d",
+        Color(0, 0, 0),
+        12.0,
+        family="monospace",
+        align=TextAlign.RIGHT,
+        cache=cache,
+    )
+    var markup = svg.to_string()
+    assert_true(
+        '<text x="10.000" y="20.000" font-size="12.000"'
+        ' font-family="sans-serif" fill="#000000" text-anchor="start">a</text>'
+        in markup,
+        "Sans maps to sans-serif, upright emits no font-style",
+    )
+    assert_true(
+        'font-family="serif" font-style="italic"' in markup,
+        "Serif and italic",
+    )
+    assert_true(
+        'font-family="DejaVu Sans" font-style="oblique"' in markup,
+        "a face name passes through; oblique",
+    )
+    assert_true(
+        '<text x="10.500" y="45.250" font-size="12.000"'
+        ' font-family="monospace" fill="#000000" text-anchor="end">d</text>'
+        in markup,
+        "sub-pixel anchor, monospace, RIGHT is end",
+    )
+
+
+def test_whole_pixel_draw_text_markup_is_unchanged() raises:
+    """The overload that predates the trait writes the same bytes it
+    did: whole-pixel anchor, the CSS family verbatim, no font-style."""
+    var svg = SvgCanvas(100, 50)
+    svg.draw_text(10, 20, "a", Color(0, 0, 0), 12.0, TextAlign.LEFT)
+    svg.draw_text(
+        10,
+        30,
+        "b",
+        Color(0, 0, 0),
+        12.0,
+        TextAlign.CENTER,
+        family="Sans",
+        weight=FontWeight.BOLD,
+    )
+    var markup = svg.to_string()
+    assert_true(
+        '<text x="10" y="20" font-size="12.000" font-family="sans-serif"'
+        ' fill="#000000" text-anchor="start">a</text>'
+        in markup,
+        "the default family stays the CSS keyword",
+    )
+    assert_true(
+        '<text x="10" y="30" font-size="12.000" font-family="Sans"'
+        ' font-weight="bold" fill="#000000" text-anchor="middle">b</text>'
+        in markup,
+        "a family given here is not mapped",
+    )
 
 
 def main() raises:
