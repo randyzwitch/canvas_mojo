@@ -38,6 +38,7 @@ def _titles() -> Dict[String, String]:
     d["arc"] = "Arcs & Wedges"
     d["polyline"] = "Polylines"
     d["polygon"] = "Polygons"
+    d["mesh"] = "Meshes & Surfaces"
     d["path"] = "Paths"
     d["fill_rule"] = "Fill Rules"
     d["gradient"] = "Gradients"
@@ -109,6 +110,10 @@ def _descriptions() -> Dict[String, String]:
     d["text"] = "Render aligned and rotated text from system fonts."
     d["text_on_path"] = "Place text along a curve and draw outlined glyphs."
     d["vector"] = "Render one DrawTarget routine to PNG, SVG, and PDF."
+    d["mesh"] = (
+        "Draw a surface's faces as one seam-free shape, beside the same"
+        " faces filled one at a time."
+    )
     return d^
 
 
@@ -143,6 +148,7 @@ def _categories() -> List[Category]:
                 "arc",
                 "polyline",
                 "polygon",
+                "mesh",
             ],
         )
     )

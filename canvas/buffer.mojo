@@ -281,6 +281,10 @@ comptime _OP_GLYPH = 6
 # because 2,000 separate ops replayed across 30 bands cost more than
 # the buffer the region saves (#414).
 comptime _OP_MARKERS = 9
+# A whole `fill_mesh` call: `first_point`/`point_count` into `points`,
+# `first_face`/`face_count` triples into `mesh_faces`, `first_dash`
+# into `marker_colors` for the face colors (#425).
+comptime _OP_MESH = 10
 comptime _OP_PUSH_CLIP = 7
 comptime _OP_POP_CLIP = 8
 
@@ -335,6 +339,10 @@ struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
     # the style, in the space `matrix` maps to the device.
     var first_point: Int
     var point_count: Int
+    # `_OP_MESH`: index triples [first_face, first_face + 3 * face_count)
+    # of the batch's `mesh_faces`, relative to `first_point`.
+    var first_face: Int
+    var face_count: Int
     var closed: Bool
     var half_width: Float64
     var first_dash: Int
@@ -376,6 +384,8 @@ struct _BatchOp(Copyable, ImplicitlyCopyable, Movable):
         self.last_edge = 0
         self.first_point = 0
         self.point_count = 0
+        self.first_face = 0
+        self.face_count = 0
         self.closed = False
         self.half_width = 0.0
         self.first_dash = 0
@@ -469,8 +479,12 @@ struct _Batch(Copyable, Movable):
     # Every recorded glyph's coverage bytes, end to end, each op
     # holding its own range (#391).
     var glyph_counts: List[UInt8]
-    # Per-marker colours for the recorded bulk calls that carry them.
+    # Per-marker colours for the recorded bulk calls that carry them,
+    # and per-face colours for recorded meshes.
     var marker_colors: List[Color]
+    # Every recorded mesh's index triples, end to end, each op holding
+    # its own range; the vertices go into `points` (#425).
+    var mesh_faces: List[Int]
     # Whether any op changes the clip. Those mutate the clip stack of
     # the canvas they replay onto, which is safe when every band has
     # its own scratch (a supersampled region) and a data race when the
@@ -486,6 +500,7 @@ struct _Batch(Copyable, Movable):
         self.commands = List[PathCommand]()
         self.glyph_counts = List[UInt8]()
         self.marker_colors = List[Color]()
+        self.mesh_faces = List[Int]()
         self.has_clip_ops = False
         self.tables = List[_EdgeTable]()
         self.tables.append(_EdgeTable())
@@ -498,6 +513,7 @@ struct _Batch(Copyable, Movable):
         self.commands.reserve(len(other.commands))
         self.glyph_counts.reserve(len(other.glyph_counts))
         self.marker_colors.reserve(len(other.marker_colors))
+        self.mesh_faces.reserve(len(other.mesh_faces))
 
     def record_edges(
         mut self,
@@ -1393,6 +1409,56 @@ struct Canvas(Copyable, DrawTarget, Movable):
         op.last_row = Int(ceil(max_y + radius)) + 2
         op.min_y = op.first_row
         op.max_y = op.last_row
+        self._batch.ops.append(op)
+
+    def _record_mesh(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        colors: List[Color],
+    ):
+        """Record a whole `fill_mesh` call as one op: the vertices go
+        into the batch's points, the triples into `mesh_faces`, the
+        face colors into `marker_colors`, and the op keeps the three
+        ranges. Vertices are already in device space.
+        """
+        if len(faces) == 0:
+            return
+        var op = _BatchOp(_OP_MESH, Color(0, 0, 0))
+        op.first_point = len(self._batch.points)
+        op.point_count = len(points)
+        op.first_face = len(self._batch.mesh_faces)
+        op.face_count = len(faces) // 3
+        op.first_dash = len(self._batch.marker_colors)
+        op.dash_count = len(colors)
+        var min_y = points[faces[0]].y
+        var max_y = min_y
+        var min_x = points[faces[0]].x
+        var max_x = min_x
+        for i in range(len(points)):
+            self._batch.points.append(points[i])
+        for i in range(len(faces)):
+            self._batch.mesh_faces.append(faces[i])
+            ref p = points[faces[i]]
+            if p.y < min_y:
+                min_y = p.y
+            if p.y > max_y:
+                max_y = p.y
+            if p.x < min_x:
+                min_x = p.x
+            if p.x > max_x:
+                max_x = p.x
+        for i in range(len(colors)):
+            self._batch.marker_colors.append(colors[i])
+        # The rows any face can touch, padded as the rasterizer pads,
+        # which is what a band rejects the whole mesh on; the columns
+        # only size the op's work estimate.
+        op.first_row = Int(floor(min_y)) - 1
+        op.last_row = Int(ceil(max_y)) + 2
+        op.min_y = op.first_row
+        op.max_y = op.last_row
+        op.min_x = Int(floor(min_x))
+        op.max_x = Int(ceil(max_x))
         self._batch.ops.append(op)
 
     def _record_glyph(
@@ -2629,6 +2695,29 @@ struct Canvas(Copyable, DrawTarget, Movable):
         from canvas.shapes.circles import fill_circles_aa as _batch
 
         _batch(self, centers, radius, colors)
+
+    def fill_mesh(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        colors: List[Color],
+    ) raises:
+        """`DrawTarget`'s mesh: adjacent triangles drawn as one
+        anti-aliased shape, seam-free along shared edges. See
+        `canvas.shapes.mesh`.
+
+        Args:
+            points: The vertices, in the canvas's coordinates.
+            faces: Index triples into `points`, in draw order.
+            colors: One color per triangle.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `colors` is not one per triangle.
+        """
+        from canvas.shapes.mesh import fill_mesh as _mesh
+
+        _mesh(self, points, faces, colors)
 
     def fill_circle_aa(
         mut self, cx: Float64, cy: Float64, radius: Float64, color: Color
