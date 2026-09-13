@@ -242,6 +242,20 @@ resolves.
   neighbourhood -- so 14 clean runs of it in one day is evidence about
   this workload at this width, not about concurrency being safe, and
   capping the fan-out would buy a lower rate rather than safety.
+  Corroborated on a second platform since: the same crash landed on
+  their macOS CI, inside `libKGENCompilerRTShared.dylib` with the same
+  exit-1-and-no-summary signature, on a commit whose Linux job passed.
+  That runner fans out at 3 or 4, not 64, which fits the sweep rather
+  than contradicting it.
+- Keep the crash and the hang apart when citing either. A wall-clock
+  limit does nothing about a crash, which reports itself on every
+  platform with or without a guard; the limit exists for the hang,
+  which reports nothing at all. As of 2026-09-12 the crash is observed
+  on Linux and macOS and the hang only on one Linux box, so macOS is
+  demonstrably exposed to the failure the guard does not catch and
+  theoretically exposed to the one it does. A crash is not evidence
+  for the timeout work, however tempting it is to reach for while the
+  subject is open.
 - In a worktree, run each gate through exactly one `pixi run`. A nested
   one silently tests the main checkout: `pixi run --manifest-path <main>
   bash -c "cd <worktree> && pixi run ... test"` resets the cwd back to
