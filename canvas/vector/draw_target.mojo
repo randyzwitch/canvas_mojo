@@ -384,6 +384,44 @@ trait DrawTarget:
         """
         ...
 
+    def fill_mesh_shaded(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        vertex_colors: List[Color],
+    ) raises:
+        """`fill_mesh` with a color per vertex, interpolated across
+        each face: a smoothly shaded surface rather than a faceted one
+        (#426). Seam-free shared edges, painter's order and the
+        transform are `fill_mesh`'s.
+
+        The raster backend interpolates in the canvas's color space,
+        SRGB or LINEAR, the rule source-over follows. `PdfCanvas` has
+        the same thing natively, a Type 4 free-form triangle mesh
+        shading, and emits it. `SvgCanvas` does not: mesh gradients
+        are SVG 2 and no shipping browser renders them, so it emits
+        each face flat at the mean of its three corner colors, which
+        is what every SVG exporter does and the first place the three
+        backends do not produce the same picture. A consumer whose
+        SVG must match the raster output draws the surface with
+        `fill_mesh` and a color per face instead.
+
+        A different name rather than an overload of `fill_mesh`,
+        because a color per vertex and a color per face are the same
+        type and differ only in count.
+
+        Args:
+            points: The vertices, in user space.
+            faces: Index triples into `points`, one triangle each, in
+                draw order.
+            vertex_colors: One color per vertex, same count as `points`.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `vertex_colors` is not one per vertex.
+        """
+        ...
+
     def fill_ellipses_aa(
         mut self,
         centers: List[FPoint],

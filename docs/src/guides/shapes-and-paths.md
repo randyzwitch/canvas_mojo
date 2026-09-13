@@ -33,6 +33,12 @@ faces as a flat `List[Int]` of index triples in draw order, and one
 `Color` per triangle. Faces are drawn in the order given, so sort them
 far to near for a 3D surface.
 
+`fill_mesh_shaded` takes one `Color` per vertex instead and
+interpolates across each face, for a smoothly shaded surface. The
+raster canvas interpolates in its color space and the PDF backend
+emits a native mesh shading; SVG has no equivalent, so it draws each
+face flat at the mean of its corners.
+
 ## Construct a path
 
 Each subpath begins with `move_to`. Add segments, then optionally close

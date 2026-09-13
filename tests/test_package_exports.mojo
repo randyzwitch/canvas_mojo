@@ -150,6 +150,25 @@ def _draw_mesh[T: DrawTarget](mut target: T) raises:
     target.fill_mesh(pts, faces, cols)
 
 
+def _draw_shaded_mesh[T: DrawTarget](mut target: T) raises:
+    """The same faces with a color per vertex (#426), through the
+    trait for the same reason."""
+    var pts: List[FPoint] = [
+        FPoint(4.0, 4.0),
+        FPoint(20.0, 4.0),
+        FPoint(20.0, 20.0),
+        FPoint(4.0, 20.0),
+    ]
+    var faces: List[Int] = [0, 1, 2, 0, 2, 3]
+    var per_vertex: List[Color] = [
+        Color(40, 90, 160),
+        Color(200, 90, 40),
+        Color(200, 90, 40),
+        Color(40, 90, 160),
+    ]
+    target.fill_mesh_shaded(pts, faces, per_vertex)
+
+
 def test_a_mesh_reaches_every_backend_through_the_trait() raises:
     var c = Canvas(24, 24, Color(255, 255, 255))
     _draw_mesh(c)
@@ -162,6 +181,22 @@ def test_a_mesh_reaches_every_backend_through_the_trait() raises:
     var p = PdfCanvas(24, 24)
     _draw_mesh(p)
     assert_true(len(p.to_bytes()) > 0, "PDF emits the faces")
+
+    var sc = Canvas(24, 24, Color(255, 255, 255))
+    _draw_shaded_mesh(sc)
+    # Blue corners on the left, orange on the right: red rises along
+    # a row, and nothing steps where the diagonal crosses it.
+    for x in range(7, 17):
+        assert_true(
+            Int(sc.get_pixel(x, 12).r) >= Int(sc.get_pixel(x - 1, 12).r),
+            "shaded red rises at " + String(x),
+        )
+    var ss = SvgCanvas(24, 24)
+    _draw_shaded_mesh(ss)
+    assert_equal(ss.to_string().count("<path"), 2, "SVG emits a flat path per face")
+    var sp = PdfCanvas(24, 24)
+    _draw_shaded_mesh(sp)
+    assert_equal(sp.content().count(" sh "), 1, "PDF paints one mesh shading")
 
 
 def test_a_colour_list_of_the_wrong_length_raises_on_every_backend() raises:

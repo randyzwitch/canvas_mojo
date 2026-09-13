@@ -103,6 +103,17 @@ def _check_mesh(
         )
 
 
+def _mean_color(a: Color, b: Color, c: Color) -> Color:
+    """The flat color a vector backend without per-vertex shading
+    gives a face: the mean of its corners, channel by channel."""
+    return Color(
+        UInt8((Int(a.r) + Int(b.r) + Int(c.r) + 1) // 3),
+        UInt8((Int(a.g) + Int(b.g) + Int(c.g) + 1) // 3),
+        UInt8((Int(a.b) + Int(b.b) + Int(c.b) + 1) // 3),
+        UInt8((Int(a.a) + Int(b.a) + Int(c.a) + 1) // 3),
+    )
+
+
 def _mesh_rows(points: List[FPoint], faces: List[Int]) -> Tuple[Int, Int]:
     """The canvas rows any face can touch, padded a row each way: what
     a band rejects the whole mesh on, and what the batch's op records
@@ -134,6 +145,52 @@ def _fix(v: Float64) -> Int:
     return Int(floor(v * Float64(_FIX_ONE) + 0.5))
 
 
+@always_inline
+def _channels(
+    canvas: Canvas, color: Color, linear: Bool
+) -> SIMD[DType.float64, 4]:
+    """A vertex color as four lanes to interpolate: r, g, b as bytes
+    in SRGB or as linear light in LINEAR, and alpha as a byte either
+    way."""
+    if linear:
+        return SIMD[DType.float64, 4](
+            Float64(canvas._transfer.linear(color.r)),
+            Float64(canvas._transfer.linear(color.g)),
+            Float64(canvas._transfer.linear(color.b)),
+            Float64(color.a),
+        )
+    return SIMD[DType.float64, 4](
+        Float64(color.r), Float64(color.g), Float64(color.b), Float64(color.a)
+    )
+
+
+@always_inline
+def _encode(canvas: Canvas, ch: SIMD[DType.float64, 4], linear: Bool) -> Color:
+    """`_channels` back to a color at one sub-sample, rounded and
+    clamped."""
+    var a = Int(ch[3] + 0.5)
+    if a < 0:
+        a = 0
+    elif a > 255:
+        a = 255
+    if linear:
+        return Color(
+            canvas._transfer.byte(Float32(ch[0])),
+            canvas._transfer.byte(Float32(ch[1])),
+            canvas._transfer.byte(Float32(ch[2])),
+            UInt8(a),
+        )
+    var r = Int(ch[0] + 0.5)
+    var g = Int(ch[1] + 0.5)
+    var b = Int(ch[2] + 0.5)
+    return Color(
+        UInt8(min(max(r, 0), 255)),
+        UInt8(min(max(g, 0), 255)),
+        UInt8(min(max(b, 0), 255)),
+        UInt8(a),
+    )
+
+
 def _mesh_band(
     mut canvas: Canvas,
     points: List[FPoint],
@@ -145,6 +202,7 @@ def _mesh_band(
     first_face: Int = 0,
     face_count: Int = -1,
     first_color: Int = 0,
+    per_vertex: Bool = False,
 ):
     """Every face reaching rows [row_lo, row_hi), in draw order, as
     one anti-aliased shape. `points`, `faces` and `colors` are a
@@ -168,6 +226,9 @@ def _mesh_band(
         first_face: Where its first index triple starts in `faces`.
         face_count: How many triples, -1 for the rest of the list.
         first_color: Where its colors start in `colors`.
+        per_vertex: Whether `colors` holds one per vertex, interpolated
+            across each face (`fill_mesh_shaded`), rather than one per
+            face.
     """
     var stop = len(faces) if face_count < 0 else first_face + face_count * 3
     if stop <= first_face:
@@ -189,6 +250,7 @@ def _mesh_band(
             first_face,
             stop,
             first_color,
+            per_vertex,
         )
         y = y1
 
@@ -204,10 +266,22 @@ def _mesh_chunk(
     first_face: Int,
     stop: Int,
     first_color: Int,
+    per_vertex: Bool,
 ):
     """`_mesh_band`'s body for rows [y0, y1), already clamped to the
     canvas: rasterize every face into a sub-sample scratch of those
-    rows, then average each pixel down onto the canvas."""
+    rows, then average each pixel down onto the canvas.
+
+    With `per_vertex` each face's color is interpolated from its three
+    corners: the edge functions are barycentric weights up to the
+    face's area, and each is affine in (x, y), so a channel is a value
+    at the box corner stepped by a constant per sub-sample, the same
+    way the edge functions themselves are walked. In the LINEAR color
+    space the corners are taken to linear light first and each
+    sub-sample encoded back, so a smooth face agrees with the same face
+    drawn as many flat ones with intermediate colors; alpha is not
+    gamma-encoded and interpolates as it is in either space."""
+    var linear = per_vertex and canvas._space.is_linear()
     # The columns any face reaches, so the scratch is the mesh's width
     # rather than the canvas's, and the composite walks only those.
     var min_x = points[first_point + faces[first_face]].x
@@ -248,9 +322,20 @@ def _mesh_chunk(
         var a = points[first_point + faces[f]]
         var b = points[first_point + faces[f + 1]]
         var c = points[first_point + faces[f + 2]]
-        var color = colors[first_color + (f - first_face) // 3]
-        if color.a == 0:
-            continue
+        var color = Color(0, 0, 0)
+        var col_a = Color(0, 0, 0)
+        var col_b = Color(0, 0, 0)
+        var col_c = Color(0, 0, 0)
+        if per_vertex:
+            col_a = colors[first_color + faces[f]]
+            col_b = colors[first_color + faces[f + 1]]
+            col_c = colors[first_color + faces[f + 2]]
+            if col_a.a == 0 and col_b.a == 0 and col_c.a == 0:
+                continue
+        else:
+            color = colors[first_color + (f - first_face) // 3]
+            if color.a == 0:
+                continue
         # Fixed-point vertices relative to the scratch origin.
         var ax = _fix(a.x) - ox
         var ay = _fix(a.y) - oy
@@ -272,6 +357,11 @@ def _mesh_chunk(
             by = cy
             cx = tx
             cy = ty
+            area = -area
+            # The colors travel with their vertices.
+            var tc = col_b
+            col_b = col_c
+            col_c = tc
         # The face's sub-sample box, clamped to the scratch.
         var fy_lo = min(ay, min(by, cy))
         var fy_hi = max(ay, max(by, cy))
@@ -320,13 +410,49 @@ def _mesh_chunk(
         var step_y1 = e1_dy * STEP
         var step_y2 = e2_dy * STEP
         var opaque = color.a == 255
+        # Per-vertex shading: each channel as an affine function of
+        # the sub-sample position, from its value at the box corner
+        # and its step per sub-sample in x and y. E0 weights vertex a
+        # (it is the edge opposite a), E1 weights b, E2 weights c; the
+        # ownership biases are put back so the weights sum to the
+        # area exactly.
+        var inv_area = 1.0 / Float64(area)
+        # Converted per face whether or not they are used: three
+        # lookups against a per-sub-sample loop, and the flat path's
+        # corners are the zero color.
+        var ch_a = _channels(canvas, col_a, linear)
+        var ch_b = _channels(canvas, col_b, linear)
+        var ch_c = _channels(canvas, col_c, linear)
+        var ch_row = SIMD[DType.float64, 4](0.0)
+        var ch_dx = SIMD[DType.float64, 4](0.0)
+        var ch_dy = SIMD[DType.float64, 4](0.0)
+        if per_vertex:
+            ch_row = (
+                ch_a * Float64(row0 + bias0)
+                + ch_b * Float64(row1 + bias1)
+                + ch_c * Float64(row2 + bias2)
+            ) * inv_area
+            ch_dx = (
+                ch_a * Float64(step_x0)
+                + ch_b * Float64(step_x1)
+                + ch_c * Float64(step_x2)
+            ) * inv_area
+            ch_dy = (
+                ch_a * Float64(step_y0)
+                + ch_b * Float64(step_y1)
+                + ch_c * Float64(step_y2)
+            ) * inv_area
+            opaque = col_a.a == 255 and col_b.a == 255 and col_c.a == 255
         for j in range(j_lo, j_hi):
             var w0 = row0
             var w1 = row1
             var w2 = row2
+            var ch = ch_row
             var idx = (j * sw + i_lo) * BYTES_PER_PIXEL
             for _ in range(i_lo, i_hi):
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                    if per_vertex:
+                        color = _encode(canvas, ch, linear)
                     if opaque:
                         sp[unsafe_offset=idx] = color.r
                         sp[unsafe_offset=idx + 1] = color.g
@@ -353,10 +479,12 @@ def _mesh_chunk(
                 w0 += step_x0
                 w1 += step_x1
                 w2 += step_x2
+                ch += ch_dx
                 idx += BYTES_PER_PIXEL
             row0 += step_y0
             row1 += step_y1
             row2 += step_y2
+            ch_row += ch_dy
 
     # Each pixel is the premultiplied mean of its sub-samples, then
     # composited over the canvas through `set_pixel`, which applies
@@ -409,12 +537,15 @@ async def _mesh_band_async(
     colors: List[Color],
     row_lo: Int,
     row_hi: Int,
+    per_vertex: Bool,
 ):
     """`_mesh_band` as a task. The lists are borrowed, never owned: a
     heap-backed aggregate handed to `create_task` by value is
     canvas_mojo#97.
     """
-    _mesh_band(canvas, points, faces, colors, row_lo, row_hi)
+    _mesh_band(
+        canvas, points, faces, colors, row_lo, row_hi, per_vertex=per_vertex
+    )
 
 
 def _fill_mesh_device(
@@ -422,6 +553,7 @@ def _fill_mesh_device(
     points: List[FPoint],
     faces: List[Int],
     colors: List[Color],
+    per_vertex: Bool = False,
 ) raises:
     """Draw a device-space mesh now, banded across cores when there is
     enough of it. What `fill_mesh` reaches once the transform is
@@ -440,7 +572,7 @@ def _fill_mesh_device(
     var work = (hi - lo) * canvas.width * _SUBSAMPLE * _SUBSAMPLE
     var bands = _bands_for(work, hi - lo, canvas.max_workers())
     if bands <= 1:
-        _mesh_band(canvas, points, faces, colors, lo, hi)
+        _mesh_band(canvas, points, faces, colors, lo, hi, per_vertex=per_vertex)
         return
     var per_band = (hi - lo + bands - 1) // bands
     var tg = TaskGroup()
@@ -450,7 +582,9 @@ def _fill_mesh_device(
         if row_lo >= row_hi:
             continue
         tg.create_task(
-            _mesh_band_async(canvas, points, faces, colors, row_lo, row_hi)
+            _mesh_band_async(
+                canvas, points, faces, colors, row_lo, row_hi, per_vertex
+            )
         )
     tg.wait()
     # Named past the tasks: a task's borrow is not a use the compiler
@@ -504,6 +638,54 @@ def fill_mesh(
             ref p = points[i]
             device[i] = m.apply(p.x, p.y)
     if canvas._batching():
-        canvas._record_mesh(device, faces, colors)
+        canvas._record_mesh(device, faces, colors, False)
         return
     _fill_mesh_device(canvas, device, faces, colors)
+
+
+def fill_mesh_shaded(
+    mut canvas: Canvas,
+    points: List[FPoint],
+    faces: List[Int],
+    vertex_colors: List[Color],
+) raises:
+    """`fill_mesh` with a color per vertex, interpolated across each
+    face: a smoothly shaded surface rather than a faceted one (#426).
+    Everything else is `fill_mesh`'s -- seam-free shared edges,
+    painter's order, the transform, recording as one op -- and a face
+    whose three corners share a color draws exactly as `fill_mesh`
+    draws it.
+
+    Interpolation is barycentric, in the canvas's color space: SRGB
+    mixes the stored bytes, LINEAR mixes linear light and encodes back,
+    the same rule source-over follows, so a smooth face agrees with the
+    same face drawn as many flat faces at intermediate colors. A
+    different name rather than an overload, because a color per vertex
+    and a color per face are the same type and only their counts
+    differ, and a call whose meaning depends on a count is a call that
+    changes meaning when the mesh does.
+
+    Args:
+        canvas: Canvas to draw on.
+        points: The vertices, in the canvas's coordinates.
+        faces: Index triples into `points`, one triangle each, in
+            draw order.
+        vertex_colors: One color per vertex, same count as `points`.
+
+    Raises:
+        Error: `faces` is not whole triples, an index is out of range,
+            or `vertex_colors` is not one per vertex.
+    """
+    _check_mesh(points, faces, len(vertex_colors), False)
+    if len(faces) == 0:
+        return
+    var device = points.copy()
+    if canvas.has_transform():
+        var m = canvas.current_transform()
+        for i in range(len(points)):
+            ref p = points[i]
+            device[i] = m.apply(p.x, p.y)
+    if canvas._batching():
+        canvas._record_mesh(device, faces, vertex_colors, True)
+        return
+    _fill_mesh_device(canvas, device, faces, vertex_colors, True)

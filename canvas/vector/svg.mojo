@@ -28,7 +28,7 @@ from canvas.blend import BlendMode, _css_blend_name
 from canvas.buffer import Canvas
 from canvas.color import Color, ColorSpace
 from canvas.fill_rule import FillRule
-from canvas.shapes.mesh import _check_mesh
+from canvas.shapes.mesh import _check_mesh, _mean_color
 from canvas.geometry import FPoint, Matrix2D, _snap_rect
 from canvas.gradient import GradientStops, LinearGradient, RadialGradient
 from canvas.io.png import encode_png
@@ -1072,6 +1072,41 @@ struct SvgCanvas(DrawTarget, Movable):
             self._write_transform()
             self._write_blend()
             self._body.write("/>\n")
+
+    def fill_mesh_shaded(
+        mut self,
+        points: List[FPoint],
+        faces: List[Int],
+        vertex_colors: List[Color],
+    ) raises:
+        """`DrawTarget`'s smooth-shaded mesh, flat here: each face at
+        the mean of its three corner colors. SVG has no shipping way
+        to interpolate color across a triangle -- mesh gradients are
+        SVG 2 and unimplemented in browsers -- so this is the same
+        faceted approximation every SVG exporter makes, and the one
+        place this backend's picture differs from the raster one by
+        design. The faces are seam-treated as `fill_mesh`'s are.
+
+        Args:
+            points: The vertices, in user space.
+            faces: Index triples into `points`, in draw order.
+            vertex_colors: One color per vertex.
+
+        Raises:
+            Error: `faces` is not whole triples, an index is out of
+                range, or `vertex_colors` is not one per vertex.
+        """
+        _check_mesh(points, faces, len(vertex_colors), False)
+        var flat = List[Color](capacity=len(faces) // 3)
+        for f in range(0, len(faces), 3):
+            flat.append(
+                _mean_color(
+                    vertex_colors[faces[f]],
+                    vertex_colors[faces[f + 1]],
+                    vertex_colors[faces[f + 2]],
+                )
+            )
+        self.fill_mesh(points, faces, flat)
 
     def fill_circle_aa(mut self, cx: Int, cy: Int, radius: Int, color: Color):
         """Emit a `<circle>` element.

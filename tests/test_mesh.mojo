@@ -16,7 +16,8 @@ from canvas.color import Color
 from canvas.geometry import FPoint
 from canvas.path import Path
 from canvas.resize import downsample
-from canvas.shapes.mesh import fill_mesh
+from canvas.color import ColorSpace
+from canvas.shapes.mesh import fill_mesh, fill_mesh_shaded
 from canvas.shapes.polygon_fill import fill_polygon_aa
 from canvas.vector.pdf import PdfCanvas
 from canvas.vector.svg import SvgCanvas
@@ -443,6 +444,218 @@ def test_repeated_renders_agree() raises:
         fill_mesh(again, g[0], g[1], cols)
         again.end_supersampled()
         _assert_same(first, again, "render " + String(k))
+
+
+def test_shaded_interpolates_to_the_scalar_reference() raises:
+    """A triangle with a red, a green and a blue corner: every fully
+    covered interior pixel must hold the barycentric mix of the three
+    at the pixel's centre, computed here outside the rasterizer. The
+    mean of sixteen sub-samples of an affine function is its value at
+    the centre, so the only slack is per-sub-sample rounding."""
+    var a = FPoint(8.0, 10.0)
+    var b = FPoint(88.0, 18.0)
+    var c = FPoint(40.0, 86.0)
+    var pts: List[FPoint] = [a, b, c]
+    var one: List[Int] = [0, 1, 2]
+    var cols: List[Color] = [
+        Color(255, 0, 0),
+        Color(0, 255, 0),
+        Color(0, 0, 255),
+    ]
+    var cv = Canvas(100, 100, BG)
+    fill_mesh_shaded(cv, pts, one, cols)
+    var area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+    var checked = 0
+    var worst = 0
+    for y in range(100):
+        for x in range(100):
+            var p = cv.get_pixel(x, y)
+            if p.a != 255:
+                continue
+            var px = Float64(x)
+            var py = Float64(y)
+            var wa = ((b.x - px) * (c.y - py) - (b.y - py) * (c.x - px)) / area
+            var wb = ((c.x - px) * (a.y - py) - (c.y - py) * (a.x - px)) / area
+            var wc = 1.0 - wa - wb
+            # Only pixels whose whole square is inside: the reference
+            # is the interior mix, not a partially covered edge.
+            if wa < 0.02 or wb < 0.02 or wc < 0.02:
+                continue
+            if p.r == 255 and p.g == 255 and p.b == 255:
+                continue
+            var er = Int(wa * 255.0 + 0.5)
+            var eg = Int(wb * 255.0 + 0.5)
+            var eb = Int(wc * 255.0 + 0.5)
+            var d = max(
+                abs(Int(p.r) - er), max(abs(Int(p.g) - eg), abs(Int(p.b) - eb))
+            )
+            if d > worst:
+                worst = d
+            checked += 1
+    assert_true(checked > 1500, "interior pixels checked: " + String(checked))
+    assert_true(worst <= 2, "worst channel error " + String(worst))
+
+
+def test_shaded_with_equal_corners_is_the_flat_mesh() raises:
+    """A face whose three corners share a color must come out exactly
+    as `fill_mesh` draws it: same pixels, same silhouette."""
+    var g = _grid(6, 5, 7.5, 6.25, 11.3)
+    var per_vertex = _same_color(len(g[0]), Color(40, 90, 160, 210))
+    var per_face = _same_color(len(g[1]) // 3, Color(40, 90, 160, 210))
+    var flat = Canvas(90, 80, BG)
+    fill_mesh(flat, g[0], g[1], per_face)
+    var shaded = Canvas(90, 80, BG)
+    fill_mesh_shaded(shaded, g[0], g[1], per_vertex)
+    _assert_same(flat, shaded, "equal corners")
+
+
+def test_shaded_interpolates_in_the_canvas_color_space() raises:
+    """Black to white across a face: halfway is 128 when the canvas
+    mixes bytes and 188 when it mixes linear light, the same rule
+    source-over follows on the same canvas."""
+    var pts: List[FPoint] = [
+        FPoint(0, 0),
+        FPoint(100, 0),
+        FPoint(100, 60),
+        FPoint(0, 60),
+    ]
+    var cols: List[Color] = [
+        Color(0, 0, 0),
+        Color(255, 255, 255),
+        Color(255, 255, 255),
+        Color(0, 0, 0),
+    ]
+    var srgb = Canvas(100, 60, BG)
+    fill_mesh_shaded(srgb, pts, _two_faces(), cols)
+    var mid_srgb = Int(srgb.get_pixel(50, 30).r)
+    assert_true(abs(mid_srgb - 128) <= 2, "sRGB midpoint " + String(mid_srgb))
+    var lin = Canvas(100, 60, BG)
+    lin.set_color_space(ColorSpace.LINEAR)
+    fill_mesh_shaded(lin, pts, _two_faces(), cols)
+    var mid_lin = Int(lin.get_pixel(50, 30).r)
+    assert_true(abs(mid_lin - 188) <= 2, "linear midpoint " + String(mid_lin))
+
+
+def test_shaded_faces_are_continuous_across_a_shared_edge() raises:
+    """Blue on the left corners, red on the right: the mix is linear
+    in x on both triangles of the square, so every row reads the same
+    and nothing changes where the diagonal crosses it."""
+    var pts = _square(10, 10, 90, 70)
+    var cols: List[Color] = [
+        Color(0, 0, 255),
+        Color(255, 0, 0),
+        Color(255, 0, 0),
+        Color(0, 0, 255),
+    ]
+    var c = Canvas(100, 80, BG)
+    fill_mesh_shaded(c, pts, _two_faces(), cols)
+    for x in range(14, 86):
+        var top = c.get_pixel(x, 20)
+        var bottom = c.get_pixel(x, 60)
+        assert_true(
+            abs(Int(top.r) - Int(bottom.r)) <= 1,
+            "r differs between rows at " + String(x),
+        )
+        assert_true(
+            abs(Int(top.b) - Int(bottom.b)) <= 1,
+            "b differs between rows at " + String(x),
+        )
+        if x > 14:
+            var left = c.get_pixel(x - 1, 20)
+            assert_true(
+                Int(top.r) >= Int(left.r),
+                "red must not decrease at " + String(x),
+            )
+
+
+def test_shaded_batch_and_region_match_drawing_now() raises:
+    var g = _grid(8, 6, 6.5, 5.25, 9.7)
+    var cols = List[Color]()
+    for i in range(len(g[0])):
+        cols.append(
+            Color(
+                UInt8((i * 37) % 256),
+                UInt8((i * 91) % 256),
+                UInt8(80 + (i * 13) % 170),
+            )
+        )
+    var now = Canvas(90, 70, BG)
+    fill_mesh_shaded(now, g[0], g[1], cols)
+    var batched = Canvas(90, 70, BG)
+    batched.begin_batch()
+    fill_mesh_shaded(batched, g[0], g[1], cols)
+    batched.end_batch()
+    _assert_same(now, batched, "batch")
+
+    comptime F = 3
+    var big = Canvas(90 * F, 70 * F, BG)
+    big.save()
+    big.translate(Float64(F - 1) / 2.0, Float64(F - 1) / 2.0)
+    big.scale(Float64(F), Float64(F))
+    fill_mesh_shaded(big, g[0], g[1], cols)
+    big.restore()
+    var want = downsample(big, F)
+    var got = Canvas(90, 70, BG)
+    got.begin_supersampled(F, BG)
+    fill_mesh_shaded(got, g[0], g[1], cols)
+    got.end_supersampled()
+    _assert_same(want, got, "region")
+
+
+def test_shaded_validation_and_vector_backends() raises:
+    """A color count that is not one per vertex raises everywhere.
+    SVG emits each face flat at the mean of its corners, documented as
+    the backend's limit; PDF emits a Type 4 shading stream, twelve
+    bytes per vertex entry, and paints it with `sh`."""
+    var pts = _square(10, 10, 50, 50)
+    var cols: List[Color] = [
+        Color(0, 0, 255),
+        Color(255, 0, 0),
+        Color(255, 0, 0),
+        Color(0, 0, 255),
+    ]
+    var wrong = _same_color(2, INK)
+    var raised = 0
+    var c = Canvas(60, 60, BG)
+    var s = SvgCanvas(60, 60)
+    var p = PdfCanvas(60, 60)
+    try:
+        fill_mesh_shaded(c, pts, _two_faces(), wrong)
+    except:
+        raised += 1
+    try:
+        s.fill_mesh_shaded(pts, _two_faces(), wrong)
+    except:
+        raised += 1
+    try:
+        p.fill_mesh_shaded(pts, _two_faces(), wrong)
+    except:
+        raised += 1
+    assert_equal(raised, 3, "one color per vertex, on every backend")
+
+    s.fill_mesh_shaded(pts, _two_faces(), cols)
+    var svg = s.to_string()
+    assert_equal(svg.count("<path"), 2, "one path per face")
+    # Face (0, 1, 2) is blue, red, red: (170, 0, 85). Face (0, 2, 3)
+    # is blue, red, blue: (85, 0, 170).
+    assert_equal(
+        svg.count('fill="#aa0055"'),
+        1,
+        "the first face at the mean of its corners",
+    )
+    assert_equal(
+        svg.count('fill="#5500aa"'),
+        1,
+        "the second face at the mean of its corners",
+    )
+
+    p.fill_mesh_shaded(pts, _two_faces(), cols)
+    assert_equal(p.content().count("/Msh1 sh"), 1, "painted with sh")
+    var file = String(unsafe_from_utf8=Span(p.to_bytes(compress=False)))
+    assert_equal(file.count("/ShadingType 4"), 1, "a Type 4 shading object")
+    assert_true(file.count("/Msh1 ") >= 1, "referenced from the resources")
+    # Two faces, three vertices each, twelve bytes per vertex entry.
+    assert_equal(file.count("/Length 72"), 1, "the packed vertex stream")
 
 
 def main() raises:
