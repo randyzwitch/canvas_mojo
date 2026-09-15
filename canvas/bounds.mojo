@@ -58,6 +58,15 @@ page, so this is the case that matters least.
 Blend mode and color space are carried for `save`/`restore` and
 otherwise ignored: `CLEAR` or `DESTINATION_OUT` still count as ink,
 since the box answers where a primitive drew, not what it left.
+
+## Measuring a scene that has a background
+
+A full-page background fill is ink like any other, so a scene that
+paints one measures as the whole page and a crop to that box is a
+no-op. A caller measuring for a tight crop should draw the scene
+without its background and paint the background into the cropped
+target afterwards. The same applies to any mark placed to cover the
+page rather than to be seen, such as a border drawn at the edges.
 """
 
 from std.math import cos, sin, floor, ceil

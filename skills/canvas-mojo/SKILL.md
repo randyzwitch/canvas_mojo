@@ -11,6 +11,8 @@ trait; code written against the trait draws to any of them.
 `BoundsTarget` implements it too and only measures: draw a scene into
 one, read `ink_pixels()`, and draw again into a target of that size
 translated by minus the box's corner for a crop tight to the ink.
+Measure the scene without its background fill: a full-page background
+is ink like any other and would make the box the whole page.
 
 ## First, load the API digest
 
