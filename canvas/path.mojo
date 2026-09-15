@@ -496,6 +496,14 @@ struct Path(Copyable, Movable):
         unit radius and map it with `transformed` and a `Transform2D`
         carrying the two scales.
 
+        That advice assumes the mapping is affine, which a
+        `Transform2D` always is but a caller's own data-to-pixel scale
+        might not be -- a logarithmic axis, for one. A `Transform2D`
+        built from such a scale's slope and intercept places this
+        polygon's vertices on the straight line the scale is not,
+        correct only where the two happen to agree. Check for that
+        case rather than assuming a scale is affine because most are.
+
         Args:
             cx: Center x.
             cy: Center y.
