@@ -565,5 +565,30 @@ def test_draw_image_is_reachable_through_the_trait() raises:
     )
 
 
+def test_a_document_with_text_is_byte_identical_run_to_run() raises:
+    """`pdf_font.mojo` tells a consumer that a byte-level gate on PDF
+    output is a gate on the font installation and nothing else: no
+    creation date, no `/ID`, a fixed `/Producer`. That promise is
+    invisible in the rendered page, so it needs a test that reads the
+    bytes rather than the pixels -- a timestamp added later would
+    break every downstream digest and pass every other test here.
+
+    Text, because the embedded font subset is the part of the document
+    with the most machinery behind it (#462).
+    """
+    var first = PdfCanvas(200, 100)
+    first.draw_text(20.0, 50.0, "Reproducible", Color(0, 0, 0), 18.0)
+    var second = PdfCanvas(200, 100)
+    second.draw_text(20.0, 50.0, "Reproducible", Color(0, 0, 0), 18.0)
+    var a = first.to_bytes()
+    var b = second.to_bytes()
+    assert_equal(len(a), len(b), "two identical renders differ in length")
+    var differing = 0
+    for i in range(len(a)):
+        if a[i] != b[i]:
+            differing += 1
+    assert_equal(differing, 0, "two identical renders differ in bytes")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
