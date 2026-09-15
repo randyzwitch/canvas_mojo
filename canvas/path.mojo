@@ -159,6 +159,11 @@ struct Path(Copyable, Movable):
     stroke_path_aa. No chaining: each call is `mut self` returning
     nothing, like Canvas's push_clip/set_pixel.
 
+    `transformed` maps a whole path into a new one, and `extend` folds
+    that new path into another -- how a shape built at a convenient
+    size or orientation joins a larger path as its own sub-path,
+    sharing one fill with the rest rather than seaming against it.
+
     All coordinates are absolute. There are no relative-to-current-
     point variants (SVG/Cairo's rel_line_to and friends).
 
@@ -1075,6 +1080,46 @@ struct Path(Copyable, Movable):
             if shape.edges.winding_at(x, y) != 0:
                 return True
         return False
+
+    def extend(mut self, other: Path) raises:
+        """Append `other`'s commands onto this path, and adopt its
+        current point and sub-path start so the builder state stays in
+        step with `commands` -- the thing a caller cannot do from
+        outside, since those fields are private.
+
+        No implicit connection between the two: `other` begins with
+        its own `move_to`, so it becomes its own sub-path rather than
+        continuing this one, and a `close()` afterward closes
+        `other`'s sub-path, not whatever this path held before.
+
+        The case this exists for is `transformed`, which returns a
+        *new* path: a shape built at a convenient size or orientation,
+        mapped into place, then folded into a larger path so it shares
+        one fill with its neighbors and leaves no seam between them
+        (see `regular_polygon`'s docstring for a worked case, and
+        `arrow_head`'s for why a shared fill matters at all).
+
+        Extending by an empty `other` (no `move_to` called on it) is a
+        no-op: this path's current point and sub-path start are left
+        alone.
+
+        Args:
+            other: The path whose commands to append. Left unchanged;
+                nothing here mutates it.
+
+        Raises:
+            Error: Never in practice -- `other`'s commands are already
+                well-formed, having been built through this same API.
+        """
+        if len(other.commands) == 0:
+            return
+        for cmd in other.commands:
+            self.commands.append(cmd)
+        self._current_x = other._current_x
+        self._current_y = other._current_y
+        self._subpath_start_x = other._subpath_start_x
+        self._subpath_start_y = other._subpath_start_y
+        self._has_current_point = True
 
     def close(mut self) raises:
         """Draw a straight segment back to this sub-path's move_to and

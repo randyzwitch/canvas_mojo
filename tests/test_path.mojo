@@ -34,6 +34,7 @@ from canvas.path import (
     _quad_point,
     _cubic_point,
     _point_in_subpaths,
+    PathCommand,
     PathOp,
 )
 
@@ -2039,6 +2040,222 @@ def test_curve_to_through_needs_a_current_point() raises:
     q.move_to(1.0, 2.0)
     q.curve_to_through(List[FPoint]())
     assert_equal(len(q.commands), 1)
+
+
+def _assert_commands_equal(a: PathCommand, b: PathCommand, msg: String) raises:
+    assert_equal(a.op, b.op, msg)
+    assert_equal(a.p1.x, b.p1.x, msg)
+    assert_equal(a.p1.y, b.p1.y, msg)
+    assert_equal(a.p2.x, b.p2.x, msg)
+    assert_equal(a.p2.y, b.p2.y, msg)
+    assert_equal(a.p3.x, b.p3.x, msg)
+    assert_equal(a.p3.y, b.p3.y, msg)
+
+
+def test_extend_concatenates_commands_field_for_field() raises:
+    var a = Path()
+    a.move_to(1.0, 2.0)
+    a.line_to(3.0, 4.0)
+
+    var b = Path()
+    b.move_to(10.0, 20.0)
+    b.line_to(30.0, 40.0)
+    b.close()
+
+    a.extend(b)
+
+    assert_equal(len(a.commands), 5)
+    _assert_commands_equal(
+        a.commands[0],
+        PathCommand(
+            PathOp.MOVE_TO, FPoint(1.0, 2.0), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+        ),
+        "a's own first command is untouched",
+    )
+    _assert_commands_equal(
+        a.commands[1],
+        PathCommand(
+            PathOp.LINE_TO, FPoint(3.0, 4.0), FPoint(0.0, 0.0), FPoint(0.0, 0.0)
+        ),
+        "a's own second command is untouched",
+    )
+    for i in range(3):
+        _assert_commands_equal(
+            a.commands[2 + i], b.commands[i], "b's commands, appended in order"
+        )
+
+
+def test_extend_by_an_empty_path_is_a_no_op() raises:
+    var a = Path()
+    a.move_to(1.0, 2.0)
+    a.line_to(3.0, 4.0)
+    var before = _flat_points(a)
+
+    a.extend(Path())
+
+    assert_equal(len(a.commands), 2, "nothing was appended")
+    var after = _flat_points(a)
+    assert_equal(len(after), len(before))
+    for i in range(len(before)):
+        assert_equal(after[i].x, before[i].x)
+        assert_equal(after[i].y, before[i].y)
+    # The current point is untouched, not cleared: a further line_to
+    # does not raise "before any move_to", and starts from (3, 4).
+    a.line_to(9.0, 9.0)
+    var final_points = _flat_points(a)
+    var last = len(final_points) - 1
+    assert_equal(final_points[last].x, 9.0)
+    assert_equal(final_points[last].y, 9.0)
+    assert_equal(final_points[last - 1].x, 3.0)
+    assert_equal(final_points[last - 1].y, 4.0)
+
+
+def test_extend_into_an_empty_path_adopts_the_other() raises:
+    var other = Path()
+    other.move_to(2.0, 3.0)
+    other.line_to(6.0, 3.0)
+
+    var p = Path()
+    p.extend(other)
+
+    assert_equal(len(p.commands), 2)
+    for i in range(2):
+        _assert_commands_equal(
+            p.commands[i], other.commands[i], "adopted verbatim"
+        )
+
+    # The current point is other's: a further line_to succeeds and
+    # continues from (6, 3), not from Path()'s default (0, 0).
+    p.line_to(6.0, 9.0)
+    var pts = _flat_points(p)
+    assert_equal(pts[len(pts) - 2].x, 6.0)
+    assert_equal(pts[len(pts) - 2].y, 3.0)
+    assert_equal(pts[len(pts) - 1].x, 6.0)
+    assert_equal(pts[len(pts) - 1].y, 9.0)
+
+
+def test_close_after_extend_closes_the_other_sub_path() raises:
+    var p = Path()
+    p.move_to(0.0, 0.0)
+    p.line_to(10.0, 0.0)
+
+    var other = Path()
+    other.move_to(20.0, 0.0)
+    other.line_to(20.0, 10.0)
+
+    p.extend(other)
+    p.close()
+
+    var subs = _flatten(p)
+    assert_equal(len(subs), 2)
+    assert_true(not subs[0].closed, "p's own sub-path is untouched, still open")
+    assert_true(subs[1].closed, "close() closed other's sub-path, not p's")
+    ref pts = subs[1].points
+    assert_equal(pts[0].x, 20.0)
+    assert_equal(pts[0].y, 0.0)
+    assert_equal(pts[len(pts) - 1].x, 20.0)
+    assert_equal(pts[len(pts) - 1].y, 10.0)
+
+
+def test_extended_bounds_and_stroke_bounds_match_the_union() raises:
+    var a = Path()
+    a.move_to(0.0, 0.0)
+    a.line_to(10.0, 0.0)
+    a.line_to(10.0, 10.0)
+    a.close()
+
+    var b = Path()
+    b.move_to(20.0, 5.0)
+    b.line_to(30.0, 5.0)
+    b.line_to(30.0, 15.0)
+    b.close()
+
+    var stroke_a = a.stroke_bounds(2.0)
+    var stroke_b = b.stroke_bounds(2.0)
+
+    var combined = Path()
+    combined.extend(a)
+    combined.extend(b)
+
+    _assert_box(
+        combined.bounds(), 0.0, 0.0, 30.0, 15.0, 1e-9, "bounds is the union"
+    )
+    _assert_box(
+        combined.stroke_bounds(2.0),
+        min(stroke_a[0], stroke_b[0]),
+        min(stroke_a[1], stroke_b[1]),
+        max(stroke_a[2], stroke_b[2]),
+        max(stroke_a[3], stroke_b[3]),
+        1e-9,
+        "stroke_bounds is the union",
+    )
+
+
+def test_extend_gives_a_seam_free_fill_two_separate_fills_do_not() raises:
+    """The property this method exists for. `regular_polygon`'s own
+    docstring names the case: a shape regular at unit size, mapped by
+    its own `Transform2D` into place, joining a larger path so it
+    shares one fill with its neighbors -- the hexbin cell pattern
+    dataviz_mojo#579 keeps hand-written vertex math for today.
+
+    Two unit right triangles that together tile the unit square, split
+    along its rising diagonal, stand in for two such neighbors sharing
+    a non-axis-aligned edge: the shape `fill_mesh`'s own docstring
+    measures a seam on (a shared *axis-aligned* edge has no such
+    problem, since its antialiased coverage is exact on both sides).
+
+    Filled once, as one path via `extend`, under `FillRule.NONZERO`,
+    the internal diagonal cancels and the square comes out solid.
+    Filled as two separate `fill_path_aa` calls -- what a caller
+    without `extend` is stuck with -- each triangle's antialiased edge
+    blends against whatever is already there rather than against the
+    other triangle, and the diagonal is left with pixels short of full
+    coverage.
+    """
+    var lower = Path()
+    lower.move_to(0.0, 0.0)
+    lower.line_to(1.0, 0.0)
+    lower.line_to(1.0, 1.0)
+    lower.close()
+
+    var upper = Path()
+    upper.move_to(0.0, 0.0)
+    upper.line_to(1.0, 1.0)
+    upper.line_to(0.0, 1.0)
+    upper.close()
+
+    var t = Transform2D(60.0, 60.0, 5.0, 5.0)
+
+    var combined = lower.transformed(t)
+    combined.extend(upper.transformed(t))
+
+    var one_fill = Canvas(70, 70, BG)
+    fill_path_aa(one_fill, combined, FG, fill_rule=FillRule.NONZERO)
+
+    var two_fills = Canvas(70, 70, BG)
+    fill_path_aa(
+        two_fills, lower.transformed(t), FG, fill_rule=FillRule.NONZERO
+    )
+    fill_path_aa(
+        two_fills, upper.transformed(t), FG, fill_rule=FillRule.NONZERO
+    )
+
+    # Along the diagonal, away from the triangles' own corners at the
+    # square's ends, where both fills agree regardless.
+    var off_in_one = 0
+    var off_in_two = 0
+    for i in range(15, 56):
+        if one_fill.get_pixel(i, i).r != 255:
+            off_in_one += 1
+        if two_fills.get_pixel(i, i).r != 255:
+            off_in_two += 1
+    assert_equal(
+        off_in_one, 0, "one path via extend leaves the seam fully covered"
+    )
+    assert_true(
+        off_in_two > 0,
+        "two separate fills leave the seam short of full coverage",
+    )
 
 
 def main() raises:
