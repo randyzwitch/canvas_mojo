@@ -726,8 +726,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
     BYTES_PER_PIXEL), so a canvas can carry a transparent background and
     `write_png` can emit real transparency.
 
-    There is no `draw_text` method, since `DrawTarget` has none. Call
-    `canvas.text.render.draw_text(canvas, ...)`.
+    `draw_text` is the `DrawTarget` method; `canvas.text.render.draw_text`
+    is the free function it wraps, which additionally offers the kerning
+    and ligature switches and the whole-pixel and cache-less overloads.
     """
 
     var width: Int
