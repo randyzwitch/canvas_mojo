@@ -36,6 +36,12 @@ from canvas import Canvas, Color, Path, fill_circle_aa, write_png
 - `PdfCanvas(width, height)` creates a PDF document; `new_page` adds pages.
 - A function generic over `DrawTarget` can issue the shared drawing
   operations to any backend.
+- `BoundsTarget(width, height)` is a fourth conformer that draws
+  nothing and keeps the union of what it was asked to draw: render a
+  scene into one, read `ink_pixels()` as `(x, y, width, height)`, then
+  render again into a target of that size with `translate(-x, -y)`.
+  That is a tight crop on every backend. `has_ink()` tells an empty
+  scene from a box at the origin; `ink_bounds()` is the geometric box.
 - Free drawing functions take their target first. `Canvas` also exposes
   the core operations as methods.
 - `begin_batch()` / `end_batch()` on any target defer the anti-aliased
