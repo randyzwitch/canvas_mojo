@@ -13,7 +13,8 @@ from std.math import asin, ceil, floor, sqrt
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.color import Color
-from canvas.buffer import Canvas, _disk_op
+from canvas.buffer import Canvas
+from canvas.batch_ops import _disk_op
 from canvas.geometry import FPoint, round_to_int
 from canvas.fill_rule import FillRule
 from canvas.path import (
