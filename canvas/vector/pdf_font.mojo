@@ -19,6 +19,27 @@ components of a used composite glyph marked used with it. Glyph
 indices are unchanged, so `CIDToGIDMap` stays `/Identity`. A
 CFF-flavored OpenType font is embedded whole (`FontFile3`, subtype
 `OpenType`); subsetting a CFF program is a separate job.
+
+## The document carries the machine's font, not a copy of the family
+
+What is embedded is the bytes of the file `font_discovery` resolved on
+the machine that rendered, subset and reserialized. The tables listed
+above are copied verbatim out of it, `glyf` included, and the hinting
+programs `cvt `, `fpgm` and `prep` are copied whole. So the document
+is a function of which build of a family the machine had, not of the
+family name the caller asked for. Two machines with "the same font"
+from different packagings produce documents that differ in length:
+the glyph outlines agree, which is why raster output is identical, and
+the file bytes around them need not.
+
+Nothing else in the document varies. There is no creation date and no
+`/ID`, and the `/Producer` is a fixed string, so the same font file on
+the same machine renders byte-identical documents run to run. A
+consumer gating on PDF bytes across machines is gating on the font
+installation; one gating on a single machine is gating on this
+package. The font program is most of a small document -- a two-word
+label embeds about 53 KB of subset font, compressed to about 12 KB of
+a 14 KB file.
 """
 
 from std.memory import ArcPointer

@@ -1810,6 +1810,18 @@ struct PdfCanvas(DrawTarget, Movable):
         the anchor). The overload below, with a `cache`, is the
         `DrawTarget` form; this one is the same call without it.
 
+        What is embedded is the font file this machine resolved, subset
+        and reserialized, so a document with text in it depends on which
+        build of a family the machine had installed. Two machines whose
+        packaging of one family differs produce documents of different
+        lengths from the same calls -- the glyphs are the same, which is
+        why raster output matches, and the embedded bytes are not.
+        `SvgCanvas` names the family and embeds nothing, so it does not
+        have this dependency. A byte-level gate on PDF output is
+        therefore a gate on the font installation as well; on one
+        machine with one font file the output is byte-identical run to
+        run. See `canvas/vector/pdf_font.mojo`.
+
         Args:
             x: Anchor x -- baseline left end for LEFT alignment.
             y: Anchor y -- baseline.
