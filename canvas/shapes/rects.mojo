@@ -9,7 +9,8 @@ from canvas.color import Color
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
-from canvas.buffer import Canvas, _rect_op
+from canvas.buffer import Canvas
+from canvas.batch_ops import _rect_op
 from canvas.geometry import (
     Matrix2D,
     Point,

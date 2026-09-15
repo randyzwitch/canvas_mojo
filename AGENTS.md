@@ -48,13 +48,14 @@ resolves.
 ## Layout
 
 - `canvas/` is the package. `buffer.mojo` (Canvas, pixel writes, clip
-  and transform state), `color.mojo`, `path.mojo` (Path and the path
-  fills), `shapes/` (primitives), `aa_crossing.mojo` (sampled sweep,
-  even-odd) and `aa_area.mojo` (analytic area, nonzero), `gradient.mojo`,
-  `blend.mojo`, `compose.mojo`, `blur.mojo`, `mask.mojo`, `resize.mojo`,
-  `io/` (png, bmp, jpeg, deflate), `text/` (discovery, TrueType/CFF
-  parsing, shaping, layout, rendering), `vector/` (the trait, svg,
-  pdf, pdf_font).
+  and transform state), `batch_ops.mojo` (what a batch records) and
+  `batch.mojo` (how it is drawn), `color.mojo`, `path.mojo` (Path and
+  the path fills), `shapes/` (primitives), `aa_crossing.mojo` (sampled
+  sweep, even-odd) and `aa_area.mojo` (analytic area, nonzero),
+  `gradient.mojo`, `blend.mojo`, `compose.mojo`, `blur.mojo`,
+  `mask.mojo`, `resize.mojo`, `io/` (png, bmp, jpeg, deflate),
+  `text/` (discovery, TrueType/CFF parsing, shaping, layout,
+  rendering), `vector/` (the trait, svg, pdf, pdf_font).
 - `tests/` mirrors `canvas/` one file per module; `tests/golden/` holds
   reference PNGs; `tests/jpeg/` holds decoder fixtures.
 - `examples/` are the docs pages' sources; each writes one or more
