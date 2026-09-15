@@ -3,6 +3,7 @@ from canvas.blur import blur, draw_shadowed
 from canvas.color import Color, ColorSpace
 from canvas.named_colors import *
 from canvas.buffer import Canvas
+from canvas.bounds import BoundsTarget
 from canvas.compose import Filter, draw_canvas, draw_image
 from canvas.resize import downsample, resize
 from canvas.io.bmp import read_bmp, write_bmp

@@ -8,6 +8,9 @@ description: Draw 2D graphics in Mojo with canvas_mojo -- raster PNG/BMP, SVG an
 canvas_mojo is a 2D drawing engine written entirely in Mojo. `Canvas`
 (raster), `SvgCanvas` and `PdfCanvas` implement the same `DrawTarget`
 trait; code written against the trait draws to any of them.
+`BoundsTarget` implements it too and only measures: draw a scene into
+one, read `ink_pixels()`, and draw again into a target of that size
+translated by minus the box's corner for a crop tight to the ink.
 
 ## First, load the API digest
 

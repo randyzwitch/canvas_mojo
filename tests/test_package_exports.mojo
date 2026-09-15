@@ -9,6 +9,7 @@ from std.testing import TestSuite, assert_equal, assert_true
 
 from canvas import (
     BlendMode,
+    BoundsTarget,
     Canvas,
     Color,
     DrawTarget,
@@ -168,6 +169,34 @@ def _draw_shaded_mesh[T: DrawTarget](mut target: T) raises:
         Color(40, 90, 160),
     ]
     target.fill_mesh_shaded(pts, faces, per_vertex)
+
+
+def test_the_measuring_target_is_a_fourth_conformer() raises:
+    """`BoundsTarget` is the one `DrawTarget` written without a
+    buffer, a string or a page behind it, so it is also the proof that
+    the trait can be implemented from outside the three backends. The
+    same generic scatter that reaches the batched raster path reaches
+    it, and it answers with the markers' extent (#460).
+    """
+    var bounds = BoundsTarget(40, 34)
+    _draw_markers(bounds, 3.0)
+    assert_true(bounds.has_ink(), "the scatter has extent")
+    var box = bounds.ink_pixels()
+    assert_true(box[0] >= 0 and box[1] >= 0, "inside the page")
+    assert_true(box[0] + box[2] <= 40 and box[1] + box[3] <= 34, "inside")
+    var singly = Canvas(40, 34, Color(255, 255, 255))
+    _draw_markers_singly(singly, 3.0)
+    for y in range(34):
+        for x in range(40):
+            if singly.get_pixel(x, y) == Color(255, 255, 255):
+                continue
+            assert_true(
+                x >= box[0]
+                and x < box[0] + box[2]
+                and y >= box[1]
+                and y < box[1] + box[3],
+                "every inked pixel is inside the measured box",
+            )
 
 
 def test_a_mesh_reaches_every_backend_through_the_trait() raises:

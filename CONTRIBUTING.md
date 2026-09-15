@@ -95,7 +95,11 @@ trait DrawTarget:
 ```
 
 Three backends implement it, and they work in completely different
-ways:
+ways; a fourth conformer, `BoundsTarget` (`canvas/bounds.mojo`),
+draws nothing and keeps the union of what it was asked to draw, so a
+caller can measure a scene's ink before sizing a real target to it.
+It is also the in-repo proof that the trait can be implemented
+without a buffer, a string or a page behind it. The three:
 
 - **`Canvas`** (`canvas/buffer.mojo`) owns an RGBA pixel buffer, four
   bytes per pixel, row-major. Its methods delegate to the free
