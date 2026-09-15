@@ -42,6 +42,9 @@ from canvas import Canvas, Color, Path, fill_circle_aa, write_png
   render again into a target of that size with `translate(-x, -y)`.
   That is a tight crop on every backend. `has_ink()` tells an empty
   scene from a box at the origin; `ink_bounds()` is the geometric box.
+  Measure without the scene's background fill: a full-page background
+  counts as ink, which makes the box the whole page and the crop a
+  no-op. Paint it into the cropped target instead.
 - Free drawing functions take their target first. `Canvas` also exposes
   the core operations as methods.
 - `begin_batch()` / `end_batch()` on any target defer the anti-aliased
