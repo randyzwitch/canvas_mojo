@@ -77,7 +77,11 @@ shape as one subpath. `curve_through` adds a smooth open subpath through
 points with Catmull-Rom tangents; `curve_to_through` continues the current
 subpath with the same curve, for a closed band with two smoothed edges.
 `arrow_head` adds a closed arrowhead pointing along a direction; stroke the
-shaft to the tip so the head covers the join.
+shaft to the tip so the head covers the join. `transformed` maps a whole
+path into a new one; `extend` appends another path's commands, adopting its
+current point, so a shape built at unit size and mapped into place joins a
+larger path as its own subpath -- sharing one fill with the rest under
+`FillRule.NONZERO` instead of seaming against it.
 
 Use `fill_path_aa` for its interior or `stroke_path_aa` for its outline.
 `FillRule.EVEN_ODD` is the default; use `FillRule.NONZERO` when winding
