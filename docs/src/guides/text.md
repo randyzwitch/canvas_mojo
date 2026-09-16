@@ -95,4 +95,29 @@ it because its glyph indices refer to faces owned by that cache.
 - `SvgCanvas.draw_text` emits an SVG text element using a CSS family value.
 - `PdfCanvas.draw_text` embeds used font subsets and a ToUnicode map.
 
-Text is not part of `DrawTarget`; call the concrete backend's text API.
+`draw_text` is on `DrawTarget`, with a `cache=` keyword, so code generic
+over the trait can label what it draws; `stroke_text` and
+`draw_text_on_path` are backend methods.
+
+## Draw one label from several runs
+
+A label whose pieces differ in size or slant, an italic variable or a
+superscript, is a list of `TextRun`s drawn by `draw_text_runs`, on every
+backend. Each run has its text, size and slant, a `dx` that moves the pen
+from where the previous run ended, and a `dy` that is its baseline relative
+to the label's, negative for a superscript:
+
+```mojo
+var runs: List[TextRun] = [
+    TextRun("E", 18.0, slant=FontSlant.ITALIC),
+    TextRun(" = ", 18.0),
+    TextRun("mc", 18.0, slant=FontSlant.ITALIC),
+    TextRun("2", 12.6, dy=-6.3),
+]
+target.draw_text_runs(x, y, runs, color, align=TextAlign.CENTER, cache=cache)
+```
+
+`Canvas` and `PdfCanvas` draw each run with `draw_text` at the anchor
+`text_run_anchors` measures for it. `SvgCanvas` writes one `<text>` element
+with a `<tspan>` per run, so the label stays one string to select or copy,
+and the viewer's font metrics place the runs, as they do a single label.

@@ -27,6 +27,9 @@ from canvas.io.deflate import inflate
 from canvas.path import Path
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
+from canvas.text.render import text_run_anchors
+from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 from canvas.vector.draw_target import DrawTarget
 from canvas.vector.pdf import PdfCanvas, write_pdf, _pdf_string
 
@@ -358,6 +361,54 @@ def test_ligature_maps_to_its_characters() raises:
         "<00660069>" in file or ("<0066>" in file and "<0069>" in file),
         "f and i survive into ToUnicode",
     )
+
+
+def _count(haystack: String, needle: String) -> Int:
+    var n = 0
+    var at = haystack.find(needle)
+    while at >= 0:
+        n += 1
+        at = haystack.find(needle, at + needle.byte_length())
+    return n
+
+
+def test_draw_text_runs_is_draw_text_per_run() raises:
+    var cache = FontCache()
+    var runs: List[TextRun] = [
+        TextRun("E", 18.0, FontSlant.ITALIC),
+        TextRun(" = mc", 18.0),
+        TextRun("2", 12.6, dy=-6.3),
+    ]
+    var via = PdfCanvas(200, 100)
+    via.draw_text_runs(
+        100.0,
+        60.0,
+        runs,
+        Color(0, 0, 0),
+        rotation=0.2,
+        align=TextAlign.CENTER,
+        cache=cache,
+    )
+    var direct = PdfCanvas(200, 100)
+    var anchors = text_run_anchors(
+        100.0, 60.0, runs, rotation=0.2, align=TextAlign.CENTER, cache=cache
+    )
+    for i in range(len(runs)):
+        direct.draw_text(
+            anchors[i].x,
+            anchors[i].y,
+            runs[i].text,
+            Color(0, 0, 0),
+            runs[i].size,
+            slant=runs[i].slant,
+            rotation=0.2,
+        )
+    assert_equal(
+        _bytes_to_string(via.to_bytes(compress=False)),
+        _bytes_to_string(direct.to_bytes(compress=False)),
+        "byte-identical to draw_text at each run's anchor",
+    )
+    assert_equal(_count(via.content(), "BT "), 3, "one text object per run")
 
 
 def test_kerning_is_a_tj_adjustment() raises:

@@ -46,7 +46,9 @@ from canvas.text.render import (
     measure_text_block,
     prepare_text,
     stroke_text,
+    text_run_anchors,
     TextAlign,
+    TextRun,
     _apply_run_kerning,
     _shape_line,
     _ShapedGlyph,
@@ -1459,6 +1461,161 @@ def test_layout_pins_the_inputs_that_shaped_it() raises:
     assert_true(layout.align == TextAlign.CENTER, "align")
     assert_true(not layout.kerning, "kerning")
     assert_true(not layout.ligatures, "ligatures")
+
+
+# --- draw_text_runs: one label from several runs (#467) -----------------
+
+
+def _mc2() -> List[TextRun]:
+    var runs: List[TextRun] = [
+        TextRun("E", 24.0, FontSlant.ITALIC),
+        TextRun(" = mc", 24.0),
+        TextRun("2", 16.8, dx=1.0, dy=-8.4),
+    ]
+    return runs^
+
+
+def test_text_run_anchors_places_each_run_after_the_previous_advance() raises:
+    var cache = FontCache()
+    var runs: List[TextRun] = [
+        TextRun("ab", 20.0),
+        TextRun("c", 14.0, FontSlant.ITALIC, dx=1.5, dy=-7.0),
+    ]
+    var a = text_run_anchors(10.0, 40.0, runs, cache=cache)
+    assert_equal(len(a), 2)
+    assert_equal(a[0].x, 10.0)
+    assert_equal(a[0].y, 40.0)
+    var adv = measure_text("ab", 20.0, cache=cache).advance
+    assert_true(adv > 0.0)
+    assert_equal(a[1].x, 10.0 + adv + 1.5, "the pen, then the kern")
+    assert_equal(a[1].y, 40.0 - 7.0, "dy is the run's own baseline")
+
+
+def test_text_run_anchors_center_and_right_shift_by_the_label_width() raises:
+    var cache = FontCache()
+    var runs: List[TextRun] = [
+        TextRun("ab", 20.0),
+        TextRun("c", 14.0, FontSlant.ITALIC, dx=1.5),
+    ]
+    var adv_ab = measure_text("ab", 20.0, cache=cache).advance
+    var adv_c = measure_text(
+        "c", 14.0, slant=FontSlant.ITALIC, cache=cache
+    ).advance
+    var width = adv_ab + 1.5 + adv_c
+    var center = text_run_anchors(
+        10.0, 40.0, runs, align=TextAlign.CENTER, cache=cache
+    )
+    assert_equal(center[0].x, 10.0 - width / 2.0)
+    assert_equal(center[1].x, 10.0 - width / 2.0 + adv_ab + 1.5)
+    var right = text_run_anchors(
+        10.0, 40.0, runs, align=TextAlign.RIGHT, cache=cache
+    )
+    assert_equal(right[0].x, 10.0 - width)
+    assert_equal(right[1].x, 10.0 - width + adv_ab + 1.5)
+
+
+def test_text_run_anchors_rotate_about_the_anchor() raises:
+    var cache = FontCache()
+    var runs: List[TextRun] = [
+        TextRun("ab", 20.0),
+        TextRun("c", 14.0, dx=1.5, dy=-7.0),
+    ]
+    var pen = measure_text("ab", 20.0, cache=cache).advance + 1.5
+    # A quarter turn clockwise on screen: along-the-line becomes down,
+    # and a rise above the baseline becomes a step to the right.
+    var a = text_run_anchors(10.0, 40.0, runs, rotation=pi / 2.0, cache=cache)
+    assert_true(abs(a[0].x - 10.0) < 1e-9 and abs(a[0].y - 40.0) < 1e-9)
+    assert_true(abs(a[1].x - (10.0 + 7.0)) < 1e-9, "the rise turned right")
+    assert_true(abs(a[1].y - (40.0 + pen)) < 1e-9, "the pen turned down")
+
+
+def test_text_run_anchors_skips_an_empty_run() raises:
+    var cache = FontCache()
+    var runs: List[TextRun] = [
+        TextRun("", 20.0, dx=5.0),
+        TextRun("ab", 20.0),
+        TextRun("", 20.0, dx=5.0, dy=-3.0),
+        TextRun("c", 20.0),
+    ]
+    var a = text_run_anchors(10.0, 40.0, runs, cache=cache)
+    var adv = measure_text("ab", 20.0, cache=cache).advance
+    assert_equal(len(a), 4)
+    assert_equal(a[1].x, 10.0, "an empty run's dx moves nothing")
+    assert_equal(a[3].x, 10.0 + adv, "nor does one in the middle")
+    assert_equal(a[3].y, 40.0)
+
+
+def test_draw_text_runs_draws_each_run_where_draw_text_would() raises:
+    var cache = FontCache()
+    var runs = _mc2()
+    var via = Canvas(160, 80, BG)
+    via.draw_text_runs(
+        80.5,
+        44.25,
+        runs,
+        FG,
+        rotation=0.3,
+        align=TextAlign.CENTER,
+        cache=cache,
+    )
+    var direct = Canvas(160, 80, BG)
+    var anchors = text_run_anchors(
+        80.5, 44.25, runs, rotation=0.3, align=TextAlign.CENTER, cache=cache
+    )
+    for i in range(len(runs)):
+        draw_text(
+            direct,
+            anchors[i].x,
+            anchors[i].y,
+            runs[i].text,
+            FG,
+            runs[i].size,
+            slant=runs[i].slant,
+            rotation=0.3,
+            cache=cache,
+        )
+    assert_true(_ink_bbox(via, BG).found_any)
+    _assert_same_pixels(via, direct, "runs vs draw_text per run")
+
+
+def test_draw_text_runs_of_one_run_is_draw_text() raises:
+    var cache = FontCache()
+    var runs: List[TextRun] = [TextRun("Ag", 24.0, FontSlant.ITALIC)]
+    var via = Canvas(120, 60, BG)
+    via.draw_text_runs(
+        60.5, 40.0, runs, FG, rotation=0.3, align=TextAlign.CENTER, cache=cache
+    )
+    var direct = Canvas(120, 60, BG)
+    draw_text(
+        direct,
+        60.5,
+        40.0,
+        "Ag",
+        FG,
+        24.0,
+        slant=FontSlant.ITALIC,
+        rotation=0.3,
+        align=TextAlign.CENTER,
+        cache=cache,
+    )
+    assert_true(_ink_bbox(via, BG).found_any)
+    _assert_same_pixels(via, direct, "one run vs draw_text")
+
+
+def test_draw_text_runs_negative_dy_is_up_on_screen() raises:
+    var cache = FontCache()
+    var base: List[TextRun] = [TextRun("x", 24.0)]
+    var alone = Canvas(120, 60, BG)
+    alone.draw_text_runs(20.0, 40.0, base, FG, cache=cache)
+    var raised: List[TextRun] = [
+        TextRun("x", 24.0),
+        TextRun("2", 16.0, dy=-9.0),
+    ]
+    var with_super = Canvas(120, 60, BG)
+    with_super.draw_text_runs(20.0, 40.0, raised, FG, cache=cache)
+    var top_alone = _ink_bbox(alone, BG).min_y
+    var top_raised = _ink_bbox(with_super, BG).min_y
+    assert_true(top_raised < top_alone, "the superscript reaches higher")
 
 
 def main() raises:

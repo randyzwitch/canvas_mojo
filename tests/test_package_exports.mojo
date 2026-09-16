@@ -27,6 +27,7 @@ from canvas import (
     PdfCanvas,
     SvgCanvas,
     TextAlign,
+    TextRun,
     blur,
     downsample,
     draw_canvas,
@@ -43,6 +44,7 @@ from canvas import (
     read_bmp,
     read_png,
     resolve_font_file,
+    text_run_anchors,
     write_bmp,
     write_png,
     write_svg,
@@ -333,6 +335,95 @@ def test_text_reaches_every_backend_through_the_trait() raises:
     for i in range(len(bytes_a)):
         assert_equal(bytes_a[i], bytes_b[i], String("PDF byte ", i))
     assert_true("BT " in pdf_a.content(), "a text object was emitted")
+
+
+def _runs_label[T: DrawTarget](mut target: T, mut cache: FontCache) raises:
+    """Written against the trait: a centered, rotated label of three
+    runs at a sub-pixel anchor, an italic variable and a superscript,
+    which is what a chart's math-bearing title is."""
+    var runs: List[TextRun] = [
+        TextRun("E", 18.0, FontSlant.ITALIC),
+        TextRun(" = mc", 18.0),
+        TextRun("2", 12.6, dy=-6.3),
+    ]
+    target.draw_text_runs(
+        40.5,
+        30.25,
+        runs,
+        Color(0, 0, 0),
+        align=TextAlign.CENTER,
+        rotation=0.3,
+        cache=cache,
+    )
+
+
+def test_text_runs_reach_every_backend_through_the_trait() raises:
+    """#467: a label of several runs is one call on every backend. The
+    raster output is byte-identical to `draw_text` per run at the
+    anchors `text_run_anchors` measures, the SVG is one `<text>` with
+    a `<tspan>` per run, the PDF has a text object per run, and the
+    measuring target sees ink."""
+    var cache = FontCache()
+    var via_trait = Canvas(80, 60, Color(255, 255, 255))
+    _runs_label(via_trait, cache)
+    var runs: List[TextRun] = [
+        TextRun("E", 18.0, FontSlant.ITALIC),
+        TextRun(" = mc", 18.0),
+        TextRun("2", 12.6, dy=-6.3),
+    ]
+    var anchors = text_run_anchors(
+        40.5, 30.25, runs, rotation=0.3, align=TextAlign.CENTER, cache=cache
+    )
+    var direct = Canvas(80, 60, Color(255, 255, 255))
+    for i in range(len(runs)):
+        draw_text(
+            direct,
+            anchors[i].x,
+            anchors[i].y,
+            runs[i].text,
+            Color(0, 0, 0),
+            runs[i].size,
+            slant=runs[i].slant,
+            rotation=0.3,
+            cache=cache,
+        )
+    var ink = 0
+    for y in range(60):
+        for x in range(80):
+            var a = via_trait.get_pixel(x, y)
+            var b = direct.get_pixel(x, y)
+            assert_true(
+                a.r == b.r and a.g == b.g and a.b == b.b and a.a == b.a,
+                String("raster runs differ at (", x, ", ", y, ")"),
+            )
+            if a.r != 255:
+                ink += 1
+    assert_true(ink > 20, "the label left ink")
+
+    var svg = SvgCanvas(80, 60)
+    _runs_label(svg, cache)
+    var markup = svg.to_string()
+    assert_true('<text x="40.500" y="30.250"' in markup, "sub-pixel anchor")
+    assert_true(
+        '<tspan font-size="18.000" font-style="italic">E</tspan>' in markup,
+        "a tspan per run",
+    )
+    assert_true('<tspan font-size="12.600" dy="-6.300">2</tspan>' in markup)
+    assert_true("rotate(17.189 40.500 30.250)" in markup, "0.3 rad about it")
+
+    var pdf = PdfCanvas(80, 60)
+    _runs_label(pdf, cache)
+    var content = pdf.content()
+    var objects = 0
+    var at = content.find("BT ")
+    while at >= 0:
+        objects += 1
+        at = content.find("BT ", at + 3)
+    assert_equal(objects, 3, "a text object per run")
+
+    var bounds = BoundsTarget(80, 60)
+    _runs_label(bounds, cache)
+    assert_true(bounds.has_ink(), "the measuring target sees the label")
 
 
 def _draw_scene[T: DrawTarget](mut target: T):

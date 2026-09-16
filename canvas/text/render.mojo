@@ -117,7 +117,7 @@ from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import Filter, draw_canvas
 from canvas.fill_rule import FillRule
-from canvas.geometry import Matrix2D
+from canvas.geometry import FPoint, Matrix2D
 from canvas.text.font_cache import _cache_key, _GlyphMask, FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.glyph_outline import (
@@ -154,6 +154,7 @@ from canvas.path import (
 )
 from canvas.shapes.lines import LineJoin
 from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 
 # Sub-pixel positions per pixel the glyph mask cache distinguishes.
 # Two anchors whose fractional parts differ only in floating-point
@@ -989,6 +990,81 @@ def measure_text_block(
         block.rot_max_x - block.rot_min_x,
         block.rot_max_y - block.rot_min_y,
     )
+
+
+def text_run_anchors(
+    x: Float64,
+    y: Float64,
+    runs: List[TextRun],
+    family: String = "Sans",
+    weight: FontWeight = FontWeight.NORMAL,
+    rotation: Float64 = 0.0,
+    align: TextAlign = TextAlign.LEFT,
+    *,
+    mut cache: FontCache,
+) raises -> List[FPoint]:
+    """Where each run of `draw_text_runs(x, y, runs, ...)` lands: the
+    anchor `draw_text` takes for that run drawn alone, with
+    `TextAlign.LEFT` and the same `rotation`. One entry per run, in
+    order.
+
+    The pen starts at the label's origin; each run moves it by its
+    `dx`, takes the pen as its left end, and advances it by its own
+    measured advance. Where the pen ends is the label's width, and
+    `align` shifts every run by none, half or all of it, as
+    `draw_text` shifts a line by its advance. Each run's `(pen, dy)`
+    is then rotated about `(x, y)`, clockwise on screen. A run with
+    no text moves nothing and takes the pen where it stands.
+
+    This is the layout the raster, PDF and bounds backends share. The
+    SVG backend writes the offsets into `<tspan>`s and the viewer's
+    font metrics decide the advances and the alignment, as they do
+    for a single run.
+
+    Args:
+        x: Anchor x, sub-pixel: the label's left end for
+            `TextAlign.LEFT`.
+        y: Anchor y, sub-pixel: the label's baseline.
+        runs: The label's runs, in reading order.
+        family: Font family name or generic alias, shared by every run.
+        weight: Normal or bold, shared by every run.
+        rotation: Radians about the anchor.
+        align: Horizontal alignment of the whole label.
+        cache: Shared font cache to measure through.
+
+    Returns:
+        One anchor per run, in `runs` order.
+
+    Raises:
+        Error: No font could be resolved for `family`.
+    """
+    var pens = List[Float64](capacity=len(runs))
+    var pen = 0.0
+    for run in runs:
+        if run.text == "":
+            pens.append(pen)
+            continue
+        pen += run.dx
+        pens.append(pen)
+        pen += measure_text(
+            run.text, run.size, family, run.slant, weight, cache=cache
+        ).advance
+    var shift = 0.0
+    if align == TextAlign.CENTER:
+        shift = -pen / 2.0
+    elif align == TextAlign.RIGHT:
+        shift = -pen
+    var c = 1.0
+    var s = 0.0
+    if rotation != 0.0:
+        c = cos(rotation)
+        s = sin(rotation)
+    var anchors = List[FPoint](capacity=len(runs))
+    for i in range(len(runs)):
+        var px = shift + pens[i]
+        var py = runs[i].dy
+        anchors.append(FPoint(x + px * c - py * s, y + px * s + py * c))
+    return anchors^
 
 
 struct TextLayout(Movable):

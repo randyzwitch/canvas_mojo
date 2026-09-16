@@ -47,7 +47,10 @@ package is `canvas`; subpackages are `canvas.shapes`, `canvas.path`,
    where sub-paths overlap; pass `FillRule.NONZERO` for a union.
    TrueType glyph outlines from `text_path` need `NONZERO`.
 4. `draw_text` is on the trait, as a method taking `cache=`, so a
-   generic mark layer can label what it draws; gradient path fills,
+   generic mark layer can label what it draws; `draw_text_runs` beside
+   it draws one label from `TextRun`s that differ in size, slant or
+   offset (an italic variable, a raised superscript), one `<text>` of
+   `<tspan>`s on SVG; gradient path fills,
    outlined text and text on a path are backend methods. The rectangle
    clip `push_clip`/`pop_clip` is on the trait too, so that layer can
    keep its drawing inside a plot area. Write the shared drawing
