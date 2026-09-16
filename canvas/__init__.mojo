@@ -94,11 +94,13 @@ from canvas.text.render import (
     measure_text_block,
     prepare_text,
     stroke_text,
+    text_run_anchors,
     TextAlign,
     TextLayout,
     TextMetrics,
     TextBlockBounds,
 )
+from canvas.text.text_run import TextRun
 from canvas.path import (
     Path,
     PathCommand,

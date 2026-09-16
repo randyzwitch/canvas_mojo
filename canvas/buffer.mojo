@@ -62,6 +62,7 @@ from canvas.shapes.rects import fill_rect, fill_rect_gradient
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 from canvas.compose import draw_canvas, draw_image
 
 
@@ -1858,6 +1859,61 @@ struct Canvas(Copyable, DrawTarget, Movable):
             align,
             cache=cache,
         )
+
+    def draw_text_runs(
+        mut self,
+        x: Float64,
+        y: Float64,
+        runs: List[TextRun],
+        color: Color,
+        family: String = "Sans",
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """The `DrawTarget` form: `draw_text` once per run, each at the
+        anchor `canvas.text.render.text_run_anchors` computes for it,
+        so a run lands where the same text drawn alone at that anchor
+        lands, byte for byte.
+
+        Args:
+            x: Anchor x, sub-pixel.
+            y: Anchor y, the label's baseline.
+            runs: The label's runs, in reading order.
+            color: Fill color.
+            family: Font family name or generic alias.
+            weight: Normal or bold.
+            rotation: Radians about the anchor.
+            align: Horizontal alignment of the whole label.
+            cache: Shared font and glyph cache.
+
+        Raises:
+            Error: No font could be resolved for `family`.
+        """
+        # Local for the reason draw_text's import is.
+        from canvas.text.render import text_run_anchors
+
+        var anchors = text_run_anchors(
+            x, y, runs, family, weight, rotation, align, cache=cache
+        )
+        for i in range(len(runs)):
+            if runs[i].text == "":
+                continue
+            self.draw_text(
+                anchors[i].x,
+                anchors[i].y,
+                runs[i].text,
+                color,
+                runs[i].size,
+                family,
+                runs[i].slant,
+                weight,
+                rotation,
+                TextAlign.LEFT,
+                cache=cache,
+            )
 
     def draw_image(
         mut self,

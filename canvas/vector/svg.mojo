@@ -42,6 +42,7 @@ from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 
 
 # Decimal places every Float64 coordinate/width/size is formatted to.
@@ -1957,6 +1958,31 @@ struct SvgCanvas(DrawTarget, Movable):
     ):
         """The `<text>` element both `draw_text` overloads write, with
         the anchor already formatted the way each wants it."""
+        self._body.write('<text x="', x, '" y="', y, '" font-size="')
+        _write_svg_float(self._body, size)
+        self._body.write('"')
+        self._write_text_attributes(
+            x, y, css_family, slant, weight, color, rotation, align
+        )
+        self._body.write(">", _escape_xml_text(text), "</text>\n")
+
+    def _write_text_attributes(
+        mut self,
+        x: String,
+        y: String,
+        css_family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        color: Color,
+        rotation: Float64,
+        align: TextAlign,
+    ):
+        """What a `<text>` element carries after its anchor and, when
+        it has one, its size: family, weight, slant, fill, anchor,
+        transform and blend, up to but not including the `>`.
+        `_write_text` and `draw_text_runs` share it; the runs' element
+        passes an upright slant, since each of its `<tspan>`s carries
+        its own."""
         var escaped_family = _escape_xml_attr(css_family)
         var anchor = _anchor_name(align)
         var font_weight = ""
@@ -1967,10 +1993,8 @@ struct SvgCanvas(DrawTarget, Movable):
             font_style = ' font-style="italic"'
         elif slant == FontSlant.OBLIQUE:
             font_style = ' font-style="oblique"'
-        self._body.write('<text x="', x, '" y="', y, '" font-size="')
-        _write_svg_float(self._body, size)
         self._body.write(
-            '" font-family="',
+            ' font-family="',
             escaped_family,
             '"',
             font_weight,
@@ -1996,7 +2020,103 @@ struct SvgCanvas(DrawTarget, Movable):
                 self._body.write(" ", x, " ", y, ")")
             self._body.write('"')
         self._write_blend()
-        self._body.write(">", _escape_xml_text(text), "</text>\n")
+
+    def draw_text_runs(
+        mut self,
+        x: Float64,
+        y: Float64,
+        runs: List[TextRun],
+        color: Color,
+        family: String = "Sans",
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """One `<text>` element with a `<tspan>` per run: SVG's own
+        form for a label whose pieces differ in size or slant, and
+        what keeps the label one string in a viewer -- one selection,
+        one copy with its spaces in place, one announcement -- where
+        the same runs as separate `draw_text` calls are as many
+        elements. The element carries the family, weight, fill, anchor
+        and transform as `draw_text`'s does; each `<tspan>` carries
+        its `font-size`, its `font-style` when slanted, its `dx`, and
+        a `dy` that is the difference from the previous run's
+        baseline, since a `<tspan>`'s `dy` shifts the current position
+        for everything after it where `TextRun.dy` names a baseline.
+        Nothing is written between the tspans: whitespace there would
+        be a space in the rendered text.
+
+        The viewer's own font metrics advance the pen from run to run
+        and resolve `align`, as they do for a single `draw_text`; a
+        run's kern and rise are what this backend carries, not the
+        anchor the other backends measure. A run with no text is left
+        out, and a label of nothing but those writes nothing.
+
+        `cache` is unused, as in `draw_text`.
+
+        Args:
+            x: Anchor x, sub-pixel -- the label's left end for
+                `TextAlign.LEFT`.
+            y: Anchor y, sub-pixel -- the label's baseline.
+            runs: The label's runs, in reading order.
+            color: Fill color.
+            family: Font family name or generic alias, as the raster
+                backend takes it; mapped as `draw_text` maps it.
+            weight: Normal/bold weight, on the element.
+            rotation: Radians, rotating the whole `<text>` element
+                around (x, y).
+            align: `text-anchor` for the whole label.
+            cache: Unused here; see above.
+
+        Raises:
+            Error: Never; the signature is the trait's.
+        """
+        var drawn = False
+        for run in runs:
+            if run.text != "":
+                drawn = True
+        if not drawn:
+            return
+        var xs = String()
+        _write_svg_float(xs, x)
+        var ys = String()
+        _write_svg_float(ys, y)
+        self._body.write('<text x="', xs, '" y="', ys, '"')
+        self._write_text_attributes(
+            xs,
+            ys,
+            _css_family(family),
+            FontSlant.NORMAL,
+            weight,
+            color,
+            rotation,
+            align,
+        )
+        self._body.write(">")
+        var baseline = 0.0
+        for run in runs:
+            if run.text == "":
+                continue
+            self._body.write('<tspan font-size="')
+            _write_svg_float(self._body, run.size)
+            self._body.write('"')
+            if run.slant == FontSlant.ITALIC:
+                self._body.write(' font-style="italic"')
+            elif run.slant == FontSlant.OBLIQUE:
+                self._body.write(' font-style="oblique"')
+            if run.dx != 0.0:
+                self._body.write(' dx="')
+                _write_svg_float(self._body, run.dx)
+                self._body.write('"')
+            if run.dy != baseline:
+                self._body.write(' dy="')
+                _write_svg_float(self._body, run.dy - baseline)
+                self._body.write('"')
+                baseline = run.dy
+            self._body.write(">", _escape_xml_text(run.text), "</tspan>")
+        self._body.write("</text>\n")
 
     def stroke_text(
         mut self,

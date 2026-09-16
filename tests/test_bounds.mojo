@@ -17,7 +17,9 @@ from canvas.geometry import FPoint, Matrix2D
 from canvas.path import Path
 from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
+from canvas.text.render import text_run_anchors
 from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 from canvas.vector.draw_target import DrawTarget
 
 comptime BG = Color(255, 255, 255)
@@ -196,6 +198,37 @@ def test_text_contributes_its_block() raises:
     var e = BoundsTarget(300, 100)
     e.draw_text(20.0, 50.0, "", INK, 16.0, cache=cache)
     assert_false(e.has_ink(), "empty text is no ink")
+
+
+def test_text_runs_bound_the_union_of_their_runs() raises:
+    var cache = FontCache()
+    var runs: List[TextRun] = [TextRun("x", 24.0), TextRun("2", 16.0, dy=-9.0)]
+    var b = BoundsTarget(300, 100)
+    b.draw_text_runs(20.0, 50.0, runs, INK, cache=cache)
+    var d = BoundsTarget(300, 100)
+    var anchors = text_run_anchors(20.0, 50.0, runs, cache=cache)
+    for i in range(len(runs)):
+        d.draw_text(
+            anchors[i].x,
+            anchors[i].y,
+            runs[i].text,
+            INK,
+            runs[i].size,
+            cache=cache,
+        )
+    var got = b.ink_bounds()
+    var want = d.ink_bounds()
+    assert_equal(got[0], want[0], "the runs' box is draw_text's per run")
+    assert_equal(got[1], want[1], "the runs' box is draw_text's per run")
+    assert_equal(got[2], want[2], "the runs' box is draw_text's per run")
+    assert_equal(got[3], want[3], "the runs' box is draw_text's per run")
+    var base = BoundsTarget(300, 100)
+    base.draw_text(20.0, 50.0, "x", INK, 24.0, cache=cache)
+    assert_true(got[1] < base.ink_bounds()[1], "the superscript reaches above")
+    var empty: List[TextRun] = [TextRun("", 24.0)]
+    var e = BoundsTarget(300, 100)
+    e.draw_text_runs(20.0, 50.0, empty, INK, cache=cache)
+    assert_false(e.has_ink(), "an empty run is no ink")
 
 
 # --- Clips, page, state ---------------------------------------------------

@@ -103,6 +103,11 @@ direction should determine the interior.
 from those installed on the system, with fallback for missing glyphs.
 It is on `DrawTarget` as a method with a `cache=` keyword, so a function
 generic over the trait can label what it draws on all three backends.
+`draw_text_runs` is beside it for one label made of several `TextRun`s
+that differ in size, slant or offset, an italic variable or a raised
+superscript: on SVG it is one `<text>` of `<tspan>`s, so the label stays
+one string to select or copy; the other backends draw the runs one at a
+time where `text_run_anchors` measures them.
 
 Create one `FontCache` and pass it through the `cache=` overloads when
 performing related text operations. Construction does not scan the system;
@@ -177,6 +182,12 @@ def main() raises:
   draws a label at a sub-pixel baseline anchor with the same alignment
   and rotation on every backend; `family` takes the raster names, and
   SVG maps the generic ones to CSS.
+
+- `draw_text_runs(x, y, runs, color, ..., cache=cache)` on any target
+  draws one label from a list of `TextRun(text, size, slant, dx, dy)`:
+  each run at its own size and slant, `dx` a pen shift from the previous
+  run's end, `dy` its baseline below the label's (negative raises a
+  superscript). One `<text>` of `<tspan>`s on SVG.
 
 Gradient path fills, outlined text and text on a path are backend
 methods rather than part of `DrawTarget`. Use the relevant backend

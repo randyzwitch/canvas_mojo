@@ -23,6 +23,7 @@ from canvas.vector.svg import SvgCanvas, _base64
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 
 
 def test_fill_rect_emits_expected_rect_element() raises:
@@ -1742,6 +1743,150 @@ def test_whole_pixel_draw_text_markup_is_unchanged() raises:
         ' font-weight="bold" fill="#000000" text-anchor="middle">b</text>'
         in markup,
         "a family given here is not mapped",
+    )
+
+
+# --- draw_text_runs: one <text> of <tspan>s (#467) -----------------------
+
+
+def _count(haystack: String, needle: String) -> Int:
+    var n = 0
+    var at = haystack.find(needle)
+    while at >= 0:
+        n += 1
+        at = haystack.find(needle, at + needle.byte_length())
+    return n
+
+
+def _mc2() -> List[TextRun]:
+    var runs: List[TextRun] = [
+        TextRun("Energy ", 18.0),
+        TextRun("E", 18.0, FontSlant.ITALIC),
+        TextRun(" = ", 18.0),
+        TextRun("mc", 18.0, FontSlant.ITALIC),
+        TextRun("2", 12.6, dy=-6.3),
+        TextRun(" over time", 18.0),
+    ]
+    return runs^
+
+
+def test_draw_text_runs_is_one_text_element_of_tspans() raises:
+    """The label the issue describes: six runs that were six sibling
+    `<text>` elements are one element, so a viewer selects, copies
+    and announces one string with its spaces in place."""
+    var svg = SvgCanvas(300, 100)
+    var cache = FontCache()
+    svg.draw_text_runs(10.0, 40.0, _mc2(), Color(0, 0, 0), cache=cache)
+    var markup = svg.to_string()
+    assert_true(
+        '<text x="10.000" y="40.000" font-family="sans-serif" fill="#000000"'
+        ' text-anchor="start">'
+        '<tspan font-size="18.000">Energy </tspan>'
+        '<tspan font-size="18.000" font-style="italic">E</tspan>'
+        '<tspan font-size="18.000"> = </tspan>'
+        '<tspan font-size="18.000" font-style="italic">mc</tspan>'
+        '<tspan font-size="12.600" dy="-6.300">2</tspan>'
+        '<tspan font-size="18.000" dy="6.300"> over time</tspan>'
+        "</text>\n"
+        in markup,
+        "one element; size and slant per tspan; dy back to the baseline",
+    )
+    assert_equal(_count(markup, "<text "), 1, "exactly one text element")
+
+
+def test_draw_text_runs_dx_is_a_kern_and_dy_a_difference() raises:
+    """`dx` is written as given, since a tspan's dx is a pen shift
+    already; `dy` is written as the change from the previous run's
+    baseline, since a tspan's dy shifts everything after it, and is
+    omitted when the baseline does not change."""
+    var svg = SvgCanvas(100, 100)
+    var cache = FontCache()
+    var runs: List[TextRun] = [
+        TextRun("a", 10.0),
+        TextRun("b", 10.0, dx=-2.5, dy=4.0),
+        TextRun("c", 10.0, dy=4.0),
+        TextRun("d", 10.0),
+    ]
+    svg.draw_text_runs(0.0, 0.0, runs, Color(0, 0, 0), cache=cache)
+    assert_true(
+        '<tspan font-size="10.000">a</tspan>'
+        '<tspan font-size="10.000" dx="-2.500" dy="4.000">b</tspan>'
+        '<tspan font-size="10.000">c</tspan>'
+        '<tspan font-size="10.000" dy="-4.000">d</tspan>'
+        in svg.to_string(),
+        "kern as given, baseline as a difference, nothing when unchanged",
+    )
+
+
+def test_draw_text_runs_carries_the_label_attributes_on_the_element() raises:
+    var svg = SvgCanvas(100, 100)
+    var cache = FontCache()
+    var runs: List[TextRun] = [TextRun("hi", 12.0, FontSlant.OBLIQUE)]
+    svg.draw_text_runs(
+        10.0,
+        20.0,
+        runs,
+        Color(255, 0, 0, 128),
+        family="Serif",
+        weight=FontWeight.BOLD,
+        rotation=pi / 2.0,
+        align=TextAlign.CENTER,
+        cache=cache,
+    )
+    assert_true(
+        '<text x="10.000" y="20.000" font-family="serif" font-weight="bold"'
+        ' fill="#ff0000" fill-opacity="0.502" text-anchor="middle"'
+        ' transform="rotate(90.000 10.000 20.000)">'
+        '<tspan font-size="12.000" font-style="oblique">hi</tspan></text>\n'
+        in svg.to_string(),
+        "family mapped, weight, fill, anchor and rotation as draw_text's",
+    )
+
+
+def test_draw_text_runs_escapes_each_run() raises:
+    var svg = SvgCanvas(100, 100)
+    var cache = FontCache()
+    var runs: List[TextRun] = [TextRun("a < b", 12.0), TextRun("& c", 12.0)]
+    svg.draw_text_runs(0.0, 0.0, runs, Color(0, 0, 0), cache=cache)
+    assert_true(
+        '>a &lt; b</tspan><tspan font-size="12.000">&amp; c</tspan>'
+        in svg.to_string(),
+        "each run's text escaped as draw_text escapes",
+    )
+
+
+def test_draw_text_runs_leaves_empty_runs_out() raises:
+    var cache = FontCache()
+    var nothing: List[TextRun] = [TextRun("", 12.0), TextRun("", 12.0, dx=3.0)]
+    var blank = SvgCanvas(100, 100)
+    blank.draw_text_runs(5.0, 5.0, nothing, Color(0, 0, 0), cache=cache)
+    assert_equal(
+        blank.to_string(),
+        SvgCanvas(100, 100).to_string(),
+        "only empty runs write nothing",
+    )
+    var some: List[TextRun] = [TextRun("", 12.0, dx=3.0), TextRun("x", 12.0)]
+    var svg = SvgCanvas(100, 100)
+    svg.draw_text_runs(5.0, 5.0, some, Color(0, 0, 0), cache=cache)
+    assert_true(
+        '><tspan font-size="12.000">x</tspan></text>' in svg.to_string(),
+        "an empty run's dx is dropped with it, as the raster layout drops it",
+    )
+
+
+def test_draw_text_runs_composes_the_canvas_transform_before_its_rotation() raises:
+    var svg = SvgCanvas(100, 100)
+    var cache = FontCache()
+    svg.translate(20.0, 30.0)
+    var runs: List[TextRun] = [TextRun("up", 12.0)]
+    svg.draw_text_runs(
+        5.0, 6.0, runs, Color(0, 0, 0), rotation=-pi / 2.0, cache=cache
+    )
+    assert_true(
+        'transform="matrix(1.000 0.000 0.000 1.000 20.000 30.000)'
+        ' rotate(-90.000 5.000 6.000)"'
+        in svg.to_string(),
+        "matrix first, then the rotation about the anchor, as draw_text",
     )
 
 

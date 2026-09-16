@@ -55,8 +55,9 @@ from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.glyph_outline import glyph_index_metrics
-from canvas.text.render import _layout_block, text_path
+from canvas.text.render import _layout_block, text_path, text_run_anchors
 from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 from canvas.text.ttf import TTFFace
 from canvas.vector.draw_target import DrawTarget
 from canvas.vector.pdf_font import _EmbeddedFont, _hex4
@@ -1895,6 +1896,58 @@ struct PdfCanvas(DrawTarget, Movable):
         self.draw_text(
             x, y, text, color, size, family, slant, weight, rotation, align
         )
+
+    def draw_text_runs(
+        mut self,
+        x: Float64,
+        y: Float64,
+        runs: List[TextRun],
+        color: Color,
+        family: String = "Sans",
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """The `DrawTarget` form: `draw_text` once per run, each at the
+        anchor `canvas.text.render.text_run_anchors` computes for it.
+        One text object per run, in reading order, which is also the
+        order a viewer selects them in; the runs' spaces are in the
+        runs. `cache` is unused, as in `draw_text`.
+
+        Args:
+            x: Anchor x, sub-pixel.
+            y: Anchor y, the label's baseline.
+            runs: The label's runs, in reading order.
+            color: Fill color.
+            family: Font family name or generic alias.
+            weight: Normal or bold.
+            rotation: Radians about the anchor.
+            align: Horizontal alignment of the whole label.
+            cache: Unused here; see `draw_text`.
+
+        Raises:
+            Error: No font could be resolved for `family`.
+        """
+        var anchors = text_run_anchors(
+            x, y, runs, family, weight, rotation, align, cache=self._fonts
+        )
+        for i in range(len(runs)):
+            if runs[i].text == "":
+                continue
+            self.draw_text(
+                anchors[i].x,
+                anchors[i].y,
+                runs[i].text,
+                color,
+                runs[i].size,
+                family,
+                runs[i].slant,
+                weight,
+                rotation,
+                TextAlign.LEFT,
+            )
 
     def stroke_text(
         mut self,

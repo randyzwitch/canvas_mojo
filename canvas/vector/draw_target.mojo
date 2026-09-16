@@ -119,7 +119,10 @@ anything else through verbatim. The `FontCache` every call takes is
 what the raster backend resolves through; SVG has no glyphs to cache
 and ignores it, and PDF keeps its own because the subset it embeds
 lives with the document. `measure_text` is not on the trait: it is
-backend-independent already.
+backend-independent already. `draw_text_runs` is beside `draw_text`
+for a label whose pieces differ in size or slant, and is where the
+one-element-per-call shape of SVG text shows: it writes one `<text>`
+of `<tspan>`s where the other backends draw the runs one at a time.
 
 Conformance is nominal, not structural: `Canvas` (`canvas/buffer.mojo`),
 `SvgCanvas` (`canvas/vector/svg.mojo`) and `PdfCanvas`
@@ -138,6 +141,7 @@ from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.text_align import TextAlign
+from canvas.text.text_run import TextRun
 
 
 trait DrawTarget:
@@ -777,6 +781,60 @@ trait DrawTarget:
             weight: Normal or bold.
             rotation: Radians about the anchor.
             align: Horizontal alignment of each line.
+            cache: Shared font and glyph cache.
+
+        Raises:
+            Error: No font could be resolved for `family`, on the
+                backends that resolve one.
+        """
+        ...
+
+    def draw_text_runs(
+        mut self,
+        x: Float64,
+        y: Float64,
+        runs: List[TextRun],
+        color: Color,
+        family: String = "Sans",
+        weight: FontWeight = FontWeight.NORMAL,
+        rotation: Float64 = 0.0,
+        align: TextAlign = TextAlign.LEFT,
+        *,
+        mut cache: FontCache,
+    ) raises:
+        """Draw one label made of several runs, each at its own size,
+        slant and offset (`TextRun`), anchored at `(x, y)` on the
+        label's baseline. What one `draw_text` cannot say: a variable
+        in italic beside upright text, a superscript at a smaller size
+        raised off the baseline. The runs stay one label -- one
+        `<text>` element of `<tspan>`s on SVG, so a viewer selects,
+        copies and announces one string -- where the same runs as
+        separate `draw_text` calls are as many elements.
+
+        The pen starts at the label's origin and each run moves it by
+        its `dx`, then by its own advance; `align` places the whole
+        label by where the pen ends, and `rotation` turns the whole
+        label about the anchor. The raster, PDF and bounds backends
+        draw each run with `draw_text` at the anchor
+        `canvas.text.render.text_run_anchors` computes for it; SVG
+        writes the offsets into the `<tspan>`s and the viewer's own
+        font metrics resolve the advances and the alignment, as they
+        do for a single run. A run with no text draws nothing and
+        moves nothing. No line-break handling: each run is one line.
+
+        `family`, `weight` and `cache` mean what they mean for
+        `draw_text`, and are shared by every run.
+
+        Args:
+            x: Anchor x, sub-pixel: the label's left end for
+                `TextAlign.LEFT`.
+            y: Anchor y, sub-pixel: the label's baseline.
+            runs: The label's runs, in reading order.
+            color: Fill color.
+            family: Font family name or generic alias.
+            weight: Normal or bold.
+            rotation: Radians about the anchor.
+            align: Horizontal alignment of the whole label.
             cache: Shared font and glyph cache.
 
         Raises:
