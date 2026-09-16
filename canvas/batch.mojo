@@ -38,6 +38,7 @@ from canvas.aa_crossing import (
     _sweep_edges_sampled_rows,
 )
 from canvas.buffer import Canvas
+from canvas.color import Color
 from canvas.batch_ops import (
     _Batch,
     _BatchOp,

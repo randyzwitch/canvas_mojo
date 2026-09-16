@@ -2030,7 +2030,6 @@ def test_curve_to_through_at_zero_tension_emits_lines() raises:
 
 
 def test_curve_to_through_needs_a_current_point() raises:
-    var top = _band_top()
     var bottom = _band_bottom()
     var p = Path()
     with assert_raises(contains="before any move_to"):
