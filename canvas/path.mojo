@@ -558,9 +558,9 @@ struct Path(Copyable, Movable):
         Args:
             tip_x: The tip's x.
             tip_y: The tip's y.
-            direction_x: x of the direction the arrow points in; any
-                length.
-            direction_y: y of that direction.
+            direction_x: The x of the direction the arrow points in;
+                any length.
+            direction_y: The y of that direction.
             length: Tip-to-base distance in pixels.
             half_width: Half the base width in pixels.
 
