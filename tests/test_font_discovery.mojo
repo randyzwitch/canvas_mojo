@@ -46,6 +46,7 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.text.font_discovery import (
     _decode_name,
+    _parse_font_file,
     FontDatabase,
     FontSlant,
     FontWeight,
@@ -354,6 +355,17 @@ def test_a_lone_surrogate_in_a_name_record_is_dropped_not_fatal() raises:
     # A real pair: U+1F600 as D83D DE00.
     var pair: List[UInt8] = [0xD8, 0x3D, 0xDE, 0x00]
     assert_equal(_decode_name(pair, 0, len(pair), 3), String(chr(0x1F600)))
+
+
+def test_a_table_length_past_the_file_is_clamped_not_allocated() raises:
+    """From the second fuzz campaign (#430): a 5 KB font whose `name`
+    record claims a length of 4 GB. Discovery sized a buffer from the
+    claim and the allocation failed under a memory limit, which is an
+    abort, not a skip. `_read_at` now clamps to the file, so the face
+    is parsed from what is there or skipped, and either way the
+    process survives."""
+    var faces = _parse_font_file("tests/fuzz/font_name_table_length_4gb.ttf")
+    assert_true(len(faces) <= 1)
 
 
 def main() raises:

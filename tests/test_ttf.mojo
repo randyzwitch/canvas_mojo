@@ -22,6 +22,7 @@ from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontDatabase, resolve_font_file
 from canvas.text.render import draw_text, measure_text
 from canvas.text.ttf import (
+    _sorted_merged_ranges,
     TTFFace,
     outline_to_path,
     _gpos_kern_lookups,
@@ -477,6 +478,33 @@ def test_fuzz_cff_real_without_a_terminator_raises() raises:
         raised = True
         assert_true("real number too long" in String(e), String(e))
     assert_true(raised, "an unterminated real must raise")
+
+
+def test_fuzz_reverse_sorted_coverage_ranges_merge_in_reasonable_time() raises:
+    """From the second fuzz campaign (#430): a damaged Coverage table
+    with tens of thousands of ranges in descending order made the
+    insertion sort in `_sorted_merged_ranges` quadratic, minutes per
+    font. Sixty thousand descending, touching pairs merge into one
+    range; under the old sort this test would not finish."""
+    var ranges = List[Int]()
+    for i in range(60000):
+        var first = 65535 - i
+        ranges.append(first)
+        ranges.append(first)
+    var merged = _sorted_merged_ranges(ranges^)
+    assert_equal(len(merged), 2)
+    assert_equal(merged[0], 65535 - 59999)
+    assert_equal(merged[1], 65535)
+    # Overlapping and disjoint pairs, out of order.
+    var mixed: List[Int] = [10, 12, 3, 5, 11, 20, 30, 30, 6, 6]
+    var m2 = _sorted_merged_ranges(mixed^)
+    assert_equal(len(m2), 6)
+    assert_equal(m2[0], 3)
+    assert_equal(m2[1], 6)
+    assert_equal(m2[2], 10)
+    assert_equal(m2[3], 20)
+    assert_equal(m2[4], 30)
+    assert_equal(m2[5], 30)
 
 
 def main() raises:

@@ -249,6 +249,27 @@ def test_a_header_claiming_a_65535_square_raises_before_allocating() raises:
     assert_true(raised, "must raise, not allocate")
 
 
+def test_dimensions_whose_product_overflows_are_rejected() raises:
+    """Two 32-bit sides multiply past 64 bits and the product reads as
+    small, so the cap never fired and the Adam7 buffer was sized from
+    the wrapped value: the second fuzz campaign's first finding, a
+    69-byte file. Each side is checked before the product."""
+    var raised = False
+    try:
+        _ = decode_png(_header_only_png(0xFFFFFFFF, 0xFFFFFFFF))
+    except e:
+        raised = True
+        assert_true("exceeds the decode limit" in String(e), String(e))
+    assert_true(raised, "an overflowing product must raise")
+    raised = False
+    try:
+        _ = read_png("tests/fuzz/png_dimension_overflow.png")
+    except e:
+        raised = True
+        assert_true("exceeds the decode limit" in String(e), String(e))
+    assert_true(raised, "the file that found it must raise")
+
+
 def test_a_zero_dimension_is_rejected() raises:
     var raised = False
     try:

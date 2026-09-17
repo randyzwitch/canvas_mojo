@@ -87,6 +87,13 @@ resolves.
   instead -- which the four byte-identity tests did not notice.
 - U.S. spelling everywhere (color, center, gray, rasterize). Neutral
   tone: "known issue", not "defect that bites".
+- A decoder's hot loop reads and writes through `_ReadView` and
+  `_WriteView` (`canvas/io/view.mojo`), not a raw pointer. In the
+  production build they are the pointer; under `-D CANVAS_CHECKED_READS`,
+  which `pixi run fuzz` uses, an access past the buffer aborts naming
+  the index. A raw `unsafe_ptr()` in decoder code is a read the fuzzer
+  cannot see. Encoders, whose input is the caller's own canvas, keep
+  their pointers.
 - Every primitive writes each pixel exactly once, so a translucent color
   never double-blends. Hard-edged and anti-aliased variants are separate
   functions. Pixel (x, y) is the square [x - 0.5, x + 0.5]; every

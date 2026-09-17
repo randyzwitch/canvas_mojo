@@ -22,7 +22,10 @@
 #   .fuzz/fuzz_decoders one <decoder> .fuzz/findings/<decoder>/<case>
 #
 # and, for a symbolicated trace, rebuild with
-# `-debug-level=line-tables`. Not wired into CI: this needs hours on a
+# `-debug-level=line-tables -D CANVAS_CHECKED_READS`. The harness is
+# built with checked reads (canvas/io/view.mojo) unless
+# CANVAS_FUZZ_CHECKED=0, so a read past a buffer in an image codec
+# aborts naming the index instead of passing silently. Not wired into CI: this needs hours on a
 # quiet machine and its output is nondeterministic. Run it before a
 # release the way bench-check is run; the harness stays here so the
 # next release can rerun it. `.fuzz/` is ignored by git.
@@ -47,10 +50,22 @@ findings="$work/findings/$decoder"
 mkdir -p "$work/cases" "$findings"
 
 # Rebuilt when the harness or anything under canvas/ is newer than the
-# binary, so a fix to a parser is what the next batch runs.
-if [[ ! -x "$work/fuzz_decoders" ]] || [[ -n "$(find "$root/canvas" "$root/scripts/fuzz_decoders.mojo" -newer "$work/fuzz_decoders" -print -quit)" ]]; then
-    echo "fuzz: building the harness"
-    (cd "$root" && mojo build -I . -o "$work/fuzz_decoders" scripts/fuzz_decoders.mojo)
+# binary, so a fix to a parser is what the next batch runs. Built with
+# checked reads unless CANVAS_FUZZ_CHECKED=0: the image codecs read
+# through raw pointers, and a read past a buffer only faults once it
+# reaches an unmapped page, so without the check that whole class of
+# bug passes every run (canvas/io/view.mojo).
+checked="${CANVAS_FUZZ_CHECKED:-1}"
+define=()
+if [[ "$checked" != "0" ]]; then
+    define=(-D CANVAS_CHECKED_READS)
+fi
+stamp="$work/fuzz_decoders.checked=$checked"
+if [[ ! -x "$work/fuzz_decoders" || ! -f "$stamp" ]] || [[ -n "$(find "$root/canvas" "$root/scripts/fuzz_decoders.mojo" -newer "$work/fuzz_decoders" -print -quit)" ]]; then
+    echo "fuzz: building the harness (checked reads: $checked)"
+    rm -f "$work"/fuzz_decoders.checked=*
+    (cd "$root" && mojo build -I . "${define[@]}" -o "$work/fuzz_decoders" scripts/fuzz_decoders.mojo)
+    touch "$stamp"
 fi
 harness="$work/fuzz_decoders"
 
@@ -81,7 +96,9 @@ worker() {
             local stamp; stamp="$(date +%Y%m%d-%H%M%S)-w$index-b$batches-exit$status"
             cp "$case" "$findings/$stamp.case"
             cp "$case.txt" "$findings/$stamp.case.txt" 2>/dev/null || true
-            tail -n 3 "$case.log" >> "$findings/$stamp.case.txt" 2>/dev/null || true
+            # The whole batch log: the abort message names the file
+            # and line, and sits well above the stack dump's tail.
+            cp "$case.log" "$findings/$stamp.case.log" 2>/dev/null || true
             echo "fuzz: worker $index batch $batches exit $status -> $findings/$stamp.case"
             rm -f "$case" "$case.txt"
         elif [[ "$status" -ne 0 ]]; then

@@ -34,13 +34,15 @@ this package's own `deflate` to get a valid stream. `one` decodes a
 single file and reports, which is how a collected finding is
 replayed and how a fixture under `tests/fuzz/` was first confirmed.
 
-The mutations are deliberately dumb: bit flips, byte overwrites with
-random and edge values, truncation, block duplication and deletion,
-appended bytes, and stacks of those. They find truncation and
-offset-check bugs, which is what a fresh parser usually has. A
-mutation that survives a length field or a checksum needs to know
-where those are, and that structure-aware pass is the second half of
-#430, not this file.
+Two kinds of mutation, each half the time. The dumb ones -- bit
+flips, byte overwrites with random and edge values, truncation, block
+duplication and deletion, appended bytes, and stacks of those -- find
+truncation and offset-check bugs, which is what a fresh parser usually
+has. The structure-aware ones know where a format keeps its lengths,
+checksums and counts, since a dumb mutation of a PNG mostly dies at
+the next CRC: they rewrite a chunk and recompute its CRC, an edge
+value into a JPEG frame or table header, a table offset or a glyph
+count in a font, and so reach the code past the first check.
 """
 
 from std.os import listdir, remove
@@ -239,6 +241,487 @@ def _mutate(mut data: List[UInt8], mut rng: _Rng) -> String:
     return description + "]"
 
 
+# --- Structure-aware mutations ---------------------------------------------
+#
+# Each parses just enough of the format to find the fields a dumb
+# mutation cannot reach past, and leaves everything else as it was.
+# A file the parser here cannot make sense of falls back to a dumb
+# mutation, so a mutated seed keeps mutating.
+
+
+def _u16be(data: List[UInt8], i: Int) -> Int:
+    if i + 2 > len(data):
+        return 0
+    return (Int(data[i]) << 8) | Int(data[i + 1])
+
+
+def _u32be(data: List[UInt8], i: Int) -> Int:
+    if i + 4 > len(data):
+        return 0
+    return (
+        (Int(data[i]) << 24)
+        | (Int(data[i + 1]) << 16)
+        | (Int(data[i + 2]) << 8)
+        | Int(data[i + 3])
+    )
+
+
+def _put_be(mut data: List[UInt8], i: Int, value: Int, width: Int):
+    for k in range(width):
+        if i + k < len(data):
+            data[i + k] = UInt8((value >> ((width - 1 - k) * 8)) & 0xFF)
+
+
+def _put_le(mut data: List[UInt8], i: Int, value: Int, width: Int):
+    for k in range(width):
+        if i + k < len(data):
+            data[i + k] = UInt8((value >> (k * 8)) & 0xFF)
+
+
+def _edge_or_random(mut rng: _Rng, width: Int) -> Int:
+    """An edge value for a field `width` bytes wide, or a random one."""
+    if rng.below(3) == 0:
+        return rng.below(1 << (8 * width))
+    var values = _edge_values()
+    return values[rng.below(len(values))] & ((1 << (8 * width)) - 1)
+
+
+def _crc32(data: List[UInt8], start: Int, end: Int) -> Int:
+    """PNG's CRC-32 over `data[start:end]`, ISO 3309 as the spec
+    gives it, so a rewritten chunk still passes the decoder's check."""
+    var crc = 0xFFFFFFFF
+    for i in range(start, end):
+        crc ^= Int(data[i])
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0xEDB88320
+            else:
+                crc >>= 1
+    return crc ^ 0xFFFFFFFF
+
+
+struct _Chunk(Copyable, ImplicitlyCopyable, Movable):
+    """One PNG chunk: where its length field sits, and its data
+    length as declared."""
+
+    var at: Int
+    var length: Int
+
+    def __init__(out self, at: Int, length: Int):
+        self.at = at
+        self.length = length
+
+
+def _png_chunks(data: List[UInt8]) -> List[_Chunk]:
+    var chunks = List[_Chunk]()
+    var at = 8
+    while at + 12 <= len(data):
+        var length = _u32be(data, at)
+        if at + 12 + length > len(data):
+            break
+        chunks.append(_Chunk(at, length))
+        at += 12 + length
+    return chunks^
+
+
+def _png_fix_crc(mut data: List[UInt8], chunk: _Chunk):
+    var start = chunk.at + 4
+    var end = start + 4 + chunk.length
+    if end + 4 <= len(data):
+        _put_be(data, end, _crc32(data, start, end), 4)
+
+
+def _mutate_png(mut data: List[UInt8], mut rng: _Rng) -> String:
+    var chunks = _png_chunks(data)
+    if len(chunks) == 0:
+        return _mutate(data, rng)
+    var c = chunks[rng.below(len(chunks))]
+    var which = rng.below(6)
+    if which == 0 and c.length > 0:
+        # A byte of the chunk's data, CRC repaired: inside IHDR that
+        # is a header field, inside IDAT it is the deflate stream.
+        var n = 1 + rng.below(4)
+        for _ in range(n):
+            data[c.at + 8 + rng.below(c.length)] = rng.byte()
+        _png_fix_crc(data, c)
+        return String(
+            "png: ", n, " data byte(s) of chunk at ", c.at, ", crc fixed"
+        )
+    if which == 1 and c.length >= 4:
+        # An edge value into a four-byte field of the data: IHDR's
+        # width or height, a PLTE entry, an IDAT block header.
+        var field = rng.below(c.length - 3)
+        var width = 1 << rng.below(3)
+        if field + width > c.length:
+            width = 1
+        var value = _edge_or_random(rng, width)
+        _put_be(data, c.at + 8 + field, value, width)
+        _png_fix_crc(data, c)
+        return String(
+            "png: edge ",
+            value,
+            " width ",
+            width,
+            " at data+",
+            field,
+            " of chunk at ",
+            c.at,
+            ", crc fixed",
+        )
+    if which == 2:
+        # The declared length, with the CRC recomputed over the new
+        # extent when it still lies inside the file.
+        var value = (
+            _edge_or_random(rng, 4) if rng.below(2)
+            == 0 else c.length + rng.below(64) - 32
+        )
+        if value < 0:
+            value = 0
+        _put_be(data, c.at, value, 4)
+        var moved = _Chunk(c.at, value)
+        if value <= len(data) - c.at - 12:
+            _png_fix_crc(data, moved)
+        return String(
+            "png: chunk at ", c.at, " length ", c.length, " -> ", value
+        )
+    if which == 3 and len(chunks) > 1:
+        # Drop the chunk.
+        var result = List[UInt8](capacity=len(data))
+        for i in range(c.at):
+            result.append(data[i])
+        for i in range(c.at + 12 + c.length, len(data)):
+            result.append(data[i])
+        data = result^
+        return String("png: chunk at ", c.at, " deleted")
+    if which == 4:
+        # Duplicate the chunk in place, right after itself.
+        var result = List[UInt8](capacity=len(data) + 12 + c.length)
+        var end = c.at + 12 + c.length
+        for i in range(end):
+            result.append(data[i])
+        for i in range(c.at, end):
+            result.append(data[i])
+        for i in range(end, len(data)):
+            result.append(data[i])
+        data = result^
+        return String("png: chunk at ", c.at, " duplicated")
+    # The chunk type: a critical chunk renamed, or a private one made
+    # critical.
+    var k = c.at + 4 + rng.below(4)
+    data[k] = data[k] ^ 0x20 if rng.below(2) == 0 else rng.byte()
+    _png_fix_crc(data, c)
+    return String("png: type byte of chunk at ", c.at, " changed, crc fixed")
+
+
+struct _Segment(Copyable, ImplicitlyCopyable, Movable):
+    """One JPEG marker segment: the marker byte, where the marker
+    sits, and its declared length (the two length bytes included)."""
+
+    var marker: Int
+    var at: Int
+    var length: Int
+
+    def __init__(out self, marker: Int, at: Int, length: Int):
+        self.marker = marker
+        self.at = at
+        self.length = length
+
+
+def _jpeg_segments(data: List[UInt8]) -> List[_Segment]:
+    """The segments up to and including SOS; the entropy-coded data
+    after it is not a segment."""
+    var segments = List[_Segment]()
+    var at = 2
+    while at + 4 <= len(data):
+        if data[at] != 0xFF:
+            break
+        var marker = Int(data[at + 1])
+        if (
+            marker == 0xD8
+            or marker == 0x01
+            or (marker >= 0xD0 and marker <= 0xD7)
+        ):
+            at += 2
+            continue
+        var length = _u16be(data, at + 2)
+        if length < 2 or at + 2 + length > len(data):
+            break
+        segments.append(_Segment(marker, at, length))
+        at += 2 + length
+        if marker == 0xDA:
+            break
+    return segments^
+
+
+def _mutate_jpeg(mut data: List[UInt8], mut rng: _Rng) -> String:
+    var segments = _jpeg_segments(data)
+    if len(segments) == 0:
+        return _mutate(data, rng)
+    var seg = segments[rng.below(len(segments))]
+    var payload = seg.at + 4
+    var which = rng.below(7)
+    if which == 0 and seg.length > 2:
+        var n = 1 + rng.below(4)
+        for _ in range(n):
+            data[payload + rng.below(seg.length - 2)] = rng.byte()
+        return String(
+            "jpeg: ", n, " byte(s) of segment ", hex(seg.marker), " at ", seg.at
+        )
+    if which == 1 and seg.length > 2:
+        # An edge value into a field: SOF's height, width, component
+        # count or sampling factors; DHT's counts; DQT's precision;
+        # SOS's selectors and spectral band; DRI's interval.
+        var field = rng.below(seg.length - 2)
+        var width = 1 if rng.below(2) == 0 or field + 2 > seg.length - 2 else 2
+        var value = _edge_or_random(rng, width)
+        _put_be(data, payload + field, value, width)
+        return String(
+            "jpeg: edge ",
+            value,
+            " width ",
+            width,
+            " at payload+",
+            field,
+            " of segment ",
+            hex(seg.marker),
+        )
+    if which == 2:
+        # The declared length.
+        var value = (
+            _edge_or_random(rng, 2) if rng.below(2)
+            == 0 else seg.length + rng.below(16) - 8
+        )
+        if value < 0:
+            value = 0
+        _put_be(data, seg.at + 2, value, 2)
+        return String(
+            "jpeg: segment ",
+            hex(seg.marker),
+            " at ",
+            seg.at,
+            " length ",
+            seg.length,
+            " -> ",
+            value,
+        )
+    if which == 3 and seg.marker != 0xDA and len(segments) > 1:
+        var result = List[UInt8](capacity=len(data))
+        for i in range(seg.at):
+            result.append(data[i])
+        for i in range(seg.at + 2 + seg.length, len(data)):
+            result.append(data[i])
+        data = result^
+        return String(
+            "jpeg: segment ", hex(seg.marker), " at ", seg.at, " deleted"
+        )
+    if which == 4:
+        var result = List[UInt8](capacity=len(data) + 2 + seg.length)
+        var end = seg.at + 2 + seg.length
+        for i in range(end):
+            result.append(data[i])
+        for i in range(seg.at, end):
+            result.append(data[i])
+        for i in range(end, len(data)):
+            result.append(data[i])
+        data = result^
+        return String(
+            "jpeg: segment ", hex(seg.marker), " at ", seg.at, " duplicated"
+        )
+    # Into the entropy-coded data after SOS: bytes overwritten, a
+    # marker planted (FF Dx restart, FF D9 end, FF 00 stuffing), or
+    # a stuffing zero removed so a stray FF reads as a marker.
+    var last = segments[len(segments) - 1]
+    var scan = last.at + 2 + last.length
+    if last.marker != 0xDA or scan >= len(data) - 1:
+        return _mutate(data, rng)
+    var at = scan + rng.below(len(data) - scan - 1)
+    var kind = rng.below(3)
+    if kind == 0:
+        data[at] = rng.byte()
+        return String("jpeg: scan byte at ", at, " overwritten")
+    if kind == 1:
+        var markers: List[Int] = [0xD0, 0xD7, 0xD9, 0x00, 0xC4, 0xFF]
+        var m = markers[rng.below(len(markers))]
+        data[at] = 0xFF
+        data[at + 1] = UInt8(m)
+        return String(
+            "jpeg: marker FF ", hex(m), " planted in the scan at ", at
+        )
+    for i in range(at, len(data) - 1):
+        if data[i] == 0xFF and data[i + 1] == 0x00:
+            data[i + 1] = rng.byte()
+            return String("jpeg: stuffing byte at ", i + 1, " replaced")
+    return _mutate(data, rng)
+
+
+struct _Table(Copyable, ImplicitlyCopyable, Movable):
+    """One sfnt table directory record: where the record sits, and
+    the table's tag, offset and length as declared."""
+
+    var record: Int
+    var tag: String
+    var offset: Int
+    var length: Int
+
+    def __init__(out self, record: Int, tag: String, offset: Int, length: Int):
+        self.record = record
+        self.tag = tag
+        self.offset = offset
+        self.length = length
+
+
+def _font_tables(data: List[UInt8]) -> List[_Table]:
+    var tables = List[_Table]()
+    var base = 0
+    if len(data) >= 16 and _u32be(data, 0) == 0x74746366:  # 'ttcf'
+        base = _u32be(data, 12)
+    var count = _u16be(data, base + 4)
+    if count > 512:
+        return tables^
+    for i in range(count):
+        var record = base + 12 + i * 16
+        if record + 16 > len(data):
+            break
+        var tag = String()
+        for k in range(4):
+            tag += chr(Int(data[record + k]))
+        tables.append(
+            _Table(
+                record, tag, _u32be(data, record + 8), _u32be(data, record + 12)
+            )
+        )
+    return tables^
+
+
+def _mutate_font(mut data: List[UInt8], mut rng: _Rng) -> String:
+    var tables = _font_tables(data)
+    if len(tables) == 0:
+        return _mutate(data, rng)
+    var t = tables[rng.below(len(tables))]
+    var which = rng.below(6)
+    if which == 0:
+        # The record's offset or length: past the end of the file,
+        # zero, or a little off so it overlaps a neighbour.
+        var field = t.record + (8 if rng.below(2) == 0 else 12)
+        var value = (
+            _edge_or_random(rng, 4) if rng.below(2)
+            == 0 else _u32be(data, field) + rng.below(64) - 32
+        )
+        if value < 0:
+            value = 0
+        _put_be(data, field, value, 4)
+        return String(
+            "font: ",
+            t.tag,
+            " record ",
+            "offset" if field == t.record + 8 else "length",
+            " -> ",
+            value,
+        )
+    var inside = t.offset < len(data) and t.length > 0
+    var span = min(t.length, len(data) - t.offset) if inside else 0
+    if which == 1 and span > 0:
+        var n = 1 + rng.below(8)
+        for _ in range(n):
+            data[t.offset + rng.below(span)] = rng.byte()
+        return String("font: ", n, " byte(s) inside ", t.tag)
+    if which == 2 and span >= 2:
+        # An edge value into a two- or four-byte field of the table:
+        # maxp's numGlyphs, head's indexToLocFormat, a loca entry, a
+        # glyf point count or composite flag, a GPOS count, a CFF
+        # INDEX count or offSize.
+        var width = 2 if rng.below(3) > 0 or span < 4 else 4
+        var field = rng.below(span - width + 1)
+        var value = _edge_or_random(rng, width)
+        _put_be(data, t.offset + field, value, width)
+        return String(
+            "font: edge ", value, " width ", width, " at ", t.tag, "+", field
+        )
+    if which == 3:
+        # numTables, or a table's tag swapped with another's so the
+        # parser reads one table with the other's expectations.
+        if rng.below(2) == 0 or len(tables) < 2:
+            var value = _edge_or_random(rng, 2)
+            _put_be(data, 4, value, 2)
+            return String("font: numTables -> ", value)
+        var other = tables[rng.below(len(tables))]
+        for k in range(4):
+            var a = data[t.record + k]
+            data[t.record + k] = data[other.record + k]
+            data[other.record + k] = a
+        return String("font: tags ", t.tag, " and ", other.tag, " swapped")
+    if which == 4 and span > 0:
+        # A run of the table cleared or filled, which a glyph or
+        # subroutine parser reads as many zero-length or maximal items.
+        var length = 1 + rng.below(min(span, 512))
+        var start = t.offset + rng.below(span - length + 1)
+        var fill = 0 if rng.below(2) == 0 else 0xFF
+        for i in range(start, start + length):
+            data[i] = UInt8(fill)
+        return String("font: ", length, " bytes of ", t.tag, " set to ", fill)
+    # Point the record at another table's bytes.
+    if len(tables) > 1:
+        var other = tables[rng.below(len(tables))]
+        _put_be(data, t.record + 8, other.offset, 4)
+        _put_be(data, t.record + 12, other.length, 4)
+        return String("font: ", t.tag, " record aimed at ", other.tag)
+    return _mutate(data, rng)
+
+
+def _mutate_bmp(mut data: List[UInt8], mut rng: _Rng) -> String:
+    """The header's fixed fields: file size, pixel offset, DIB size,
+    width, height, planes, bit depth, compression, image size."""
+    if len(data) < 54:
+        return _mutate(data, rng)
+    var fields: List[Int] = [2, 10, 14, 18, 22, 26, 28, 30, 34]
+    var widths: List[Int] = [4, 4, 4, 4, 4, 2, 2, 4, 4]
+    var k = rng.below(len(fields))
+    var value = _edge_or_random(rng, widths[k])
+    if widths[k] == 4 and rng.below(2) == 0:
+        # A negative height is the top-down flag; other negatives are
+        # what a signed read of an edge value gives.
+        value = (1 << 32) - 1 - rng.below(4096)
+    _put_le(data, fields[k], value, widths[k])
+    return String("bmp: header field at ", fields[k], " -> ", value)
+
+
+def _mutate_deflate(mut data: List[UInt8], mut rng: _Rng) -> String:
+    """The block header and the code-length tables are the first few
+    dozen bytes of a stream; bit flips concentrated there reach the
+    table construction, where dumb flips spread over the whole stream
+    mostly land in literal data."""
+    if len(data) == 0:
+        return _mutate(data, rng)
+    var head = min(len(data), 48)
+    var n = 1 + rng.below(4)
+    for _ in range(n):
+        var at = rng.below(head)
+        data[at] ^= UInt8(1) << UInt8(rng.below(8))
+    return String(
+        "deflate: ", n, " bit(s) flipped in the first ", head, " bytes"
+    )
+
+
+def _mutate_for(
+    decoder: String, mut data: List[UInt8], mut rng: _Rng
+) -> String:
+    """Half the time a structure-aware mutation for `decoder`, the
+    rest a dumb one; both are described for the sidecar."""
+    if rng.below(2) == 0:
+        return _mutate(data, rng)
+    if decoder == "png":
+        return _mutate_png(data, rng)
+    if decoder == "jpeg":
+        return _mutate_jpeg(data, rng)
+    if decoder == "font":
+        return _mutate_font(data, rng)
+    if decoder == "bmp":
+        return _mutate_bmp(data, rng)
+    if decoder == "deflate":
+        return _mutate_deflate(data, rng)
+    return _mutate(data, rng)
+
+
 # --- Decoders --------------------------------------------------------------
 
 
@@ -388,7 +871,7 @@ def _batch(
         var seed_path = seeds[rng.below(len(seeds))]
         var data = _read_seed(decoder, seed_path)
         var state_before = rng.state
-        var description = _mutate(data, rng)
+        var description = _mutate_for(decoder, data, rng)
         # On disk before the decoder sees it: if the decoder kills the
         # process, this is what the driver collects.
         _write(case_path, data)

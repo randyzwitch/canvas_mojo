@@ -128,13 +128,16 @@ def main() raises:
                         )
                 tg.wait()
                 sink += Int(dst[17])
-            ts.append(
-                Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters)
-            )
+            ts.append(Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters))
         var v = _median(ts^)
         print(
-            "   ", bands, "bands ", String(round(v, 1)),
-            "us =", String(round(mb / v * 1000.0, 1)), "GB/s",
+            "   ",
+            bands,
+            "bands ",
+            String(round(v, 1)),
+            "us =",
+            String(round(mb / v * 1000.0, 1)),
+            "GB/s",
         )
 
     # Serial loop over the same band split, no tasks at all: isolates
@@ -152,12 +155,15 @@ def main() raises:
                     if lo < hi:
                         _fill_range(dst, lo, hi, UInt8(k & 0xFF))
                 sink += Int(dst[17])
-            ts.append(
-                Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters)
-            )
+            ts.append(Float64(perf_counter_ns() - t0) / 1000.0 / Float64(iters))
         var v = _median(ts^)
         print(
-            "   ", bands, "bands ", String(round(v, 1)),
-            "us =", String(round(mb / v * 1000.0, 1)), "GB/s",
+            "   ",
+            bands,
+            "bands ",
+            String(round(v, 1)),
+            "us =",
+            String(round(mb / v * 1000.0, 1)),
+            "GB/s",
         )
     print("\nsink", sink != 0)

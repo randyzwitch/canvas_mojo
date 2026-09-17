@@ -41,6 +41,9 @@ from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
 from canvas.gradient import LinearGradient
+from canvas.io.deflate import deflate, inflate
+from canvas.io.jpeg import decode_jpeg
+from canvas.io.png import decode_png, encode_png
 from canvas.path import Path, fill_path_aa, fill_path_gradient_aa
 from canvas.shapes.lines import draw_line, draw_line_aa
 from canvas.shapes.rects import fill_rect
@@ -106,7 +109,9 @@ def _stats(rounds_ns: List[Float64]) -> _Stats:
     return _Stats(median, iqr / median if median > 0.0 else 0.0)
 
 
-def _time_round[C: MicroCase](mut subject: C, iters: Int, mut sink: Int) raises -> Float64:
+def _time_round[
+    C: MicroCase
+](mut subject: C, iters: Int, mut sink: Int) raises -> Float64:
     var t0 = perf_counter_ns()
     for _ in range(iters):
         subject.run(sink)
@@ -151,7 +156,9 @@ def _print_row(name: String, s: _Stats, rounds: Int, iters: Int):
 
 def measure[
     C: MicroCase
-](mut subject: C, mut sink: Int, rounds: Int = 9, iters: Int = 200) raises -> _Stats:
+](
+    mut subject: C, mut sink: Int, rounds: Int = 9, iters: Int = 200
+) raises -> _Stats:
     """Time `case` for `rounds` rounds of `iters` iterations, after one
     warm-up round, and print its median and spread.
 
@@ -209,7 +216,86 @@ def compare[
 # --- cases ----------------------------------------------------------
 
 
-struct FillRectOpaque(Movable, MicroCase):
+struct PngDecode(MicroCase, Movable):
+    """`decode_png` of a 1600x1200 file with varied content, so every
+    filter and the vector copy in `_unfilter_rows` do real work. The
+    decoder's loops go through `canvas/io/view.mojo`; this row is
+    what pins that the production build pays nothing for them."""
+
+    var file: List[UInt8]
+
+    def __init__(out self) raises:
+        var c = Canvas(1600, 1200, WHITE)
+        for i in range(120):
+            fill_rect(
+                c,
+                0,
+                i * 10,
+                1600,
+                10,
+                Color(UInt8(i * 2), UInt8(255 - i * 2), UInt8((i * 7) & 255)),
+            )
+        for i in range(160):
+            fill_rect(
+                c,
+                i * 10,
+                0,
+                5,
+                1200,
+                Color(UInt8(i), UInt8((i * 3) & 255), 200, 90),
+            )
+        self.file = encode_png(c)
+
+    def name(self) -> String:
+        return "decode_png 1600x1200"
+
+    def run(mut self, mut sink: Int) raises:
+        var img = decode_png(self.file.copy())
+        sink += Int(img.get_pixel(3, 3).r)
+
+
+struct JpegDecode(MicroCase, Movable):
+    """`decode_jpeg` of the 4:2:0 fixture, fifty times per iteration
+    since the file is small; the IDCT, upsampling and color
+    conversion loops go through views as the PNG ones do."""
+
+    var file: List[UInt8]
+
+    def __init__(out self) raises:
+        var f = open("tests/jpeg/color_420.jpg", "r")
+        self.file = f.read_bytes()
+        f.close()
+
+    def name(self) -> String:
+        return "decode_jpeg color_420 x50"
+
+    def run(mut self, mut sink: Int) raises:
+        for _ in range(50):
+            var img = decode_jpeg(self.file.copy())
+            sink += Int(img.get_pixel(3, 3).r)
+
+
+struct Inflate(MicroCase, Movable):
+    """`inflate` of a 4 MB stream whose back-references are long, so
+    the vector back-copy is the loop timed."""
+
+    var stream: List[UInt8]
+
+    def __init__(out self) raises:
+        var raw = List[UInt8]()
+        for i in range(4 << 20):
+            raw.append(UInt8((i * 7 + (i >> 9)) & 0xFF))
+        self.stream = deflate(raw)
+
+    def name(self) -> String:
+        return "inflate 4 MB"
+
+    def run(mut self, mut sink: Int) raises:
+        var plain = inflate(self.stream.copy())
+        sink += Int(plain[100])
+
+
+struct FillRectOpaque(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -223,7 +309,7 @@ struct FillRectOpaque(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(50, 50).r)
 
 
-struct FillRectMultiply(Movable, MicroCase):
+struct FillRectMultiply(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -238,7 +324,7 @@ struct FillRectMultiply(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(50, 50).r)
 
 
-struct LineHairline(Movable, MicroCase):
+struct LineHairline(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -252,7 +338,7 @@ struct LineHairline(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct LineAaDiagonal(Movable, MicroCase):
+struct LineAaDiagonal(MicroCase, Movable):
     var canvas: Canvas
 
     def __init__(out self) raises:
@@ -266,7 +352,7 @@ struct LineAaDiagonal(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct LineAaHorizontal(Movable, MicroCase):
+struct LineAaHorizontal(MicroCase, Movable):
     """The same length as the diagonal, along one row band: if the
     sweep is sized to the bounding box, this is much cheaper.
     """
@@ -285,7 +371,7 @@ struct LineAaHorizontal(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(400, 300).r)
 
 
-struct GradientUnderClip(Movable, MicroCase):
+struct GradientUnderClip(MicroCase, Movable):
     """A large gradient-filled path whose visible area is a small
     rectangle: the case where the coverage mask used to be allocated
     and swept for the whole path however little of it could be
@@ -316,7 +402,7 @@ struct GradientUnderClip(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(380, 290).r)
 
 
-struct FillPathGlyphSized(Movable, MicroCase):
+struct FillPathGlyphSized(MicroCase, Movable):
     """A quadrilateral the size of a glyph, filled through the
     exact-area path: the small-shape end of the rasterizer, where
     per-call overhead is most of the cost.
@@ -342,7 +428,7 @@ struct FillPathGlyphSized(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(55, 55).r)
 
 
-struct TextCached(Movable, MicroCase):
+struct TextCached(MicroCase, Movable):
     var canvas: Canvas
     var cache: FontCache
 
@@ -360,7 +446,7 @@ struct TextCached(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(104, 96).r)
 
 
-struct TextScaled(Movable, MicroCase):
+struct TextScaled(MicroCase, Movable):
     """The same label under scale(3, 3), which today takes the direct
     outline fill rather than the glyph mask cache (#240).
     """
@@ -383,7 +469,7 @@ struct TextScaled(Movable, MicroCase):
         sink += Int(self.canvas.get_pixel(104, 96).r)
 
 
-struct TextLarge(Movable, MicroCase):
+struct TextLarge(MicroCase, Movable):
     """The scaled label's size drawn unscaled: what the cached path
     costs for the same ink, the target #240 aims at.
     """
@@ -467,6 +553,14 @@ def main() raises:
 
     var first_font = FirstFontResolution()
     _ = measure(first_font, sink, rounds=9, iters=200)
+    print("")
+
+    var png_decode = PngDecode()
+    _ = measure(png_decode, sink, rounds=9, iters=10)
+    var jpeg_decode = JpegDecode()
+    _ = measure(jpeg_decode, sink, rounds=9, iters=10)
+    var inflate_case = Inflate()
+    _ = measure(inflate_case, sink, rounds=9, iters=20)
 
     print("")
     print("sink", sink)

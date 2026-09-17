@@ -55,6 +55,7 @@ from std.math import cos, pi, sqrt
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.io import MAX_DECODED_PIXELS
+from canvas.io.view import _ReadView, _WriteView
 
 # Bits of lookahead the fast Huffman lookup table covers.
 comptime _LOOKUP_BITS = 9
@@ -208,18 +209,18 @@ struct _BitReader(Movable):
         self.marker_pos = -1
 
     def _fill(mut self, want: Int):
-        var p = self.data.unsafe_ptr()
+        var p = _ReadView(self.data)
         var n = len(self.data)
         # Refill to well past `want`, so a symbol and the bits after it
         # come out of one refill rather than two.
         while self.cnt < 32:
             var b = 0
             if self.marker_pos < 0 and self.pos < n:
-                b = Int(p[unsafe_offset=self.pos])
+                b = Int(p[self.pos])
                 if b == 0xFF:
                     var nxt = 0
                     if self.pos + 1 < n:
-                        nxt = Int(p[unsafe_offset=self.pos + 1])
+                        nxt = Int(p[self.pos + 1])
                     if nxt == 0:
                         self.pos += 2
                     elif nxt == 0xFF:
@@ -279,7 +280,7 @@ struct _BitReader(Movable):
 
 
 def _decode_symbol(mut bits: _BitReader, table: _HuffTable) raises -> Int:
-    var entry = table.lookup.unsafe_ptr()[unsafe_offset=bits.peek(_LOOKUP_BITS)]
+    var entry = _ReadView(table.lookup)[bits.peek(_LOOKUP_BITS)]
     if entry >= 0:
         bits.drop(entry & 0xFF)
         return entry >> 8
@@ -327,7 +328,13 @@ struct _Component(Movable):
     var plane: List[UInt8]
     var bw: Int
     var bh: Int
-    var coeffs: List[Int]
+    # Quantized coefficients, 64 per block, `Int32` on purpose: a
+    # progressive frame under `MAX_DECODED_PIXELS` holds one per pixel
+    # per component, and at eight bytes each a 211-megapixel frame
+    # from a 1 KB file asked for more than a machine's memory limit
+    # (#430). The magnitudes are bounded by the DC category (11 bits)
+    # shifted by a successive-approximation `al` of at most 15.
+    var coeffs: List[Int32]
 
     def __init__(out self, id: Int, h: Int, v: Int, tq: Int):
         self.id = id
@@ -342,7 +349,7 @@ struct _Component(Movable):
         self.plane = List[UInt8]()
         self.bw = 0
         self.bh = 0
-        self.coeffs = List[Int]()
+        self.coeffs = List[Int32]()
 
 
 def _idct_table() -> List[Float32]:
@@ -375,28 +382,25 @@ def _idct_block(
     vector, and a zero coefficient -- most of them, after
     quantization -- is skipped."""
     comptime V = SIMD[DType.float32, 8]
-    var cp = coef.unsafe_ptr()
-    var bp = basis.unsafe_ptr()
+    var cp = _ReadView(coef)
+    var bp = _ReadView(basis)
     var rows = InlineArray[V, 8](fill=V(0.0))
     for v in range(8):
         var acc = V(0.0)
         for u in range(8):
-            var c = cp[unsafe_offset=v * 8 + u]
+            var c = cp[v * 8 + u]
             if c != 0:
-                acc += (
-                    V(Float32(c))
-                    * bp.unsafe_offset(u * 8).unsafe_load[width=8]()
-                )
+                acc += V(Float32(c)) * bp.load[DType.float32, 8](u * 8)
         rows[v] = acc
     # Columns: output row y is the sum over v of rows[v] (the eight x
     # values at frequency v) times basis[v][y].
-    var pp = plane.unsafe_ptr()
+    var pp = _WriteView(plane)
     for y in range(8):
         var acc = V(128.5)
         for v in range(8):
-            acc += rows[v] * V(bp[unsafe_offset=v * 8 + y])
+            acc += rows[v] * V(bp[v * 8 + y])
         var clamped = acc.clamp(0.0, 255.0).cast[DType.uint8]()
-        pp.unsafe_offset((by + y) * plane_w + bx).unsafe_store(clamped)
+        pp.store[DType.uint8, 8]((by + y) * plane_w + bx, clamped)
 
 
 def _flat_block(
@@ -412,11 +416,11 @@ def _flat_block(
     if s > 255:
         s = 255
     var v = UInt8(s)
-    var pp = plane.unsafe_ptr()
+    var pp = _WriteView(plane)
     for y in range(8):
         var row = (by + y) * plane_w + bx
         for x in range(8):
-            pp[unsafe_offset=row + x] = v
+            pp[row + x] = v
 
 
 def _u16(data: List[UInt8], pos: Int) raises -> Int:
@@ -850,7 +854,7 @@ def _alloc_coeffs(
         comps[c].bh = mcus_y * comps[c].v
         comps[c].pw = comps[c].bw * 8
         comps[c].ph = comps[c].bh * 8
-        comps[c].coeffs = List[Int](
+        comps[c].coeffs = List[Int32](
             length=comps[c].bw * comps[c].bh * 64, fill=0
         )
 
@@ -858,7 +862,7 @@ def _alloc_coeffs(
 def _prog_dc_first(
     mut bits: _BitReader,
     dc: _HuffTable,
-    mut coeffs: List[Int],
+    mut coeffs: List[Int32],
     base: Int,
     al: Int,
     pred: Int,
@@ -871,23 +875,23 @@ def _prog_dc_first(
     if t > 11:
         raise Error("jpeg: invalid DC category")
     var p = pred + _extend(bits.bits(t), t)
-    coeffs[base] = p << al
+    coeffs[base] = Int32(p << al)
     return p
 
 
 def _prog_dc_refine(
-    mut bits: _BitReader, mut coeffs: List[Int], base: Int, al: Int
+    mut bits: _BitReader, mut coeffs: List[Int32], base: Int, al: Int
 ):
     """Later DC scan: one bit, the next lower bit of the coefficient
     already there."""
     if bits.bits(1) != 0:
-        coeffs[base] |= 1 << al
+        coeffs[base] |= Int32(1 << al)
 
 
 def _prog_ac_first(
     mut bits: _BitReader,
     ac: _HuffTable,
-    mut coeffs: List[Int],
+    mut coeffs: List[Int32],
     base: Int,
     zz: List[Int],
     ss: Int,
@@ -919,14 +923,14 @@ def _prog_ac_first(
         k += r
         if k > se:
             raise Error("jpeg: AC coefficient run past the spectral band")
-        coeffs[base + zz[k]] = _extend(bits.bits(s), s) << al
+        coeffs[base + zz[k]] = Int32(_extend(bits.bits(s), s) << al)
         k += 1
 
 
 def _prog_ac_refine(
     mut bits: _BitReader,
     ac: _HuffTable,
-    mut coeffs: List[Int],
+    mut coeffs: List[Int32],
     base: Int,
     zz: List[Int],
     ss: Int,
@@ -948,15 +952,15 @@ def _prog_ac_refine(
     A new coefficient always has size 1 -- a refinement can only add
     the bit at the current point transform, never a larger magnitude.
     """
-    var p1 = 1 << al
-    var m1 = -(1 << al)
+    var p1 = Int32(1 << al)
+    var m1 = -p1
     var k = ss
     if eobrun == 0:
         while k <= se:
             var rs = _decode_symbol(bits, ac)
             var r = rs >> 4
             var s = rs & 15
-            var newval = 0
+            var newval = Int32(0)
             if s == 0:
                 if r < 15:
                     eobrun = 1 << r
@@ -1168,7 +1172,7 @@ def _finish_progressive(
                 var any_ac = False
                 for k in range(64):
                     var idx = zz[k]
-                    var v = comps[c].coeffs[base + idx] * q[k]
+                    var v = Int(comps[c].coeffs[base + idx]) * q[k]
                     coef[idx] = v
                     if k > 0 and v != 0:
                         any_ac = True
@@ -1192,17 +1196,17 @@ def _decode_block(
     term was non-zero; a block that is DC alone is flat, and the
     inverse DCT of it is a broadcast."""
     # `coef`, `zz` and `q` are 64 long and `k` stays within 0..63, so
-    # the accesses below go through pointers.
-    var cp = coef.unsafe_ptr()
-    var zp = zz.unsafe_ptr()
-    var qp = q.unsafe_ptr()
+    # the accesses below go through views.
+    var cp = _WriteView(coef)
+    var zp = _ReadView(zz)
+    var qp = _ReadView(q)
     for i in range(64):
-        cp[unsafe_offset=i] = 0
+        cp[i] = 0
     var t = _decode_symbol(bits, dc)
     if t > 11:
         raise Error("jpeg: invalid DC category")
     comp.dc_pred += _extend(bits.bits(t), t)
-    cp[unsafe_offset=0] = comp.dc_pred * qp[unsafe_offset=0]
+    cp[0] = comp.dc_pred * qp[0]
     var any_ac = False
     var k = 1
     while k < 64:
@@ -1217,9 +1221,7 @@ def _decode_block(
         k += r
         if k > 63:
             raise Error("jpeg: AC coefficient run past the block")
-        cp[unsafe_offset=zp[unsafe_offset=k]] = (
-            _extend(bits.bits(s), s) * qp[unsafe_offset=k]
-        )
+        cp[zp[k]] = _extend(bits.bits(s), s) * qp[k]
         any_ac = True
         k += 1
     return any_ac
@@ -1245,9 +1247,9 @@ def _upsample(
     var cw = (width * comp.h + hmax - 1) // hmax
     var ch = (height * comp.v + vmax - 1) // vmax
     var pw = comp.pw
-    var sp = comp.plane.unsafe_ptr()
+    var sp = _ReadView(comp.plane)
     var out = List[UInt8](unsafe_uninit_length=width * height)
-    var op = out.unsafe_ptr()
+    var op = _WriteView(out)
     var rx = hmax // comp.h
     var ry = vmax // comp.v
     var fancy_x = rx == 2 and hmax % comp.h == 0
@@ -1261,57 +1263,47 @@ def _upsample(
         # row/column (the sum of 3 and 1), which keeps one rounding
         # rule for every case.
         var colsum = List[Int](length=cw, fill=0)
-        var cp = colsum.unsafe_ptr()
+        var cp = _WriteView(colsum)
         var out_h = ch * ry
         for oy in range(min(out_h, height)):
             var iy = oy // ry
-            var row0 = sp.unsafe_offset(iy * pw)
+            var row0 = sp.offset(iy * pw)
             if fancy_y:
                 var near = iy - 1 if oy % 2 == 0 else iy + 1
                 if near < 0:
                     near = 0
                 if near > ch - 1:
                     near = ch - 1
-                var row1 = sp.unsafe_offset(near * pw)
+                var row1 = sp.offset(near * pw)
                 for x in range(cw):
-                    cp[unsafe_offset=x] = Int(row0[unsafe_offset=x]) * 3 + Int(
-                        row1[unsafe_offset=x]
-                    )
+                    cp[x] = Int(row0[x]) * 3 + Int(row1[x])
             else:
                 for x in range(cw):
-                    cp[unsafe_offset=x] = Int(row0[unsafe_offset=x]) * 4
-            var dst = op.unsafe_offset(oy * width)
+                    cp[x] = Int(row0[x]) * 4
+            var dst = op.offset(oy * width)
             if fancy_x:
                 for x in range(cw):
-                    var this = cp[unsafe_offset=x]
-                    var last = cp[unsafe_offset=x - 1] if x > 0 else this
-                    var nxt = cp[unsafe_offset=x + 1] if x < cw - 1 else this
+                    var this = cp[x]
+                    var last = cp[x - 1] if x > 0 else this
+                    var nxt = cp[x + 1] if x < cw - 1 else this
                     var ox = 2 * x
                     if ox < width:
-                        dst[unsafe_offset=ox] = UInt8(
-                            (this * 3 + last + 8) >> 4
-                        )
+                        dst[ox] = UInt8((this * 3 + last + 8) >> 4)
                     if ox + 1 < width:
-                        dst[unsafe_offset=ox + 1] = UInt8(
-                            (this * 3 + nxt + 7) >> 4
-                        )
+                        dst[ox + 1] = UInt8((this * 3 + nxt + 7) >> 4)
             else:
                 for x in range(min(cw, width)):
-                    dst[unsafe_offset=x] = UInt8((cp[unsafe_offset=x] + 2) >> 2)
+                    dst[x] = UInt8((cp[x] + 2) >> 2)
         # Rows past the plane's own (a height not a multiple of the
         # ratio) repeat the last one.
         for oy in range(min(out_h, height), height):
             for x in range(width):
-                op[unsafe_offset=oy * width + x] = op[
-                    unsafe_offset=(out_h - 1) * width + x
-                ]
+                op[oy * width + x] = op[(out_h - 1) * width + x]
         return out^
     for y in range(height):
         var iy = y * comp.v // vmax
         for x in range(width):
-            op[unsafe_offset=y * width + x] = sp[
-                unsafe_offset=iy * pw + x * comp.h // hmax
-            ]
+            op[y * width + x] = sp[iy * pw + x * comp.h // hmax]
     return out^
 
 
@@ -1329,43 +1321,41 @@ def _to_canvas(
     var pixels = List[UInt8](
         unsafe_uninit_length=width * height * BYTES_PER_PIXEL
     )
-    var dp = pixels.unsafe_ptr()
+    var dp = _WriteView(pixels)
     var n = width * height
     if len(comps) == 1:
         var g = _upsample(comps[0], hmax, vmax, width, height)
-        var gp = g.unsafe_ptr()
+        var gp = _ReadView(g)
         for i in range(n):
-            var v = gp[unsafe_offset=i]
+            var v = gp[i]
             var d = i * BYTES_PER_PIXEL
-            dp[unsafe_offset=d] = v
-            dp[unsafe_offset=d + 1] = v
-            dp[unsafe_offset=d + 2] = v
-            dp[unsafe_offset=d + 3] = 255
+            dp[d] = v
+            dp[d + 1] = v
+            dp[d + 2] = v
+            dp[d + 3] = 255
         return Canvas(width, height, pixels^)
 
     var y_plane = _upsample(comps[0], hmax, vmax, width, height)
     var cb_plane = _upsample(comps[1], hmax, vmax, width, height)
     var cr_plane = _upsample(comps[2], hmax, vmax, width, height)
-    var yp = y_plane.unsafe_ptr()
-    var bp = cb_plane.unsafe_ptr()
-    var rp = cr_plane.unsafe_ptr()
+    var yp = _ReadView(y_plane)
+    var bp = _ReadView(cb_plane)
+    var rp = _ReadView(cr_plane)
     var rgb = adobe_transform == 0
     for i in range(n):
-        var a = Float32(yp[unsafe_offset=i])
-        var b = Float32(bp[unsafe_offset=i])
-        var c = Float32(rp[unsafe_offset=i])
+        var a = Float32(yp[i])
+        var b = Float32(bp[i])
+        var c = Float32(rp[i])
         var d = i * BYTES_PER_PIXEL
         if rgb:
-            dp[unsafe_offset=d] = yp[unsafe_offset=i]
-            dp[unsafe_offset=d + 1] = bp[unsafe_offset=i]
-            dp[unsafe_offset=d + 2] = rp[unsafe_offset=i]
+            dp[d] = yp[i]
+            dp[d + 1] = bp[i]
+            dp[d + 2] = rp[i]
         else:
             var cb = b - 128.0
             var cr = c - 128.0
-            dp[unsafe_offset=d] = _clamp_byte(a + 1.402 * cr)
-            dp[unsafe_offset=d + 1] = _clamp_byte(
-                a - 0.344136 * cb - 0.714136 * cr
-            )
-            dp[unsafe_offset=d + 2] = _clamp_byte(a + 1.772 * cb)
-        dp[unsafe_offset=d + 3] = 255
+            dp[d] = _clamp_byte(a + 1.402 * cr)
+            dp[d + 1] = _clamp_byte(a - 0.344136 * cb - 0.714136 * cr)
+            dp[d + 2] = _clamp_byte(a + 1.772 * cb)
+        dp[d + 3] = 255
     return Canvas(width, height, pixels^)

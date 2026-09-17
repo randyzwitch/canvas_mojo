@@ -39,6 +39,7 @@ from std.math import iota
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color
 from canvas.io import MAX_DECODED_PIXELS
+from canvas.io.view import _ReadView, _WriteView
 from canvas.io.deflate import (
     _MAX_CHAIN as _DEFLATE_MAX_CHAIN,
     _MAX_LAZY as _DEFLATE_MAX_LAZY,
@@ -227,7 +228,7 @@ def _adler32(data: List[UInt8]) -> UInt32:
     var s1 = UInt32(1)
     var s2 = UInt32(0)
     var n = len(data)
-    var p = data.unsafe_ptr()
+    var p = _ReadView(data)
     var i = 0
     while i < n:
         var block = min(BLOCK, n - i)
@@ -237,11 +238,7 @@ def _adler32(data: List[UInt8]) -> UInt32:
             var vs2 = SIMD[DType.uint32, W](0)
             for c in range(chunks):
                 vs2 += vs1
-                vs1 += (
-                    p.unsafe_offset(i + c * W)
-                    .unsafe_load[width=W]()
-                    .cast[DType.uint32]()
-                )
+                vs1 += p.load[DType.uint8, W](i + c * W).cast[DType.uint32]()
             var total = vs1.reduce_add()
             var vec_len = UInt32(chunks * W)
             s2 += vec_len * s1
@@ -254,7 +251,7 @@ def _adler32(data: List[UInt8]) -> UInt32:
             i += done
             block -= done
         for _ in range(block):
-            s1 += UInt32(p[unsafe_offset=i])
+            s1 += UInt32(p[i])
             s2 += s1
             i += 1
         s1 %= BASE
@@ -735,12 +732,19 @@ def _unfilter_rows(
     above from a zeroed row. One loop per filter type, since the type
     is fixed for a row and the loop over its bytes is the hot one.
     Every index is bounded by the row length checks and the `x >= bpp`
-    guards, so the reads and writes go through pointers.
+    guards, so the reads and writes go through views (`canvas/io/view`),
+    which a checked build turns into the proof of that.
+
+    The zero row above the first scanline lives at the end of `out`,
+    past the image, and is cut off before returning: the two branches
+    of "row above" are then the same view type, and the first row's
+    reconstruction is the same loop as every other row's.
     """
-    var out = List[UInt8](unsafe_uninit_length=height * row_bytes)
-    var zero_row = List[UInt8](length=row_bytes, fill=0)
-    var rp = raw.unsafe_ptr()
-    var op = out.unsafe_ptr()
+    var out = List[UInt8](unsafe_uninit_length=(height + 1) * row_bytes)
+    var rp = _ReadView(raw)
+    var op = _WriteView(out)
+    for x in range(row_bytes):
+        op[height * row_bytes + x] = 0
     var pos = offset
     for y in range(height):
         if pos >= len(raw):
@@ -752,11 +756,11 @@ def _unfilter_rows(
         pos += 1
         if pos + row_bytes > len(raw):
             raise Error("png: truncated scanline data (row cut short)")
-        var cp = op.unsafe_offset(y * row_bytes)
-        var pp = zero_row.unsafe_ptr() if y == 0 else op.unsafe_offset(
+        var cp = op.offset(y * row_bytes)
+        var pp = op.offset(height * row_bytes) if y == 0 else op.offset(
             (y - 1) * row_bytes
         )
-        var fp = rp.unsafe_offset(pos)
+        var fp = rp.offset(pos)
         if filter_type == 0:
             # Nothing to reconstruct: the row is already its own
             # bytes. A byte-at-a-time loop is what the compiler is
@@ -764,20 +768,18 @@ def _unfilter_rows(
             # overlap; copying a vector at a time says so.
             var x = 0
             while x + _UNFILTER_W <= row_bytes:
-                cp.unsafe_offset(x).unsafe_store(
-                    fp.unsafe_offset(x).unsafe_load[width=_UNFILTER_W]()
+                cp.store[DType.uint8, _UNFILTER_W](
+                    x, fp.load[DType.uint8, _UNFILTER_W](x)
                 )
                 x += _UNFILTER_W
             while x < row_bytes:
-                cp[unsafe_offset=x] = fp[unsafe_offset=x]
+                cp[x] = fp[x]
                 x += 1
         elif filter_type == 1:
             for x in range(bpp):
-                cp[unsafe_offset=x] = fp[unsafe_offset=x]
+                cp[x] = fp[x]
             for x in range(bpp, row_bytes):
-                cp[unsafe_offset=x] = (
-                    fp[unsafe_offset=x] + cp[unsafe_offset=x - bpp]
-                )
+                cp[x] = fp[x] + cp[x - bpp]
         elif filter_type == 2:
             # Up: every byte depends only on the row above, never on
             # its own neighbours, so the whole row goes a vector at a
@@ -785,42 +787,36 @@ def _unfilter_rows(
             # the spec asks for.
             var x = 0
             while x + _UNFILTER_W <= row_bytes:
-                cp.unsafe_offset(x).unsafe_store(
-                    fp.unsafe_offset(x).unsafe_load[width=_UNFILTER_W]()
-                    + pp.unsafe_offset(x).unsafe_load[width=_UNFILTER_W]()
+                cp.store[DType.uint8, _UNFILTER_W](
+                    x,
+                    fp.load[DType.uint8, _UNFILTER_W](x)
+                    + pp.load[DType.uint8, _UNFILTER_W](x),
                 )
                 x += _UNFILTER_W
             while x < row_bytes:
-                cp[unsafe_offset=x] = fp[unsafe_offset=x] + pp[unsafe_offset=x]
+                cp[x] = fp[x] + pp[x]
                 x += 1
         elif filter_type == 3:
             for x in range(bpp):
-                cp[unsafe_offset=x] = UInt8(
-                    (Int(fp[unsafe_offset=x]) + Int(pp[unsafe_offset=x]) // 2)
-                    & 0xFF
-                )
+                cp[x] = UInt8((Int(fp[x]) + Int(pp[x]) // 2) & 0xFF)
             for x in range(bpp, row_bytes):
-                var a = Int(cp[unsafe_offset=x - bpp])
-                var b = Int(pp[unsafe_offset=x])
-                cp[unsafe_offset=x] = UInt8(
-                    (Int(fp[unsafe_offset=x]) + (a + b) // 2) & 0xFF
-                )
+                var a = Int(cp[x - bpp])
+                var b = Int(pp[x])
+                cp[x] = UInt8((Int(fp[x]) + (a + b) // 2) & 0xFF)
         elif filter_type == 4:
             for x in range(bpp):
                 # Left and upper-left are zero, so the predictor is
                 # the byte above.
-                cp[unsafe_offset=x] = fp[unsafe_offset=x] + pp[unsafe_offset=x]
+                cp[x] = fp[x] + pp[x]
             for x in range(bpp, row_bytes):
-                var a = Int(cp[unsafe_offset=x - bpp])
-                var b = Int(pp[unsafe_offset=x])
-                var c = Int(pp[unsafe_offset=x - bpp])
-                cp[unsafe_offset=x] = UInt8(
-                    (Int(fp[unsafe_offset=x]) + _paeth_predictor(a, b, c))
-                    & 0xFF
-                )
+                var a = Int(cp[x - bpp])
+                var b = Int(pp[x])
+                var c = Int(pp[x - bpp])
+                cp[x] = UInt8((Int(fp[x]) + _paeth_predictor(a, b, c)) & 0xFF)
         else:
             raise Error(String("png: invalid filter type ", filter_type))
         pos += row_bytes
+    out.resize(height * row_bytes, 0)
     return out^
 
 
@@ -834,7 +830,7 @@ def _canvas_from_scanlines(
     a blank canvas one at a time: a `write_pixel` walk would *composite*
     each pixel onto the canvas's initial background, losing alpha.
     Decoding a file is a replace, not a draw. The buffer is sized up
-    front and written through pointers: `unfiltered` holds exactly
+    front and written through views (`canvas/io/view`): `unfiltered` holds exactly
     `width * height * bpp` bytes, and every read below stays inside a
     pixel of it.
     """
@@ -843,8 +839,8 @@ def _canvas_from_scanlines(
     if len(unfiltered) < n * bpp:
         raise Error("png: scanline data shorter than the image")
     var pixels = List[UInt8](unsafe_uninit_length=n * BYTES_PER_PIXEL)
-    var sp = unfiltered.unsafe_ptr()
-    var dp = pixels.unsafe_ptr()
+    var sp = _ReadView(unfiltered)
+    var dp = _WriteView(pixels)
     if color_type == 6:
         # Already the canvas's own layout, so this is a copy. Taken a
         # vector at a time: the compiler cannot know the two buffers
@@ -852,12 +848,12 @@ def _canvas_from_scanlines(
         var i = 0
         var total = n * BYTES_PER_PIXEL
         while i + _UNFILTER_W <= total:
-            dp.unsafe_offset(i).unsafe_store(
-                sp.unsafe_offset(i).unsafe_load[width=_UNFILTER_W]()
+            dp.store[DType.uint8, _UNFILTER_W](
+                i, sp.load[DType.uint8, _UNFILTER_W](i)
             )
             i += _UNFILTER_W
         while i < total:
-            dp[unsafe_offset=i] = sp[unsafe_offset=i]
+            dp[i] = sp[i]
             i += 1
     elif color_type == 2:
         # Three source bytes become four. Reading four and overwriting
@@ -865,28 +861,26 @@ def _canvas_from_scanlines(
         # one store; the last pixel is done by hand, since reading
         # four bytes there would run one past the end.
         for i in range(n - 1):
-            var v = sp.unsafe_offset(i * 3).unsafe_load[width=4]()
+            var v = sp.load[DType.uint8, 4](i * 3)
             v[3] = 255
-            dp.unsafe_offset(i * BYTES_PER_PIXEL).unsafe_store(v)
+            dp.store[DType.uint8, 4](i * BYTES_PER_PIXEL, v)
         var last = n - 1
         var lp = last * 3
         var ld = last * BYTES_PER_PIXEL
-        dp[unsafe_offset=ld] = sp[unsafe_offset=lp]
-        dp[unsafe_offset=ld + 1] = sp[unsafe_offset=lp + 1]
-        dp[unsafe_offset=ld + 2] = sp[unsafe_offset=lp + 2]
-        dp[unsafe_offset=ld + 3] = 255
+        dp[ld] = sp[lp]
+        dp[ld + 1] = sp[lp + 1]
+        dp[ld + 2] = sp[lp + 2]
+        dp[ld + 3] = 255
     elif color_type == 0:
         for i in range(n):
-            var gray = sp[unsafe_offset=i]
+            var gray = sp[i]
             var v = SIMD[DType.uint8, 4](gray, gray, gray, 255)
-            dp.unsafe_offset(i * BYTES_PER_PIXEL).unsafe_store(v)
+            dp.store[DType.uint8, 4](i * BYTES_PER_PIXEL, v)
     else:  # 4 -- _bytes_per_pixel already rejected anything else
         for i in range(n):
-            var gray = sp[unsafe_offset=i * 2]
-            var v = SIMD[DType.uint8, 4](
-                gray, gray, gray, sp[unsafe_offset=i * 2 + 1]
-            )
-            dp.unsafe_offset(i * BYTES_PER_PIXEL).unsafe_store(v)
+            var gray = sp[i * 2]
+            var v = SIMD[DType.uint8, 4](gray, gray, gray, sp[i * 2 + 1])
+            dp.store[DType.uint8, 4](i * BYTES_PER_PIXEL, v)
     return Canvas(width, height, pixels^)
 
 
@@ -917,8 +911,8 @@ def _canvas_from_scanlines16(
     if len(unfiltered) < n * ch * 2:
         raise Error("png: scanline data shorter than the image")
     var pixels = List[UInt8](unsafe_uninit_length=n * BYTES_PER_PIXEL)
-    var sp = unfiltered.unsafe_ptr()
-    var dp = pixels.unsafe_ptr()
+    var sp = _ReadView(unfiltered)
+    var dp = _WriteView(pixels)
     var keyed = len(trns) > 0 and (color_type == 0 or color_type == 2)
     var key_r = -1
     var key_g = -1
@@ -940,35 +934,25 @@ def _canvas_from_scanlines16(
         # Bounded by the length check above: `base` runs to
         # (n - 1) * ch * 2 and each read stays inside that pixel.
         var base = i * ch * 2
-        var first = (Int(sp[unsafe_offset=base]) << 8) | Int(
-            sp[unsafe_offset=base + 1]
-        )
+        var first = (Int(sp[base]) << 8) | Int(sp[base + 1])
         var r16 = first
         var g16 = first
         var b16 = first
         var a16 = 65535
         if color_type == 2 or color_type == 6:
-            g16 = (Int(sp[unsafe_offset=base + 2]) << 8) | Int(
-                sp[unsafe_offset=base + 3]
-            )
-            b16 = (Int(sp[unsafe_offset=base + 4]) << 8) | Int(
-                sp[unsafe_offset=base + 5]
-            )
+            g16 = (Int(sp[base + 2]) << 8) | Int(sp[base + 3])
+            b16 = (Int(sp[base + 4]) << 8) | Int(sp[base + 5])
             if color_type == 6:
-                a16 = (Int(sp[unsafe_offset=base + 6]) << 8) | Int(
-                    sp[unsafe_offset=base + 7]
-                )
+                a16 = (Int(sp[base + 6]) << 8) | Int(sp[base + 7])
         elif color_type == 4:
-            a16 = (Int(sp[unsafe_offset=base + 2]) << 8) | Int(
-                sp[unsafe_offset=base + 3]
-            )
+            a16 = (Int(sp[base + 2]) << 8) | Int(sp[base + 3])
         if keyed and r16 == key_r and g16 == key_g and b16 == key_b:
             a16 = 0
         var d = i * BYTES_PER_PIXEL
-        dp[unsafe_offset=d] = UInt8((r16 + 128) // 257)
-        dp[unsafe_offset=d + 1] = UInt8((g16 + 128) // 257)
-        dp[unsafe_offset=d + 2] = UInt8((b16 + 128) // 257)
-        dp[unsafe_offset=d + 3] = UInt8((a16 + 128) // 257)
+        dp[d] = UInt8((r16 + 128) // 257)
+        dp[d + 1] = UInt8((g16 + 128) // 257)
+        dp[d + 2] = UInt8((b16 + 128) // 257)
+        dp[d + 3] = UInt8((a16 + 128) // 257)
     return Canvas(width, height, pixels^)
 
 
@@ -990,15 +974,11 @@ def _apply_trns8(mut canvas: Canvas, color_type: Int, trns: List[UInt8]) raises:
     var key_g = trns[1] if color_type == 0 else trns[3]
     var key_b = trns[1] if color_type == 0 else trns[5]
     var n = canvas.width * canvas.height
-    var p = canvas.pixels.unsafe_ptr()
+    var p = _WriteView(canvas.pixels)
     for i in range(n):
         var d = i * BYTES_PER_PIXEL
-        if (
-            p[unsafe_offset=d] == key_r
-            and p[unsafe_offset=d + 1] == key_g
-            and p[unsafe_offset=d + 2] == key_b
-        ):
-            p[unsafe_offset=d + 3] = 0
+        if p[d] == key_r and p[d + 1] == key_g and p[d + 2] == key_b:
+            p[d + 3] = 0
 
 
 def _rows_to_canvas(
@@ -1060,7 +1040,7 @@ def _deinterlace_adam7(
     var xstep: List[Int] = [8, 8, 4, 4, 2, 2, 1]
     var ystep: List[Int] = [8, 8, 8, 4, 4, 2, 2]
     var pixels = List[UInt8](length=width * height * BYTES_PER_PIXEL, fill=0)
-    var dp = pixels.unsafe_ptr()
+    var dp = _WriteView(pixels)
     var filter_bpp = _filter_bpp(color_type, bit_depth)
     var pos = 0
     for p in range(7):
@@ -1093,15 +1073,15 @@ def _deinterlace_adam7(
         var sub = _rows_to_canvas(
             unfiltered, pw, ph, color_type, bit_depth, palette, trns
         )
-        var subp = sub.pixels.unsafe_ptr()
+        var subp = _ReadView(sub.pixels)
         for y in range(ph):
             var dest_row = (y0 + y * dy) * width
             var src_row = y * pw
             for x in range(pw):
                 var s = (src_row + x) * BYTES_PER_PIXEL
                 var d = (dest_row + x0 + x * dx) * BYTES_PER_PIXEL
-                dp.unsafe_offset(d).unsafe_store(
-                    subp.unsafe_offset(s).unsafe_load[width=BYTES_PER_PIXEL]()
+                dp.store[DType.uint8, BYTES_PER_PIXEL](
+                    d, subp.load[DType.uint8, BYTES_PER_PIXEL](s)
                 )
     return Canvas(width, height, pixels^)
 
@@ -1206,7 +1186,13 @@ def decode_png(var data: List[UInt8]) raises -> Canvas:
             height = _read_u32_be(data, pos + 4)
             if width == 0 or height == 0:
                 raise Error("png: invalid image dimensions")
-            if width * height > MAX_DECODED_PIXELS:
+            # Each side first: two 32-bit sides multiply past 64 bits,
+            # and the product then reads as small (#430).
+            if (
+                width > MAX_DECODED_PIXELS
+                or height > MAX_DECODED_PIXELS
+                or width * height > MAX_DECODED_PIXELS
+            ):
                 # Before any buffer is sized from the claim (#430).
                 raise Error(
                     String(
