@@ -29,7 +29,6 @@ thousands of tables, and a batch of 2,000 small paths was slower than
 drawing them one at a time.
 """
 
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.aa_area import _AreaScratch, _CELLS_PER_BAND, _area_edges_rows
 from canvas.aa_crossing import (
@@ -63,7 +62,7 @@ from canvas.shapes.mesh import _mesh_band
 from canvas.shapes.lines import _stroke_edges
 from canvas.compose import _draw_canvas_device, draw_canvas, draw_image
 from canvas.resize import downsample
-from canvas.workers import _bands_for_work, _worker_limit
+from canvas.workers import run_bands, _bands_for_work, _worker_limit
 
 # Below this many vertices across the batch's strokes and paths, they
 # are built inline; a task costs about as much as a small stroke.
@@ -185,7 +184,7 @@ def _build_into(
     return True
 
 
-async def _build_task_async(
+def _build_task(
     mut ops: List[_BatchOp],
     mut tables: List[_EdgeTable],
     table_index: Int,
@@ -198,8 +197,7 @@ async def _build_task_async(
     """Build the stroke and path ops whose index is `task` modulo
     `tasks` into `tables[table_index]`: the interleaving spreads a
     batch's few large strokes over the tasks. Tasks write disjoint
-    slots of `ops` and disjoint tables, and grow neither list. Every
-    argument is borrowed, never owned (#97).
+    slots of `ops` and disjoint tables, and grow neither list.
     """
     var i = task
     var n = len(ops)
@@ -255,22 +253,20 @@ def _build_ops(mut batch: _Batch, cap: Int):
                     batch.commands,
                 )
     else:
-        var tg = TaskGroup()
-        for t in range(tasks):
-            tg.create_task(
-                _build_task_async(
-                    batch.ops,
-                    batch.tables,
-                    base + t,
-                    t,
-                    tasks,
-                    batch.points,
-                    batch.dashes,
-                    batch.commands,
-                )
+
+        def build(t: Int) {mut batch, imm base, imm tasks}:
+            _build_task(
+                batch.ops,
+                batch.tables,
+                base + t,
+                t,
+                tasks,
+                batch.points,
+                batch.dashes,
+                batch.commands,
             )
-        tg.wait()
-        _ = len(batch.ops)  # last use past the tasks (#263)
+
+        run_bands(tasks, build)
     # Whatever is still geometry takes the sampled sweep: a whole,
     # sorted table each.
     for i in range(len(batch.ops)):
@@ -441,16 +437,6 @@ def _glyph_rows(
                 canvas.write_pixel(op.min_x + mx, py, color.with_alpha(alpha))
 
 
-async def _batch_band_async(
-    mut canvas: Canvas, batch: _Batch, row_lo: Int, row_hi: Int
-):
-    """`_batch_band` as a task. `batch` is borrowed, never owned: a
-    heap-backed aggregate handed to `create_task` by value is
-    canvas_mojo#97.
-    """
-    _batch_band(canvas, batch, row_lo, row_hi)
-
-
 def _render_batch(mut canvas: Canvas, mut batch: _Batch):
     """Draw `batch` onto `canvas`: build what is still geometry
     (`_build_ops`), then rasterize across row bands when the ops'
@@ -479,17 +465,18 @@ def _render_batch(mut canvas: Canvas, mut batch: _Batch):
         _batch_band(canvas, batch, 0, canvas.height)
         return
     var per_band = (canvas.height + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
-        var row_lo = b * per_band
-        var row_hi = min(row_lo + per_band, canvas.height)
-        if row_lo >= row_hi:
-            continue
-        tg.create_task(_batch_band_async(canvas, batch, row_lo, row_hi))
-    tg.wait()
-    # A task's borrow is not a use the compiler counts: named here so
-    # the batch outlives the bands (#263).
-    _ = len(batch.ops)
+    var height = canvas.height
+
+    def band(
+        b: Int,
+    ) {mut canvas, imm batch, imm per_band, imm height,}:
+        var band_start = b * per_band
+        var band_end = min(band_start + per_band, height)
+        if band_start >= band_end:
+            return
+        _batch_band(canvas, batch, band_start, band_end)
+
+    run_bands(bands, band)
 
 
 # Output rows per band of a supersampled replay. Each band holds a
@@ -542,22 +529,6 @@ def _supersampled_band(
     _draw_canvas_device(canvas, small, 0, y0, 255)
 
 
-async def _supersampled_band_async(
-    mut canvas: Canvas,
-    batch: _Batch,
-    factor: Int,
-    y0: Int,
-    rows: Int,
-    background: Color,
-):
-    """`_supersampled_band` as a task; `batch` is borrowed, never
-    owned (canvas_mojo#97)."""
-    try:
-        _supersampled_band(canvas, batch, factor, y0, rows, background)
-    except:
-        pass
-
-
 def _replay_supersampled(
     mut canvas: Canvas, mut batch: _Batch, factor: Int, background: Color
 ) raises:
@@ -576,14 +547,18 @@ def _replay_supersampled(
     if bands <= 1:
         _supersampled_band(canvas, batch, factor, 0, canvas.height, background)
         return
-    var tg = TaskGroup()
-    var y = 0
-    while y < canvas.height:
-        var rows = min(_SUPERSAMPLE_BAND_ROWS, canvas.height - y)
-        tg.create_task(
-            _supersampled_band_async(canvas, batch, factor, y, rows, background)
-        )
-        y += rows
-    tg.wait()
-    # A task's borrow is not a use the compiler counts (#263).
-    _ = len(batch.ops)
+    var height = canvas.height
+
+    def band(
+        b: Int,
+    ) {mut canvas, imm batch, imm factor, imm background, imm height,}:
+        var y0 = b * _SUPERSAMPLE_BAND_ROWS
+        var rows = min(_SUPERSAMPLE_BAND_ROWS, height - y0)
+        if rows <= 0:
+            return
+        try:
+            _supersampled_band(canvas, batch, factor, y0, rows, background)
+        except:
+            pass
+
+    run_bands(bands, band)

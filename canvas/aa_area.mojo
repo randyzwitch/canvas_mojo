@@ -7,10 +7,9 @@ sweep in `aa_crossing.mojo` instead.
 """
 
 from std.math import ceil, floor
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.aa_crossing import _EdgeTable, _MIN_PARALLEL_PIXELS
-from canvas.workers import _bands_for_work
+from canvas.workers import _bands_for_work, run_bands
 from canvas.buffer import Canvas
 from canvas.color import Color
 
@@ -575,21 +574,6 @@ def _area_band_with(
     )
 
 
-async def _area_band_async(
-    mut canvas: Canvas,
-    edges: _EdgeTable,
-    band_start: Int,
-    band_end: Int,
-    row_first_px: Int,
-    row_width: Int,
-    color: Color,
-):
-    """`_area_band` as a task; see `_sweep_band_async`."""
-    _area_band(
-        canvas, edges, band_start, band_end, row_first_px, row_width, color
-    )
-
-
 def _area_edges_aa(
     mut canvas: Canvas,
     edges: _EdgeTable,
@@ -644,33 +628,29 @@ def _area_edges_aa(
             edges, first_row, last_row, row_first_px, row_width + 2
         )
         bands = _bands_for(cells, row_count, canvas.max_workers())
-    if bands == 1:
-        _area_band(
-            canvas, edges, first_row, last_row, row_first_px, row_width, color
-        )
-        return
-
     var per_band = (row_count + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        mut canvas,
+        imm edges,
+        imm per_band,
+        imm first_row,
+        imm last_row,
+        imm row_first_px,
+        imm row_width,
+        imm color,
+    }:
         var band_start = first_row + b * per_band
-        var band_end = band_start + per_band
-        if band_end > last_row:
-            band_end = last_row
+        var band_end = min(band_start + per_band, last_row)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _area_band_async(
-                canvas,
-                edges,
-                band_start,
-                band_end,
-                row_first_px,
-                row_width,
-                color,
-            )
+            return
+        _area_band(
+            canvas, edges, band_start, band_end, row_first_px, row_width, color
         )
-    tg.wait()
+
+    run_bands(bands, band)
 
 
 def _area_edges_rows(
@@ -794,33 +774,6 @@ def _area_mask_band(
     )
 
 
-async def _area_mask_band_async(
-    mut mask: List[UInt8],
-    mask_width: Int,
-    origin_x: Int,
-    origin_y: Int,
-    edges: _EdgeTable,
-    band_start: Int,
-    band_end: Int,
-    row_first_px: Int,
-    row_width: Int,
-    full_coverage: Int,
-):
-    """`_area_mask_band` as a task; see `_sweep_band_async`."""
-    _area_mask_band(
-        mask,
-        mask_width,
-        origin_x,
-        origin_y,
-        edges,
-        band_start,
-        band_end,
-        row_first_px,
-        row_width,
-        full_coverage,
-    )
-
-
 def _area_edges_to_mask(
     mut mask: List[UInt8],
     mask_width: Int,
@@ -869,29 +822,40 @@ def _area_edges_to_mask(
         return
 
     var per_band = (row_count + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        mut mask,
+        imm mask_width,
+        imm origin_x,
+        imm origin_y,
+        imm edges,
+        imm per_band,
+        imm first_row,
+        imm last_row,
+        imm row_first_px,
+        imm row_width,
+        imm full_coverage,
+    }:
         var band_start = first_row + b * per_band
-        var band_end = band_start + per_band
-        if band_end > last_row:
-            band_end = last_row
+        var band_end = min(band_start + per_band, last_row)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _area_mask_band_async(
-                mask,
-                mask_width,
-                origin_x,
-                origin_y,
-                edges,
-                band_start,
-                band_end,
-                row_first_px,
-                row_width,
-                full_coverage,
-            )
+            return
+        _area_mask_band(
+            mask,
+            mask_width,
+            origin_x,
+            origin_y,
+            edges,
+            band_start,
+            band_end,
+            row_first_px,
+            row_width,
+            full_coverage,
         )
-    tg.wait()
+
+    run_bands(bands, band)
 
 
 def _rect_coverage_to_mask(

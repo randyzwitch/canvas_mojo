@@ -22,7 +22,7 @@ from canvas.path import Path, fill_path_aa, fill_path_gradient_aa
 from canvas.resize import downsample
 from canvas.shapes.circles import fill_circle_aa
 from canvas.shapes.rects import fill_rect
-from canvas.workers import _bands_for, _bands_for_work, _worker_limit
+from canvas.workers import _bands_for, _bands_for_work, _worker_limit, run_bands
 
 comptime W = 160
 comptime H = 120
@@ -163,6 +163,62 @@ def test_the_worker_limit_falls_back_to_the_runtime() raises:
     )
     if available > 1:
         assert_equal(_worker_limit(1), 1)
+
+
+def test_run_bands_delivers_every_band_once_and_inline_when_one() raises:
+    var seen = List[Int](length=64, fill=0)
+
+    def mark(b: Int) {mut seen}:
+        seen[b] += 1
+
+    run_bands(64, mark)
+    for b in range(64):
+        assert_equal(seen[b], 1, "band ran exactly once")
+    var one = List[Int](length=1, fill=0)
+
+    def mark_one(b: Int) {mut one}:
+        one[b] += 1
+
+    run_bands(1, mark_one)
+    run_bands(0, mark_one)
+    assert_equal(one[0], 2, "bands <= 1 runs work(0) inline, once per call")
+
+
+def test_run_bands_closures_carry_aggregates_intact() raises:
+    """Issue #97's reproducer, as `run_bands` runs it: each band
+    reads a list it reaches through the closure's captures rather
+    than one handed to `create_task` by value. By value, the runtime
+    delivers some of them corrupted (about 0.3% of 1,920 per run on
+    Mojo 1.0 and 1.1, every run); through captures, none, which is
+    what the whole library's banding now relies on."""
+    var bands = 32
+    var n = 500
+    var bad = 0
+    for _ in range(20):
+        var copies = List[List[Float64]]()
+        for _ in range(bands):
+            var one = List[Float64](capacity=n)
+            for i in range(n):
+                one.append(Float64(i) * 1.5)
+            copies.append(one^)
+        var result = List[Int](length=bands, fill=-1)
+
+        def check(b: Int) {imm copies, mut result, imm n}:
+            var ok = 1
+            if len(copies[b]) != n:
+                ok = 0
+            else:
+                for i in range(n):
+                    if copies[b][i] != Float64(i) * 1.5:
+                        ok = 2
+                        break
+            result[b] = ok
+
+        run_bands(bands, check)
+        for b in range(bands):
+            if result[b] != 1:
+                bad += 1
+    assert_equal(bad, 0, "every band saw its list intact")
 
 
 def main() raises:

@@ -6,7 +6,6 @@ pattern.mojo).
 """
 
 from canvas.color import Color
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas
@@ -28,7 +27,7 @@ from canvas.path import (
     _rect_path,
 )
 from canvas.shapes.lines import draw_line, draw_polygon, _draw_line_device
-from canvas.workers import _bands_for
+from canvas.workers import run_bands, _bands_for
 
 
 def draw_rect(
@@ -226,18 +225,26 @@ def _fill_rect_source[
         _fill_source_rows(canvas, rx, rw, ry, ry + rh, source, to_user)
         return
     var per_band = (rh + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        mut canvas,
+        imm rx,
+        imm rw,
+        imm ry,
+        imm rh,
+        imm source,
+        imm to_user,
+        imm per_band,
+    }:
         var band_start = ry + b * per_band
         var band_end = min(band_start + per_band, ry + rh)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _fill_source_rows_async(
-                canvas, rx, rw, band_start, band_end, source, to_user
-            )
-        )
-    tg.wait()
+            return
+        _fill_source_rows(canvas, rx, rw, band_start, band_end, source, to_user)
+
+    run_bands(bands, band)
 
 
 def _fill_source_rows[
@@ -265,21 +272,6 @@ def _fill_source_rows[
             else:
                 var p = to_user.apply(fx, fy)
                 canvas.write_pixel(xx, yy, source.color_at(p.x, p.y))
-
-
-async def _fill_source_rows_async[
-    S: ColorSource
-](
-    mut canvas: Canvas,
-    rx: Int,
-    rw: Int,
-    first_row: Int,
-    last_row: Int,
-    source: S,
-    to_user: Matrix2D,
-):
-    """`_fill_source_rows` as a task."""
-    _fill_source_rows(canvas, rx, rw, first_row, last_row, source, to_user)
 
 
 def fill_rect_gradient(

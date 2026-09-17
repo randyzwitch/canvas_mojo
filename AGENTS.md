@@ -190,12 +190,19 @@ resolves.
   notice; the constraint in `pixi.toml` names the versions it was
   tested on. Mojo 1.0 spelled the module `std.runtime.asyncrt`, so one
   source cannot serve both (#472).
-- `TaskGroup.create_task` corrupts aggregate arguments passed by value
-  (#97, upstream). Pass a struct holding the Lists by reference; never
-  hand a task an owned temporary or a container element.
-- Mojo destroys a value after its last use, and a task's borrow does not
-  count. Anything tasks read must be named again after `tg.wait()`
-  (`_ = len(source)`), or it is freed while they run (#263).
+- A banded pass is a closure over its context plus one call to
+  `run_bands(bands, work)` in `canvas/workers.mojo`; nothing in the
+  library calls `TaskGroup` directly. The closure lists every capture
+  with its convention (`{mut canvas, imm edges, ...}`) and takes only
+  the band index, so no heap-owning aggregate crosses `create_task`,
+  which corrupts one passed by value (#97, upstream, still present in
+  Mojo 1.1: the issue's reproducer corrupts 64 of 19,200 on 1.1 where
+  the same work as a closure is clean in 38,400, including under
+  `taskset -c 0,1`). `tests/test_workers.mojo` runs that closure form.
+- The helper also keeps a closure's captures alive past the wait, so
+  the `_ = len(source)` after `tg.wait()` that #263 needed is gone
+  with the direct calls. A task is a non-raising coroutine, so a band
+  cannot raise; it reports through what it writes.
 - Bands write disjoint rows or slots; that is the whole safety argument,
   so say it in the docstring of every band function.
 - Creating a task costs about 1.2 us and tasks start after the last is
@@ -422,6 +429,20 @@ resolves.
   are draws from noise. The failure mode is that one row flags,
   someone reasons about why that row is plausible, and a story gets
   built on a coin flip.
+- Whether a `List(length=n, fill=0)` lowers to one memset is the
+  optimizer's decision, and it can change under a module edit that
+  never touches the line: converting path.mojo's band dispatch to a
+  closure left `_path_coverage_mask`'s zero-fill as a byte loop, 18x
+  slower (`push_clip_path rect mask`, 12 to 125 us), with the two
+  callees unchanged in isolation. A hot zero-fill is an explicit
+  `unsafe_memset_zero`, which no decision can undo.
+- A pure-store row can move 25% between two builds whose store loop
+  is the same instructions: `Canvas.fill opaque` read 23 us on one
+  binary and 29 on the other, pinned to one core, while the same
+  method timed alone in a fresh process read 24 on both. That is
+  buffer placement, not code, so a cross-build difference on a
+  store-bound row needs the loop compared in the disassembly before
+  it is believed.
 - A leaf function timed in a loop of its own can point the wrong way,
   because the loop vectorizes and the call site does not. A polynomial
   `asin` measured 2.7x faster than the library's that way and 1.75x
