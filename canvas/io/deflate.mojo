@@ -13,9 +13,8 @@ tests/test_deflate.mojo round-trips both directions against real
 `zlib.compress()`/`zlib.decompress()` output.
 """
 
-from std.runtime._asyncrt import TaskGroup
 
-from canvas.workers import _bands_for_work
+from canvas.workers import run_bands, _bands_for_work
 from canvas.io.view import _WriteView
 
 
@@ -1504,7 +1503,7 @@ comptime _MIN_PARALLEL_DEFLATE = 1 << 18
 comptime _MIN_DEFLATE_CHUNK = 1 << 16
 
 
-async def _tokenize_chunk(
+def _tokenize_chunk(
     data: List[UInt8],
     lo: Int,
     hi: Int,
@@ -1599,21 +1598,23 @@ def deflate_parallel(
             )
         )
 
-    var tg = TaskGroup()
+    # A chunk's slot is its index, so the count of non-empty chunks is
+    # known before any band runs and each band writes its own entry.
     var used = 0
     for c in range(chunks):
-        var lo = c * per
+        if c * per < n:
+            used += 1
+
+    def band(
+        b: Int,
+    ) {imm data, imm per, imm n, imm max_chain, imm max_lazy, mut parts,}:
+        var lo = b * per
         var hi = min(lo + per, n)
         if lo >= hi:
-            continue
-        tg.create_task(
-            _tokenize_chunk(data, lo, hi, max_chain, max_lazy, parts, used)
-        )
-        used += 1
-    tg.wait()
-    # Named past the tasks: a task's borrow is not a use the compiler
-    # counts, so without this they are freed while chunks still write.
-    _ = len(data)
+            return
+        _tokenize_chunk(data, lo, hi, max_chain, max_lazy, parts, b)
+
+    run_bands(used, band)
 
     var total = 0
     for i in range(used):

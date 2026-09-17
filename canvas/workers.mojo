@@ -1,6 +1,20 @@
-"""Helpers for splitting parallel passes into row bands."""
+"""Helpers for splitting parallel passes into row bands, and the one
+place the library runs a band as a task.
+
+`run_bands` is the only caller of `TaskGroup` in `canvas/`, so the
+private `std.runtime._asyncrt` import lives here alone in the library
+(#472; the roofline benchmarks import it too, to price the runtime
+itself), and so do the two rules that make banding safe: what a task borrows must
+outlive the wait (#263), and no heap-owning aggregate may cross
+`create_task` by value, since the runtime delivers it corrupted
+(#97). A band is a closure that captures its context by reference
+and takes only the band index, so nothing aggregate crosses the task
+boundary; the #97 reproducer rewritten that way is clean where the
+by-value form corrupts or crashes, on Mojo 1.1 as on 1.0.
+"""
 
 from std.runtime import parallelism_level
+from std.runtime._asyncrt import TaskGroup
 
 # Below this much work, a pass runs inline instead of dispatching tasks.
 comptime _MIN_PARALLEL_WORK = 40000
@@ -66,3 +80,34 @@ def _bands_for_work(work: Int, rows: Int, work_per_band: Int, cap: Int) -> Int:
     if bands < 1:
         bands = 1
     return bands
+
+
+async def _band_task(work: Some[def(Int) -> None], b: Int):
+    """`work(b)` as a task; see `run_bands`."""
+    work(b)
+
+
+def run_bands(bands: Int, work: Some[def(Int) -> None]):
+    """Run `work(b)` for every band `b` in `0 <= b < bands` and return
+    once all have finished. One band runs on the caller's thread, so
+    the serial case costs no task; more run as tasks on the runtime's
+    pool. `work` is typically a closure over the pass's context with a
+    capture list naming each value it reads or writes, and the bands
+    must write disjoint rows or slots, which is each pass's own
+    argument to make. `work` cannot raise: a task is a non-raising
+    coroutine, so a band reports a failure through what it writes.
+
+    Args:
+        bands: How many bands; from `_bands_for` or `_bands_for_work`.
+        work: The band body, given the band index.
+    """
+    if bands <= 1:
+        work(0)
+        return
+    var tg = TaskGroup()
+    for b in range(bands):
+        tg.create_task(_band_task(work, b))
+    tg.wait()
+    # `work` and everything it captures must outlive the wait; naming
+    # it here keeps it alive past the last task (#263).
+    _ = bands

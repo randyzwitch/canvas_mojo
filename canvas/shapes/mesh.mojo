@@ -31,12 +31,11 @@ rows. Bands write disjoint rows, which is the whole safety argument.
 """
 
 from std.math import ceil, floor
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color
 from canvas.geometry import FPoint
-from canvas.workers import _bands_for
+from canvas.workers import run_bands, _bands_for
 
 # Sub-samples per pixel along each axis: 4 gives 16 per pixel, the
 # same 17 coverage levels the sampled AA fills use at their default.
@@ -528,24 +527,6 @@ def _mesh_chunk(
             )
 
 
-async def _mesh_band_async(
-    mut canvas: Canvas,
-    points: List[FPoint],
-    faces: List[Int],
-    colors: List[Color],
-    row_lo: Int,
-    row_hi: Int,
-    per_vertex: Bool,
-):
-    """`_mesh_band` as a task. The lists are borrowed, never owned: a
-    heap-backed aggregate handed to `create_task` by value is
-    canvas_mojo#97.
-    """
-    _mesh_band(
-        canvas, points, faces, colors, row_lo, row_hi, per_vertex=per_vertex
-    )
-
-
 def _fill_mesh_device(
     mut canvas: Canvas,
     points: List[FPoint],
@@ -573,24 +554,34 @@ def _fill_mesh_device(
         _mesh_band(canvas, points, faces, colors, lo, hi, per_vertex=per_vertex)
         return
     var per_band = (hi - lo + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
-        var row_lo = lo + b * per_band
-        var row_hi = min(row_lo + per_band, hi)
-        if row_lo >= row_hi:
-            continue
-        tg.create_task(
-            _mesh_band_async(
-                canvas, points, faces, colors, row_lo, row_hi, per_vertex
-            )
+
+    def band(
+        b: Int,
+    ) {
+        mut canvas,
+        imm points,
+        imm faces,
+        imm colors,
+        imm lo,
+        imm hi,
+        imm per_band,
+        imm per_vertex,
+    }:
+        var band_start = lo + b * per_band
+        var band_end = min(band_start + per_band, hi)
+        if band_start >= band_end:
+            return
+        _mesh_band(
+            canvas,
+            points,
+            faces,
+            colors,
+            band_start,
+            band_end,
+            per_vertex=per_vertex,
         )
-    tg.wait()
-    # Named past the tasks: a task's borrow is not a use the compiler
-    # counts, so without this the lists are freed while bands still
-    # read them (#263).
-    _ = len(points)
-    _ = len(faces)
-    _ = len(colors)
+
+    run_bands(bands, band)
 
 
 def fill_mesh(

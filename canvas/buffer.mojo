@@ -15,7 +15,6 @@ comptime BYTES_PER_PIXEL = 4
 
 from std.math import ceil, floor
 from std.sys import size_of
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.blend import BlendMode, _blend_pixel, _blend_span
 from canvas.color import (
@@ -29,7 +28,7 @@ from canvas.color import (
 from canvas.gradient import LinearGradient
 from canvas.machine import l3_slice_bytes
 from canvas.vector.draw_target import DrawTarget
-from canvas.workers import _bands_for, _worker_limit
+from canvas.workers import run_bands, _bands_for, _worker_limit
 from canvas.fill_rule import FillRule
 from canvas.aa_crossing import _EdgeTable
 from canvas.batch import _render_batch, _replay_supersampled
@@ -197,12 +196,6 @@ def _store_packed_span(
         idx += 1
 
 
-async def _store_packed_span_async(
-    mut pixels: List[UInt8], start: Int, count: Int, packed: UInt32
-):
-    _store_packed_span(pixels, start, count, packed)
-
-
 def _clear_bands(count: Int, cap: Int) -> Int:
     """How many bands to split a `count`-pixel solid fill over: 1 while
     the buffer fits in one L3 slice, where a band would cost more than
@@ -251,23 +244,15 @@ def _clear_packed(
         _store_packed_span(pixels, 0, count, packed)
         return
     var per = (count + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(b: Int) {mut pixels, imm per, imm count, imm packed}:
         var start = b * per
         var n = min(per, count - start)
         if n <= 0:
-            continue
-        tg.create_task(_store_packed_span_async(pixels, start, n, packed))
-    tg.wait()
+            return
+        _store_packed_span(pixels, start, n, packed)
 
-
-async def _fill_region_band_async(
-    mut canvas: Canvas, rx: Int, ry: Int, rw: Int, rh: Int, color: Color
-):
-    """One band of rows of `Canvas._fill_region_top`. Bands write
-    disjoint rows and read nothing the others write.
-    """
-    canvas._fill_region(rx, ry, rw, rh, color)
+    run_bands(bands, band)
 
 
 def _intersect_clip(a: _ClipRect, b: _ClipRect) -> _ClipRect:
@@ -2012,16 +1997,17 @@ struct Canvas(Copyable, DrawTarget, Movable):
             return
 
         var per_band = (rh + bands - 1) // bands
-        var tg = TaskGroup()
-        for b in range(bands):
+
+        def band(
+            b: Int,
+        ) {mut self, imm rx, imm ry, imm rw, imm rh, imm per_band, imm color,}:
             var band_y = ry + b * per_band
             var band_h = min(per_band, ry + rh - band_y)
             if band_h <= 0:
-                continue
-            tg.create_task(
-                _fill_region_band_async(self, rx, band_y, rw, band_h, color)
-            )
-        tg.wait()
+                return
+            self._fill_region(rx, band_y, rw, band_h, color)
+
+        run_bands(bands, band)
 
     def _fill_region(
         mut self, rx: Int, ry: Int, rw: Int, rh: Int, color: Color

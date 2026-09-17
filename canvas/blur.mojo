@@ -43,9 +43,8 @@ vertical sliding windows are populated before its first output row.
 """
 
 from std.math import sqrt
-from std.runtime._asyncrt import TaskGroup
 
-from canvas.workers import _bands_for as _shared_bands_for
+from canvas.workers import run_bands, _bands_for as _shared_bands_for
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -453,22 +452,6 @@ def _blur_band(
                     _unpremultiply_rows(canvas, s3.out, 0, y, y, y + 1)
 
 
-async def _blur_band_async(
-    mut canvas: Canvas,
-    source: List[UInt8],
-    r0: Int,
-    r1: Int,
-    r2: Int,
-    y0: Int,
-    y1: Int,
-):
-    """`_blur_band` as a task; see `_area_band_async` in
-    `canvas.aa_area` for why the heap-owning `canvas`/`source` are
-    passed by reference here rather than by value (#97).
-    """
-    _blur_band(canvas, source, r0, r1, r2, y0, y1)
-
-
 def _bands_for(w: Int, h: Int, halo: Int, max_workers: Int = 0) -> Int:
     """How many row bands to blur a `w x h` canvas in: one below
     `_MIN_PARALLEL_WORK`, otherwise what the worker limit allows,
@@ -522,19 +505,17 @@ def blur(mut canvas: Canvas, radius: Float64):
         _blur_band(canvas, source, r0, r1, r2, 0, h)
         return
     var per_band = (h + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {mut canvas, imm source, imm r0, imm r1, imm r2, imm per_band, imm h,}:
         var band_start = b * per_band
         var band_end = min(band_start + per_band, h)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _blur_band_async(canvas, source, r0, r1, r2, band_start, band_end)
-        )
-    tg.wait()
-    # The tasks borrow `source` without the compiler counting it as a
-    # use, so name it here to keep it alive past `wait`.
-    _ = len(source)
+            return
+        _blur_band(canvas, source, r0, r1, r2, band_start, band_end)
+
+    run_bands(bands, band)
 
 
 def _shadow_pad(radius: Float64) -> Int:

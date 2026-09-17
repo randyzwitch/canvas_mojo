@@ -76,7 +76,8 @@ measuring, hinting or rasterizing.
 
 from std.os import getenv, listdir, makedirs, stat
 from std.runtime import parallelism_level
-from std.runtime._asyncrt import TaskGroup
+
+from canvas.workers import run_bands
 from std.os.path import expanduser, isdir, realpath
 from std.sys.info import CompilationTarget
 
@@ -461,18 +462,6 @@ def _classify_entries(
             kind[i] = _ENTRY_DIRECTORY
 
 
-async def _classify_entries_async(
-    children: List[String],
-    font_named: List[Bool],
-    mut kind: List[Int],
-    mut canonical: List[String],
-    first: Int,
-    last: Int,
-):
-    """`_classify_entries` as a task; bands write disjoint slots."""
-    _classify_entries(children, font_named, kind, canonical, first, last)
-
-
 def _collect_font_files() -> List[String]:
     """Every readable `sfnt` file under `_font_directories`, discarding
     the visited-directory list `_collect_font_files_visited` also
@@ -523,19 +512,26 @@ def _collect_font_files_visited(mut visited: List[String]) -> List[String]:
             _classify_entries(children, font_named, kind, canonical, 0, count)
         else:
             var per_band = (count + bands - 1) // bands
-            var tg = TaskGroup()
-            for b in range(bands):
+
+            def band(
+                b: Int,
+            ) {
+                imm children,
+                imm font_named,
+                mut kind,
+                mut canonical,
+                imm per_band,
+                imm count,
+            }:
                 var first = b * per_band
                 var last = min(first + per_band, count)
                 if first >= last:
-                    continue
-                tg.create_task(
-                    _classify_entries_async(
-                        children, font_named, kind, canonical, first, last
-                    )
+                    return
+                _classify_entries(
+                    children, font_named, kind, canonical, first, last
                 )
-            tg.wait()
-            _ = len(children) + len(font_named) + len(kind) + len(canonical)
+
+            run_bands(bands, band)
         var next_frontier = List[String]()
         for i in range(count):
             if kind[i] == _ENTRY_DIRECTORY:
@@ -814,19 +810,6 @@ def _parse_files(
     of `results`."""
     for i in range(first, last):
         results[i] = _parse_font_file(files[i])
-
-
-async def _parse_files_async(
-    files: List[String],
-    mut results: List[List[FontFace]],
-    first: Int,
-    last: Int,
-):
-    """`_parse_files` as a task; bands write disjoint slots."""
-    _parse_files(files, results, first, last)
-
-
-# --- Codepoint coverage ---------------------------------------------------
 
 
 def _face_covers_codepoint(face: FontFace, codepoint: Int) -> Bool:
@@ -1490,15 +1473,17 @@ struct FontDatabase(Movable):
             _parse_files(files, results, 0, count)
         else:
             var per_band = (count + bands - 1) // bands
-            var tg = TaskGroup()
-            for b in range(bands):
+
+            def band(
+                b: Int,
+            ) {imm files, mut results, imm per_band, imm count,}:
                 var first = b * per_band
                 var last = min(first + per_band, count)
                 if first >= last:
-                    continue
-                tg.create_task(_parse_files_async(files, results, first, last))
-            tg.wait()
-            _ = len(files) + len(results)
+                    return
+                _parse_files(files, results, first, last)
+
+            run_bands(bands, band)
         for i in range(count):
             for face in results[i]:
                 self.faces.append(face.copy())

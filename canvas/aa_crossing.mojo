@@ -1,9 +1,8 @@
 """Supersampled scanline coverage for anti-aliased path and polygon fills."""
 
 from std.math import ceil, floor
-from std.runtime._asyncrt import TaskGroup
 
-from canvas.workers import _MIN_PARALLEL_WORK, _bands_for
+from canvas.workers import run_bands, _MIN_PARALLEL_WORK, _bands_for
 
 from canvas.aa_area import _area_edges_aa, _area_edges_to_mask
 from canvas.buffer import Canvas
@@ -1015,28 +1014,38 @@ def _sweep_edges_sampled_aa(
         return
 
     var per_band = (row_count + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        mut canvas,
+        imm edges,
+        imm per_band,
+        imm first_row,
+        imm last_row,
+        imm row_first_px,
+        imm row_width,
+        imm color,
+        imm fill_rule,
+        imm s,
+    }:
         var band_start = first_row + b * per_band
-        var band_end = band_start + per_band
-        if band_end > last_row:
-            band_end = last_row
+        var band_end = min(band_start + per_band, last_row)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _sweep_band_async(
-                canvas,
-                edges,
-                band_start,
-                band_end,
-                row_first_px,
-                row_width,
-                color,
-                fill_rule,
-                s,
-            )
+            return
+        _sweep_band(
+            canvas,
+            edges,
+            band_start,
+            band_end,
+            row_first_px,
+            row_width,
+            color,
+            fill_rule,
+            s,
         )
-    tg.wait()
+
+    run_bands(bands, band)
 
 
 def _sweep_edges_sampled_rows(
@@ -1064,34 +1073,6 @@ def _sweep_edges_sampled_rows(
     var last_row = min(max_y + 2, row_hi)
     if last_row - first_row <= 0 or row_width <= 0:
         return
-    _sweep_band(
-        canvas,
-        edges,
-        first_row,
-        last_row,
-        row_first_px,
-        row_width,
-        color,
-        fill_rule,
-        supersample,
-    )
-
-
-async def _sweep_band_async(
-    mut canvas: Canvas,
-    edges: _EdgeTable,
-    first_row: Int,
-    last_row: Int,
-    row_first_px: Int,
-    row_width: Int,
-    color: Color,
-    fill_rule: FillRule,
-    supersample: Int,
-):
-    """`_sweep_band` as a task. Separate from the plain function so the
-    single-band path keeps an ordinary call with no coroutine
-    machinery around it.
-    """
     _sweep_band(
         canvas,
         edges,
@@ -1270,62 +1251,44 @@ def _sweep_edges_to_mask(
         return
 
     var per_band = (row_count + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        mut mask,
+        imm mask_width,
+        imm origin_x,
+        imm origin_y,
+        imm edges,
+        imm per_band,
+        imm first_row,
+        imm last_row,
+        imm row_first_px,
+        imm row_width,
+        imm fill_rule,
+        imm s,
+        imm full_coverage,
+    }:
         var band_start = first_row + b * per_band
-        var band_end = band_start + per_band
-        if band_end > last_row:
-            band_end = last_row
+        var band_end = min(band_start + per_band, last_row)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _mask_band_async(
-                mask,
-                mask_width,
-                origin_x,
-                origin_y,
-                edges,
-                band_start,
-                band_end,
-                row_first_px,
-                row_width,
-                fill_rule,
-                s,
-                full_coverage,
-            )
+            return
+        _mask_band(
+            mask,
+            mask_width,
+            origin_x,
+            origin_y,
+            edges,
+            band_start,
+            band_end,
+            row_first_px,
+            row_width,
+            fill_rule,
+            s,
+            full_coverage,
         )
-    tg.wait()
 
-
-async def _mask_band_async(
-    mut mask: List[UInt8],
-    mask_width: Int,
-    origin_x: Int,
-    origin_y: Int,
-    edges: _EdgeTable,
-    first_row: Int,
-    last_row: Int,
-    row_first_px: Int,
-    row_width: Int,
-    fill_rule: FillRule,
-    supersample: Int,
-    full_coverage: Int,
-):
-    """`_mask_band` as a task; see `_sweep_band_async`."""
-    _mask_band(
-        mask,
-        mask_width,
-        origin_x,
-        origin_y,
-        edges,
-        first_row,
-        last_row,
-        row_first_px,
-        row_width,
-        fill_rule,
-        supersample,
-        full_coverage,
-    )
+    run_bands(bands, band)
 
 
 def _mask_band(

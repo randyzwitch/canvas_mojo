@@ -35,7 +35,6 @@ that call takes the blit path above.
 
 from std.math import ceil, floor
 from std.memory import unsafe_memcpy
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.blend import BlendMode
@@ -43,7 +42,7 @@ from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color, _DIV255_MUL, _DIV255_SHIFT, _div255
 from canvas.geometry import Matrix2D, round_to_int
 from canvas.mask import Mask
-from canvas.workers import _bands_for
+from canvas.workers import run_bands, _bands_for
 
 
 struct Filter(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
@@ -1313,33 +1312,26 @@ def _draw_canvas_matrix(
         return
 
     var per_band = (rh + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        mut dst,
+        imm src,
+        imm job,
+        imm rx,
+        imm rw,
+        imm ry,
+        imm rh,
+        imm per_band,
+    }:
         var band_start = ry + b * per_band
-        var band_end = band_start + per_band
-        if band_end > ry + rh:
-            band_end = ry + rh
+        var band_end = min(band_start + per_band, ry + rh)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _mapped_band_async(dst, src, job, rx, rw, band_start, band_end)
-        )
-    tg.wait()
+            return
+        _mapped_band(dst, src, job, rx, rw, band_start, band_end)
 
-
-async def _mapped_band_async(
-    mut dst: Canvas,
-    src: Canvas,
-    job: _MappedDraw,
-    first_col: Int,
-    col_count: Int,
-    first_row: Int,
-    last_row: Int,
-):
-    """`_mapped_band` as a task, so the single-band path stays an
-    ordinary call with no coroutine machinery around it.
-    """
-    _mapped_band(dst, src, job, first_col, col_count, first_row, last_row)
+    run_bands(bands, band)
 
 
 def _mapped_band(
