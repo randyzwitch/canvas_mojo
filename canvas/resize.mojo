@@ -257,7 +257,7 @@ def _downsample_band(
 # means every one of the eight alphas was 255.
 # ...and the complement, for the opposite question: AND this in and a
 # zero vector means every one of the eight alphas was zero.
-comptime _ALPHA_ONLY32 = SIMD[DType.uint8, 32](
+comptime _ALPHA_ONLY32 = SIMD[.uint8, 32](
     0,
     0,
     0,
@@ -291,7 +291,7 @@ comptime _ALPHA_ONLY32 = SIMD[DType.uint8, 32](
     0,
     255,
 )
-comptime _NOT_ALPHA32 = SIMD[DType.uint8, 32](
+comptime _NOT_ALPHA32 = SIMD[.uint8, 32](
     255,
     255,
     255,
@@ -387,9 +387,7 @@ def _downsample_band_fixed[
                     if (top | _NOT_ALPHA32).reduce_min() == 255 and (
                         bot | _NOT_ALPHA32
                     ).reduce_min() == 255:
-                        var rows = (
-                            top.cast[DType.uint16]() + bot.cast[DType.uint16]()
-                        )
+                        var rows = top.cast[.uint16]() + bot.cast[.uint16]()
                         var left = rows.shuffle[
                             0,
                             1,
@@ -459,9 +457,9 @@ def _downsample_band_fixed[
                             0,
                         ]().slice[16, offset=0]()
                         var mean = (
-                            (left + right + SIMD[DType.uint16, 16](HALF))
+                            (left + right + SIMD[.uint16, 16](HALF))
                             >> UInt16(SHIFT)
-                        ).cast[DType.uint8]()
+                        ).cast[.uint8]()
                         op.unsafe_offset(out_idx).unsafe_store(mean)
                         ox += 4
                         out_idx += 4 * BYTES_PER_PIXEL
@@ -475,7 +473,7 @@ def _downsample_band_fixed[
                         # transparent black -- which a layer drawn on a
                         # transparent ground is mostly made of.
                         op.unsafe_offset(out_idx).unsafe_store(
-                            SIMD[DType.uint8, 16](0)
+                            SIMD[.uint8, 16](0)
                         )
                         ox += 4
                         out_idx += 4 * BYTES_PER_PIXEL

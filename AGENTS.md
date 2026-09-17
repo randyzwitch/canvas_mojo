@@ -166,6 +166,12 @@ resolves.
   builder methods raise, so anything building a Path does.
 - `@parameter if` and `@parameter for` are gone (removed in Mojo 1.1);
   write `comptime if` and `comptime for`.
+- A `DType` is named contextually wherever the expected type is known:
+  `SIMD[.uint8, 16]`, `.cast[.uint32]()`, `load[.float32, 8]`, not
+  `SIMD[DType.uint8, 16]`. The one place the context is missing is a
+  bare alias, which takes an annotation: `comptime _PLANE: DType =
+  .float32`. Mojo 1.1's contextual member references; the tree was
+  converted wholesale so the two spellings do not mix.
 - Structs with a `List` field cannot be `ImplicitlyCopyable`; a `String`
   field can. Give a struct `Copyable` explicitly when another struct
   needs to copy it.

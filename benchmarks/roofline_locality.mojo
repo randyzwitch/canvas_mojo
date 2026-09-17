@@ -23,7 +23,7 @@ def _median(var xs: List[Float64]) -> Float64:
 
 def _fill_range(mut dst: List[UInt8], lo: Int, hi: Int, val: UInt8):
     var d = dst.unsafe_ptr()
-    var v = SIMD[DType.uint8, W](val)
+    var v = SIMD[.uint8, W](val)
     var i = lo
     while i + W <= hi:
         d.unsafe_offset(i).unsafe_store(v)
@@ -43,7 +43,7 @@ async def _fill_inline_async(
     mut dst: List[UInt8], lo: Int, hi: Int, val: UInt8
 ):
     var d = dst.unsafe_ptr()
-    var v = SIMD[DType.uint8, W](val)
+    var v = SIMD[.uint8, W](val)
     var i = lo
     while i + W <= hi:
         d.unsafe_offset(i).unsafe_store(v)

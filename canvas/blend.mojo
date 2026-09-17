@@ -666,9 +666,7 @@ def _blend_pixel(mode: BlendMode, src: Color, dst: Color) -> Color:
 @always_inline
 def _blend_lanes[
     MODE: Int
-](cb: SIMD[DType.uint32, 16], cs: SIMD[DType.uint32, 16]) -> SIMD[
-    DType.uint32, 16
-]:
+](cb: SIMD[.uint32, 16], cs: SIMD[.uint32, 16]) -> SIMD[.uint32, 16]:
     """`_blend_channel` for the six modes whose `B` is plain integer
     arithmetic, over sixteen channel lanes at once. The lanes hold four
     RGBA pixels; the alpha lanes compute garbage the caller masks off.
@@ -717,9 +715,9 @@ def _blend_span_impl[
             or MODE == 19
         ):
             comptime W = 16
-            var cs = SIMD[DType.uint32, W]()
-            var keep = SIMD[DType.uint32, W]()
-            var alpha = SIMD[DType.uint32, W]()
+            var cs = SIMD[.uint32, W]()
+            var keep = SIMD[.uint32, W]()
+            var alpha = SIMD[.uint32, W]()
             for k in range(W):
                 var ch = k % 4
                 if ch == 0:
@@ -730,8 +728,8 @@ def _blend_span_impl[
                     cs[k] = UInt32(sb)
                 keep[k] = UInt32(0) if ch == 3 else UInt32(0xFFFFFFFF)
                 alpha[k] = UInt32(255) if ch == 3 else UInt32(0)
-            var sa_v = SIMD[DType.uint32, W](UInt32(sa))
-            var inv_v = SIMD[DType.uint32, W](UInt32(inv))
+            var sa_v = SIMD[.uint32, W](UInt32(sa))
+            var inv_v = SIMD[.uint32, W](UInt32(inv))
             while idx + W <= end:
                 if (
                     p[unsafe_offset=idx + 3] == 255
@@ -742,12 +740,12 @@ def _blend_span_impl[
                     var cb = (
                         p.unsafe_offset(idx)
                         .unsafe_load[width=W]()
-                        .cast[DType.uint32]()
+                        .cast[.uint32]()
                     )
                     var b = _blend_lanes[MODE](cb, cs)
                     var out = ((sa_v * b + inv_v * cb) * 32897) >> 23
                     out = (out & keep) | alpha
-                    p.unsafe_offset(idx).unsafe_store(out.cast[DType.uint8]())
+                    p.unsafe_offset(idx).unsafe_store(out.cast[.uint8]())
                     idx += W
                     continue
                 _blend_one[MODE](pixels, idx, src)

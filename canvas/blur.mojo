@@ -59,7 +59,7 @@ comptime _LANES = 4
 # pixels sums to at most 255 * (2r + 1), whose Float32 spacing is well
 # under 0.01 for any radius a canvas can hold, and the sum's drift
 # across a row is a random walk of steps that size.
-comptime _PLANE = DType.float32
+comptime _PLANE: DType = .float32
 comptime _Lane = Scalar[_PLANE]
 comptime _Pixel = SIMD[_PLANE, _LANES]
 
@@ -231,7 +231,7 @@ def _unpremultiply_rows(
     var p = canvas.pixels.unsafe_ptr()
     var src = plane.unsafe_ptr().unsafe_offset(plane_off * _LANES)
     var w = canvas.width
-    comptime ZERO = SIMD[DType.uint8, _LANES](0)
+    comptime ZERO = SIMD[.uint8, _LANES](0)
     for i in range(first_row * w, last_row * w):
         var idx = i * BYTES_PER_PIXEL
         var v = src.unsafe_offset((i - plane_first * w) * _LANES).unsafe_load[
@@ -244,7 +244,7 @@ def _unpremultiply_rows(
         var straight = v * 255.0 / a
         straight[3] = a
         # `_round_byte` on every lane: the clamp keeps the cast in range.
-        var bytes = (straight + 0.5).clamp(0.0, 255.0).cast[DType.uint8]()
+        var bytes = (straight + 0.5).clamp(0.0, 255.0).cast[.uint8]()
         p.unsafe_offset(idx).unsafe_store(bytes)
 
 

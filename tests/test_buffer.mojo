@@ -193,7 +193,7 @@ def _first_differing_pixel(c: Canvas, packed: UInt32) -> Int:
     comptime LANES = 16
     var n = c.width * c.height
     var p32 = c.pixels.unsafe_ptr().unsafe_bitcast[UInt32]()
-    var want = SIMD[DType.uint32, LANES](packed)
+    var want = SIMD[.uint32, LANES](packed)
     var i = 0
     while i + LANES <= n:
         var v = p32.unsafe_offset(i).unsafe_load[width=LANES]()

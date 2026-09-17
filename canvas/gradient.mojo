@@ -66,15 +66,15 @@ struct _Interval(Copyable, ImplicitlyCopyable, Movable):
 
     var offset: Float64
     var span: Float64
-    var base: SIMD[DType.float64, 4]
-    var delta: SIMD[DType.float64, 4]
+    var base: SIMD[.float64, 4]
+    var delta: SIMD[.float64, 4]
 
     def __init__(
         out self,
         offset: Float64,
         span: Float64,
-        base: SIMD[DType.float64, 4],
-        delta: SIMD[DType.float64, 4],
+        base: SIMD[.float64, 4],
+        delta: SIMD[.float64, 4],
     ):
         self.offset = offset
         self.span = span
@@ -83,8 +83,8 @@ struct _Interval(Copyable, ImplicitlyCopyable, Movable):
 
 
 @always_inline
-def _channels(color: Color) -> SIMD[DType.float64, 4]:
-    return SIMD[DType.float64, 4](
+def _channels(color: Color) -> SIMD[.float64, 4]:
+    return SIMD[.float64, 4](
         Float64(color.r), Float64(color.g), Float64(color.b), Float64(color.a)
     )
 

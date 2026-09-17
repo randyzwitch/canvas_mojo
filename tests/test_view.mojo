@@ -21,7 +21,7 @@ def test_read_view_indexes_offsets_and_loads() raises:
     var tail = r.offset(30)
     assert_equal(tail[0], 30)
     assert_equal(tail.offset(5)[4], 39)
-    var v = r.load[DType.uint8, 16](4)
+    var v = r.load[.uint8, 16](4)
     assert_equal(v[0], 4)
     assert_equal(v[15], 19)
     var ints: List[Int] = [7, 8, 9]
@@ -33,17 +33,17 @@ def test_write_view_stores_where_the_list_reads() raises:
     var w = _WriteView(ys)
     w[3] = 7
     w.offset(10)[0] = 8
-    w.store[DType.uint8, 16](20, SIMD[DType.uint8, 16](5))
+    w.store[.uint8, 16](20, SIMD[.uint8, 16](5))
     assert_equal(ys[3], 7)
     assert_equal(ys[10], 8)
     assert_equal(ys[20], 5)
     assert_equal(ys[35], 5)
     assert_equal(ys[36], 0)
     assert_equal(w[35], 5)
-    assert_equal(w.load[DType.uint8, 4](33)[2], 5)
+    assert_equal(w.load[.uint8, 4](33)[2], 5)
     var floats = List[Float32](length=8, fill=0.0)
     var wf = _WriteView(floats)
-    wf.store[DType.float32, 8](0, SIMD[DType.float32, 8](1.5))
+    wf.store[.float32, 8](0, SIMD[.float32, 8](1.5))
     assert_equal(floats[7], 1.5)
 
 

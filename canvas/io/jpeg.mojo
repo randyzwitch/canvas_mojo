@@ -381,7 +381,7 @@ def _idct_block(
     frequencies of the coefficient times that frequency's basis
     vector, and a zero coefficient -- most of them, after
     quantization -- is skipped."""
-    comptime V = SIMD[DType.float32, 8]
+    comptime V = SIMD[.float32, 8]
     var cp = _ReadView(coef)
     var bp = _ReadView(basis)
     var rows = Array[V, 8](fill=V(0.0))
@@ -390,7 +390,7 @@ def _idct_block(
         for u in range(8):
             var c = cp[v * 8 + u]
             if c != 0:
-                acc += V(Float32(c)) * bp.load[DType.float32, 8](u * 8)
+                acc += V(Float32(c)) * bp.load[.float32, 8](u * 8)
         rows[v] = acc
     # Columns: output row y is the sum over v of rows[v] (the eight x
     # values at frequency v) times basis[v][y].
@@ -399,8 +399,8 @@ def _idct_block(
         var acc = V(128.5)
         for v in range(8):
             acc += rows[v] * V(bp[v * 8 + y])
-        var clamped = acc.clamp(0.0, 255.0).cast[DType.uint8]()
-        pp.store[DType.uint8, 8]((by + y) * plane_w + bx, clamped)
+        var clamped = acc.clamp(0.0, 255.0).cast[.uint8]()
+        pp.store[.uint8, 8]((by + y) * plane_w + bx, clamped)
 
 
 def _flat_block(

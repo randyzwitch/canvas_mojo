@@ -13,8 +13,8 @@ mojo = ">=1.1.0,<1.2"
 # does not pull them, and `pixi run docs` selects the `docs`
 # environment (default feature plus this one) that does.
 [feature.docs.dependencies]
-hugo = ">=0.164.0,<0.165"
-go = ">=1.26.6,<2"
+hugo = ">=0.166.0,<0.167"
+go = ">=1.27.1,<2"
 
 [environments]
 docs = ["docs"]

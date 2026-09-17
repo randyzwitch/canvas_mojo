@@ -224,7 +224,7 @@ def _adler32(data: List[UInt8]) -> UInt32:
     comptime BASE = UInt32(65521)
     comptime W = 32
     comptime BLOCK = 4096
-    comptime RAMP = iota[DType.uint32, W]()
+    comptime RAMP = iota[.uint32, W]()
     var s1 = UInt32(1)
     var s2 = UInt32(0)
     var n = len(data)
@@ -234,11 +234,11 @@ def _adler32(data: List[UInt8]) -> UInt32:
         var block = min(BLOCK, n - i)
         var chunks = block // W
         if chunks > 0:
-            var vs1 = SIMD[DType.uint32, W](0)
-            var vs2 = SIMD[DType.uint32, W](0)
+            var vs1 = SIMD[.uint32, W](0)
+            var vs2 = SIMD[.uint32, W](0)
             for c in range(chunks):
                 vs2 += vs1
-                vs1 += p.load[DType.uint8, W](i + c * W).cast[DType.uint32]()
+                vs1 += p.load[.uint8, W](i + c * W).cast[.uint32]()
             var total = vs1.reduce_add()
             var vec_len = UInt32(chunks * W)
             s2 += vec_len * s1
@@ -768,8 +768,8 @@ def _unfilter_rows(
             # overlap; copying a vector at a time says so.
             var x = 0
             while x + _UNFILTER_W <= row_bytes:
-                cp.store[DType.uint8, _UNFILTER_W](
-                    x, fp.load[DType.uint8, _UNFILTER_W](x)
+                cp.store[.uint8, _UNFILTER_W](
+                    x, fp.load[.uint8, _UNFILTER_W](x)
                 )
                 x += _UNFILTER_W
             while x < row_bytes:
@@ -787,10 +787,10 @@ def _unfilter_rows(
             # the spec asks for.
             var x = 0
             while x + _UNFILTER_W <= row_bytes:
-                cp.store[DType.uint8, _UNFILTER_W](
+                cp.store[.uint8, _UNFILTER_W](
                     x,
-                    fp.load[DType.uint8, _UNFILTER_W](x)
-                    + pp.load[DType.uint8, _UNFILTER_W](x),
+                    fp.load[.uint8, _UNFILTER_W](x)
+                    + pp.load[.uint8, _UNFILTER_W](x),
                 )
                 x += _UNFILTER_W
             while x < row_bytes:
@@ -848,9 +848,7 @@ def _canvas_from_scanlines(
         var i = 0
         var total = n * BYTES_PER_PIXEL
         while i + _UNFILTER_W <= total:
-            dp.store[DType.uint8, _UNFILTER_W](
-                i, sp.load[DType.uint8, _UNFILTER_W](i)
-            )
+            dp.store[.uint8, _UNFILTER_W](i, sp.load[.uint8, _UNFILTER_W](i))
             i += _UNFILTER_W
         while i < total:
             dp[i] = sp[i]
@@ -861,9 +859,9 @@ def _canvas_from_scanlines(
         # one store; the last pixel is done by hand, since reading
         # four bytes there would run one past the end.
         for i in range(n - 1):
-            var v = sp.load[DType.uint8, 4](i * 3)
+            var v = sp.load[.uint8, 4](i * 3)
             v[3] = 255
-            dp.store[DType.uint8, 4](i * BYTES_PER_PIXEL, v)
+            dp.store[.uint8, 4](i * BYTES_PER_PIXEL, v)
         var last = n - 1
         var lp = last * 3
         var ld = last * BYTES_PER_PIXEL
@@ -874,13 +872,13 @@ def _canvas_from_scanlines(
     elif color_type == 0:
         for i in range(n):
             var gray = sp[i]
-            var v = SIMD[DType.uint8, 4](gray, gray, gray, 255)
-            dp.store[DType.uint8, 4](i * BYTES_PER_PIXEL, v)
+            var v = SIMD[.uint8, 4](gray, gray, gray, 255)
+            dp.store[.uint8, 4](i * BYTES_PER_PIXEL, v)
     else:  # 4 -- _bytes_per_pixel already rejected anything else
         for i in range(n):
             var gray = sp[i * 2]
-            var v = SIMD[DType.uint8, 4](gray, gray, gray, sp[i * 2 + 1])
-            dp.store[DType.uint8, 4](i * BYTES_PER_PIXEL, v)
+            var v = SIMD[.uint8, 4](gray, gray, gray, sp[i * 2 + 1])
+            dp.store[.uint8, 4](i * BYTES_PER_PIXEL, v)
     return Canvas(width, height, pixels^)
 
 
@@ -1080,8 +1078,8 @@ def _deinterlace_adam7(
             for x in range(pw):
                 var s = (src_row + x) * BYTES_PER_PIXEL
                 var d = (dest_row + x0 + x * dx) * BYTES_PER_PIXEL
-                dp.store[DType.uint8, BYTES_PER_PIXEL](
-                    d, subp.load[DType.uint8, BYTES_PER_PIXEL](s)
+                dp.store[.uint8, BYTES_PER_PIXEL](
+                    d, subp.load[.uint8, BYTES_PER_PIXEL](s)
                 )
     return Canvas(width, height, pixels^)
 

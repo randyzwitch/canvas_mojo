@@ -145,26 +145,24 @@ def _fix(v: Float64) -> Int:
 
 
 @always_inline
-def _channels(
-    canvas: Canvas, color: Color, linear: Bool
-) -> SIMD[DType.float64, 4]:
+def _channels(canvas: Canvas, color: Color, linear: Bool) -> SIMD[.float64, 4]:
     """A vertex color as four lanes to interpolate: r, g, b as bytes
     in SRGB or as linear light in LINEAR, and alpha as a byte either
     way."""
     if linear:
-        return SIMD[DType.float64, 4](
+        return SIMD[.float64, 4](
             Float64(canvas._transfer.linear(color.r)),
             Float64(canvas._transfer.linear(color.g)),
             Float64(canvas._transfer.linear(color.b)),
             Float64(color.a),
         )
-    return SIMD[DType.float64, 4](
+    return SIMD[.float64, 4](
         Float64(color.r), Float64(color.g), Float64(color.b), Float64(color.a)
     )
 
 
 @always_inline
-def _encode(canvas: Canvas, ch: SIMD[DType.float64, 4], linear: Bool) -> Color:
+def _encode(canvas: Canvas, ch: SIMD[.float64, 4], linear: Bool) -> Color:
     """`_channels` back to a color at one sub-sample, rounded and
     clamped."""
     var a = Int(ch[3] + 0.5)
@@ -422,9 +420,9 @@ def _mesh_chunk(
         var ch_a = _channels(canvas, col_a, linear)
         var ch_b = _channels(canvas, col_b, linear)
         var ch_c = _channels(canvas, col_c, linear)
-        var ch_row = SIMD[DType.float64, 4](0.0)
-        var ch_dx = SIMD[DType.float64, 4](0.0)
-        var ch_dy = SIMD[DType.float64, 4](0.0)
+        var ch_row = SIMD[.float64, 4](0.0)
+        var ch_dx = SIMD[.float64, 4](0.0)
+        var ch_dy = SIMD[.float64, 4](0.0)
         if per_vertex:
             ch_row = (
                 ch_a * Float64(row0 + bias0)
