@@ -16,6 +16,7 @@ tests/test_deflate.mojo round-trips both directions against real
 from std.runtime.asyncrt import TaskGroup
 
 from canvas.workers import _bands_for_work
+from canvas.io.view import _WriteView
 
 
 comptime _MAX_BITS = 15
@@ -495,19 +496,19 @@ def _codes(
                 # the whole output every few hundred bytes.
                 out.reserve(max(2 * out.capacity(), n0 + length))
             out.resize(unsafe_uninit_length=n0 + length)
-            var op = out.unsafe_ptr()
+            var op = _WriteView(out)
             var copied = 0
             while copied < length:
                 var chunk = min(dist + copied, length - copied)
                 var d = n0 + copied
                 var k = 0
                 while k + 16 <= chunk:
-                    op.unsafe_offset(d + k).unsafe_store(
-                        op.unsafe_offset(start + k).unsafe_load[width=16]()
+                    op.store[DType.uint8, 16](
+                        d + k, op.load[DType.uint8, 16](start + k)
                     )
                     k += 16
                 while k < chunk:
-                    op[unsafe_offset=d + k] = op[unsafe_offset=start + k]
+                    op[d + k] = op[start + k]
                     k += 1
                 copied += chunk
 

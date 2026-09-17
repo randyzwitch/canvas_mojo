@@ -250,15 +250,21 @@ def _tag_at(data: List[UInt8], pos: Int) raises -> String:
 
 
 def _read_at(mut f: FileHandle, offset: Int, length: Int) raises -> List[UInt8]:
-    """`length` bytes starting at `offset`. A short read at end-of-file
-    is not an error here -- the bounds checks above turn any resulting
-    truncation into a raise at the field that actually needed the
-    missing bytes.
+    """`length` bytes starting at `offset`, or as many as the file
+    holds past `offset`. A short read at end-of-file is not an error
+    here -- the bounds checks above turn any resulting truncation into
+    a raise at the field that actually needed the missing bytes. The
+    length is clamped to the file before the buffer is sized, because
+    it comes from the file's own table directory and a damaged record
+    claiming four gigabytes must not allocate them (#430).
     """
     if length <= 0:
         return List[UInt8]()
+    var size = Int(f.seek(0, 2))
+    if offset >= size:
+        return List[UInt8]()
     _ = f.seek(offset)
-    return f.read_bytes(length)
+    return f.read_bytes(min(length, size - offset))
 
 
 # --- Family-name normalization --------------------------------------------

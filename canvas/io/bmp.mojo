@@ -17,6 +17,7 @@ real transparency.
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.io import MAX_DECODED_PIXELS
+from canvas.io.view import _ReadView
 from canvas.color import Color
 
 
@@ -221,7 +222,11 @@ def read_bmp(path: String) raises -> Canvas:
     # Negative height is the top-down flag, not an error.
     var top_down = raw_height < 0
     var height = -raw_height if top_down else raw_height
-    if width * height > MAX_DECODED_PIXELS:
+    if (
+        width > MAX_DECODED_PIXELS
+        or height > MAX_DECODED_PIXELS
+        or width * height > MAX_DECODED_PIXELS
+    ):
         # The row check below already needs the file to hold every
         # row, so this is the same rule the other decoders apply
         # rather than a bomb this one had (#430).
@@ -264,15 +269,15 @@ def read_bmp(path: String) raises -> Canvas:
     # replace, not a draw, so it must not go through the compositing
     # `write_pixel` -- the same reasoning `read_png` records.
     var pixels = List[UInt8](capacity=width * height * BYTES_PER_PIXEL)
-    var src = data.unsafe_ptr()
+    var src = _ReadView(data)
     for y in range(height):
         # Bottom-up files store the last image row first.
         var src_row = y if top_down else (height - 1 - y)
         var row_start = pixel_offset + src_row * row_size
         for x in range(width):
             var i = row_start + x * channels
-            pixels.append(src[unsafe_offset=i + 2])  # R (stored BGR)
-            pixels.append(src[unsafe_offset=i + 1])  # G
-            pixels.append(src[unsafe_offset=i])  # B
+            pixels.append(src[i + 2])  # R (stored BGR)
+            pixels.append(src[i + 1])  # G
+            pixels.append(src[i])  # B
             pixels.append(255)
     return Canvas(width, height, pixels^)

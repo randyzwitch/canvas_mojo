@@ -598,26 +598,22 @@ def _coverage_ranges(
 def _sorted_merged_ranges(var ranges: List[Int]) -> List[Int]:
     """Sort [first, last] pairs by their first glyph and merge the ones
     that overlap or touch, so membership is one bisection over the
-    result. Insertion sort, because the pairs come from a handful of
-    Coverage tables already in ascending order and the list is nearly
-    sorted to begin with.
+    result. Each pair is packed into one key and sorted with the
+    stdlib's sort: an insertion sort used to sit here on the argument
+    that Coverage tables come nearly sorted, and a damaged one with
+    tens of thousands of ranges in reverse order made it quadratic and
+    ran for minutes (#430). Glyph ids are 16-bit, so the key has room.
     """
     var count = len(ranges) // 2
-    for i in range(1, count):
-        var first = ranges[i * 2]
-        var last = ranges[i * 2 + 1]
-        var k = i - 1
-        while k >= 0 and ranges[k * 2] > first:
-            ranges[(k + 1) * 2] = ranges[k * 2]
-            ranges[(k + 1) * 2 + 1] = ranges[k * 2 + 1]
-            k -= 1
-        ranges[(k + 1) * 2] = first
-        ranges[(k + 1) * 2 + 1] = last
+    var keys = List[Int](capacity=count)
+    for i in range(count):
+        keys.append((ranges[i * 2] << 20) | (ranges[i * 2 + 1] & 0xFFFFF))
+    sort(keys)
 
     var out = List[Int]()
     for i in range(count):
-        var first = ranges[i * 2]
-        var last = ranges[i * 2 + 1]
+        var first = keys[i] >> 20
+        var last = keys[i] & 0xFFFFF
         if len(out) > 0 and first <= out[len(out) - 1] + 1:
             if last > out[len(out) - 1]:
                 out[len(out) - 1] = last
