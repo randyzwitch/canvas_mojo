@@ -27,7 +27,7 @@ called.
 """
 
 from std.math import atan2, ceil, cos, floor, pi, sin, sqrt
-from std.runtime._asyncrt import TaskGroup
+from std.memory import unsafe_memset_zero
 
 from canvas.buffer import Canvas
 from canvas.color import Color, _div255
@@ -67,7 +67,7 @@ from canvas.shapes.lines import (
 )
 from canvas.shapes.polygon_fill import _Crossing, _spans_from_crossings
 from canvas.shapes.arcs import _arc_fpoints
-from canvas.workers import _bands_for
+from canvas.workers import run_bands, _bands_for
 
 # Control-point offset for approximating a quarter ellipse with one
 # cubic Bezier: 4/3 * (sqrt(2) - 1). Maximum radial error is about
@@ -2073,7 +2073,12 @@ def _path_coverage_mask(
     a fill boundary of the same path land in the same places. It needs
     `_flatten`, so it lives here rather than in buffer.mojo.
     """
-    var mask = List[UInt8](length=width * height, fill=0)
+    # Zeroed with an explicit memset rather than `fill=0`: whether the
+    # fill loop lowers to one is an optimizer decision that changed
+    # under it once this module held a closure, and cost a rectangle
+    # clip 18x (`push_clip_path rect mask` in the survey).
+    var mask = List[UInt8](unsafe_uninit_length=width * height)
+    unsafe_memset_zero(mask.unsafe_ptr(), width * height)
     var subpaths = _flatten(path, curve_steps)
     if len(subpaths) == 0:
         return mask^
@@ -2241,64 +2246,39 @@ def _fill_path_source_aa[
         return
 
     var per_band = (mask_height + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        mut canvas,
+        imm source,
+        imm mask,
+        imm mask_width,
+        imm lo_x,
+        imm lo_y,
+        imm hi_x,
+        imm hi_y,
+        imm to_user,
+        imm per_band,
+    }:
         var band_start = lo_y + b * per_band
-        var band_end = band_start + per_band
-        if band_end > hi_y:
-            band_end = hi_y
+        var band_end = min(band_start + per_band, hi_y)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _fill_source_band_async(
-                canvas,
-                source,
-                mask,
-                mask_width,
-                lo_x,
-                lo_y,
-                hi_x,
-                band_start,
-                band_end,
-                to_user,
-            )
+            return
+        _fill_source_band(
+            canvas,
+            source,
+            mask,
+            mask_width,
+            lo_x,
+            lo_y,
+            hi_x,
+            band_start,
+            band_end,
+            to_user,
         )
-    tg.wait()
 
-
-async def _fill_source_band_async[
-    S: ColorSource
-](
-    mut canvas: Canvas,
-    source: S,
-    mask: List[UInt8],
-    mask_width: Int,
-    lo_x: Int,
-    mask_origin_y: Int,
-    hi_x: Int,
-    first_row: Int,
-    last_row: Int,
-    to_user: Matrix2D,
-):
-    """`_fill_source_band` as a task, so the single-band path stays an
-    ordinary call with no coroutine machinery around it.
-
-    `source` and `mask` are borrowed, never owned: a heap-backed
-    aggregate handed to `create_task` by value is canvas_mojo#97, and
-    a gradient owns its list of stops.
-    """
-    _fill_source_band(
-        canvas,
-        source,
-        mask,
-        mask_width,
-        lo_x,
-        mask_origin_y,
-        hi_x,
-        first_row,
-        last_row,
-        to_user,
-    )
+    run_bands(bands, band)
 
 
 def _fill_source_band[

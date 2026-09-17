@@ -8,11 +8,10 @@ so every output pixel averages `factor * factor` real source samples.
 """
 
 from std.math import floor
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.machine import l3_slice_bytes
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
-from canvas.workers import _bands_for
+from canvas.workers import run_bands, _bands_for
 
 # Below this many source pixels, resize runs inline.
 comptime _MIN_PARALLEL_PIXELS = 40000
@@ -187,36 +186,28 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
         return Canvas(out_width, out_height, pixels^)
 
     var per_band = (out_height + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        imm source,
+        mut pixels,
+        imm per_band,
+        imm out_height,
+        imm out_width,
+        imm factor,
+        imm n,
+    }:
         var band_start = b * per_band
-        var band_end = band_start + per_band
-        if band_end > out_height:
-            band_end = out_height
+        var band_end = min(band_start + per_band, out_height)
         if band_start >= band_end:
-            continue
-        tg.create_task(
-            _downsample_band_async(
-                source, pixels, band_start, band_end, out_width, factor, n
-            )
+            return
+        _downsample_band(
+            source, pixels, band_start, band_end, out_width, factor, n
         )
-    tg.wait()
+
+    run_bands(bands, band)
     return Canvas(out_width, out_height, pixels^)
-
-
-async def _downsample_band_async(
-    source: Canvas,
-    mut pixels: List[UInt8],
-    first_row: Int,
-    last_row: Int,
-    out_width: Int,
-    factor: Int,
-    n: Int,
-):
-    """`_downsample_band` as a task, so the single-band path stays an
-    ordinary call with no coroutine machinery around it.
-    """
-    _downsample_band(source, pixels, first_row, last_row, out_width, factor, n)
 
 
 def _downsample_band(
@@ -864,34 +855,6 @@ def _resize_fused_band(
         oy = end
 
 
-async def _resize_fused_band_async(
-    source: Canvas,
-    out_width: Int,
-    wx: _AxisWeights,
-    wy: _AxisWeights,
-    mut pixels: List[UInt8],
-    mut scratch: List[Float64],
-    scratch_off: Int,
-    first_out: Int,
-    last_out: Int,
-    chunk: Int,
-):
-    """`_resize_fused_band` as a task. Every aggregate is borrowed,
-    never owned: canvas_mojo#97."""
-    _resize_fused_band(
-        source,
-        out_width,
-        wx,
-        wy,
-        pixels,
-        scratch,
-        scratch_off,
-        first_out,
-        last_out,
-        chunk,
-    )
-
-
 def _resize_streamed(
     source: Canvas,
     out_width: Int,
@@ -927,33 +890,39 @@ def _resize_streamed(
         return
 
     var scratch = List[Float64](unsafe_uninit_length=strip_len * bands)
-    var tg = TaskGroup()
-    for b in range(bands):
+
+    def band(
+        b: Int,
+    ) {
+        imm source,
+        imm out_width,
+        imm wx,
+        imm wy,
+        mut pixels,
+        mut scratch,
+        imm strip_len,
+        imm per_band,
+        imm out_height,
+        imm chunk,
+    }:
         var lo = b * per_band
         var hi = min(lo + per_band, out_height)
         if lo >= hi:
-            continue
-        tg.create_task(
-            _resize_fused_band_async(
-                source,
-                out_width,
-                wx,
-                wy,
-                pixels,
-                scratch,
-                b * strip_len,
-                lo,
-                hi,
-                chunk,
-            )
+            return
+        _resize_fused_band(
+            source,
+            out_width,
+            wx,
+            wy,
+            pixels,
+            scratch,
+            b * strip_len,
+            lo,
+            hi,
+            chunk,
         )
-    tg.wait()
-    _ = len(scratch)
-    # Named past the tasks, or they are freed while bands read them.
-    _ = len(wx.weights)
-    _ = len(wy.weights)
-    _ = len(wx.sums)
-    _ = source.width
+
+    run_bands(bands, band)
 
 
 def _resize_v_rows(

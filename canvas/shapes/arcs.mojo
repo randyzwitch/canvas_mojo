@@ -13,7 +13,6 @@ function above builds on.
 """
 
 from std.math import acos, atan2, ceil, cos, floor, pi, sin
-from std.runtime._asyncrt import TaskGroup
 
 from canvas.color import Color
 from canvas.fill_rule import FillRule
@@ -31,7 +30,7 @@ from canvas.shapes.polygon_fill import (
     _fill_polygon_aa_device,
     _fill_polygon_aa_rows,
 )
-from canvas.workers import _bands_for
+from canvas.workers import run_bands, _bands_for
 from canvas.path import (
     fill_path_aa,
     _ring_path,
@@ -798,34 +797,6 @@ def _arcs_band(
         )
 
 
-async def _arcs_band_async(
-    mut canvas: Canvas,
-    centers: List[FPoint],
-    colors: List[Color],
-    radius: Float64,
-    start_angle: Float64,
-    end_angle: Float64,
-    color: Color,
-    row_lo: Int,
-    row_hi: Int,
-):
-    """`_arcs_band` as a task. `centers` and `colors` are borrowed,
-    never owned: a heap-backed aggregate handed to `create_task` by
-    value is canvas_mojo#97.
-    """
-    _arcs_band(
-        canvas,
-        centers,
-        colors,
-        radius,
-        start_angle,
-        end_angle,
-        color,
-        row_lo,
-        row_hi,
-    )
-
-
 def _fill_arcs_sequential(
     mut canvas: Canvas,
     centers: List[FPoint],
@@ -925,31 +896,38 @@ def _fill_arcs_aa_impl(
         return
 
     var per_band = (canvas.height + bands - 1) // bands
-    var tg = TaskGroup()
-    for b in range(bands):
-        var row_lo = b * per_band
-        var row_hi = min(row_lo + per_band, canvas.height)
-        if row_lo >= row_hi:
-            continue
-        tg.create_task(
-            _arcs_band_async(
-                canvas,
-                centers,
-                colors,
-                radius,
-                start_angle,
-                end_angle,
-                color,
-                row_lo,
-                row_hi,
-            )
+    var height = canvas.height
+
+    def band(
+        b: Int,
+    ) {
+        mut canvas,
+        imm centers,
+        imm colors,
+        imm radius,
+        imm start_angle,
+        imm end_angle,
+        imm color,
+        imm per_band,
+        imm height,
+    }:
+        var band_start = b * per_band
+        var band_end = min(band_start + per_band, height)
+        if band_start >= band_end:
+            return
+        _arcs_band(
+            canvas,
+            centers,
+            colors,
+            radius,
+            start_angle,
+            end_angle,
+            color,
+            band_start,
+            band_end,
         )
-    tg.wait()
-    # Named past the tasks: a task's borrow is not a use the compiler
-    # counts, so without this the lists are freed while bands still
-    # read them.
-    _ = len(centers)
-    _ = len(colors)
+
+    run_bands(bands, band)
 
 
 def fill_arcs_aa(
