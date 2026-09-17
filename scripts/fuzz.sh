@@ -5,7 +5,15 @@
 #
 #   pixi run fuzz <decoder> <seed-dir-or-file> [minutes] [workers]
 #
-# <decoder> is png, jpeg, bmp, deflate or font. Findings land in
+# <decoder> is png, jpeg, bmp, deflate or font. Seeds are a directory
+# or one file; for fonts, a directory of symlinks to every font the
+# machine has is one line:
+#
+#   mkdir -p .fuzz/seeds/fonts && fc-list : file | sed 's/: *$//' \
+#     | grep -iE '\.(ttf|otf|ttc)$' | sort -u | while read -r f; do \
+#     ln -sf "$f" ".fuzz/seeds/fonts/$(basename "$f")"; done
+#
+# Findings land in
 # .fuzz/findings/<decoder>/ as the case file plus a .txt sidecar naming
 # the seed, mutation and RNG state; the batch's exit status is in the
 # file name (134 abort, 139 segfault, 124 timeout, 137 killed by the

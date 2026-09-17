@@ -696,7 +696,8 @@ release touches one of them, or when enough releases have passed since
 the last campaign: `pixi run fuzz <png|jpeg|bmp|deflate|font> <seeds>
 [minutes] [workers]`, with seeds from `tests/golden`, `tests/png`,
 `tests/jpeg`, `examples` (after `pixi run example`) or a directory of
-the machine's fonts. It mutates seeds and runs the decoder under a time
+the machine's fonts (`scripts/fuzz.sh`'s header has the one-liner that
+symlinks every installed font into one). It mutates seeds and runs the decoder under a time
 and memory limit; anything that kills the process instead of raising is
 collected under `.fuzz/findings/`. It is not in CI, since it needs hours
 on a quiet machine and its output is nondeterministic. Every finding
