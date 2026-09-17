@@ -1,7 +1,7 @@
 """Supersampled scanline coverage for anti-aliased path and polygon fills."""
 
 from std.math import ceil, floor
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.workers import _MIN_PARALLEL_WORK, _bands_for
 

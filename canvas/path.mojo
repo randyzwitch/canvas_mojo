@@ -27,7 +27,7 @@ called.
 """
 
 from std.math import atan2, ceil, cos, floor, pi, sin, sqrt
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.buffer import Canvas
 from canvas.color import Color, _div255

@@ -7,7 +7,7 @@ sweep in `aa_crossing.mojo` instead.
 """
 
 from std.math import ceil, floor
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.aa_crossing import _EdgeTable, _MIN_PARALLEL_PIXELS
 from canvas.workers import _bands_for_work

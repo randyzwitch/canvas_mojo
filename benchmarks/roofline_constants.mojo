@@ -5,7 +5,7 @@ Buffer is an 800x600 RGBA canvas (1.92 MB) unless a kernel says
 otherwise, so the numbers drop straight into the bench rows.
 """
 from std.time import perf_counter_ns
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 
 comptime N = 800 * 600 * 4

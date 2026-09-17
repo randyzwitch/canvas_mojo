@@ -15,7 +15,7 @@ comptime BYTES_PER_PIXEL = 4
 
 from std.math import ceil, floor
 from std.sys import size_of
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.blend import BlendMode, _blend_pixel, _blend_span
 from canvas.color import (
@@ -349,7 +349,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
     # Mojo passes a Canvas by reference only when the struct exceeds
     # 256 bytes. Keep this padding and the size check in `__init__` so
     # pixel-writing calls do not copy the Canvas value.
-    var _layout_pad: InlineArray[UInt8, 176]
+    var _layout_pad: Array[UInt8, 176]
     # The current transform (see `save`), and whether it is anything
     # but the identity. Every drawing call tests the flag once, so it
     # is a field rather than six comparisons on the matrix.
@@ -430,7 +430,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
-        self._layout_pad = InlineArray[UInt8, 176](fill=0)
+        self._layout_pad = Array[UInt8, 176](fill=0)
         comptime assert (
             size_of[Canvas]() > 256
         ), "Canvas must stay over 256 bytes -- see _layout_pad"
@@ -492,7 +492,7 @@ struct Canvas(Copyable, DrawTarget, Movable):
         self._clip_stack = List[_ClipRect]()
         self.clip_masks = List[List[UInt8]]()
         self._clip_mask_count = 0
-        self._layout_pad = InlineArray[UInt8, 176](fill=0)
+        self._layout_pad = Array[UInt8, 176](fill=0)
         comptime assert (
             size_of[Canvas]() > 256
         ), "Canvas must stay over 256 bytes -- see _layout_pad"

@@ -10,7 +10,7 @@ rather than carrying a sampler of their own (#275).
 """
 
 from std.math import asin, ceil, floor, sqrt
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.color import Color
 from canvas.buffer import Canvas

@@ -8,7 +8,7 @@ so every output pixel averages `factor * factor` real source samples.
 """
 
 from std.math import floor
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.machine import l3_slice_bytes
 from canvas.buffer import Canvas, BYTES_PER_PIXEL

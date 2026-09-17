@@ -4,7 +4,7 @@ Every variant fills the whole buffer with a value that changes each
 iteration, so none of it is loop-invariant and none can be hoisted.
 """
 from std.time import perf_counter_ns
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 comptime N = 800 * 600 * 4
 comptime W = 32
