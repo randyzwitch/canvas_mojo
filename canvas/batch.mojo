@@ -29,7 +29,7 @@ thousands of tables, and a batch of 2,000 small paths was slower than
 drawing them one at a time.
 """
 
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.aa_area import _AreaScratch, _CELLS_PER_BAND, _area_edges_rows
 from canvas.aa_crossing import (

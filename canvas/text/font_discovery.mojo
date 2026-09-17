@@ -75,7 +75,8 @@ measuring, hinting or rasterizing.
 """
 
 from std.os import getenv, listdir, makedirs, stat
-from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.runtime import parallelism_level
+from std.runtime._asyncrt import TaskGroup
 from std.os.path import expanduser, isdir, realpath
 from std.sys.info import CompilationTarget
 
@@ -1180,8 +1181,9 @@ def _directory_mtime(path: String) -> Int:
     valid as long as it stays absent.
     """
     try:
-        var spec = stat(path).st_mtimespec
-        return Int(spec.tv_sec) * 1_000_000_000 + Int(spec.tv_subsec)
+        # `as_nanoseconds` rather than the fields: the sub-second field
+        # is `tv_subsec` on Mojo 1.0 and `tv_nsec` on 1.1 (#472).
+        return Int(stat(path).st_mtimespec.as_nanoseconds())
     except:
         return -1
 

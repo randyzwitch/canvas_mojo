@@ -384,7 +384,7 @@ def _idct_block(
     comptime V = SIMD[DType.float32, 8]
     var cp = _ReadView(coef)
     var bp = _ReadView(basis)
-    var rows = InlineArray[V, 8](fill=V(0.0))
+    var rows = Array[V, 8](fill=V(0.0))
     for v in range(8):
         var acc = V(0.0)
         for u in range(8):

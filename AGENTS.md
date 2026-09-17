@@ -164,15 +164,32 @@ resolves.
   buffer; copy in doubling chunks with vector loads.
 - A method that calls a raising function must be `raises`; `Path`'s
   builder methods raise, so anything building a Path does.
-- `@parameter if` is deprecated; write `comptime if`.
+- `@parameter if` and `@parameter for` are gone (removed in Mojo 1.1);
+  write `comptime if` and `comptime for`.
 - Structs with a `List` field cannot be `ImplicitlyCopyable`; a `String`
   field can. Give a struct `Copyable` explicitly when another struct
   needs to copy it.
 - `mojo format` cannot parse a single-quoted string containing a double
   quote; escape inside double quotes instead.
+- Names that differ between Mojo 1.0 and 1.1, for anything that has
+  to read on both: `InlineArray` is `Array` (both accept `Array`);
+  a `stat` timespec's sub-second field is `tv_subsec` on 1.0 and
+  `tv_nsec` on 1.1, and `as_nanoseconds()` is on both; `String`'s
+  C-string accessor is `as_c_string_slice().unsafe_ptr()` on 1.0 and
+  `as_c_string_span().ptr()` on 1.1, with no spelling common to both
+  (the code uses 1.1's).
 
 ## Concurrency, which is where the sharp edges are
 
+- `TaskGroup` comes from `std.runtime._asyncrt`, a module Mojo 1.1
+  made private: the public `std.runtime` keeps only `parallelism_level`
+  and `initialize_runtime`, and nothing public in `std` runs work on
+  the thread pool (`std.algorithm.map` is sequential). Every banded
+  pass here needs it, so the private import stays until Modular ships
+  a public one, and a Mojo release can change or drop it without
+  notice; the constraint in `pixi.toml` names the versions it was
+  tested on. Mojo 1.0 spelled the module `std.runtime.asyncrt`, so one
+  source cannot serve both (#472).
 - `TaskGroup.create_task` corrupts aggregate arguments passed by value
   (#97, upstream). Pass a struct holding the Lists by reference; never
   hand a task an owned temporary or a container element.

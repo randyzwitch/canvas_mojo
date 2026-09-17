@@ -44,7 +44,7 @@ across hardware.
 
 from std.math import cos, pi, sin
 from std.os import getenv
-from std.runtime.asyncrt import parallelism_level
+from std.runtime import parallelism_level
 from std.time import perf_counter_ns
 
 from canvas.blend import BlendMode

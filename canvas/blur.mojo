@@ -43,7 +43,7 @@ vertical sliding windows are populated before its first output row.
 """
 
 from std.math import sqrt
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.workers import _bands_for as _shared_bands_for
 

@@ -31,7 +31,7 @@ rows. Bands write disjoint rows, which is the whole safety argument.
 """
 
 from std.math import ceil, floor
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color

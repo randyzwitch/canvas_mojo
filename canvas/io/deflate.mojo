@@ -13,7 +13,7 @@ tests/test_deflate.mojo round-trips both directions against real
 `zlib.compress()`/`zlib.decompress()` output.
 """
 
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.workers import _bands_for_work
 from canvas.io.view import _WriteView

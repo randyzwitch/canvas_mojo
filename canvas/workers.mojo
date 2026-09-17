@@ -1,6 +1,6 @@
 """Helpers for splitting parallel passes into row bands."""
 
-from std.runtime.asyncrt import parallelism_level
+from std.runtime import parallelism_level
 
 # Below this much work, a pass runs inline instead of dispatching tasks.
 comptime _MIN_PARALLEL_WORK = 40000

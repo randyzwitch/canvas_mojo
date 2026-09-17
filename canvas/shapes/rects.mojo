@@ -6,7 +6,7 @@ pattern.mojo).
 """
 
 from canvas.color import Color
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.aa_crossing import _MIN_PARALLEL_PIXELS
 from canvas.buffer import Canvas

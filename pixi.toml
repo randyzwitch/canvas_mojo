@@ -6,7 +6,7 @@ preview = ["pixi-build"]
 version = "0.38.1"
 
 [dependencies]
-mojo = ">=1.0.0,<1.1"
+mojo = ">=1.1.0,<1.2"
 
 # hugo and go serve only the docs tasks, so they sit in their own
 # feature: installing the default environment for `test`/`example`
@@ -142,7 +142,7 @@ name = "canvas"
 path = "canvas"
 
 [package.host-dependencies]
-mojo = ">=1.0.0,<1.1"
+mojo = ">=1.1.0,<1.2"
 
 [package.run-dependencies]
-mojo = ">=1.0.0,<1.1"
+mojo = ">=1.1.0,<1.2"

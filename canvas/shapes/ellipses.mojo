@@ -7,7 +7,7 @@ vs. `_aa` naming convention this follows.
 """
 
 from std.math import ceil, floor, sqrt
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 
 from canvas.color import Color
 from canvas.buffer import Canvas
