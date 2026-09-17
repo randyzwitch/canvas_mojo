@@ -30,6 +30,7 @@ the first two thirds of `progressive.jpg`.
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.io.jpeg import decode_jpeg, read_jpeg
+from canvas.io import MAX_DECODED_PIXELS
 from canvas.io.png import read_png
 
 comptime _DIR = "tests/jpeg/"
@@ -170,6 +171,85 @@ def test_truncated_file_raises() raises:
     except:
         raised = True
     assert_true(raised, "a file cut in half must raise")
+
+
+# --- Findings of the fuzz campaign (#430), each kept as the file that
+# found it under tests/fuzz/ so the rejection stays a rejection ------------
+
+
+def _assert_rejects(path: String, contains: String) raises:
+    var raised = False
+    try:
+        _ = read_jpeg(path)
+    except e:
+        raised = True
+        assert_true(
+            contains in String(e),
+            String(path, " raised '", e, "', expected '", contains, "'"),
+        )
+    assert_true(raised, path + " must raise, not decode or crash")
+
+
+def test_fuzz_huffman_table_selector_out_of_range_raises() raises:
+    """A scan header naming DC or AC table 4 through 15 indexed the
+    four-entry table lists off their ends; the process aborted on the
+    checked index."""
+    _assert_rejects(
+        "tests/fuzz/jpeg_table_selector_out_of_range.jpg",
+        "Huffman table selector out of range",
+    )
+
+
+def test_fuzz_oversubscribed_huffman_table_raises() raises:
+    """A DHT segment with more codes of a length than the length can
+    hold walked the lookup table past its end while it was built."""
+    _assert_rejects(
+        "tests/fuzz/jpeg_oversubscribed_huffman.jpg",
+        "over-subscribed Huffman table",
+    )
+
+
+def test_fuzz_65535_square_frame_raises_before_allocating() raises:
+    """A 1 KB file whose frame header claims 65535 x 65535 pixels
+    allocated a 17 GB canvas and ran for two minutes. It is refused
+    from the header, before any buffer is sized."""
+    _assert_rejects(
+        "tests/fuzz/jpeg_65535_square.jpg", "exceeds the decode limit"
+    )
+    assert_true(65535 * 65535 > MAX_DECODED_PIXELS)
+
+
+def test_fuzz_truncated_quantization_table_raises() raises:
+    """A DQT segment shorter than the 64 entries it announces was read
+    past its end."""
+    _assert_rejects(
+        "tests/fuzz/jpeg_truncated_quantization_table.jpg",
+        "truncated quantization table",
+    )
+
+
+def test_fuzz_truncated_huffman_table_raises() raises:
+    """A DHT segment ending inside its sixteen code counts."""
+    _assert_rejects(
+        "tests/fuzz/jpeg_truncated_huffman_table.jpg",
+        "truncated Huffman table",
+    )
+
+
+def test_fuzz_truncated_frame_header_raises() raises:
+    """A frame header naming more components than it has bytes for."""
+    _assert_rejects(
+        "tests/fuzz/jpeg_truncated_frame_header.jpg",
+        "truncated frame header",
+    )
+
+
+def test_fuzz_truncated_scan_header_raises() raises:
+    """A scan header whose component selectors or spectral bytes lie
+    past the segment's end."""
+    _assert_rejects(
+        "tests/fuzz/jpeg_truncated_scan_header.jpg", "truncated scan header"
+    )
 
 
 def main() raises:

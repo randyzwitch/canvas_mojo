@@ -31,6 +31,7 @@ pixi run micro       # interleaved micro-benchmarks, the gate for a perf change
 pixi run roofline    # this machine's rates: copy, fill, blend, scatter, dispatch
 pixi run roofline-census   # pixels each bench scene is obliged to change
 pixi run roofline-locality # what an async task costs across L3 slices
+pixi run fuzz <decoder> <seeds> [minutes] [workers]  # mutation-fuzz one parser (#430); findings under .fuzz/findings/
 pixi run fmt         # mojo format over canvas/ tests/ examples/ scripts/
 pixi run docs        # rebuilds the site into docs/site/public (needs `example` first)
 pixi run llms        # regenerates docs/site/static/llms.txt, the API digest
@@ -57,7 +58,9 @@ resolves.
   `text/` (discovery, TrueType/CFF parsing, shaping, layout,
   rendering), `vector/` (the trait, svg, pdf, pdf_font).
 - `tests/` mirrors `canvas/` one file per module; `tests/golden/` holds
-  reference PNGs; `tests/jpeg/` holds decoder fixtures.
+  reference PNGs; `tests/jpeg/` and `tests/png/` hold decoder fixtures;
+  `tests/fuzz/` holds the files the fuzz campaign found, each with a
+  rejection test.
 - `examples/` are the docs pages' sources; each writes one or more
   `out_<name>.{png,bmp,svg,pdf}`.
 - `benchmarks/` has the survey bench and the micro harness.
@@ -106,7 +109,8 @@ resolves.
 - CI formats every PR and commits the result; run `pixi run fmt` first
   anyway so the diff you review is the diff that lands.
 - Releases: `pixi run bench-check` and `pixi run bench-verify` clean,
-  the check on a quiet machine, then bump the version in `pixi.toml`
+  the check on a quiet machine, `pixi run fuzz` over any parser the
+  release touched, then bump the version in `pixi.toml`
   (two places: `[workspace]` and `[package]`) and tag. Every tag gets
   a GitHub release object with notes (`gh release create <tag>
   --verify-tag --notes-file -`) in the shape of v0.27.0's: what
@@ -127,6 +131,13 @@ resolves.
   only shows up on text outside ASCII (macOS font filenames are
   Japanese; the Linux CI font set is not).
 - `case` is a reserved word and cannot name a variable, like `out`.
+- `chr(n)` aborts the process on a surrogate (0xD800-0xDFFF) or any
+  value that is not a code point; it cannot be caught. Check the range
+  before calling it on a number that came from a file (#430).
+- A `List` index past the end aborts too, in a default build as well
+  as under `-D ASSERT=all`. A parser reading untrusted bytes must
+  length-check before indexing, or the caller's process dies instead
+  of getting a `raise`.
 - No module-level `var`. A `comptime` List cannot be indexed at runtime
   without materializing a copy each time. Tables live in a struct
   (`_Transfer` in color.mojo is the pattern) and are built on demand.

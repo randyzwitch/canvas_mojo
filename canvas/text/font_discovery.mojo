@@ -591,6 +591,11 @@ def _decode_name(
                 i += 2
                 out += chr(0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00))
                 continue
+        if unit >= 0xD800 and unit <= 0xDFFF:
+            # A lone surrogate is not a code point, and `chr` of one
+            # aborts the process; discovery must survive any file the
+            # machine has, so the unit is dropped (#430).
+            continue
         if unit != 0:
             out += chr(unit)
     return out^

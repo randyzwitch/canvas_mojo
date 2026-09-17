@@ -45,6 +45,7 @@ assertion for reasons unrelated to the code under test -- see
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.text.font_discovery import (
+    _decode_name,
     FontDatabase,
     FontSlant,
     FontWeight,
@@ -337,6 +338,22 @@ def test_repeated_scans_agree_with_each_other() raises:
     assert_equal(len(first.faces), len(second.faces))
     for i in range(len(first.faces)):
         assert_equal(first.faces[i].path, second.faces[i].path)
+
+
+def test_a_lone_surrogate_in_a_name_record_is_dropped_not_fatal() raises:
+    """From the fuzz campaign (#430): a mutated `name` table held a
+    UTF-16 unit in the surrogate range with no partner, and `chr` of
+    it aborted the process inside discovery, which scans every font on
+    the machine and cannot afford to. The unit is dropped; a real
+    pair still decodes."""
+    # "A", a lone high surrogate, "B", in UTF-16BE.
+    var lone: List[UInt8] = [0x00, 0x41, 0xD9, 0x30, 0x00, 0x42]
+    assert_equal(_decode_name(lone, 0, len(lone), 3), "AB")
+    var low_alone: List[UInt8] = [0xDC, 0x00, 0x00, 0x43]
+    assert_equal(_decode_name(low_alone, 0, len(low_alone), 3), "C")
+    # A real pair: U+1F600 as D83D DE00.
+    var pair: List[UInt8] = [0xD8, 0x3D, 0xDE, 0x00]
+    assert_equal(_decode_name(pair, 0, len(pair), 3), String(chr(0x1F600)))
 
 
 def main() raises:

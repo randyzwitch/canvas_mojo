@@ -54,6 +54,7 @@ past its data.
 from std.math import cos, pi, sqrt
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
+from canvas.io import MAX_DECODED_PIXELS
 
 # Bits of lookahead the fast Huffman lookup table covers.
 comptime _LOOKUP_BITS = 9
@@ -152,7 +153,7 @@ struct _HuffTable(Movable):
         self.symbols = List[Int]()
         self.lookup = List[Int]()
 
-    def __init__(out self, counts: List[Int], var symbols: List[Int]):
+    def __init__(out self, counts: List[Int], var symbols: List[Int]) raises:
         """From a DHT segment's sixteen code counts (index 1..16) and
         the symbols in order of increasing code length."""
         self.present = True
@@ -165,6 +166,11 @@ struct _HuffTable(Movable):
         var k = 0
         for length in range(1, 17):
             var n = counts[length]
+            if code + n > (1 << length):
+                # More codes of this length than the length can hold:
+                # an over-subscribed table, whose codes would run past
+                # the lookup array (#430).
+                raise Error("jpeg: over-subscribed Huffman table")
             if n > 0:
                 self.valptr[length] = k
                 self.mincode[length] = code
@@ -515,6 +521,10 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
                 if tq > 3:
                     raise Error("jpeg: quantization table index out of range")
                 p += 1
+                if p + (64 if pq == 0 else 128) > seg_end:
+                    # The 64 entries read below must lie inside the
+                    # segment, or the reads run off its end (#430).
+                    raise Error("jpeg: truncated quantization table")
                 for k in range(64):
                     if pq == 0:
                         qt[tq][k] = Int(data[p])
@@ -532,6 +542,8 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
                 if th > 3 or tc > 1:
                     raise Error("jpeg: Huffman table index out of range")
                 p += 1
+                if p + 16 > seg_end:
+                    raise Error("jpeg: truncated Huffman table")
                 var counts = List[Int](length=17, fill=0)
                 var total = 0
                 for i in range(1, 17):
@@ -552,6 +564,8 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
             if have_frame:
                 raise Error("jpeg: more than one frame header")
             progressive = marker == 0xC2
+            if seg + 6 > seg_end:
+                raise Error("jpeg: truncated frame header")
             var precision = Int(data[seg])
             if precision != 8:
                 raise Error(
@@ -566,6 +580,19 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
             var n = Int(data[seg + 5])
             if height == 0 or width == 0:
                 raise Error("jpeg: invalid image dimensions")
+            if width * height > MAX_DECODED_PIXELS:
+                # A 1 KB file claiming 65535 x 65535 allocated 17 GB
+                # and ran for minutes; refused from the header (#430).
+                raise Error(
+                    String(
+                        "jpeg: ",
+                        width,
+                        " x ",
+                        height,
+                        " pixels exceeds the decode limit of ",
+                        MAX_DECODED_PIXELS,
+                    )
+                )
             if n != 1 and n != 3:
                 raise Error(
                     String(
@@ -574,6 +601,9 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
                         " (only 1 or 3)",
                     )
                 )
+            if seg + 6 + n * 3 > seg_end:
+                # Three bytes per component, inside the segment (#430).
+                raise Error("jpeg: truncated frame header")
             for i in range(n):
                 var b = seg + 6 + i * 3
                 var hv = Int(data[b + 1])
@@ -635,10 +665,18 @@ def decode_jpeg(var data: List[UInt8]) raises -> Canvas:
                     "jpeg: a scan covering fewer components than the frame"
                     " is not supported"
                 )
+            # The component selectors and the three spectral bytes
+            # after them must lie inside the segment (#430).
+            if seg + 1 + ns * 2 + 3 > seg_end:
+                raise Error("jpeg: truncated scan header")
             var scan = List[Int]()
             for i in range(ns):
                 var cid = Int(data[seg + 1 + i * 2])
                 var t = Int(data[seg + 2 + i * 2])
+                # Four tables of each kind; a selector past that
+                # indexed the table lists off their ends (#430).
+                if (t >> 4) > 3 or (t & 15) > 3:
+                    raise Error("jpeg: Huffman table selector out of range")
                 var found = False
                 for c in range(len(comps)):
                     if comps[c].id == cid:

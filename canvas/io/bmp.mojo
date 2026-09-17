@@ -16,6 +16,7 @@ real transparency.
 """
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
+from canvas.io import MAX_DECODED_PIXELS
 from canvas.color import Color
 
 
@@ -220,6 +221,18 @@ def read_bmp(path: String) raises -> Canvas:
     # Negative height is the top-down flag, not an error.
     var top_down = raw_height < 0
     var height = -raw_height if top_down else raw_height
+    if width * height > MAX_DECODED_PIXELS:
+        # The row check below already needs the file to hold every
+        # row, so this is the same rule the other decoders apply
+        # rather than a bomb this one had (#430).
+        raise Error(
+            "bmp: "
+            + String(width)
+            + " x "
+            + String(height)
+            + " pixels exceeds the decode limit of "
+            + String(MAX_DECODED_PIXELS)
+        )
 
     if compression != 0:
         raise Error(

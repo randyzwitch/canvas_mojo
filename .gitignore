@@ -62,3 +62,7 @@ tests/consumer/smoke_out.*
 # Agent worktrees created by Claude Code (see .claude/), never part of
 # the project itself.
 .claude/worktrees/
+
+# Fuzz campaign output: the built harness, in-flight cases and
+# collected findings (see scripts/fuzz.sh).
+.fuzz/

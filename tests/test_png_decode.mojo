@@ -30,7 +30,8 @@ comparing after reduction would clear an opaque pixel too.
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.buffer import Canvas
-from canvas.io.png import read_png
+from canvas.io import MAX_DECODED_PIXELS
+from canvas.io.png import read_png, decode_png, _crc32_table, _write_chunk
 
 comptime _DIR = "tests/png/"
 
@@ -212,6 +213,50 @@ def test_sixteen_bit_indexed_raises() raises:
     and the decoder rejects it before reading a pixel.
     """
     assert_true(_raises(_DIR + "idx16.png"))
+
+
+def _header_only_png(width: Int, height: Int) -> List[UInt8]:
+    """The signature and a well-formed IHDR claiming `width` by
+    `height`, and nothing after: enough for the decoder to size its
+    buffers from the claim, which is the point."""
+    var out: List[UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+    var ihdr = List[UInt8]()
+    for shift in [24, 16, 8, 0]:
+        ihdr.append(UInt8((width >> shift) & 0xFF))
+    for shift in [24, 16, 8, 0]:
+        ihdr.append(UInt8((height >> shift) & 0xFF))
+    ihdr.append(8)  # bit depth
+    ihdr.append(2)  # RGB
+    ihdr.append(0)
+    ihdr.append(0)
+    ihdr.append(0)
+    _write_chunk(out, _crc32_table(), "IHDR", ihdr)
+    return out^
+
+
+def test_a_header_claiming_a_65535_square_raises_before_allocating() raises:
+    """The allocation bomb the fuzz campaign (#430) found in the JPEG
+    decoder, applied here: a header claiming 65535 x 65535 pixels asks
+    for 17 GB from a file of a few dozen bytes. Refused from the
+    header, with the limit in the message."""
+    var raised = False
+    try:
+        _ = decode_png(_header_only_png(65535, 65535))
+    except e:
+        raised = True
+        assert_true("exceeds the decode limit" in String(e), String(e))
+        assert_true(String(MAX_DECODED_PIXELS) in String(e), String(e))
+    assert_true(raised, "must raise, not allocate")
+
+
+def test_a_zero_dimension_is_rejected() raises:
+    var raised = False
+    try:
+        _ = decode_png(_header_only_png(0, 5))
+    except e:
+        raised = True
+        assert_true("invalid image dimensions" in String(e), String(e))
+    assert_true(raised, "a zero width must raise")
 
 
 def main() raises:
