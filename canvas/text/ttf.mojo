@@ -152,13 +152,6 @@ comptime _VALUE_Y_PLACEMENT = 0x0002
 comptime _VALUE_X_ADVANCE = 0x0004
 
 
-def _append_unique(mut values: List[Int], value: Int):
-    for i in range(len(values)):
-        if values[i] == value:
-            return
-    values.append(value)
-
-
 def _contains(values: List[Int], value: Int) -> Bool:
     for i in range(len(values)):
         if values[i] == value:
@@ -368,12 +361,14 @@ struct _PairPosLookups(Movable):
 
 def _feature_lookup_indices(
     data: List[UInt8], table_offset: Int, tags: List[String], script_tag: String
-) raises -> List[Int]:
-    """Walk a `GPOS`/`GSUB` table's script -> feature lists and collect
-    the lookup indices the features named by `tags` select, each listed
-    once. Both tables put their script, feature and lookup list offsets
-    at the same three header positions, so one walk serves `kern` in
-    `GPOS` and the substitution features in `GSUB`.
+) raises -> List[Bool]:
+    """Walk a `GPOS`/`GSUB` table's script -> feature lists and mark
+    the lookup indices the features named by `tags` select: one flag
+    per entry of the LookupList, so a caller walking that list tests
+    membership in constant time. Both tables put their script, feature
+    and lookup list offsets at the same three header positions, so one
+    walk serves `kern` in `GPOS` and the substitution features in
+    `GSUB`.
 
     `script_tag` selects one script, falling back to `DFLT` when the
     font does not list it; an empty tag selects *every* script, which
@@ -385,11 +380,19 @@ def _feature_lookup_indices(
     feature off one of those alone behaves as if the feature were
     absent.
     """
-    var out = List[Int]()
     if table_offset < 0:
-        return out^
+        return List[Bool]()
     var script_list = table_offset + _u16(data, table_offset + 4)
     var feature_list = table_offset + _u16(data, table_offset + 6)
+    var lookup_list = table_offset + _u16(data, table_offset + 8)
+    # The two list sizes bound every index below. A damaged table
+    # naming counts in the tens of thousands made the linear
+    # "append if new" walk quadratic and ran for minutes (#430); an
+    # index past its list is rejected and each list is deduplicated
+    # through a seen-bitmap instead.
+    var feature_count = _u16(data, feature_list)
+    var lookup_count = _u16(data, lookup_list)
+    var out = List[Bool](length=lookup_count, fill=False)
 
     var script_count = _u16(data, script_list)
     var scripts = List[Int]()
@@ -414,14 +417,24 @@ def _feature_lookup_indices(
             scripts.append(fallback)
 
     var feature_indices = List[Int]()
+    var feature_seen = List[Bool](length=feature_count, fill=False)
     for script in scripts:
         var default_lang_sys = _u16(data, script)
         if default_lang_sys == 0:
             continue
         var lang_sys = script + default_lang_sys
         var count = _u16(data, lang_sys + 4)
+        if count > feature_count:
+            raise Error(
+                "ttf: LangSys names more features than the FeatureList holds"
+            )
         for k in range(count):
-            _append_unique(feature_indices, _u16(data, lang_sys + 6 + k * 2))
+            var feature_index = _u16(data, lang_sys + 6 + k * 2)
+            if feature_index >= feature_count:
+                raise Error("ttf: feature index past the FeatureList")
+            if not feature_seen[feature_index]:
+                feature_seen[feature_index] = True
+                feature_indices.append(feature_index)
 
     for i in range(len(feature_indices)):
         var record = feature_list + 2 + feature_indices[i] * 6
@@ -429,8 +442,15 @@ def _feature_lookup_indices(
             continue
         var feature = feature_list + _u16(data, record + 4)
         var count = _u16(data, feature + 2)
+        if count > lookup_count:
+            raise Error(
+                "ttf: feature names more lookups than the LookupList holds"
+            )
         for k in range(count):
-            _append_unique(out, _u16(data, feature + 4 + k * 2))
+            var lookup_index = _u16(data, feature + 4 + k * 2)
+            if lookup_index >= lookup_count:
+                raise Error("ttf: lookup index past the LookupList")
+            out[lookup_index] = True
     return out^
 
 
@@ -446,11 +466,11 @@ def _gpos_kern_lookups(
         return out^
     var lookup_list = gpos_offset + _u16(data, gpos_offset + 8)
     var tags: List[String] = ["kern"]
-    var lookup_indices = _feature_lookup_indices(data, gpos_offset, tags, "")
+    var wanted = _feature_lookup_indices(data, gpos_offset, tags, "")
 
     var lookup_count = _u16(data, lookup_list)
-    for index in range(lookup_count):
-        if not _contains(lookup_indices, index):
+    for index in range(min(lookup_count, len(wanted))):
+        if not wanted[index]:
             continue
         var lookup = lookup_list + _u16(data, lookup_list + 2 + index * 2)
         var lookup_type = _u16(data, lookup)
@@ -895,11 +915,11 @@ def _gsub_subst_lookups(
     for t in range(len(tags)):
         var bit = _feature_bit(tags[t])
         var one_tag: List[String] = [tags[t]]
-        var lookup_indices = _feature_lookup_indices(
+        var wanted = _feature_lookup_indices(
             data, gsub_offset, one_tag, script_tag
         )
-        for index in range(lookup_count):
-            if not _contains(lookup_indices, index):
+        for index in range(min(lookup_count, len(wanted))):
+            if not wanted[index]:
                 continue
             # A lookup two features both select runs once, under the
             # earlier feature, carrying both bits.

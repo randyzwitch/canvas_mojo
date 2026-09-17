@@ -17,7 +17,7 @@ from std.testing import assert_equal, assert_true, TestSuite
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.path import fill_path_aa
-from canvas.text.cff import _interpret
+from canvas.text.cff import _dict_operands, _interpret, _parse_real
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontDatabase, resolve_font_file
 from canvas.text.render import draw_text, measure_text
@@ -402,6 +402,81 @@ def test_synthetic_charstring_calls_a_global_subroutine() raises:
     assert_equal(len(st.outline.points_x), 2)
     assert_equal(st.outline.points_x[1], 150)
     assert_equal(st.outline.points_y[1], 100)
+
+
+# --- Findings of the fuzz campaign (#430). Each was a mutated installed
+# font that ran for minutes; each is rebuilt here as the smallest table
+# that trips the check, so the rejection stays a rejection ---------------
+
+
+def _assert_gpos_rejects(
+    mut data: List[UInt8], at: Int, value: Int, contains: String
+) raises:
+    """Overwrite one u16 of the synthetic GPOS table (offset from the
+    table start, which sits 6 bytes in) and expect the kern walk to
+    raise naming the check."""
+    data[6 + at] = UInt8((value >> 8) & 0xFF)
+    data[6 + at + 1] = UInt8(value & 0xFF)
+    var raised = False
+    try:
+        _ = _gpos_kern_lookups(data, 6)
+    except e:
+        raised = True
+        assert_true(contains in String(e), String(e))
+    assert_true(raised, "must raise: " + contains)
+
+
+def test_fuzz_langsys_naming_more_features_than_the_list_holds_raises() raises:
+    """A LangSys featureIndexCount in the tens of thousands, with each
+    index appended through a linear scan, was quadratic and ran for
+    minutes. It cannot exceed the FeatureList's own count."""
+    var data = _synthetic_gpos(False)
+    _assert_gpos_rejects(data, 0x1A, 2, "LangSys names more features")
+
+
+def test_fuzz_feature_index_past_the_feature_list_raises() raises:
+    var data = _synthetic_gpos(False)
+    _assert_gpos_rejects(data, 0x1C, 5, "feature index past the FeatureList")
+
+
+def test_fuzz_feature_naming_more_lookups_than_the_list_holds_raises() raises:
+    var data = _synthetic_gpos(False)
+    _assert_gpos_rejects(data, 0x28, 3, "feature names more lookups")
+
+
+def test_fuzz_lookup_index_past_the_lookup_list_raises() raises:
+    var data = _synthetic_gpos(False)
+    _assert_gpos_rejects(data, 0x2A, 7, "lookup index past the LookupList")
+
+
+def test_fuzz_cff_real_with_a_huge_exponent_raises() raises:
+    """`_parse_real` scaled by ten once per unit of the exponent, so a
+    DICT real reading 1E999999999 spun for minutes."""
+    var raised = False
+    try:
+        _ = _parse_real("1E999999999")
+    except e:
+        raised = True
+        assert_true("exponent out of range" in String(e), String(e))
+    assert_true(raised, "a nine-digit exponent must raise")
+    # A real one still parses.
+    assert_true(abs(_parse_real("2.5E-1") - 0.25) < 1e-12)
+
+
+def test_fuzz_cff_real_without_a_terminator_raises() raises:
+    """A real's nibbles run to the 0xF terminator; a damaged DICT with
+    none read to the end of the file, building the exponent above."""
+    var dict = List[UInt8]()
+    dict.append(30)  # a real number follows
+    for _ in range(200):
+        dict.append(0xBB)  # "E" nibbles, never 0xF
+    var raised = False
+    try:
+        _ = _dict_operands(dict, 0, len(dict), 18)
+    except e:
+        raised = True
+        assert_true("real number too long" in String(e), String(e))
+    assert_true(raised, "an unterminated real must raise")
 
 
 def main() raises:

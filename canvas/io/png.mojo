@@ -38,6 +38,7 @@ from std.math import iota
 
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
 from canvas.color import Color
+from canvas.io import MAX_DECODED_PIXELS
 from canvas.io.deflate import (
     _MAX_CHAIN as _DEFLATE_MAX_CHAIN,
     _MAX_LAZY as _DEFLATE_MAX_LAZY,
@@ -1203,6 +1204,20 @@ def decode_png(var data: List[UInt8]) raises -> Canvas:
                 raise Error("png: malformed IHDR chunk")
             width = _read_u32_be(data, pos)
             height = _read_u32_be(data, pos + 4)
+            if width == 0 or height == 0:
+                raise Error("png: invalid image dimensions")
+            if width * height > MAX_DECODED_PIXELS:
+                # Before any buffer is sized from the claim (#430).
+                raise Error(
+                    String(
+                        "png: ",
+                        width,
+                        " x ",
+                        height,
+                        " pixels exceeds the decode limit of ",
+                        MAX_DECODED_PIXELS,
+                    )
+                )
             bit_depth = Int(data[pos + 8])
             color_type = Int(data[pos + 9])
             var compression_method = Int(data[pos + 10])

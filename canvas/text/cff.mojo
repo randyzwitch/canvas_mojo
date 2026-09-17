@@ -219,6 +219,12 @@ def _dict_operands(
             i += 1
             var done = False
             while not done:
+                # A real is a handful of nibbles; a run of them with
+                # no terminator is a damaged DICT, and letting it grow
+                # to the end of the file made the exponent loop below
+                # spin for minutes (#430).
+                if text.byte_length() > 64:
+                    raise Error("cff: DICT real number too long")
                 var byte = _u8(data, i)
                 i += 1
                 for half in range(2):
@@ -270,6 +276,10 @@ def _parse_real(text: String) raises -> Float64:
                 exp_negative = True
             elif c >= 48 and c <= 57:
                 exponent = exponent * 10 + (c - 48)
+                # A Float64 cannot hold more anyway, and the scaling
+                # loop below runs once per unit of the exponent.
+                if exponent > 400:
+                    raise Error("cff: DICT real number exponent out of range")
             continue
         if c == 45:
             negative = True

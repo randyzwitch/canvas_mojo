@@ -691,6 +691,19 @@ outside any timed region and digests every byte against
 survey's sampled checksum cannot see. It needs no quiet machine, since
 nothing in it is timed.
 
+Run `pixi run fuzz` over the parsers that read untrusted bytes when a
+release touches one of them, or when enough releases have passed since
+the last campaign: `pixi run fuzz <png|jpeg|bmp|deflate|font> <seeds>
+[minutes] [workers]`, with seeds from `tests/golden`, `tests/png`,
+`tests/jpeg`, `examples` (after `pixi run example`) or a directory of
+the machine's fonts (`scripts/fuzz.sh`'s header has the one-liner that
+symlinks every installed font into one). It mutates seeds and runs the decoder under a time
+and memory limit; anything that kills the process instead of raising is
+collected under `.fuzz/findings/`. It is not in CI, since it needs hours
+on a quiet machine and its output is nondeterministic. Every finding
+becomes a fix plus a fixture under `tests/fuzz/` with a rejection test,
+so the campaign only ever finds new things.
+
 Then bump the version in `pixi.toml` **first** — in both the
 `[workspace]` and `[package]` sections — and tag after: the tag should
 point at the commit that already carries the new version, not the

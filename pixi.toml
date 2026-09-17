@@ -65,6 +65,11 @@ bench-record-digests = "CANVAS_BENCH_MODE=record-digests mojo run -I . benchmark
 # change to a single primitive. See the file's docstring for how to
 # read it and when its numbers are trustworthy.
 micro = "mojo run -I . benchmarks/micro_canvas.mojo"
+# Mutation-fuzz one of the five parsers that read untrusted bytes for
+# a time box: `pixi run fuzz <png|jpeg|bmp|deflate|font> <seeds>
+# [minutes] [workers]`. Not in CI; run before a release, on a quiet
+# machine. Findings collect under .fuzz/findings/ (#430).
+fuzz = "bash scripts/fuzz.sh"
 
 # Roofline: what a row would cost if it did only the work it has to.
 # `roofline` measures this machine's rates, `roofline-census` counts
