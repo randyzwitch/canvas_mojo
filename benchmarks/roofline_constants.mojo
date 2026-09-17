@@ -41,7 +41,7 @@ def _median(var xs: List[Float64]) -> Float64:
 # which reports an impossible 17 TB/s.
 def _fill(mut dst: List[UInt8], n: Int, val: UInt8):
     var d = dst.unsafe_ptr()
-    var v = SIMD[DType.uint8, W](val)
+    var v = SIMD[.uint8, W](val)
     var i = 0
     while i + W <= n:
         d.unsafe_offset(i).unsafe_store(v)
@@ -61,7 +61,7 @@ def _copy(src: List[UInt8], mut dst: List[UInt8], n: Int):
 
 def _read(src: List[UInt8], n: Int) -> Int:
     var s = src.unsafe_ptr()
-    var acc = SIMD[DType.uint8, W](0)
+    var acc = SIMD[.uint8, W](0)
     var i = 0
     while i + W <= n:
         acc += s.unsafe_offset(i).unsafe_load[width=W]()
@@ -119,12 +119,12 @@ def _blend(src: List[UInt8], mut dst: List[UInt8], n: Int):
             31,
             31,
             31,
-        ]().cast[DType.uint32]()
-        var num = v.cast[DType.uint32]() * a32 + dv.cast[DType.uint32]() * (
-            SIMD[DType.uint32, W](255) - a32
+        ]().cast[.uint32]()
+        var num = v.cast[.uint32]() * a32 + dv.cast[.uint32]() * (
+            SIMD[.uint32, W](255) - a32
         )
         d.unsafe_offset(i).unsafe_store(
-            ((num * UInt32(32897)) >> UInt32(23)).cast[DType.uint8]()
+            ((num * UInt32(32897)) >> UInt32(23)).cast[.uint8]()
         )
         i += W
 
@@ -174,7 +174,7 @@ async def _nop_task():
 
 async def _fill_band_async(mut dst: List[UInt8], lo: Int, hi: Int):
     var d = dst.unsafe_ptr()
-    var v = SIMD[DType.uint8, W](7)
+    var v = SIMD[.uint8, W](7)
     var i = lo
     while i + W <= hi:
         d.unsafe_offset(i).unsafe_store(v)

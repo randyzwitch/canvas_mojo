@@ -503,9 +503,7 @@ def _codes(
                 var d = n0 + copied
                 var k = 0
                 while k + 16 <= chunk:
-                    op.store[DType.uint8, 16](
-                        d + k, op.load[DType.uint8, 16](start + k)
-                    )
+                    op.store[.uint8, 16](d + k, op.load[.uint8, 16](start + k))
                     k += 16
                 while k < chunk:
                     op[d + k] = op[start + k]

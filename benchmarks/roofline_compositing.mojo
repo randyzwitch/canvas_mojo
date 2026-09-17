@@ -43,10 +43,10 @@ def _cheap(src: List[UInt8], mut dst: List[UInt8], n: Int):
     var d = dst.unsafe_ptr()
     var i = 0
     while i + W <= n:
-        var sv = s.unsafe_offset(i).unsafe_load[width=W]().cast[DType.uint16]()
-        var dv = d.unsafe_offset(i).unsafe_load[width=W]().cast[DType.uint16]()
+        var sv = s.unsafe_offset(i).unsafe_load[width=W]().cast[.uint16]()
+        var dv = d.unsafe_offset(i).unsafe_load[width=W]().cast[.uint16]()
         d.unsafe_offset(i).unsafe_store(
-            (sv + ((dv * (255 - sv)) >> 8)).cast[DType.uint8]()
+            (sv + ((dv * (255 - sv)) >> 8)).cast[.uint8]()
         )
         i += W
 
@@ -93,12 +93,12 @@ def _exact(src: List[UInt8], mut dst: List[UInt8], n: Int):
             31,
             31,
             31,
-        ]().cast[DType.uint32]()
-        var num = v.cast[DType.uint32]() * a32 + dv.cast[DType.uint32]() * (
-            SIMD[DType.uint32, W](255) - a32
+        ]().cast[.uint32]()
+        var num = v.cast[.uint32]() * a32 + dv.cast[.uint32]() * (
+            SIMD[.uint32, W](255) - a32
         )
         d.unsafe_offset(i).unsafe_store(
-            ((num * UInt32(MUL)) >> UInt32(SH)).cast[DType.uint8]()
+            ((num * UInt32(MUL)) >> UInt32(SH)).cast[.uint8]()
         )
         i += W
 
@@ -106,13 +106,13 @@ def _exact(src: List[UInt8], mut dst: List[UInt8], n: Int):
 def _lanes[
     LW: Int
 ](sr: Int, sg: Int, sb: Int) -> Tuple[
-    SIMD[DType.uint32, LW], SIMD[DType.uint32, LW], SIMD[DType.uint32, LW]
+    SIMD[.uint32, LW], SIMD[.uint32, LW], SIMD[.uint32, LW]
 ]:
     """Source colour, the keep mask and the alpha mask, laid out for a
     span of `LW / 4` pixels."""
-    var cs = SIMD[DType.uint32, LW]()
-    var keep = SIMD[DType.uint32, LW]()
-    var alpha = SIMD[DType.uint32, LW]()
+    var cs = SIMD[.uint32, LW]()
+    var keep = SIMD[.uint32, LW]()
+    var alpha = SIMD[.uint32, LW]()
     for k in range(LW):
         var ch = k % 4
         if ch == 0:
@@ -133,14 +133,14 @@ def _flat[
     `Canvas.fill translucent` does, source terms hoisted."""
     var d = dst.unsafe_ptr()
     var parts = _lanes[LW](sr, sg, sb)
-    var sa_v = SIMD[DType.uint32, LW](UInt32(sa))
-    var inv_v = SIMD[DType.uint32, LW](UInt32(255 - sa))
+    var sa_v = SIMD[.uint32, LW](UInt32(sa))
+    var inv_v = SIMD[.uint32, LW](UInt32(255 - sa))
     var i = 0
     while i + LW <= n:
-        var cb = d.unsafe_offset(i).unsafe_load[width=LW]().cast[DType.uint32]()
+        var cb = d.unsafe_offset(i).unsafe_load[width=LW]().cast[.uint32]()
         var out = ((sa_v * parts[0] + inv_v * cb) * UInt32(MUL)) >> UInt32(SH)
         out = (out & parts[1]) | parts[2]
-        d.unsafe_offset(i).unsafe_store(out.cast[DType.uint8]())
+        d.unsafe_offset(i).unsafe_store(out.cast[.uint8]())
         i += LW
 
 
@@ -151,15 +151,15 @@ def _mul_span[
     the arithmetic a multiply span performs, destination opaque."""
     var d = dst.unsafe_ptr()
     var parts = _lanes[LW](sr, sg, sb)
-    var sa_v = SIMD[DType.uint32, LW](UInt32(sa))
-    var inv_v = SIMD[DType.uint32, LW](UInt32(255 - sa))
+    var sa_v = SIMD[.uint32, LW](UInt32(sa))
+    var inv_v = SIMD[.uint32, LW](UInt32(255 - sa))
     var i = 0
     while i + LW <= n:
-        var cb = d.unsafe_offset(i).unsafe_load[width=LW]().cast[DType.uint32]()
+        var cb = d.unsafe_offset(i).unsafe_load[width=LW]().cast[.uint32]()
         var b = (cb * parts[0] * UInt32(MUL)) >> UInt32(SH)
         var out = ((sa_v * b + inv_v * cb) * UInt32(MUL)) >> UInt32(SH)
         out = (out & parts[1]) | parts[2]
-        d.unsafe_offset(i).unsafe_store(out.cast[DType.uint8]())
+        d.unsafe_offset(i).unsafe_store(out.cast[.uint8]())
         i += LW
 
 

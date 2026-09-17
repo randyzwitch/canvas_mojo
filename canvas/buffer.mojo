@@ -186,7 +186,7 @@ def _store_packed_span(
     """
     comptime LANES = 8
     var p32 = pixels.unsafe_ptr().unsafe_bitcast[UInt32]()
-    var vec = SIMD[DType.uint32, LANES](packed)
+    var vec = SIMD[.uint32, LANES](packed)
     var idx = start
     var end = start + count
     while idx + LANES <= end:
@@ -2103,8 +2103,8 @@ struct Canvas(Copyable, DrawTarget, Movable):
         var cg = Int(color.g) * sa
         var cb = Int(color.b) * sa
         comptime W = 16
-        var src_v = SIMD[DType.uint32, W]()
-        var inv_v = SIMD[DType.uint32, W](UInt32(inv))
+        var src_v = SIMD[.uint32, W]()
+        var inv_v = SIMD[.uint32, W](UInt32(inv))
         for k in range(W):
             var ch = k % 4
             if ch == 0:
@@ -2129,13 +2129,11 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 ):
                     break
                 var dst = (
-                    p.unsafe_offset(idx)
-                    .unsafe_load[width=W]()
-                    .cast[DType.uint32]()
+                    p.unsafe_offset(idx).unsafe_load[width=W]().cast[.uint32]()
                 )
                 var t = src_v + dst * inv_v
                 var out = (t * UInt32(_DIV255_MUL)) >> UInt32(_DIV255_SHIFT)
-                p.unsafe_offset(idx).unsafe_store(out.cast[DType.uint8]())
+                p.unsafe_offset(idx).unsafe_store(out.cast[.uint8]())
                 idx += 4 * BYTES_PER_PIXEL
                 remaining -= 4
             for _ in range(remaining):

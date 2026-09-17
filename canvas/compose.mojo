@@ -185,7 +185,7 @@ comptime _WIDE_BYTES = _GROUP_BYTES * _WIDE
 # leaves zero exactly when every alpha is zero.
 comptime _GROUP = 8
 comptime _GROUP_BYTES = _GROUP * BYTES_PER_PIXEL
-comptime _NOT_ALPHA = SIMD[DType.uint8, _GROUP_BYTES](
+comptime _NOT_ALPHA = SIMD[.uint8, _GROUP_BYTES](
     255,
     255,
     255,
@@ -219,7 +219,7 @@ comptime _NOT_ALPHA = SIMD[DType.uint8, _GROUP_BYTES](
     255,
     0,
 )
-comptime _ALPHA_ONLY = SIMD[DType.uint8, _GROUP_BYTES](
+comptime _ALPHA_ONLY = SIMD[.uint8, _GROUP_BYTES](
     0,
     0,
     0,
@@ -289,8 +289,8 @@ def _blend_group_opaque(
 
 
 def _broadcast_alpha(
-    v: SIMD[DType.uint8, _GROUP_BYTES]
-) -> SIMD[DType.uint32, _GROUP_BYTES]:
+    v: SIMD[.uint8, _GROUP_BYTES]
+) -> SIMD[.uint32, _GROUP_BYTES]:
     """Each pixel's alpha lane copied across its four lanes, so a
     per-pixel alpha can multiply a per-channel vector."""
     return v.shuffle[
@@ -326,13 +326,13 @@ def _broadcast_alpha(
         31,
         31,
         31,
-    ]().cast[DType.uint32]()
+    ]().cast[.uint32]()
 
 
 def _blend_group_with_alpha(
     mut dst: Canvas,
-    v: SIMD[DType.uint8, _GROUP_BYTES],
-    a32: SIMD[DType.uint32, _GROUP_BYTES],
+    v: SIMD[.uint8, _GROUP_BYTES],
+    a32: SIMD[.uint32, _GROUP_BYTES],
     d_idx: Int,
 ) -> Bool:
     """Composite eight source pixels `v` onto `dst` at `d_idx` with
@@ -351,19 +351,17 @@ def _blend_group_with_alpha(
     var dv = dp.unsafe_offset(d_idx).unsafe_load[width=W]()
     if (dv | _NOT_ALPHA).reduce_min() != 255:
         return False
-    var num = v.cast[DType.uint32]() * a32 + dv.cast[DType.uint32]() * (
-        SIMD[DType.uint32, W](255) - a32
+    var num = v.cast[.uint32]() * a32 + dv.cast[.uint32]() * (
+        SIMD[.uint32, W](255) - a32
     )
     var outv = ((num * UInt32(_DIV255_MUL)) >> UInt32(_DIV255_SHIFT)).cast[
-        DType.uint8
+        .uint8
     ]()
     dp.unsafe_offset(d_idx).unsafe_store(outv | _ALPHA_ONLY)
     return True
 
 
-def _div255_simd(
-    v: SIMD[DType.uint32, _GROUP_BYTES]
-) -> SIMD[DType.uint32, _GROUP_BYTES]:
+def _div255_simd(v: SIMD[.uint32, _GROUP_BYTES]) -> SIMD[.uint32, _GROUP_BYTES]:
     """`_div255` per lane, the same multiply and shift."""
     return (v * UInt32(_DIV255_MUL)) >> UInt32(_DIV255_SHIFT)
 
@@ -407,7 +405,7 @@ def _blend_group_scaled[
             .unsafe_load[width=_GROUP]()
         )
         var c32 = (
-            c8.interleave(c8).interleave(c8.interleave(c8)).cast[DType.uint32]()
+            c8.interleave(c8).interleave(c8.interleave(c8)).cast[.uint32]()
         )
         a32 = _div255_simd(a32 * c32)
     if opacity != 255:
