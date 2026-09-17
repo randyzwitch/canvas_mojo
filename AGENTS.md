@@ -164,7 +164,8 @@ resolves.
   buffer; copy in doubling chunks with vector loads.
 - A method that calls a raising function must be `raises`; `Path`'s
   builder methods raise, so anything building a Path does.
-- `@parameter if` is deprecated; write `comptime if`.
+- `@parameter if` and `@parameter for` are gone (removed in Mojo 1.1);
+  write `comptime if` and `comptime for`.
 - Structs with a `List` field cannot be `ImplicitlyCopyable`; a `String`
   field can. Give a struct `Copyable` explicitly when another struct
   needs to copy it.
@@ -174,8 +175,9 @@ resolves.
   to read on both: `InlineArray` is `Array` (both accept `Array`);
   a `stat` timespec's sub-second field is `tv_subsec` on 1.0 and
   `tv_nsec` on 1.1, and `as_nanoseconds()` is on both; `String`'s
-  C-string accessor is `as_c_string_slice` on 1.0 and
-  `as_c_string_span` on 1.1, with no spelling common to both.
+  C-string accessor is `as_c_string_slice().unsafe_ptr()` on 1.0 and
+  `as_c_string_span().ptr()` on 1.1, with no spelling common to both
+  (the code uses 1.1's).
 
 ## Concurrency, which is where the sharp edges are
 

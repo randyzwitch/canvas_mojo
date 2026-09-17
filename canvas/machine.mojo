@@ -135,7 +135,7 @@ def _sysctl_int(name: StaticString) -> Int:
     # ABIs this builds for, and this version has no spelling for a
     # null `Pointer` that type-checks in a call this shape.
     var err = external_call["sysctlbyname", Int32](
-        name.as_c_string_slice().unsafe_ptr(),
+        name.as_c_string_span().ptr(),
         Pointer(to=value),
         Pointer(to=size),
         Int(0),
