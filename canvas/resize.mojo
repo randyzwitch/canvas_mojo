@@ -136,22 +136,15 @@ def downsample(source: Canvas, factor: Int) raises -> Canvas:
     # pixel in its rows before anything reads them, so clearing first
     # changes nothing (#348).
     #
-    # What it costs is not the clearing. A zero fill of this buffer is
-    # 23 us at 82 GB/s, and at one worker the two versions are within
-    # that of each other. The cost is that filling it here leaves every
-    # line of the output owned by *this* thread's CCX, so each band's
-    # first write to a line has to take ownership across Infinity
-    # Fabric. Measured on a 1600x1200 source, downsample by 2:
-    #
-    #     workers   uninit    zero-filled
-    #           1   720.2 us      744.8 us
-    #           2   366.9 us      830.5 us
-    #          64   195.3 us      361.3 us
-    #
-    # Serial, the fill is what it looks like. Banded, it is 1.85x. So
-    # do not pre-touch a buffer that band tasks are about to write --
-    # the same slice-locality rule as `_MIN_PARALLEL_CLEAR`, here about
-    # who owns a line rather than whether it fits.
+    # What it costs is not the clearing. At one worker, zero-filling
+    # this buffer first and not doing so cost about the same. The cost
+    # is that filling it here leaves every line of the output owned by
+    # *this* thread's CCX, so each band's first write to a line has to
+    # take ownership across Infinity Fabric -- a cost that only shows
+    # up once the work is banded across workers. So do not pre-touch a
+    # buffer that band tasks are about to write -- the same
+    # slice-locality rule as `_MIN_PARALLEL_CLEAR`, here about who owns
+    # a line rather than whether it fits.
     #
     # `test_every_downsample_kernel_writes_every_output_byte` and its
     # transparent-block companion are the complete-write guarantee, and
@@ -1060,10 +1053,10 @@ def resize(source: Canvas, width: Int, height: Int) raises -> Canvas:
     # downsample computes: every weight is 1 and the count is the
     # factor, so the weighted mean reduces to the block mean. Taking
     # its fixed-factor kernels rather than the general path saves a
-    # Float64 intermediate of `width * source.height * 4` doubles --
-    # 30.7 MB at 1600x1200 -> 2x -- and 3.2x the time, for bytes that
-    # were already identical. The equivalence is checked past this
-    # dispatch by test_the_general_filter_still_agrees_with_downsample.
+    # Float64 intermediate of `width * source.height * 4` doubles and
+    # the time to fill it, for bytes that were already identical. The
+    # equivalence is checked past this dispatch by
+    # test_the_general_filter_still_agrees_with_downsample.
     if source.width % width == 0 and source.height % height == 0:
         var factor = source.width // width
         if factor == source.height // height:

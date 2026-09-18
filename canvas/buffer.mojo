@@ -1973,10 +1973,9 @@ struct Canvas(Copyable, DrawTarget, Movable):
         slice bands make it *slower* (see `_clear_packed`). Every other
         case -- another blend mode, a translucent color, an active clip
         mask -- reads each destination pixel and does per-pixel
-        arithmetic on it. That is ALU-bound and scales: the multiply
-        span measured 199 us serial and 60 us across bands over a
-        600x400 rectangle, and the same kernel is what `#350` had
-        priced against a floor 6.4x too cheap to notice.
+        arithmetic on it. That is ALU-bound and scales across bands,
+        the same kernel `#350` had priced against a floor that was
+        too cheap to notice.
 
         Only the three top-level callers reach this. `aa_area`'s span
         writer keeps calling `_fill_region` directly, since it already
