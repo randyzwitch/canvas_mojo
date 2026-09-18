@@ -1559,9 +1559,9 @@ def deflate_parallel(
 
     That is what makes it nearly free in bytes. Coding each chunk as
     its own block instead would give every chunk a dynamic Huffman
-    header of its own, which on a chart-sized image cost more than the
-    image: 21,757 bytes became 41,233. Sharing one code leaves only
-    the matches that would have reached across a chunk boundary.
+    header of its own, which on a small image can cost more than the
+    image itself. Sharing one code leaves only the matches that would
+    have reached across a chunk boundary.
 
     The tokens concatenate because every distance a chunk emits points
     inside that chunk, so it reaches back only over bytes already

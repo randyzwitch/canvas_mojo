@@ -596,8 +596,7 @@ def _area_edges_aa(
     Deciding on the bounding box instead fanned a thin diagonal out
     over every core for a few thousand cells of work; finding every
     row's exact span first, as this once did, put a walk over every
-    edge-row ahead of the first task, 675 us of a dashed series'
-    3.5 ms at 64 workers (#383).
+    edge-row ahead of the first task (#383).
     """
     # `clamp_lo`/`clamp_hi` bound the rows written, past the outward
     # padding above. A batch that bands the canvas needs that: the

@@ -536,7 +536,8 @@ def _replay_supersampled(
     in a space `factor` times this canvas, and never materializes at
     that size. Each output band is one task, which is where the
     parallelism belongs -- a band that fanned out inside its own
-    `downsample` measured 2.2x slower than not banding at all (#391).
+    `downsample` instead measured slower than not banding at all
+    (#391).
     """
     if len(batch.ops) == 0:
         return

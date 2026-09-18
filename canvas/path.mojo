@@ -2075,8 +2075,8 @@ def _path_coverage_mask(
     """
     # Zeroed with an explicit memset rather than `fill=0`: whether the
     # fill loop lowers to one is an optimizer decision that changed
-    # under it once this module held a closure, and cost a rectangle
-    # clip 18x (`push_clip_path rect mask` in the survey).
+    # under it once this module held a closure, regressing a rectangle
+    # clip badly (`push_clip_path rect mask` in the survey).
     var mask = List[UInt8](unsafe_uninit_length=width * height)
     unsafe_memset_zero(mask.unsafe_ptr(), width * height)
     var subpaths = _flatten(path, curve_steps)

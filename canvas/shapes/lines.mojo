@@ -1688,14 +1688,9 @@ def _stroke_edges(
     the edge: where two overlapping bodies share a pixel it adds their
     coverages instead of taking the union, so a stretch the path
     nearly retraces reads up to one pixel column bolder along its
-    edge, and a hairpin's tip a few levels darker. Measured on a
-    3000-segment series turning through nearly 180 degrees at every
-    peak, against the union sampled 16x16 per pixel: 253 of 165,072
-    inked pixels are more than 64 levels off and the mean error is
-    3.1 levels, where the 4x4 sampled sweep of quads and joint disks
-    this replaced averaged 12.1 levels, at 23.7 ms serial against the
-    outline's 3.6. Skia and Cairo stroke the same way and accept the
-    same artifact; the sampled sweep stays for the one shape below.
+    edge, and a hairpin's tip a few levels darker. Skia and Cairo
+    stroke the same way and accept the same artifact; the sampled
+    sweep stays for the one shape below.
 
     A closed path stroked wider than its curve's radius of curvature
     is not an overlap but a wrong ring: the inner offset passes

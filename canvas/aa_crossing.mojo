@@ -325,8 +325,8 @@ struct _EdgeTable(Copyable, Movable):
         closing edge last: what `add_edge` over each consecutive pair
         records, mapped and with horizontals dropped the same way,
         written through pointers into lists grown once. Seven appends
-        per edge, each with its capacity check, were 138 us of a
-        3000-point stroke outline's build; this is 40 (#383).
+        per edge, each with its capacity check, cost noticeably more
+        of a stroke outline's build time (#383).
         """
         var n = len(points)
         if n < 2:
@@ -771,11 +771,10 @@ def _rules_agree(mut edges: _EdgeTable, min_y: Int, max_y: Int) -> Bool:
     Edges move a little in x per row and rarely swap, so re-sorting a
     nearly ordered list is close to linear, where sorting each row from
     scratch is quadratic in the crossings. That difference is not
-    academic: a per-row sort of a table in admission order made four
-    39-curve rows 1.11x to 1.44x slower than the sampled sweep this
-    gate exists to avoid, since those paths put about a hundred
-    crossings on a row and overlap themselves, so the gate paid the
-    sort and then reported failure (#374, #375).
+    academic: a per-row sort of a table in admission order made
+    self-overlapping paths with about a hundred crossings on a row
+    slower than the sampled sweep this gate exists to avoid, since the
+    gate paid the sort and then reported failure (#374, #375).
 
     Sampled at each row's center. A self-overlap that opens and closes
     between two scanlines is not seen, which is a sub-pixel difference

@@ -106,35 +106,20 @@ struct PngLevel(Copyable, Equatable, ImplicitlyCopyable, Movable, Writable):
     choosing between unfiltered and Sub-filtered scanlines.
 
     FAST settles the filter choice without compressing anything, when
-    the image is flat enough for the answer not to be in doubt.
-    DEFAULT is what the writer has always done and stays the default.
-    SMALL compresses the whole image both ways rather than sampling
-    every eighth row, and walks a hash chain four times longer.
+    the image is flat enough for the answer not to be in doubt; it
+    produces the same bytes as DEFAULT there, falling back to
+    sampling only once content gets grainy enough that the probe
+    declines. DEFAULT is what the writer has always done and stays
+    the default. SMALL compresses the whole image both ways rather
+    than sampling every eighth row, and walks a hash chain four times
+    longer.
 
-    Measured across five images, best of five each:
-
-                          FAST      DEFAULT     SMALL
-      chart 800x600     3.3 ms      4.1 ms     7.8 ms
-                        9,964 B     9,964 B    9,916 B
-      gradient 800x600  3.3 ms      4.3 ms     7.5 ms
-                        13,989 B    13,989 B   10,958 B
-      grainy 400x300    39.1 ms     39.0 ms    59.0 ms
-                        182,136 B   182,136 B  181,793 B
-      RGBA 400x300      1.3 ms      1.7 ms     3.7 ms
-                        4,658 B     4,658 B    4,631 B
-
-    FAST is about a fifth faster on flat content and identical on
-    grainy content, where the probe declines and it falls back. It
-    produced the same bytes as DEFAULT on all five, which is what the
-    probe is for: it does not guess which filter is better, only
-    whether the question is easy.
-
-    Two other ways to make FAST faster were tried and dropped. A short
-    chain with the look-ahead off makes a gradient three times larger
-    for no time saved, because unfiltered gradient rows are slow to
-    deflate. And bounding how much of a match goes into the hash
-    chains, the one knob that still moves LZ77 time, does not bind at
-    any setting that leaves smooth images intact.
+    Two other ways to make FAST faster were tried and dropped: a
+    shorter chain with the look-ahead off enlarges a gradient's
+    output, because unfiltered gradient rows are slow to deflate; and
+    bounding how much of a match goes into the hash chains, the one
+    knob that still moves LZ77 time, does not bind at any setting
+    that leaves smooth images intact.
     """
 
     var _value: Int
