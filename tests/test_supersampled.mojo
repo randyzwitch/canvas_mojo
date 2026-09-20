@@ -20,6 +20,8 @@ from canvas.blur import blur
 from canvas.shapes.circles import fill_circles_aa
 from canvas.text.font_cache import FontCache
 from canvas.text.render import draw_text
+from canvas.path import Path, stroke_path_aa
+from canvas.shapes.lines import draw_polyline_aa
 
 comptime BG = Color(255, 255, 255)
 comptime INK = Color(30, 60, 120, 200)
@@ -427,6 +429,91 @@ def test_an_unrecordable_primitive_materializes() raises:
         "a blur has no recorded form, so the region must materialize",
     )
     out.end_supersampled()
+
+
+def _one_point_strokes(mut c: Canvas) raises:
+    """A stroked path of one `move_to` and a one-point polyline: the
+    degenerate strokes that draw a single pixel. Placed so the pixel's
+    enlarged-space row is past the output canvas's own rows."""
+    var p = Path()
+    p.move_to(100.0, 70.0)
+    stroke_path_aa(c, p, INK, 2.0)
+    var pts: List[FPoint] = [FPoint(20.4, 15.7)]
+    draw_polyline_aa(c, pts, Color(200, 40, 40, 160), 1.0)
+
+
+def test_a_one_point_stroke_in_a_region_matches_the_recipe() raises:
+    """A one-point stroke draws one pixel through `set_pixel`, at the
+    transformed position. Inside a region that position is in the
+    enlarged space, and `in_bounds` accepts it there on purpose, so
+    before `set_pixel` recorded while batching the write went straight
+    into the output buffer at an index it does not have: a store past
+    the end of `pixels`, which is the crash dataviz_mojo#732 traced to
+    this line. Recorded, it lands where the recipe puts it, and the
+    region keeps its banded replay."""
+    var region = Canvas(120, 90, BG)
+    region.begin_supersampled(3, BG)
+    _one_point_strokes(region)
+    assert_equal(
+        region._region_materialized,
+        False,
+        "a one-point stroke must not materialize the enlarged buffer",
+    )
+    region.end_supersampled()
+
+    var scratch = Canvas(360, 270, BG)
+    scratch.translate(1.0, 1.0)
+    scratch.scale(3.0, 3.0)
+    _one_point_strokes(scratch)
+    var recipe = downsample(scratch, 3)
+    _assert_same(region, recipe, "one-point strokes in a region")
+    # And something was drawn: two canvases can also agree on nothing.
+    var dot = region.get_pixel(100, 70)
+    assert_true(
+        dot.r != BG.r or dot.g != BG.g or dot.b != BG.b,
+        "the one-pixel stroke lands at (100, 70)",
+    )
+
+
+def test_set_pixel_in_a_region_matches_the_recipe() raises:
+    """`set_pixel` takes device coordinates, which inside a region are
+    the enlarged space's -- the same pixel the two-step recipe's
+    scratch would be given. One of the two here is past the output
+    canvas's rows, the case that used to write out of range. It has
+    no recorded form, so like any other immediate primitive it makes
+    the region materialize, and the pixels are still the recipe's."""
+    var region = Canvas(120, 90, BG)
+    region.begin_supersampled(3, BG)
+    region.set_pixel(301, 211, INK)
+    assert_equal(
+        region._region_materialized,
+        True,
+        "set_pixel has no recorded form, so the region must materialize",
+    )
+    region.set_pixel(5, 7, Color(200, 40, 40, 255))
+    region.end_supersampled()
+
+    var scratch = Canvas(360, 270, BG)
+    scratch.set_pixel(301, 211, INK)
+    scratch.set_pixel(5, 7, Color(200, 40, 40, 255))
+    var recipe = downsample(scratch, 3)
+    _assert_same(region, recipe, "set_pixel in a region")
+
+
+def test_get_pixel_while_recording_does_not_read_past_the_buffer() raises:
+    """The read side of the same hole: while a region records,
+    `in_bounds` accepts the enlarged space, and `get_pixel` used to
+    follow it into memory the buffer does not have. Past the buffer
+    is off-canvas, so it reads as such; inside it, what it holds."""
+    var region = Canvas(120, 90, BG)
+    region.begin_supersampled(3, BG)
+    var past = region.get_pixel(301, 211)
+    assert_equal(past.r, 0, "past the buffer reads as off-canvas (r)")
+    assert_equal(past.g, 0, "past the buffer reads as off-canvas (g)")
+    assert_equal(past.b, 0, "past the buffer reads as off-canvas (b)")
+    var held = region.get_pixel(5, 7)
+    assert_equal(held.r, BG.r, "inside the buffer reads what it holds")
+    region.end_supersampled()
 
 
 def main() raises:

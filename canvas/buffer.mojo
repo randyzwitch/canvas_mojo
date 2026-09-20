@@ -41,6 +41,7 @@ from canvas.batch_ops import (
     _OP_PUSH_CLIP,
     _clip_op,
     _glyph_op,
+    _rect_op,
 )
 from canvas.resize import downsample
 from canvas.geometry import FPoint, Matrix2D, _mapped_bounds, _mapped_rect
@@ -1450,12 +1451,26 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """Write `color` at (x, y), a no-op if it's off-canvas or
         outside the active clip.
 
+        Inside a `begin_batch` or `begin_supersampled` region this is
+        an immediate primitive like a hard-edged shape: it draws what
+        is pending first, so it lands in order, and inside a region
+        that gives up the banded replay (`_flush_batch`). It cannot
+        simply write: while a region records, `in_bounds` accepts the
+        enlarged space on purpose, so a coordinate past this canvas's
+        own rows is accepted and, written directly, is a store past
+        the end of `pixels`. The one-point case of an anti-aliased
+        polyline reached exactly that from inside a supersampled
+        region (dataviz_mojo#732); a recordable primitive with a
+        one-pixel case records it through `_record_pixel` instead.
+
         Args:
             x: Column to write.
             y: Row to write.
             color: Color to write, combined with the existing pixel
                 under the current blend mode.
         """
+        if self._batch_depth != 0:
+            self._flush_batch()
         if not self.in_bounds(x, y):
             return
         if not self.in_clip(x, y):
@@ -1464,6 +1479,25 @@ struct Canvas(Copyable, DrawTarget, Movable):
             self._set_pixel_masked(x, y, color)
             return
         self.write_pixel(x, y, color)
+
+    def _record_pixel(mut self, x: Int, y: Int, color: Color):
+        """`set_pixel` for a primitive that is otherwise recordable and
+        has a one-pixel case, called only while `_batching()`: the
+        pixel goes into the batch as a one-pixel rectangle, so the
+        primitive keeps its place in the order and a supersampled
+        region keeps its banded replay rather than materializing for
+        a dot.
+
+        The checks are `set_pixel`'s, which is what `_rect_op` asks
+        for: already intersected with the canvas and the rectangle
+        clip. A clip path active at the time is applied when the op
+        draws, as it is for every other recorded rectangle.
+        """
+        if not self.in_bounds(x, y):
+            return
+        if not self.in_clip(x, y):
+            return
+        self._record(_rect_op(x, y, 1, 1, color))
 
     def _set_pixel_masked(mut self, x: Int, y: Int, color: Color):
         """`set_pixel`'s clip-path branch, kept out of line.
@@ -1758,6 +1792,13 @@ struct Canvas(Copyable, DrawTarget, Movable):
         """
         if not self.in_bounds(x, y):
             return Color(0, 0, 0)
+        if self._supersample != 0 and not self._region_materialized:
+            # Recording: `in_bounds` accepts the enlarged space so
+            # recorders keep geometry past this buffer's rows, but
+            # nothing is drawn yet and `pixels` is still this canvas's
+            # own size. A read past it is off-canvas, not a fault.
+            if x >= self.width or y >= self.height:
+                return Color(0, 0, 0)
         return self.read_pixel(x, y)
 
     def read_pixel(self, x: Int, y: Int) -> Color:
