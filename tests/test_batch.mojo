@@ -393,5 +393,27 @@ def test_batching_through_the_trait() raises:
     _assert_same(direct, raster, "raster through the trait")
 
 
+def _pixel_between_disks(mut c: Canvas):
+    """A translucent disk, one opaque pixel at its center, a second
+    translucent disk over both."""
+    fill_circle_aa(c, 100.0, 100.0, 20.0, Color(30, 60, 120, 160))
+    c.set_pixel(100, 100, Color(255, 0, 0, 255))
+    fill_circle_aa(c, 100.0, 100.0, 12.0, Color(220, 60, 40, 120))
+
+
+def test_set_pixel_inside_a_batch_lands_in_order() raises:
+    # `set_pixel` is a primitive, so inside a batch it is recorded and
+    # drawn in sequence. Written immediately instead, the pixel would
+    # sit under both disks rather than between them, and the result
+    # would differ from drawing with no batch at all.
+    var direct = Canvas(W, H, BG)
+    _pixel_between_disks(direct)
+    var batched = Canvas(W, H, BG)
+    batched.begin_batch()
+    _pixel_between_disks(batched)
+    batched.end_batch()
+    _assert_same(direct, batched, "set_pixel inside a batch")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

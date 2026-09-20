@@ -533,9 +533,15 @@ def _draw_polyline_core_aa(
     if count == 0:
         return
     if count == 1:
-        canvas.set_pixel(
-            round_to_int(points[0].x), round_to_int(points[0].y), color
-        )
+        # One pixel, recorded when a batch is open so it keeps its
+        # place in the order and a supersampled region keeps its
+        # banded replay (see `Canvas.set_pixel`).
+        var px = round_to_int(points[0].x)
+        var py = round_to_int(points[0].y)
+        if canvas._batching():
+            canvas._record_pixel(px, py, color)
+        else:
+            canvas.set_pixel(px, py, color)
         return
 
     if canvas._batching():
@@ -598,8 +604,18 @@ def _stroke_transformed(
         return
     var matrix = canvas.current_transform()
     if count == 1:
+        # The mapped pixel is in device space, which inside a
+        # supersampled region is the enlarged one. Recorded, it lands
+        # in the band that holds that row; written directly it would
+        # be a store into a buffer that does not have it (#732 in
+        # dataviz_mojo, a one-point polar series).
         var p = matrix.apply(points[0].x, points[0].y)
-        canvas.set_pixel(round_to_int(p.x), round_to_int(p.y), color)
+        var px = round_to_int(p.x)
+        var py = round_to_int(p.y)
+        if canvas._batching():
+            canvas._record_pixel(px, py, color)
+        else:
+            canvas.set_pixel(px, py, color)
         return
     if canvas._batching():
         canvas._record_stroke(
