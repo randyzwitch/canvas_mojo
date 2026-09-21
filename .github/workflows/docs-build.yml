@@ -44,16 +44,20 @@ jobs:
       - name: Install test fonts (Linux)
         run: sudo apt-get update && sudo apt-get install -y fonts-ubuntu fonts-dejavu-core fonts-urw-base35
 
+      # The `docs` environment carries the release compiler alongside
+      # hugo and go (see pixi.toml): the site describes the library as
+      # the compiler consumers have builds it, never a nightly.
       - uses: prefix-dev/setup-pixi@v0.9.0
         with:
           pixi-version: v0.78.0
+          environments: docs
           cache: true
 
       - name: Render examples
-        run: pixi run example
+        run: pixi run -e docs example
 
       - name: Check snippets, render guide figures, build site, and check local links
-        run: pixi run docs
+        run: pixi run -e docs docs
 
       # The same "built against Node.js 20" story as ci.yml's own
       # actions/checkout@v7 pin, for the two Pages actions: v5 of

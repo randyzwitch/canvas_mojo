@@ -48,17 +48,24 @@ jobs:
       # an older pixi the backend floor in pixi.toml is unsatisfiable
       # (dataviz_mojo#603). v0.78.0 is the version this was verified
       # on, not the newest. It also reads pixi.lock's v7 format.
-      - name: Install pixi and the root environment
+      # `environments: release`, and `-e release` on every task below.
+      # The default environment in pixi.toml is the nightly one, which
+      # is what a developer gets locally on purpose; what gates a pull
+      # request is the released compiler consumers install. Naming it
+      # here rather than relying on the default also means installing
+      # and running agree, so the run does not trigger a second solve.
+      - name: Install pixi and the release environment
         uses: prefix-dev/setup-pixi@v0.9.0
         with:
           pixi-version: v0.78.0
+          environments: release
           cache: true
 
       - name: Run tests
-        run: pixi run test
+        run: pixi run -e release test
 
       - name: Run examples
-        run: pixi run example
+        run: pixi run -e release example
 
   # Builds canvas_mojo as a package and imports it from a separate
   # workspace -- the install path README.md documents, and the one
