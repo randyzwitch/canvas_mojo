@@ -3,7 +3,7 @@ channels = ["https://conda.modular.com/max", "conda-forge"]
 name = "canvas_mojo"
 platforms = ["linux-64", "osx-arm64"]
 preview = ["pixi-build"]
-version = "0.39.2"
+version = "0.40.0"
 
 # No `mojo` in a plain `[dependencies]` section: the compiler comes
 # from whichever of the two features below an environment names, and a
@@ -22,21 +22,32 @@ version = "0.39.2"
 # has not shipped. Reproduce one with `pixi run -e release <task>`
 # before reading it as a defect here.
 #
-# The nightly channel is on the feature rather than the workspace on
-# purpose. `1.2.0.dev2026092105` sorts below `1.2.0` and so satisfies
-# the release feature's `<1.3` as readily as a final build does: were
-# the channel workspace-wide, the release environment could quietly
-# solve to a prerelease and the split would mean nothing.
+# The nightly channel is on the feature rather than the workspace, and
+# with no ceiling on the release spec that is now the *only* thing
+# keeping a prerelease out of the release environment: every nightly
+# satisfies `>=1.1.0`. While the bound was `<1.3` this was already
+# true -- a throwaway manifest with `max-nightly` among the workspace
+# channels asking for `>=1.1.0,<1.3` solved to `1.2.0.dev2026092105`,
+# because a `.dev` build sorts below its final release. Moving this
+# channel to `[workspace]` would put a nightly in CI.
 [feature.nightly]
 channels = [{ channel = "https://conda.modular.com/max-nightly", priority = 1 }]
 
 [feature.nightly.dependencies]
-mojo = ">=1.2.0.dev,<1.3"
+mojo = ">=1.2.0.dev"
 
-# The supported range, matching README, the Getting Started snippet
-# and the package's own host and run dependencies.
+# No upper bound, matching README, the Getting Started snippet and the
+# package's own host and run dependencies. A ceiling has to be raised
+# for every Mojo series, in five places, and each raise ships a
+# release whose only content is the raise -- v0.39.2 was exactly that.
+# The cost of dropping it is that an untested future Mojo is admitted
+# rather than refused: a consumer meets a breaking compiler as a build
+# error in their own project instead of as an unsatisfiable solve.
+# #484 is the standing job of checking new releases as they ship;
+# should one break, the fix is a floor-raising release, not a ceiling
+# nobody remembered to raise.
 [feature.release.dependencies]
-mojo = ">=1.1.0,<1.3"
+mojo = ">=1.1.0"
 
 # hugo and go serve only the docs tasks, so they sit in their own
 # feature: installing the default environment for `test`/`example`
@@ -164,7 +175,7 @@ docs-serve = { cmd = "hugo server -s docs/site", depends-on = ["docs-build"] }
 # importable package (the `canvas/` dir) is named just "canvas".
 [package]
 name = "canvas_mojo"
-version = "0.39.2"
+version = "0.40.0"
 description = "A from-scratch, stdlib-only Mojo raster/drawing engine: pixel buffer, colors, primitives, text, image I/O."
 license = "MIT"
 
@@ -177,7 +188,7 @@ name = "canvas"
 path = "canvas"
 
 [package.host-dependencies]
-mojo = ">=1.1.0,<1.3"
+mojo = ">=1.1.0"
 
 [package.run-dependencies]
-mojo = ">=1.1.0,<1.3"
+mojo = ">=1.1.0"

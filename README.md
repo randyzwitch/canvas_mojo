@@ -60,7 +60,7 @@ configuration starting from an empty directory, follow
 preview = ["pixi-build"]  # git-source pixi dependencies are a preview feature
 
 [dependencies]
-canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", tag = "v0.39.2" }
+canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", tag = "v0.40.0" }
 ```
 
 Use `branch = "main"` instead of `tag` to track development.
@@ -185,10 +185,11 @@ page walks through each path and the rendering model behind it.
 
 ## Status
 
-Version 0.39.2, on Linux x86-64 and macOS Apple Silicon, with Mojo 1.1
-or 1.2. CI runs the full suite on both platforms for every pull request,
-and a release runs the benchmark survey against its recorded reference
-and digests every verification scene byte for byte before tagging.
+Version 0.40.0, on Linux x86-64 and macOS Apple Silicon, with Mojo 1.1
+or newer. CI runs the full suite on both platforms for every pull
+request, and a release runs the benchmark survey against its recorded
+reference and digests every verification scene byte for byte before
+tagging.
 
 canvas_mojo is the drawing layer. Axes, scales, legends and series
 types belong to a charting library built on top of it, and one is.
