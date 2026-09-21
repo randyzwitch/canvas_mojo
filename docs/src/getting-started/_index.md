@@ -11,7 +11,7 @@ same drawing routine targets SVG and PDF.
 
 Start with Pixi installed and available as `pixi` in your terminal. The
 package supports Linux x86-64 and macOS Apple Silicon and requires
-Mojo 1.x. Pixi installs the Mojo compiler along with the library.
+Mojo 1.1 or 1.2. Pixi installs the Mojo compiler along with the library.
 
 Create a directory for your project:
 
@@ -31,7 +31,7 @@ platforms = ["linux-64", "osx-arm64"]
 preview = ["pixi-build"]
 
 [dependencies]
-mojo = ">=1.0.0,<2"
+mojo = ">=1.1.0,<1.3"
 canvas_mojo = { git = "https://github.com/randyzwitch/canvas_mojo.git", branch = "main" }
 ```
 

@@ -185,10 +185,10 @@ page walks through each path and the rendering model behind it.
 
 ## Status
 
-Version 0.36.0, on Linux x86-64 and macOS Apple Silicon, with Mojo 1.x.
-CI runs the full suite on both platforms for every pull request, and a
-release runs the benchmark survey against its recorded reference and
-digests every verification scene byte for byte before tagging.
+Version 0.36.0, on Linux x86-64 and macOS Apple Silicon, with Mojo 1.1
+or 1.2. CI runs the full suite on both platforms for every pull request,
+and a release runs the benchmark survey against its recorded reference
+and digests every verification scene byte for byte before tagging.
 
 canvas_mojo is the drawing layer. Axes, scales, legends and series
 types belong to a charting library built on top of it, and one is.
