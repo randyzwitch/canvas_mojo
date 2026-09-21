@@ -42,6 +42,58 @@ which caps concurrency at the machine's core count; `test` goes through
 `scripts/run_tests.sh` first, which fails before compiling anything if
 a `tests/test_*.mojo` file is missing from the task list.
 
+## Two environments: nightly here, release in CI
+
+Every command above runs on a **Mojo nightly**. The default environment
+takes `mojo = ">=1.2.0.dev,<1.3"` from `https://conda.modular.com/max-nightly`,
+so a bare `pixi run test` compiles with a prerelease and a language
+change arrives as a local failure rather than as a consumer's bug
+report.
+
+```sh
+pixi run test              # nightly (the default environment)
+pixi run -e release test    # the released compiler, what CI runs
+pixi run -e release mojo --version   # which release that is today
+```
+
+`-e release` takes `mojo = ">=1.1.0,<1.3"` from the release channel:
+the range README, the Getting Started snippet and
+`[package.run-dependencies]` all declare, and the only one this package
+claims to support. Every workflow names it (`environments: release` on
+setup-pixi plus `-e release` on each task), so nothing that gates a
+pull request has ever seen a nightly. `docs` is built on the release
+feature too, since the site describes the library as consumers'
+compiler builds it. `tests/consumer/` stays on the release channel as
+well: it exists to be a stranger's project, and a stranger has the
+released compiler.
+
+Reading a failure:
+
+- Fails on nightly, passes on `-e release`: not a defect here yet. It
+  is a heads-up about a compiler that has not shipped. Reproduce it
+  with `-e release` before changing anything, and file it with the
+  nightly build string (`pixi run mojo --version`).
+- Fails on both: an ordinary defect.
+- `pixi run fmt` is nightly like everything else, and `mojo format`'s
+  output is the compiler's. CI formats with `-e release` and commits
+  the result, so format with `-e release fmt` if CI keeps rewriting
+  your diff.
+
+The benchmark tasks are the one place where the default bites
+silently: `benchmarks/reference.txt` and `benchmarks/digests.txt` were
+recorded on the release compiler, so a bare `pixi run bench-check`
+compares a nightly build against release numbers and attributes the
+compiler to your change. Run the survey, `bench-verify` and `micro`
+with `-e release`, or record a reference on the same compiler you
+check against.
+
+The nightly is pinned in `pixi.lock` like every other package and moves
+only when someone runs `pixi update -e nightly` and commits it, so a
+failure names an exact build. Advance it deliberately, in its own
+commit; a release, its gates and its tag are release-environment work
+throughout (#484 tracks checking a Mojo 1.2 release build when one
+ships).
+
 Scratch scripts go outside the repo (`/tmp`), run with
 `pixi run mojo run -I . <script>` from the repo root so `from canvas...`
 resolves.
