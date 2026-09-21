@@ -87,6 +87,23 @@ Reading a failure:
   output is the compiler's. CI formats with `-e release` and commits
   the result, so format with `-e release fmt` if CI keeps rewriting
   your diff.
+- `tests/test_golden.mojo` is the standing gate a compiler change
+  could plausibly trip, and it is not byte-exact: at most 8 of 19,200
+  pixels may differ, none by more than one supersample step. Those
+  thresholds were sized for exactly this noise -- a ULP disagreement
+  in `cos`/`sin` moves a vertex by ~1e-16 of a pixel and flips at most
+  a sub-sample. So a golden failure on nightly is *larger* than a
+  transcendental difference, which makes it a finding rather than an
+  environment artifact: reproduce on `-e release`, and if it is
+  nightly-only, it is worth reporting upstream.
+
+**Never record a committed reference from the nightly environment.**
+`tests/golden/*.png`, `benchmarks/reference.txt` and
+`benchmarks/digests.txt` are what every future run is compared
+against; recorded on a prerelease they would bake one into the repo
+and move the baseline for everyone. `bench-record`,
+`bench-record-digests` and a golden rewrite are `-e release` work,
+always.
 
 The benchmark tasks are the one place where the default bites
 silently: `benchmarks/reference.txt` and `benchmarks/digests.txt` were
