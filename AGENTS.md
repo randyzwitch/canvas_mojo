@@ -45,7 +45,7 @@ a `tests/test_*.mojo` file is missing from the task list.
 ## Two environments: nightly here, release in CI
 
 Every command above runs on a **Mojo nightly**. The default environment
-takes `mojo = ">=1.2.0.dev,<1.3"` from `https://conda.modular.com/max-nightly`,
+takes `mojo = ">=1.2.0.dev"` from `https://conda.modular.com/max-nightly`,
 so a bare `pixi run test` compiles with a prerelease and a language
 change arrives as a local failure rather than as a consumer's bug
 report.
@@ -56,7 +56,7 @@ pixi run -e release test    # the released compiler, what CI runs
 pixi run -e release mojo --version   # which release that is today
 ```
 
-`-e release` takes `mojo = ">=1.1.0,<1.3"` from the release channel:
+`-e release` takes `mojo = ">=1.1.0"` from the release channel:
 the range README, the Getting Started snippet and
 `[package.run-dependencies]` all declare, and the only one this package
 claims to support. Every workflow names it (`environments: release` on
@@ -66,13 +66,14 @@ feature too, since the site describes the library as consumers'
 compiler builds it.
 
 The nightly channel belongs to the `nightly` feature and not to
-`[workspace]`, which is load-bearing rather than tidy: a `.dev` build
-sorts below its final release, so `1.2.0.dev2026092105` satisfies
-`>=1.1.0,<1.3` too. Checked directly -- a throwaway manifest listing
-`max-nightly` among the workspace channels and asking for
-`mojo = ">=1.1.0,<1.3"` solves to `1.2.0.dev2026092105`, not to 1.1.0.
-Workspace-wide, the release environment would follow it there and the
-split would mean nothing. `tests/consumer/` stays on the release channel as
+`[workspace]`, which is load-bearing rather than tidy. Since v0.40.0
+the release spec has no ceiling, so every nightly satisfies it and
+this channel placement is the only thing keeping a prerelease out of
+the release environment. It mattered before the ceiling came off too:
+a `.dev` build sorts below its final release, and a throwaway manifest
+listing `max-nightly` among the workspace channels while asking for
+`mojo = ">=1.1.0,<1.3"` solved to `1.2.0.dev2026092105`, not to 1.1.0.
+Moving this channel to `[workspace]` would put a nightly in CI. `tests/consumer/` stays on the release channel as
 well: it exists to be a stranger's project, and a stranger has the
 released compiler.
 
