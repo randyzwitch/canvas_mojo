@@ -63,7 +63,16 @@ claims to support. Every workflow names it (`environments: release` on
 setup-pixi plus `-e release` on each task), so nothing that gates a
 pull request has ever seen a nightly. `docs` is built on the release
 feature too, since the site describes the library as consumers'
-compiler builds it. `tests/consumer/` stays on the release channel as
+compiler builds it.
+
+The nightly channel belongs to the `nightly` feature and not to
+`[workspace]`, which is load-bearing rather than tidy: a `.dev` build
+sorts below its final release, so `1.2.0.dev2026092105` satisfies
+`>=1.1.0,<1.3` too. Checked directly -- a throwaway manifest listing
+`max-nightly` among the workspace channels and asking for
+`mojo = ">=1.1.0,<1.3"` solves to `1.2.0.dev2026092105`, not to 1.1.0.
+Workspace-wide, the release environment would follow it there and the
+split would mean nothing. `tests/consumer/` stays on the release channel as
 well: it exists to be a stranger's project, and a stranger has the
 released compiler.
 
