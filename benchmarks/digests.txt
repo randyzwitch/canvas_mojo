@@ -2,7 +2,8 @@
 # Font-dependent scenes are deliberately absent -- see `_verify_scenes`.
 # machine: AMD Ryzen Threadripper 3970X 32-Core Processor x64
 # workers: 64
-# version: 0.28.0
+# version: 0.40.0
+# mojo: 1.1.0
 # Written by `pixi run bench-record-digests`; read by `pixi run bench-verify`.
 rect fills and blend modes	cd3c1f81228a097a
 aa circles, ellipse, arc, ring	66e240b6db57a608

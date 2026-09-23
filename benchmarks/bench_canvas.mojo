@@ -47,6 +47,8 @@ from std.os import getenv
 from std.runtime import parallelism_level
 from std.time import perf_counter_ns
 
+from canvas.provenance import mojo_version, require_release_compiler
+
 from canvas.blend import BlendMode
 from canvas.blur import blur
 from canvas.buffer import Canvas, BYTES_PER_PIXEL
@@ -1338,6 +1340,7 @@ def _best_of_two() raises -> List[_Row]:
 
 
 def _record(rows: List[_Row]) raises:
+    require_release_compiler()
     var out = String(
         "# canvas_mojo bench reference: us/iter per row, the faster of two"
         " runs.\n"
@@ -1345,6 +1348,7 @@ def _record(rows: List[_Row]) raises:
     out += "# machine: " + _machine_id() + "\n"
     out += "# workers: " + String(parallelism_level()) + "\n"
     out += "# version: " + _package_version() + "\n"
+    out += "# mojo: " + mojo_version() + "\n"
     out += (
         "# Written by `pixi run bench-record`; read by `pixi run"
         " bench-check`.\n"
@@ -1368,6 +1372,7 @@ def _check(rows: List[_Row]) raises:
     var machine = String("")
     var version = String("")
     var workers = String("")
+    var recorded_mojo = String("")
     var names = List[String]()
     var times = List[Float64]()
     for line in text.split("\n"):
@@ -1377,6 +1382,8 @@ def _check(rows: List[_Row]) raises:
             workers = String(line[byte=11:].strip())
         elif line.startswith("# version: "):
             version = String(line[byte=11:].strip())
+        elif line.startswith("# mojo: "):
+            recorded_mojo = String(line[byte=8:].strip())
         elif line.startswith("#") or String(line.strip()) == "":
             continue
         else:
@@ -1394,6 +1401,13 @@ def _check(rows: List[_Row]) raises:
         return
     print("")
     print("bench-check against", _reference_path(), "(version", version + ")")
+    if recorded_mojo != "" and recorded_mojo != mojo_version():
+        print(
+            "             recorded with Mojo",
+            recorded_mojo,
+            "running with",
+            mojo_version(),
+        )
     var here_workers = String(parallelism_level())
     if workers != "" and workers != here_workers:
         # Banding decisions read the worker count, so a reference taken
@@ -1783,6 +1797,20 @@ def _digest_machine() -> String:
     return "unknown"
 
 
+def _digest_mojo() -> String:
+    """The compiler that produced the recorded digests."""
+    try:
+        var f = open(_DIGEST_PATH, "r")
+        var contents = f.read()
+        f.close()
+        for line in contents.split("\n"):
+            if line.startswith("# mojo: "):
+                return String(line[byte=8:].strip())
+    except:
+        pass
+    return "unknown"
+
+
 def _read_digests() -> List[_Scene]:
     """`benchmarks/digests.txt`, or an empty list if it is not there."""
     var out = List[_Scene]()
@@ -1824,11 +1852,14 @@ def _environment() -> String:
         parallelism_level(),
         "\n# version: ",
         _package_version(),
+        "\n# mojo: ",
+        mojo_version(),
     )
 
 
 def _record_digests() raises:
     """Write every scene's digest to `benchmarks/digests.txt`."""
+    require_release_compiler()
     var scenes = _verify_scenes()
     var out = String(
         "# canvas_mojo render digests: FNV-1a over every byte of each"
@@ -1854,6 +1885,7 @@ def _verify() raises:
     var scenes = _verify_scenes()
     var known = _read_digests()
     var recorded_on = _digest_machine()
+    var recorded_mojo = _digest_mojo()
     var here = _machine_id()
     # A digest is exact, and the transcendentals a curve goes through
     # are a platform's own libm. Two machines can render the same
@@ -1897,6 +1929,13 @@ def _verify() raises:
             missing += 1
     print()
     print(_environment())
+    if recorded_mojo != "unknown" and recorded_mojo != mojo_version():
+        print(
+            "digests were recorded with Mojo",
+            recorded_mojo,
+            "running with",
+            mojo_version(),
+        )
     print(
         "# text scenes are excluded: glyphs come from the machine's own fonts."
     )

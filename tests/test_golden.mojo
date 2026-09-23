@@ -50,7 +50,7 @@ covers text with 29 assertions that do not have that problem.
 
 When a change is *supposed* to alter output:
 
-    CANVAS_REGEN_GOLDEN=1 pixi run test
+    CANVAS_REGEN_GOLDEN=1 pixi run -e release test
 
 That rewrites every reference from the current renderer and passes
 trivially, so the diff it produces is the thing to review -- committing
@@ -73,6 +73,7 @@ from canvas.geometry import FPoint, Point
 from canvas.gradient import LinearGradient, RadialGradient
 from canvas.io.png import read_png, write_png
 from canvas.path import Path, fill_path_aa, stroke_path_aa
+from canvas.provenance import mojo_version, require_release_compiler
 from canvas.resize import downsample
 from canvas.shapes.arcs import fill_arc_aa, fill_ring_sector_aa
 from canvas.shapes.circles import fill_circle_aa
@@ -89,6 +90,7 @@ comptime _MAX_DIFFERING_PIXELS = 8
 # which is the largest a single flipped sub-sample can move a pixel.
 comptime _MAX_CHANNEL_GAP = 24
 comptime _DIR = "tests/golden/"
+comptime _PROVENANCE = "tests/golden/PROVENANCE.txt"
 
 comptime _PAPER = Color(250, 250, 248)
 comptime _INK = Color(35, 45, 70)
@@ -100,13 +102,30 @@ def _regenerating() -> Bool:
     return getenv("CANVAS_REGEN_GOLDEN", "") != ""
 
 
+def _recorded_mojo() -> String:
+    try:
+        var f = open(_PROVENANCE, "r")
+        var contents = f.read()
+        f.close()
+        for line in contents.split("\n"):
+            if line.startswith("# mojo: "):
+                return String(line[byte=8:].strip())
+    except:
+        pass
+    return "unknown"
+
+
 def _check(name: String, canvas: Canvas) raises:
     """Compare `canvas` against tests/golden/<name>.png, or rewrite it
     when regenerating.
     """
     var path = String(_DIR) + name + ".png"
     if _regenerating():
+        require_release_compiler()
         write_png(canvas, path)
+        var provenance = open(_PROVENANCE, "w")
+        provenance.write("# mojo: " + mojo_version() + "\n")
+        provenance.close()
         return
 
     var golden = read_png(path)
@@ -149,6 +168,8 @@ def _check(name: String, canvas: Canvas) raises:
     detail += ", "
     detail += String(worst_y)
     detail += "))."
+    detail += " Recorded with Mojo " + _recorded_mojo()
+    detail += "; running with Mojo " + mojo_version() + "."
     detail += " Re-run with CANVAS_REGEN_GOLDEN=1 only if the new output"
     detail += " is known correct."
 

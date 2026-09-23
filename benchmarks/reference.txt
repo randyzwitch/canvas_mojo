@@ -2,6 +2,7 @@
 # machine: AMD Ryzen Threadripper 3970X 32-Core Processor x64
 # workers: 64
 # version: 0.30.0
+# mojo: 1.0.0
 # Written by `pixi run bench-record`; read by `pixi run bench-check`.
 Canvas(800x600) construct+fill	22.318
 Canvas.fill opaque	22.639
