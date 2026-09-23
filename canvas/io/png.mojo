@@ -431,10 +431,11 @@ def encode_png(
         # all. This is where FAST's time goes.
         var only = deflate(raw, max_chain, max_lazy)
         return _finish_png(file_buf^, crc_table, only^, _adler32(raw))
-    var sub = _sub_filtered(raw, h, row_bytes, channels)
+    var sub = List[UInt8]()
     var filtered: Bool
     var compressed: List[UInt8]
     if stride == 0:
+        sub = _sub_filtered(raw, h, row_bytes, channels)
         # Both encodings in full rather than a sample, and the smaller
         # one kept. Two whole-image encodes is the one place in this
         # writer where the match search dominates enough to pay for
@@ -448,10 +449,12 @@ def encode_png(
     else:
         # Judge the sample at the default search effort so encoding
         # level does not affect the filter choice.
-        filtered = _sub_compresses_smaller(raw, sub, h, row_bytes, stride)
-        compressed = deflate(sub, max_chain, max_lazy) if filtered else deflate(
-            raw, max_chain, max_lazy
-        )
+        filtered = _sub_compresses_smaller(raw, h, row_bytes, channels, stride)
+        if filtered:
+            sub = _sub_filtered(raw, h, row_bytes, channels)
+            compressed = deflate(sub, max_chain, max_lazy)
+        else:
+            compressed = deflate(raw, max_chain, max_lazy)
 
     return _finish_png(
         file_buf^,
@@ -524,42 +527,54 @@ def _mostly_repeats_left(
 
 def _sub_compresses_smaller(
     raw: List[UInt8],
-    sub: List[UInt8],
     height: Int,
     row_bytes: Int,
+    bpp: Int,
     stride_rows: Int = _FILTER_SAMPLE_STRIDE,
     max_chain: Int = _DEFLATE_MAX_CHAIN,
     max_lazy: Int = _DEFLATE_MAX_LAZY,
 ) raises -> Bool:
-    """Whether the Sub-filtered scanlines compress smaller than the
-    unfiltered ones, decided on every `_FILTER_SAMPLE_STRIDE`th row of
-    each: the same rows, deflated both ways. Ties keep the unfiltered
-    rows, which decode with no reconstruction pass.
+    """Whether Sub-filtered scanlines compress smaller on sampled rows.
+
+    Generate both sample formats from the same source rows. Ties keep
+    unfiltered rows.
     """
     var stride = 1 + row_bytes
     var rows = (height + stride_rows - 1) // stride_rows
     var sample_raw = List[UInt8](unsafe_uninit_length=rows * stride)
     var sample_sub = List[UInt8](unsafe_uninit_length=rows * stride)
     var rp = raw.unsafe_ptr()
-    var sp = sub.unsafe_ptr()
     var dr = sample_raw.unsafe_ptr()
     var ds = sample_sub.unsafe_ptr()
     var y = 0
     var o = 0
     while y < height:
         var base = y * stride
-        var i = 0
-        while i + _UNFILTER_W <= stride:
-            dr.unsafe_offset(o + i).unsafe_store(
-                rp.unsafe_offset(base + i).unsafe_load[width=_UNFILTER_W]()
-            )
-            ds.unsafe_offset(o + i).unsafe_store(
-                sp.unsafe_offset(base + i).unsafe_load[width=_UNFILTER_W]()
+        dr[unsafe_offset=o] = 0
+        ds[unsafe_offset=o] = 1
+        for i in range(bpp):
+            var byte = rp[unsafe_offset=base + 1 + i]
+            dr[unsafe_offset=o + 1 + i] = byte
+            ds[unsafe_offset=o + 1 + i] = byte
+        var i = bpp
+        while i + _UNFILTER_W <= row_bytes:
+            var pixel = rp.unsafe_offset(base + 1 + i).unsafe_load[
+                width=_UNFILTER_W
+            ]()
+            dr.unsafe_offset(o + 1 + i).unsafe_store(pixel)
+            ds.unsafe_offset(o + 1 + i).unsafe_store(
+                pixel
+                - rp.unsafe_offset(base + 1 + i - bpp).unsafe_load[
+                    width=_UNFILTER_W
+                ]()
             )
             i += _UNFILTER_W
-        while i < stride:
-            dr[unsafe_offset=o + i] = rp[unsafe_offset=base + i]
-            ds[unsafe_offset=o + i] = sp[unsafe_offset=base + i]
+        while i < row_bytes:
+            var byte = rp[unsafe_offset=base + 1 + i]
+            dr[unsafe_offset=o + 1 + i] = byte
+            ds[unsafe_offset=o + 1 + i] = (
+                byte - rp[unsafe_offset=base + 1 + i - bpp]
+            )
             i += 1
         o += stride
         y += stride_rows
