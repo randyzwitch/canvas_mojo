@@ -425,6 +425,41 @@ def test_overlapping_translucent_markers_keep_submission_order() raises:
     assert_true(_inked(one_by_one) > 2000, "the pile must draw ink")
 
 
+def test_integer_center_batch_matches_translucent_calls_at_every_worker_count() raises:
+    # Repeated integer phases take the cached-coverage route. Include
+    # overlaps, clipping, and centers outside the canvas; the band
+    # result must keep individual-call order at every worker count.
+    var pts = List[FPoint](capacity=1000)
+    for i in range(1000):
+        pts.append(
+            FPoint(
+                Float64((i * 37) % 320 - 20),
+                Float64((i * 53) % 230 - 20),
+            )
+        )
+    var ink = Color(30, 140, 220, 70)
+    for radius in [0.5, 3.5, 7.0]:
+        var expected = Canvas(280, 190, BG)
+        expected.push_clip(5, 7, 270, 180)
+        for i in range(len(pts)):
+            fill_circle_aa(expected, pts[i].x, pts[i].y, radius, ink)
+        expected.pop_clip()
+        for workers in [1, 2, 8, 0]:
+            var batched = Canvas(280, 190, BG)
+            batched.set_max_workers(workers)
+            batched.push_clip(5, 7, 270, 180)
+            fill_circles_aa(batched, pts, radius, ink)
+            batched.pop_clip()
+            _assert_same_canvas(
+                batched,
+                expected,
+                "integer batch r="
+                + String(radius)
+                + " workers="
+                + String(workers),
+            )
+
+
 def test_per_marker_colors_match_individual_calls() raises:
     var pts = _scatter(600, 41, 29)
     var colors = List[Color](capacity=len(pts))
