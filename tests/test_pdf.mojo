@@ -641,5 +641,36 @@ def test_a_document_with_text_is_byte_identical_run_to_run() raises:
     assert_equal(differing, 0, "two identical renders differ in bytes")
 
 
+def test_text_on_path_stays_selectable_and_embedded() raises:
+    var pdf = PdfCanvas(220, 100)
+    var path = Path()
+    path.move_to(10.0, 60.0)
+    path.line_to(200.0, 60.0)
+    pdf.draw_text_on_path(path, "Curve", INK, 18.0)
+    var content = pdf.content()
+    assert_true("BT " in content and " Tj " in content and " ET " in content)
+    assert_true("Tm " in content, "each placed glyph has a text matrix")
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    assert_true("/ToUnicode" in file, "placed glyphs retain Unicode mapping")
+    assert_true("/FontFile2" in file or "/FontFile3" in file)
+
+
+def test_text_on_path_uses_the_path_tangent_and_omits_overflow() raises:
+    var pdf = PdfCanvas(100, 100)
+    var vertical = Path()
+    vertical.move_to(20.0, 10.0)
+    vertical.line_to(20.0, 90.0)
+    pdf.draw_text_on_path(vertical, "Up", INK, 16.0)
+    assert_true("0.000 1.000 1.000 0.000" in pdf.content())
+    var empty = PdfCanvas(100, 100)
+    var short = Path()
+    short.move_to(0.0, 0.0)
+    short.line_to(1.0, 0.0)
+    empty.draw_text_on_path(short, "Long", INK, 16.0)
+    assert_equal(
+        empty.content(), "", "glyph centers beyond the end are omitted"
+    )
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

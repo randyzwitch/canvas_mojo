@@ -55,7 +55,12 @@ from canvas.shapes.lines import LineCap, LineJoin
 from canvas.text.font_cache import FontCache
 from canvas.text.font_discovery import FontSlant, FontWeight
 from canvas.text.glyph_outline import glyph_index_metrics
-from canvas.text.render import _layout_block, text_path, text_run_anchors
+from canvas.text.render import (
+    _layout_block,
+    _text_on_path_placements,
+    text_path,
+    text_run_anchors,
+)
 from canvas.text.text_align import TextAlign
 from canvas.text.text_run import TextRun
 from canvas.text.ttf import TTFFace
@@ -1789,6 +1794,77 @@ struct PdfCanvas(DrawTarget, Movable):
                 pen_x += advance
             if run_font >= 0:
                 self._content += run + "] TJ "
+        self._content += "ET "
+        self._end()
+
+    def draw_text_on_path(
+        mut self,
+        path: Path,
+        text: String,
+        color: Color,
+        size: Float64,
+        offset: Float64 = 0.0,
+        family: String = "Sans",
+        slant: FontSlant = FontSlant.NORMAL,
+        weight: FontWeight = FontWeight.NORMAL,
+        align: TextAlign = TextAlign.LEFT,
+        kerning: Bool = True,
+        ligatures: Bool = True,
+    ) raises:
+        """Place selectable, embedded-font glyphs along `path`.
+
+        Each glyph uses the raster backend's arc-length placement and
+        gets its own PDF text matrix. Glyphs past either end are omitted.
+        """
+        if text == "":
+            return
+        var placements = _text_on_path_placements(
+            text,
+            path,
+            size,
+            offset,
+            family,
+            slant,
+            weight,
+            align,
+            kerning,
+            ligatures,
+            self._fonts,
+        )
+        if len(placements) == 0:
+            return
+        var primary_path = self._fonts.resolve(family, slant, weight)
+        var primary = self._fonts.resolve_face(family, slant, weight, size)
+        var primary_index = self._font_index(primary_path, primary)
+        self._begin(color, False)
+        self._content += "BT "
+        for i in range(len(placements)):
+            ref placed = placements[i]
+            var shaped = placed.shaped
+            var font_index = primary_index
+            var gid = shaped.glyph
+            if gid != 0:
+                self._efonts[primary_index].mark(gid, shaped.text())
+            else:
+                var fpath = self._fonts.resolve_for_char(
+                    family, slant, weight, shaped.codepoint
+                )
+                var fface = self._fonts.resolve_face_for_char(
+                    family, slant, weight, shaped.codepoint, size
+                )
+                gid = fface[].glyph_index_for_codepoint(shaped.codepoint)
+                font_index = self._font_index(fpath, fface)
+                self._efonts[font_index].mark(gid, shaped.text())
+            self._content += "/F" + String(font_index + 1) + " "
+            _num(self._content, size)
+            self._content += "Tf "
+            _num(self._content, placed.tx)
+            _num(self._content, placed.ty)
+            _num(self._content, placed.ty)
+            _num(self._content, -placed.tx)
+            _num(self._content, placed.x)
+            _num(self._content, placed.y)
+            self._content += "Tm <" + _hex4(gid) + "> Tj "
         self._content += "ET "
         self._end()
 

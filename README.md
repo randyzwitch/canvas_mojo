@@ -156,8 +156,8 @@ page walks through each path and the rendering model behind it.
 - The vector backends record geometry and leave rasterization to the
   viewer. Linear-light blending is guaranteed only on `Canvas`; SVG
   text depends on the viewer's fonts; `PdfCanvas` does not draw color
-  emoji or text on a path; and `SvgCanvas` draws a smooth-shaded mesh
-  flat, one color per face, since browsers have no mesh gradient.
+  emoji. `SvgCanvas` draws a smooth-shaded mesh flat, one color per
+  face, since browsers have no mesh gradient.
 - Meshes are drawn in the order given. A depth-sorted surface renders
   correctly; intersecting surfaces have no correct painter's order,
   which is the same limit every static plotting library accepts.

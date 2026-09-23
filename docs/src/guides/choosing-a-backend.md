@@ -20,7 +20,7 @@ annotations can render through any backend.
 | Rectangle and path clipping | Yes | Yes | Yes |
 | Blend modes and color-space state | Yes | Yes, emitted as SVG/CSS | Yes, emitted as PDF graphics state |
 | Filled and stroked text | Rasterized glyphs | SVG text elements | Embedded font subsets |
-| Text on a path | Yes | Yes | No |
+| Text on a path | Yes | Yes | Yes, embedded text |
 | Raster image placement (`draw_image`) | Yes | Yes, as an embedded PNG | Yes, as an image XObject |
 | Bulk markers and meshes | Yes | Yes, one element per mark | Yes, one path per mark |
 | Smooth-shaded mesh (`fill_mesh_shaded`) | Interpolated per pixel | Flat, one color per face | Native mesh shading |
@@ -47,15 +47,15 @@ with other raster content.
 
 Use `SvgCanvas` for a single scalable graphic that should remain inspectable
 and editable as XML. Text stays as SVG text and therefore depends on the
-viewer's available fonts. SVG additionally supports text on a path, and
-places a raster block as an embedded PNG.
+viewer's available fonts. SVG places a raster block as an embedded PNG.
 
 ## Use PdfCanvas for documents and printing
 
 Use `PdfCanvas` for print-oriented output, embedded raster images, or a
 multi-page document. Call `new_page()` to finish the current page and begin
 another; width and height can be inherited or changed. Used font glyphs are
-embedded in subsets with a ToUnicode map so viewers can extract text.
+embedded in subsets with a ToUnicode map so viewers can extract text,
+including text placed along a path.
 
 ## Write backend-generic drawing code
 
