@@ -1020,9 +1020,9 @@ def resize(source: Canvas, width: Int, height: Int) raises -> Canvas:
     `downsample` -- the same bytes, through the same fixed-factor
     kernels, at the same cost.
 
-    Extra memory is one intermediate of `width * source.height * 4`
-    doubles, from resampling horizontally before vertically. The
-    integer-ratio path above allocates none of it.
+    The general path filters horizontal strips before the vertical pass;
+    `_resize_streamed` sizes its shared scratch across all worker bands.
+    The integer-ratio path uses `downsample` directly.
 
     Args:
         source: Canvas to resample.
@@ -1053,9 +1053,9 @@ def resize(source: Canvas, width: Int, height: Int) raises -> Canvas:
     # downsample computes: every weight is 1 and the count is the
     # factor, so the weighted mean reduces to the block mean. Taking
     # its fixed-factor kernels rather than the general path saves a
-    # Float64 intermediate of `width * source.height * 4` doubles and
-    # the time to fill it, for bytes that were already identical. The
-    # equivalence is checked past this dispatch by
+    # horizontal filtering and scratch allocation in the general path
+    # for bytes that were already identical. The equivalence is checked
+    # past this dispatch by
     # test_the_general_filter_still_agrees_with_downsample.
     if source.width % width == 0 and source.height % height == 0:
         var factor = source.width // width

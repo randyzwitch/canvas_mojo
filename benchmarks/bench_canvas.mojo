@@ -847,10 +847,8 @@ def _survey() raises -> List[_Row]:
         sink += Int(small3.get_pixel(10, 10).r)
     _report(rows, "downsample 2400x1800 -> 3x", perf_counter_ns() - t0, iters)
 
-    # The same reduction through the arbitrary-size path, which cannot
-    # use the fixed-factor kernels and carries a Float64 intermediate
-    # (#298), and then one no integer factor can express. The pair
-    # says what the generality costs.
+    # The same reduction through the integer-ratio fast path, then one
+    # no integer factor can express. The pair says what generality costs.
     iters = 5
     t0 = perf_counter_ns()
     for _ in range(iters):
