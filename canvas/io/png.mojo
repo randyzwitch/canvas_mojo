@@ -740,6 +740,8 @@ def _unfilter_rows(
     of "row above" are then the same view type, and the first row's
     reconstruction is the same loop as every other row's.
     """
+    if offset + height * (row_bytes + 1) > len(raw):
+        raise Error("png: truncated scanline data")
     var out = List[UInt8](unsafe_uninit_length=(height + 1) * row_bytes)
     var rp = _ReadView(raw)
     var op = _WriteView(out)
@@ -1104,6 +1106,20 @@ def _deinterlace_adam7(
     var ystart: List[Int] = [0, 0, 4, 0, 2, 0, 1]
     var xstep: List[Int] = [8, 8, 4, 4, 2, 2, 1]
     var ystep: List[Int] = [8, 8, 8, 4, 4, 2, 2]
+    # Check every pass before allocating the full output. A tiny IDAT can
+    # claim a large image whose valid dimensions still fit the decode cap.
+    var needed = 0
+    for p in range(7):
+        var pw = 0
+        if width > xstart[p]:
+            pw = (width - xstart[p] + xstep[p] - 1) // xstep[p]
+        var ph = 0
+        if height > ystart[p]:
+            ph = (height - ystart[p] + ystep[p] - 1) // ystep[p]
+        if pw > 0 and ph > 0:
+            needed += ph * (_row_bytes(pw, color_type, bit_depth) + 1)
+    if needed > len(raw):
+        raise Error("png: truncated Adam7 stream")
     var pixels = List[UInt8](length=width * height * BYTES_PER_PIXEL, fill=0)
     var dp = _WriteView(pixels)
     var filter_bpp = _filter_bpp(color_type, bit_depth)

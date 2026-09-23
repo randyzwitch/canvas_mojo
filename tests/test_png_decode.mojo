@@ -278,6 +278,15 @@ def test_dimensions_whose_product_overflows_are_rejected() raises:
     assert_true(raised, "the file that found it must raise")
 
 
+def test_large_header_with_short_rows_raises_before_allocating() raises:
+    """Fuzz cases with valid dimensions but short inflated rows must raise
+    before sizing a full-image buffer. Both Adam7 and plain rows need this
+    check because the large allocation happens at different stages.
+    """
+    assert_true(_raises("tests/fuzz/png_truncated_adam7.png"))
+    assert_true(_raises("tests/fuzz/png_truncated_rows.png"))
+
+
 def test_a_zero_dimension_is_rejected() raises:
     var raised = False
     try:
