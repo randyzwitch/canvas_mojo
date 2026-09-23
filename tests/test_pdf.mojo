@@ -240,6 +240,7 @@ def test_gradients_become_shadings() raises:
     )
     var file = _bytes_to_string(pdf.to_bytes(compress=False))
     assert_true("/ShadingType 2" in file, "axial")
+    assert_true("/SMask" not in file, "opaque ramps need no mask resource")
     assert_true("/Coords [0.000 0.000 200.000 0.000 ]" in file, "the axis")
     assert_true(
         "/FunctionType 2 /Domain [0.000 1.000 ] /C0 [1.000 0.000 0.000 ] /C1"
@@ -670,6 +671,51 @@ def test_text_on_path_uses_the_path_tangent_and_omits_overflow() raises:
     assert_equal(
         empty.content(), "", "glyph centers beyond the end are omitted"
     )
+
+
+def test_gradient_alpha_uses_a_gray_shading_soft_mask() raises:
+    var pdf = PdfCanvas(100, 60)
+    var gradient = LinearGradient(0.0, 0.0, 100.0, 0.0)
+    gradient.add_stop(0.0, Color(255, 0, 0, 0))
+    gradient.add_stop(1.0, Color(0, 0, 255, 255))
+    pdf.fill_rect_gradient(0, 0, 100, 60, gradient)
+    assert_true("/AG1 gs /Sh1 sh" in pdf.content())
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    assert_true("/S /Luminosity /G 3 0 R" in file)
+    assert_true("/ColorSpace /DeviceGray" in file)
+    assert_true("/Subtype /Form" in file)
+    assert_true("/FunctionType 2" in file)
+
+
+def test_radial_gradient_alpha_and_page_specific_mask_bounds() raises:
+    var pdf = PdfCanvas(80, 70)
+    var radial = RadialGradient(40.0, 35.0, 30.0)
+    radial.add_stop(0.0, Color(0, 0, 255, 255))
+    radial.add_stop(1.0, Color(0, 0, 255, 0))
+    pdf.fill_rect_radial_gradient(0, 0, 80, 70, radial)
+    pdf.new_page(120, 90)
+    var linear = LinearGradient(0.0, 0.0, 120.0, 0.0)
+    linear.add_stop(0.0, Color(255, 0, 0, 0))
+    linear.add_stop(1.0, Color(255, 0, 0, 255))
+    pdf.fill_rect_gradient(0, 0, 120, 90, linear)
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    assert_true("/ShadingType 3 /ColorSpace /DeviceGray" in file)
+    assert_true("/BBox [0.000 0.000 80.000 70.000 ]" in file)
+    assert_true("/BBox [0.000 0.000 120.000 90.000 ]" in file)
+    assert_true("/AG1 gs /Sh1 sh" in file)
+    assert_true("/AG2 gs /Sh2 sh" in file)
+
+
+def test_gradient_mask_bounds_follow_translated_shape() raises:
+    var pdf = PdfCanvas(100, 50)
+    pdf.set_transform(Matrix2D.translation(-100.0, 0.0))
+    var gradient = LinearGradient(100.0, 0.0, 200.0, 0.0)
+    gradient.add_stop(0.0, Color(255, 0, 0, 0))
+    gradient.add_stop(1.0, Color(255, 0, 0, 255))
+    pdf.fill_rect_gradient(100, 0, 100, 50, gradient)
+    var file = _bytes_to_string(pdf.to_bytes(compress=False))
+    assert_true("/BBox [100.000 0.000 200.000 50.000 ]" in file)
+    assert_true("-100.000 0.000 cm" in file)
 
 
 def main() raises:

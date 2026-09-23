@@ -18,7 +18,8 @@ path clip onto `re W n` / `W n` inside a `q` that `pop_clip` closes
 with `Q`, a linear or radial gradient onto an axial or radial shading
 (`sh`) with a stitching function over the stops, clipped to the shape,
 and a `Canvas` drawn with `draw_image` onto an image XObject with a
-soft mask for its alpha.
+soft mask for its alpha. Gradient stop alpha uses a grayscale shading
+as a transparency-group soft mask.
 
 `draw_text` lays text out as the raster backend does and writes each
 run of glyphs as a `TJ` in the font that
@@ -30,7 +31,7 @@ content stream and the font programs are Flate-compressed through this
 package's own `deflate`.
 
 Unsupported features are Porter-Duff operators other than source-over,
-alpha on gradient stops, conic gradients, `ColorSpace.LINEAR`, and
+conic gradients, `ColorSpace.LINEAR`, and
 color bitmap glyphs. Unsupported blend operators render source-over;
 the other unsupported features are omitted or ignored.
 Annotated groups become marked content (`/Span << /Alt (title) >> BDC
@@ -222,6 +223,12 @@ struct PdfCanvas(DrawTarget, Movable):
     var _gstates: List[String]
     # Shading dictionaries, one per gradient fill.
     var _shadings: List[String]
+    var _shading_masks: List[Int]
+    var _alpha_shadings: List[String]
+    var _alpha_lefts: List[Float64]
+    var _alpha_tops: List[Float64]
+    var _alpha_rights: List[Float64]
+    var _alpha_bottoms: List[Float64]
     # Type 4 mesh shadings, one per `fill_mesh_shaded` call, each its
     # own stream object (#426).
     var _mesh_shadings: List[_PdfMeshShading]
@@ -254,6 +261,12 @@ struct PdfCanvas(DrawTarget, Movable):
         self._page_heights = List[Int]()
         self._gstates = List[String]()
         self._shadings = List[String]()
+        self._shading_masks = List[Int]()
+        self._alpha_shadings = List[String]()
+        self._alpha_lefts = List[Float64]()
+        self._alpha_tops = List[Float64]()
+        self._alpha_rights = List[Float64]()
+        self._alpha_bottoms = List[Float64]()
         self._mesh_shadings = List[_PdfMeshShading]()
         self._efonts = List[_EmbeddedFont]()
         self._images = List[_PdfImage]()
@@ -1312,11 +1325,11 @@ struct PdfCanvas(DrawTarget, Movable):
 
     # ---- gradients ------------------------------------------------
 
-    def _function(self, stops: GradientStops) -> String:
+    def _function(self, stops: GradientStops, alpha: Bool = False) -> String:
         """A PDF function over the stops' offsets: one Type 2 between
         two stops, a Type 3 stitching of them between more. Alpha is
-        dropped. Equal offsets (a hard step) are nudged apart, since
-        `/Bounds` must increase strictly."""
+        emitted as DeviceGray when requested. Equal offsets (a hard
+        step) are nudged apart, since `/Bounds` must increase strictly."""
         var n = len(stops)
         var offsets = List[Float64](capacity=n)
         for i in range(n):
@@ -1332,13 +1345,19 @@ struct PdfCanvas(DrawTarget, Movable):
             _num(out, t0)
             _num(out, t1)
             out += "] /C0 ["
-            _channel(out, stops[0].color.r)
-            _channel(out, stops[0].color.g)
-            _channel(out, stops[0].color.b)
+            if alpha:
+                _channel(out, stops[0].color.a)
+            else:
+                _channel(out, stops[0].color.r)
+                _channel(out, stops[0].color.g)
+                _channel(out, stops[0].color.b)
             out += "] /C1 ["
-            _channel(out, stops[1].color.r)
-            _channel(out, stops[1].color.g)
-            _channel(out, stops[1].color.b)
+            if alpha:
+                _channel(out, stops[1].color.a)
+            else:
+                _channel(out, stops[1].color.r)
+                _channel(out, stops[1].color.g)
+                _channel(out, stops[1].color.b)
             out += "] /N 1 >>"
             return out
         out += "<< /FunctionType 3 /Domain ["
@@ -1347,13 +1366,19 @@ struct PdfCanvas(DrawTarget, Movable):
         out += "] /Functions ["
         for i in range(n - 1):
             out += "<< /FunctionType 2 /Domain [0 1] /C0 ["
-            _channel(out, stops[i].color.r)
-            _channel(out, stops[i].color.g)
-            _channel(out, stops[i].color.b)
+            if alpha:
+                _channel(out, stops[i].color.a)
+            else:
+                _channel(out, stops[i].color.r)
+                _channel(out, stops[i].color.g)
+                _channel(out, stops[i].color.b)
             out += "] /C1 ["
-            _channel(out, stops[i + 1].color.r)
-            _channel(out, stops[i + 1].color.g)
-            _channel(out, stops[i + 1].color.b)
+            if alpha:
+                _channel(out, stops[i + 1].color.a)
+            else:
+                _channel(out, stops[i + 1].color.r)
+                _channel(out, stops[i + 1].color.g)
+                _channel(out, stops[i + 1].color.b)
             out += "] /N 1 >> "
         out += "] /Bounds ["
         for i in range(1, n - 1):
@@ -1380,6 +1405,25 @@ struct PdfCanvas(DrawTarget, Movable):
         s += "] /Function " + self._function(gradient.stops)
         s += " /Extend [true true] >>"
         self._shadings.append(s)
+        var mask = -1
+        var has_alpha = False
+        for stop in gradient.stops:
+            if stop.color.a != 255:
+                has_alpha = True
+                break
+        if has_alpha:
+            var gray = s.replace("/DeviceRGB", "/DeviceGray")
+            gray = gray.replace(
+                self._function(gradient.stops),
+                self._function(gradient.stops, True),
+            )
+            self._alpha_shadings.append(gray)
+            self._alpha_lefts.append(0.0)
+            self._alpha_tops.append(0.0)
+            self._alpha_rights.append(Float64(self.width))
+            self._alpha_bottoms.append(Float64(self.height))
+            mask = len(self._alpha_shadings) - 1
+        self._shading_masks.append(mask)
         return len(self._shadings) - 1
 
     def _radial_shading(mut self, gradient: RadialGradient) -> Int:
@@ -1405,10 +1449,51 @@ struct PdfCanvas(DrawTarget, Movable):
         s += "] /Function " + self._function(gradient.stops)
         s += " /Extend [true true] >>"
         self._shadings.append(s)
+        var mask = -1
+        var has_alpha = False
+        for stop in gradient.stops:
+            if stop.color.a != 255:
+                has_alpha = True
+                break
+        if has_alpha:
+            var gray = s.replace("/DeviceRGB", "/DeviceGray")
+            gray = gray.replace(
+                self._function(gradient.stops),
+                self._function(gradient.stops, True),
+            )
+            self._alpha_shadings.append(gray)
+            self._alpha_lefts.append(0.0)
+            self._alpha_tops.append(0.0)
+            self._alpha_rights.append(Float64(self.width))
+            self._alpha_bottoms.append(Float64(self.height))
+            mask = len(self._alpha_shadings) - 1
+        self._shading_masks.append(mask)
         return len(self._shadings) - 1
+
+    def _set_mask_box(
+        mut self,
+        shading: Int,
+        left: Float64,
+        top: Float64,
+        right: Float64,
+        bottom: Float64,
+    ):
+        """Bound a shading's transparency group to the painted shape
+        in user space, including shapes outside the page under a transform.
+        """
+        var mask = self._shading_masks[shading]
+        if mask < 0:
+            return
+        self._alpha_lefts[mask] = left
+        self._alpha_tops[mask] = top
+        self._alpha_rights[mask] = right
+        self._alpha_bottoms[mask] = bottom
 
     def _paint_shading(mut self, index: Int):
         """`sh` the shading after the clip already written."""
+        var mask = self._shading_masks[index]
+        if mask >= 0:
+            self._content += "/AG" + String(mask + 1) + " gs "
         self._content += "/Sh" + String(index + 1) + " sh "
 
     def _begin_clip_element(mut self):
@@ -1464,6 +1549,7 @@ struct PdfCanvas(DrawTarget, Movable):
         if sh < 0:
             self.fill_rect(x, y, width, height, gradient.stops[0].color)
             return
+        self._set_mask_box(sh, x, y, x + width, y + height)
         self._begin_clip_element()
         _num(self._content, x)
         _num(self._content, y)
@@ -1497,6 +1583,9 @@ struct PdfCanvas(DrawTarget, Movable):
         if sh < 0:
             self.fill_rect(x, y, width, height, gradient.stops[0].color)
             return
+        self._set_mask_box(
+            sh, Float64(x), Float64(y), Float64(x + width), Float64(y + height)
+        )
         self._begin_clip_element()
         _num(self._content, Float64(x))
         _num(self._content, Float64(y))
@@ -1526,6 +1615,9 @@ struct PdfCanvas(DrawTarget, Movable):
         if sh < 0:
             self.fill_path_aa(path, gradient.stops[0].color, fill_rule)
             return
+        if self._shading_masks[sh] >= 0:
+            var box = path.bounds()
+            self._set_mask_box(sh, box[0], box[1], box[2], box[3])
         self._begin_clip_element()
         self._write_path(path)
         self._content += "W* n " if fill_rule == FillRule.EVEN_ODD else "W n "
@@ -1552,6 +1644,9 @@ struct PdfCanvas(DrawTarget, Movable):
         if sh < 0:
             self.fill_path_aa(path, gradient.stops[0].color, fill_rule)
             return
+        if self._shading_masks[sh] >= 0:
+            var box = path.bounds()
+            self._set_mask_box(sh, box[0], box[1], box[2], box[3])
         self._begin_clip_element()
         self._write_path(path)
         self._content += "W* n " if fill_rule == FillRule.EVEN_ODD else "W n "
@@ -2235,7 +2330,8 @@ struct PdfCanvas(DrawTarget, Movable):
         for i in range(len(self._images)):
             image_objects += 2 if self._images[i].has_alpha else 1
         var mesh_base = image_base + image_objects
-        var page_base = mesh_base + len(self._mesh_shadings)
+        var alpha_base = mesh_base + len(self._mesh_shadings)
+        var page_base = alpha_base + len(self._alpha_shadings)
         var page_count = len(self._pages) + 1
         var info_number = page_base + 2 * page_count
         var have_info = self._title != "" or self._author != ""
@@ -2360,13 +2456,38 @@ struct PdfCanvas(DrawTarget, Movable):
             )
             number += 1
 
+        # A grayscale shading in a transparency group supplies each
+        # gradient's varying opacity to its page ExtGState.
+        for i in range(len(self._alpha_shadings)):
+            offsets.append(len(out))
+            var form = String(" /Type /XObject /Subtype /Form /BBox [")
+            _num(form, self._alpha_lefts[i])
+            _num(form, self._alpha_tops[i])
+            _num(form, self._alpha_rights[i])
+            _num(form, self._alpha_bottoms[i])
+            form += "] /Group << /S /Transparency /CS /DeviceGray >>"
+            form += " /Resources << /Shading << /A "
+            form += self._alpha_shadings[i] + " >> >>"
+            var body = List[UInt8]()
+            _append_text(body, "/A sh")
+            _append_stream(out, number, form, body^, compress)
+            number += 1
+
         # Resources, shared by every page.
         var resources = String("/Resources << ")
-        if len(self._gstates) > 0:
+        if len(self._gstates) > 0 or len(self._alpha_shadings) > 0:
             resources += "/ExtGState << "
             for i in range(len(self._gstates)):
                 resources += (
                     "/GS" + String(i + 1) + " << " + self._gstates[i] + ">> "
+                )
+            for i in range(len(self._alpha_shadings)):
+                resources += (
+                    "/AG"
+                    + String(i + 1)
+                    + " << /SMask << /S /Luminosity /G "
+                    + String(alpha_base + i)
+                    + " 0 R >> >> "
                 )
             resources += ">> "
         if len(self._shadings) > 0 or len(self._mesh_shadings) > 0:
