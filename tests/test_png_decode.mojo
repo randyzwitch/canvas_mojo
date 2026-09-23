@@ -30,8 +30,16 @@ comparing after reduction would clear an opaque pixel too.
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.buffer import Canvas
+from canvas.color import Color
 from canvas.io import MAX_DECODED_PIXELS
-from canvas.io.png import read_png, decode_png, _crc32_table, _write_chunk
+from canvas.io.png import (
+    read_png,
+    decode_png,
+    encode_png,
+    _crc32_table,
+    _write_chunk,
+    _decode_simple_rows,
+)
 
 comptime _DIR = "tests/png/"
 
@@ -278,6 +286,83 @@ def test_a_zero_dimension_is_rejected() raises:
         raised = True
         assert_true("invalid image dimensions" in String(e), String(e))
     assert_true(raised, "a zero width must raise")
+
+
+def test_simple_rows_decode_none_and_sub_rgb_and_rgba() raises:
+    # Two RGB rows: None, then Sub. The second row's last two pixels
+    # are each +30 per channel from the previous pixel in that row.
+    var rgb: List[UInt8] = [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+        1,
+        15,
+        25,
+        35,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+    ]
+    var image = _decode_simple_rows(rgb, 3, 2, 2)
+    _assert_rgba(image, 0, 0, 10, 20, 30, 255)
+    _assert_rgba(image, 2, 0, 70, 80, 90, 255)
+    _assert_rgba(image, 0, 1, 15, 25, 35, 255)
+    _assert_rgba(image, 2, 1, 75, 85, 95, 255)
+
+    var rgba: List[UInt8] = [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        1,
+        10,
+        20,
+        30,
+        40,
+        10,
+        10,
+        10,
+        10,
+    ]
+    var alpha = _decode_simple_rows(rgba, 2, 2, 6)
+    _assert_rgba(alpha, 0, 0, 1, 2, 3, 4)
+    _assert_rgba(alpha, 1, 0, 5, 6, 7, 8)
+    _assert_rgba(alpha, 0, 1, 10, 20, 30, 40)
+    _assert_rgba(alpha, 1, 1, 20, 30, 40, 50)
+
+
+def test_large_simple_png_uses_the_direct_decode_path() raises:
+    for alpha in [UInt8(255), UInt8(128)]:
+        var source = Canvas(1000, 1000, Color(45, 80, 140, alpha))
+        var encoded = encode_png(source)
+        # This input passes the direct path's size and compression
+        # thresholds; this writer emits only None or Sub filter rows.
+        assert_true(
+            len(encoded) < (1000 * 1000 * 3) // 4,
+            "test image must enter the direct decoder",
+        )
+        var decoded = decode_png(encoded^)
+        assert_equal(len(decoded.pixels), len(source.pixels))
+        var changed = 0
+        for i in range(len(source.pixels)):
+            if decoded.pixels[i] != source.pixels[i]:
+                changed += 1
+        assert_equal(changed, 0, "large RGB/RGBA round trip")
 
 
 def main() raises:
