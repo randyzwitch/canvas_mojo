@@ -596,6 +596,56 @@ def _circles_band(
             )
 
 
+struct _DiskStampPixel(Copyable, Movable):
+    var dx: Int
+    var dy: Int
+    var color: Color
+
+    def __init__(out self, dx: Int, dy: Int, color: Color):
+        self.dx = dx
+        self.dy = dy
+        self.color = color
+
+
+def _disk_stamp(radius: Float64, color: Color) raises -> List[_DiskStampPixel]:
+    """One exact-area disk's ink, relative to an integer center."""
+    var pad = Int(ceil(radius)) + 2
+    var side = 2 * pad + 1
+    var kernel = Canvas(side, side, Color(0, 0, 0, 0))
+    _fill_circle_aa_device(kernel, Float64(pad), Float64(pad), radius, color)
+    var ink = List[_DiskStampPixel]()
+    for y in range(side):
+        for x in range(side):
+            var pixel = kernel.get_pixel(x, y)
+            if pixel.a > 0:
+                ink.append(_DiskStampPixel(x - pad, y - pad, pixel))
+    return ink^
+
+
+def _stamp_circles_band(
+    mut canvas: Canvas,
+    centers: List[FPoint],
+    ink: List[_DiskStampPixel],
+    radius: Float64,
+    row_lo: Int,
+    row_hi: Int,
+):
+    """Stamp integer-centered disks in order into disjoint band rows."""
+    for i in range(len(centers)):
+        ref p = centers[i]
+        if p.y + radius + 2.0 < Float64(row_lo):
+            continue
+        if p.y - radius - 1.0 >= Float64(row_hi):
+            continue
+        var cx = Int(p.x)
+        var cy = Int(p.y)
+        for j in range(len(ink)):
+            ref pixel = ink[j]
+            var y = cy + pixel.dy
+            if y >= row_lo and y < row_hi:
+                canvas.set_pixel(cx + pixel.dx, y, pixel.color)
+
+
 def _fill_circles_sequential(
     mut canvas: Canvas,
     centers: List[FPoint],
@@ -687,6 +737,51 @@ def _fill_circles_aa_impl(
             raise e
         canvas._set_transform(saved)
         return
+
+    if (
+        radius <= _CLOSED_FORM_MAX_RADIUS
+        and len(colors) == 0
+        and len(centers) >= 64
+    ):
+        var integral = True
+        for i in range(len(centers)):
+            ref p = centers[i]
+            if p.x != floor(p.x) or p.y != floor(p.y):
+                integral = False
+                break
+        if integral:
+            var ink = _disk_stamp(radius, color)
+            var per_marker = Int(3.15 * (radius + 1.0) * (radius + 1.0)) + 1
+            var bands = _bands_for(
+                len(centers) * per_marker, canvas.height, canvas.max_workers()
+            )
+            if bands <= 1:
+                _stamp_circles_band(
+                    canvas, centers, ink, radius, 0, canvas.height
+                )
+                return
+            var per_band = (canvas.height + bands - 1) // bands
+            var height = canvas.height
+
+            def stamp_band(
+                b: Int,
+            ) {
+                mut canvas,
+                imm centers,
+                imm ink,
+                imm radius,
+                imm per_band,
+                imm height,
+            }:
+                var band_start = b * per_band
+                var band_end = min(band_start + per_band, height)
+                if band_start < band_end:
+                    _stamp_circles_band(
+                        canvas, centers, ink, radius, band_start, band_end
+                    )
+
+            run_bands(bands, stamp_band)
+            return
 
     # Roughly the covered area, the figure `_bands_for` weighs against
     # its parallel threshold.
