@@ -55,7 +55,8 @@ Use `PdfCanvas` for print-oriented output, embedded raster images, or a
 multi-page document. Call `new_page()` to finish the current page and begin
 another; width and height can be inherited or changed. Used font glyphs are
 embedded in subsets with a ToUnicode map so viewers can extract text,
-including text placed along a path.
+including text placed along a path. Linear and radial gradient-stop
+opacity is preserved through PDF soft masks.
 
 ## Write backend-generic drawing code
 
