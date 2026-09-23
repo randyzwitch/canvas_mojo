@@ -275,6 +275,28 @@ resolves.
   notice; the constraint in `pixi.toml` names the versions it was
   tested on. Mojo 1.0 spelled the module `std.runtime.asyncrt`, so one
   source cannot serve both (#472).
+- If `_asyncrt` disappears before a public replacement exists, keep
+  `run_bands` as the only dispatch boundary and replace its backend with
+  a persistent POSIX thread pool on Linux and macOS (#479). Initialize
+  it on the first parallel call, create at most the runtime worker limit,
+  and park idle workers on a condition variable. Each call posts a job
+  containing a pointer to its borrowed closure, the next band index
+  and a completion count; the caller executes one band, workers claim
+  the others, and the call waits until all bands finish before the
+  closure goes out of scope. Protect the queue and completion state
+  with a mutex/condition variable (or equivalent acquire/release
+  atomics), run band bodies outside the lock, support concurrent
+  `run_bands` callers, and run nested calls inline to avoid pool
+  starvation. Preserve the existing non-raising, disjoint-write
+  contract and the serial path with no pool startup. Join workers at
+  process teardown. Test repeated, concurrent and nested dispatch,
+  closure lifetime, and output identity, then measure the micro
+  dispatch costs and representative passes before switching.
+  Per-pass `pthread_create` is the wrong fallback: for 2, 4, 8, 16
+  and 32 empty bands it measured 49, 104, 278, 679 and 1490 us,
+  against `TaskGroup`'s 5.5, 8.1, 13.4, 23.7 and 43.8 us in the
+  same contended run (9x-34x). Many passes do only tens of
+  microseconds of work, so spawning on every call would dominate them.
 - A banded pass is a closure over its context plus one call to
   `run_bands(bands, work)` in `canvas/workers.mojo`; nothing in the
   library calls `TaskGroup` directly. The closure lists every capture
