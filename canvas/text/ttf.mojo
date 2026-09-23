@@ -8,7 +8,7 @@ gpos,gsub,chapter2}).
 
 Scope:
 
-- **TrueType (`glyf`) and CFF outlines.** An `OTTO` font's `CFF `
+- **TrueType (`glyf`) and CFF outlines, including collections.** An `OTTO` font's `CFF `
   table is read by cff.mojo, whose Type 2 charstring interpreter
   produces cubic contours where `glyf` gives quadratic ones with
   implied midpoints; `RawGlyphOutline.cubic` says which, and
@@ -1171,16 +1171,16 @@ struct TTFFace(Movable):
     than measuring and drawing at a defaulted size.
     """
 
-    def __init__(out self, path: String) raises:
+    def __init__(out self, path: String, collection_index: Int = 0) raises:
         """Parse a TrueType (`glyf`-outline) font file.
 
         Args:
-            path: Path to a `.ttf` file.
+            path: Path to a `.ttf`, `.otf`, `.ttc` or `.otc` file.
+            collection_index: Zero-based face index in a collection.
 
         Raises:
-            Error: `path` can't be read, isn't a TrueType font (a
-                CFF/OpenType-CFF `.otf` included), or is missing a
-                required table.
+            Error: `path` can't be read, has an unsupported sfnt
+                version, or is missing a required table.
         """
         var f = open(path, "r")
         var data = f.read_bytes()
@@ -1195,17 +1195,35 @@ struct TTFFace(Movable):
         # 'OTTO' -- CFF outlines in a `CFF ` table, see cff.mojo
         comptime _SFNT_VERSION_OTTO = 0x4F54544F
 
-        var sfnt_version = _u32(data, 0)
+        var base = 0
+        if _tag_at(data, 0) == "ttcf":
+            var count = _u32(data, 8)
+            if (
+                count == 0
+                or count > 256
+                or collection_index < 0
+                or collection_index >= count
+            ):
+                raise Error("ttf: collection face index out of range")
+            base = _u32(data, 12 + collection_index * 4)
+            if base < 0 or base + 12 > len(data):
+                raise Error("ttf: collection face offset outside file")
+        elif collection_index != 0:
+            raise Error("ttf: face index requires a collection")
+
+        var sfnt_version = _u32(data, base)
         if (
             sfnt_version != _SFNT_VERSION_TRUETYPE
             and sfnt_version != _SFNT_VERSION_TRUETYPE_APPLE
             and sfnt_version != _SFNT_VERSION_OTTO
         ):
             raise Error(
-                String("ttf: unrecognized sfntVersion 0x", hex(sfnt_version))
+                String("ttf: unrecognized sfntVersion ", hex(sfnt_version))
             )
 
-        var num_tables = _u16(data, 4)
+        var num_tables = _u16(data, base + 4)
+        if num_tables == 0 or num_tables > 512:
+            raise Error("ttf: implausible numTables")
 
         var cmap_off = -1
         var glyf_off = -1
@@ -1221,7 +1239,7 @@ struct TTFFace(Movable):
         var cblc_off = -1
         var cbdt_off = -1
 
-        var pos = 12
+        var pos = base + 12
         for _ in range(num_tables):
             var tag = _tag_at(data, pos)
             var offset = _u32(data, pos + 8)
