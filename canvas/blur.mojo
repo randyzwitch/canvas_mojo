@@ -453,17 +453,20 @@ def _blur_band(
 
 
 def _bands_for(w: Int, h: Int, halo: Int, max_workers: Int = 0) -> Int:
-    """How many row bands to blur a `w x h` canvas in: one below
-    `_MIN_PARALLEL_WORK`, otherwise what the worker limit allows,
-    capped so that each band is at least `halo` rows. Bands recompute
-    the halo rows needed by their neighbors.
+    """Choose blur bands while limiting duplicated halo work and scratch.
+
+    Each band allocates three vertical rings, whose size grows with
+    `w * halo`, and reprocesses the halo rows on both sides. Requiring
+    at least three halos of output per band limits both costs; 32 bands
+    also avoids the extra scratch and scheduling overhead of filling
+    every hardware thread on large canvases.
     """
     var bands = _shared_bands_for(w * h, h, max_workers)
-    var by_halo = h // max(halo, 1)
+    var by_halo = h // max(3 * halo, 1)
     if bands > by_halo:
         bands = by_halo
-    if bands > h:
-        bands = h
+    if bands > 32:
+        bands = 32
     if bands < 1:
         bands = 1
     return bands
