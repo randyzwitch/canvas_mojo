@@ -820,6 +820,73 @@ def _unfilter_rows(
     return out^
 
 
+def _decode_simple_rows(
+    raw: List[UInt8], width: Int, height: Int, color_type: Int
+) raises -> Canvas:
+    """Decode 8-bit RGB/RGBA rows filtered with None or Sub.
+
+    These filters need only the current row, so RGBA rows are
+    reconstructed in the final Canvas buffer. RGB rows are rebuilt in
+    temporary row storage before conversion into that buffer.
+    """
+    var channels = 4 if color_type == 6 else 3
+    var row_bytes = width * channels
+    var pixels = List[UInt8](
+        unsafe_uninit_length=width * height * BYTES_PER_PIXEL
+    )
+    var rp = _ReadView(raw)
+    var dp = _WriteView(pixels)
+    var scratch = List[UInt8](unsafe_uninit_length=row_bytes)
+    var sp = _WriteView(scratch)
+    for y in range(height):
+        var src = rp.offset(y * (row_bytes + 1) + 1)
+        var filter_type = Int(rp[y * (row_bytes + 1)])
+        if color_type == 6:
+            var dst = dp.offset(y * row_bytes)
+            if filter_type == 0:
+                var i = 0
+                while i + _UNFILTER_W <= row_bytes:
+                    dst.store[.uint8, _UNFILTER_W](
+                        i, src.load[.uint8, _UNFILTER_W](i)
+                    )
+                    i += _UNFILTER_W
+                while i < row_bytes:
+                    dst[i] = src[i]
+                    i += 1
+            else:
+                for i in range(4):
+                    dst[i] = src[i]
+                for i in range(4, row_bytes):
+                    dst[i] = src[i] + dst[i - 4]
+        else:
+            if filter_type == 0:
+                var i = 0
+                while i + _UNFILTER_W <= row_bytes:
+                    sp.store[.uint8, _UNFILTER_W](
+                        i, src.load[.uint8, _UNFILTER_W](i)
+                    )
+                    i += _UNFILTER_W
+                while i < row_bytes:
+                    sp[i] = src[i]
+                    i += 1
+            else:
+                for i in range(3):
+                    sp[i] = src[i]
+                for i in range(3, row_bytes):
+                    sp[i] = src[i] + sp[i - 3]
+            var dst = dp.offset(y * width * BYTES_PER_PIXEL)
+            for x in range(width - 1):
+                var pixel = sp.load[.uint8, 4](x * 3)
+                pixel[3] = 255
+                dst.store[.uint8, 4](x * BYTES_PER_PIXEL, pixel)
+            var last = width - 1
+            dst[last * BYTES_PER_PIXEL] = sp[last * 3]
+            dst[last * BYTES_PER_PIXEL + 1] = sp[last * 3 + 1]
+            dst[last * BYTES_PER_PIXEL + 2] = sp[last * 3 + 2]
+            dst[last * BYTES_PER_PIXEL + 3] = 255
+    return Canvas(width, height, pixels^)
+
+
 def _canvas_from_scanlines(
     unfiltered: List[UInt8], width: Int, height: Int, color_type: Int
 ) raises -> Canvas:
@@ -1291,6 +1358,24 @@ def decode_png(var data: List[UInt8]) raises -> Canvas:
             raw, width, height, color_type, bit_depth, palette, trns
         )
     var row_bytes = _row_bytes(width, color_type, bit_depth)
+    if (
+        bit_depth == 8
+        and (color_type == 2 or color_type == 6)
+        and width * height >= 1_000_000
+        and len(idat) < len(raw) // 4
+    ):
+        var stride = row_bytes + 1
+        if len(raw) >= height * stride:
+            var simple = True
+            for y in range(height):
+                if raw[y * stride] > 1:
+                    simple = False
+                    break
+            if simple:
+                var canvas = _decode_simple_rows(raw, width, height, color_type)
+                if len(trns) > 0 and color_type == 2:
+                    _apply_trns8(canvas, color_type, trns)
+                return canvas^
     var unfiltered = _unfilter_rows(
         raw, row_bytes, height, _filter_bpp(color_type, bit_depth)
     )

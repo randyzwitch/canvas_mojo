@@ -31,7 +31,13 @@ from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.buffer import Canvas
 from canvas.io import MAX_DECODED_PIXELS
-from canvas.io.png import read_png, decode_png, _crc32_table, _write_chunk
+from canvas.io.png import (
+    read_png,
+    decode_png,
+    _crc32_table,
+    _write_chunk,
+    _decode_simple_rows,
+)
 
 comptime _DIR = "tests/png/"
 
@@ -278,6 +284,64 @@ def test_a_zero_dimension_is_rejected() raises:
         raised = True
         assert_true("invalid image dimensions" in String(e), String(e))
     assert_true(raised, "a zero width must raise")
+
+
+def test_simple_rows_decode_none_and_sub_rgb_and_rgba() raises:
+    # Two RGB rows: None, then Sub. The second row's last two pixels
+    # are each +30 per channel from the previous pixel in that row.
+    var rgb: List[UInt8] = [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+        1,
+        15,
+        25,
+        35,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+    ]
+    var image = _decode_simple_rows(rgb, 3, 2, 2)
+    _assert_rgba(image, 0, 0, 10, 20, 30, 255)
+    _assert_rgba(image, 2, 0, 70, 80, 90, 255)
+    _assert_rgba(image, 0, 1, 15, 25, 35, 255)
+    _assert_rgba(image, 2, 1, 75, 85, 95, 255)
+
+    var rgba: List[UInt8] = [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        1,
+        10,
+        20,
+        30,
+        40,
+        10,
+        10,
+        10,
+        10,
+    ]
+    var alpha = _decode_simple_rows(rgba, 2, 2, 6)
+    _assert_rgba(alpha, 0, 0, 1, 2, 3, 4)
+    _assert_rgba(alpha, 1, 0, 5, 6, 7, 8)
+    _assert_rgba(alpha, 0, 1, 10, 20, 30, 40)
+    _assert_rgba(alpha, 1, 1, 20, 30, 40, 50)
 
 
 def main() raises:
