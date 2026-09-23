@@ -22,6 +22,7 @@ from canvas.blur import (
     _clamp_index,
     _LANES,
     _Lane,
+    _bands_for,
 )
 from canvas.buffer import Canvas
 from canvas.color import Color
@@ -315,6 +316,50 @@ def test_draw_shadowed_applies_the_blend_mode() raises:
     assert_equal(p.r, 100, "multiplied red")
     assert_equal(p.g, 50, "multiplied green")
     assert_equal(p.b, 25, "multiplied blue")
+
+
+def test_band_planner_bounds_per_band_scratch() raises:
+    # A vertical stage owns O(width * halo) scratch, so the band count
+    # is the resource to check when changing its scheduling policy.
+    var halo = 22
+    var bands = _bands_for(2400, 1800, halo)
+    assert_true(bands <= 32, "large blurs must cap scratch-bearing bands")
+    assert_true(
+        bands <= 1800 // (3 * halo),
+        "each band must amortize its duplicated halo rows",
+    )
+
+
+def test_blur_band_boundaries_only_move_rounding_by_one_level() raises:
+    var serial = Canvas(320, 240, Color(0, 0, 0, 0))
+    var banded = Canvas(320, 240, Color(0, 0, 0, 0))
+    for y in range(240):
+        for x in range(320):
+            var color = Color(
+                UInt8((x * 17 + y * 3) % 256),
+                UInt8((x * 7 + y * 13) % 256),
+                UInt8((x + y * 19) % 256),
+                UInt8((x * 11 + y * 5) % 256),
+            )
+            serial.set_pixel(x, y, color)
+            banded.set_pixel(x, y, color)
+    serial.set_max_workers(1)
+    banded.set_max_workers(4)
+    blur(serial, 16.0)
+    blur(banded, 16.0)
+    var count = 0
+    var max_diff = 0
+    for i in range(len(serial.pixels)):
+        var diff = abs(Int(serial.pixels[i]) - Int(banded.pixels[i]))
+        if diff != 0:
+            count += 1
+            if diff > max_diff:
+                max_diff = diff
+    # Each band restarts the Float32 vertical sums at its own halo,
+    # so a few rounded bytes may differ at a boundary. The blur image
+    # should otherwise remain the same as the serial result.
+    assert_true(count <= 128, "band boundaries changed too many bytes")
+    assert_true(max_diff <= 1, "band boundaries changed a byte by >1")
 
 
 def main() raises:
