@@ -12,14 +12,19 @@ composite glyph point data was diffed byte for byte against that
 oracle's decode of the same glyph.
 """
 
-from std.testing import assert_equal, assert_true, TestSuite
+from std.os import remove
+from std.testing import assert_equal, assert_raises, assert_true, TestSuite
 
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.path import fill_path_aa
 from canvas.text.cff import _dict_operands, _interpret, _parse_real
 from canvas.text.font_cache import FontCache
-from canvas.text.font_discovery import FontDatabase, resolve_font_file
+from canvas.text.font_discovery import (
+    FontDatabase,
+    _parse_font_file,
+    resolve_font_file,
+)
 from canvas.text.render import draw_text, measure_text
 from canvas.text.ttf import (
     _sorted_merged_ranges,
@@ -35,6 +40,9 @@ from canvas.text.ttf import (
     _FEATURE_CCMP,
     _FEATURE_LIGA,
     _in_ranges,
+    _u16,
+    _u32,
+    _tag_at,
 )
 
 comptime BG = Color(255, 255, 255)
@@ -73,6 +81,67 @@ def _push_tag(mut data: List[UInt8], tag: String):
 def _pad_to(mut data: List[UInt8], length: Int):
     while len(data) < length:
         data.append(0)
+
+
+def _set_u16(mut data: List[UInt8], pos: Int, value: Int):
+    data[pos] = UInt8((value >> 8) & 0xFF)
+    data[pos + 1] = UInt8(value & 0xFF)
+
+
+def _set_u32(mut data: List[UInt8], pos: Int, value: Int):
+    _set_u16(data, pos, value >> 16)
+    _set_u16(data, pos + 2, value)
+
+
+def _two_face_collection() raises -> String:
+    """Wrap a known sfnt twice with absolute table offsets, as TTC uses.
+
+    The second face's ascender differs by one unit so loading face 0
+    twice cannot satisfy the test.
+    """
+    var source = open(resolve_font_file("DejaVu Sans"), "r")
+    var font = source.read_bytes()
+    source.close()
+    var result = List[UInt8]()
+    _push_tag(result, "ttcf")
+    _push_u32(result, 0x00010000)
+    _push_u32(result, 2)
+    _push_u32(result, 20)
+    _push_u32(result, 20 + len(font))
+    for face_index in range(2):
+        var base = len(result)
+        for value in font:
+            result.append(value)
+        var num_tables = _u16(result, base + 4)
+        for i in range(num_tables):
+            var record = base + 12 + i * 16
+            var offset = _u32(result, record + 8)
+            _set_u32(result, record + 8, base + offset)
+            if face_index == 1 and _tag_at(result, record) == "hhea":
+                _set_u16(result, base + offset + 4, 1902)
+    var path = String("/tmp/canvas_mojo_test_two_faces.ttc")
+    var f = open(path, "w")
+    f.write_bytes(Span(result))
+    f.close()
+    return path
+
+
+def test_collection_opens_the_selected_face() raises:
+    var path = _two_face_collection()
+    var first = TTFFace(path)
+    var second = TTFFace(path, 1)
+    assert_equal(first.ascender, 1901)
+    assert_equal(second.ascender, 1902)
+    assert_true(first.glyph_index_for_codepoint(65) > 0)
+    assert_true(second.glyph_index_for_codepoint(65) > 0)
+    var faces = _parse_font_file(path)
+    assert_equal(len(faces), 2)
+    assert_equal(faces[0].collection_index, 0)
+    assert_equal(faces[1].collection_index, 1)
+    assert_true(faces[0].renderable and faces[1].renderable)
+    with assert_raises(contains="index out of range"):
+        _ = TTFFace(path, 2)
+    remove(path)
 
 
 def test_head_maxp_hhea_match_known_font_metrics() raises:

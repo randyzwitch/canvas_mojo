@@ -92,7 +92,7 @@ comptime _FONT_CACHE_ENV_VAR = "CANVAS_MOJO_FONT_CACHE"
 # from an installed package (there is no pixi.toml beside a
 # `.mojopkg`), and keying on the package version would also discard a
 # still-valid table on every release.
-comptime _CACHE_FORMAT = 1
+comptime _CACHE_FORMAT = 2
 # Written as the last line, so a file cut short by a crash or by two
 # processes writing at once is recognized and discarded. Mojo's stdlib
 # has no `rename`, so the write cannot be made atomic by the usual
@@ -330,13 +330,12 @@ struct FontFace(Copyable, Movable):
     """`post`'s isFixedPitch, or PANOSE bProportion == 9."""
 
     var renderable: Bool
-    """Whether `ttf.mojo` can actually parse this file: `glyf` or `CFF `
-    outlines or `CBDT` color bitmaps, and not a collection container it
-    reads no face index from. False for every face in a `.ttc`.
-    Ranked below every real matching term -- an exact family match wins
-    even when the answer is a font this library will then refuse, which
-    is a clear error rather than a silently different font.
+    """Whether the face has an outline or color bitmap table this
+    library can draw.
     """
+
+    var collection_index: Int
+    """Zero-based face index in a collection, or 0 for a single font."""
 
     var cmap_offset: Int
     """Absolute file offset of this face's `cmap` table, -1 if it has
@@ -643,7 +642,7 @@ def _read_names(name_table: List[UInt8]) raises -> Dict[Int, String]:
 
 
 def _parse_face(
-    mut f: FileHandle, path: String, base: Int, in_collection: Bool
+    mut f: FileHandle, path: String, base: Int, collection_index: Int
 ) raises -> FontFace:
     """One `sfnt` face, starting at table directory offset `base` (0 for
     a plain font file, a `ttcf` header entry for a face in a
@@ -756,7 +755,8 @@ def _parse_face(
         slant,
         width,
         monospace,
-        (has_glyf or has_cff or has_cbdt) and not in_collection,
+        has_glyf or has_cff or has_cbdt,
+        collection_index,
         cmap_offset,
         cmap_length,
     )
@@ -789,9 +789,9 @@ def _parse_font_file(path: String) -> List[FontFace]:
         else:
             bases.append(0)
 
-        for base in bases:
+        for i in range(len(bases)):
             try:
-                faces.append(_parse_face(f, path, base, in_collection))
+                faces.append(_parse_face(f, path, bases[i], i))
             except:
                 pass
         f.close()
@@ -1314,6 +1314,7 @@ def _write_cache(
             out += "\t" + String(face.width)
             out += "\t" + ("1" if face.monospace else "0")
             out += "\t" + ("1" if face.renderable else "0")
+            out += "\t" + String(face.collection_index)
             out += "\t" + String(face.cmap_offset)
             out += "\t" + String(face.cmap_length)
             out += "\n"
@@ -1391,7 +1392,7 @@ def _read_cache(path: String, search_key: String) -> List[FontFace]:
                 return List[FontFace]()
             var face_path = _unescape_field(fields[0])
             var name_count = Int(fields[1])
-            if len(fields) != 2 + name_count + 7:
+            if len(fields) != 2 + name_count + 8:
                 return List[FontFace]()
             var names = List[String]()
             for k in range(name_count):
@@ -1408,6 +1409,7 @@ def _read_cache(path: String, search_key: String) -> List[FontFace]:
                     fields[rest + 4] == "1",
                     Int(fields[rest + 5]),
                     Int(fields[rest + 6]),
+                    Int(fields[rest + 7]),
                 )
             )
         if len(faces) != count:
@@ -1499,6 +1501,17 @@ struct FontDatabase(Movable):
         """
         self.faces = faces^
 
+    def resolve_selection(
+        self,
+        family: String,
+        slant: FontSlant = FontSlant.NORMAL,
+        weight: FontWeight = FontWeight.NORMAL,
+        codepoint: Int = -1,
+    ) raises -> Tuple[String, Int]:
+        """The file and collection index of the best matching face."""
+        var index = self._resolve_index(family, slant, weight, codepoint)
+        return (self.faces[index].path, self.faces[index].collection_index)
+
     def resolve(
         self,
         family: String,
@@ -1528,6 +1541,18 @@ struct FontDatabase(Movable):
         Raises:
             Error: no font files were found on this machine.
         """
+        return self.faces[
+            self._resolve_index(family, slant, weight, codepoint)
+        ].path
+
+    def _resolve_index(
+        self,
+        family: String,
+        slant: FontSlant,
+        weight: FontWeight,
+        codepoint: Int,
+    ) raises -> Int:
+        """Index into `faces` after ranking and optional glyph coverage."""
         if len(self.faces) == 0:
             raise Error(
                 String(
@@ -1562,11 +1587,11 @@ struct FontDatabase(Movable):
 
         var order = _ranked_order(scores)
         if codepoint < 0:
-            return self.faces[order[0]].path
+            return order[0]
         for index in order:
             if _face_covers_codepoint(self.faces[index], codepoint):
-                return self.faces[index].path
-        return self.faces[order[0]].path
+                return index
+        return order[0]
 
 
 def _ranked_order(scores: List[Int]) -> List[Int]:

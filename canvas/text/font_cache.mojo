@@ -90,7 +90,9 @@ struct FontCache(Movable):
     # `_scan_if_needed` replaces it with a scan once.
     var _scanned: Bool
     var _paths: Dict[String, String]
+    var _indices: Dict[String, Int]
     var _paths_for_char: Dict[String, String]
+    var _indices_for_char: Dict[String, Int]
     var _faces: Dict[String, ArcPointer[TTFFace]]
     # Rasterized glyphs, in two generations: `_glyph_masks` is the
     # young one every insert goes into, `_glyph_masks_old` the one it
@@ -109,7 +111,9 @@ struct FontCache(Movable):
         self._database = FontDatabase(List[FontFace]())
         self._scanned = False
         self._paths = Dict[String, String]()
+        self._indices = Dict[String, Int]()
         self._paths_for_char = Dict[String, String]()
+        self._indices_for_char = Dict[String, Int]()
         self._faces = Dict[String, ArcPointer[TTFFace]]()
         self._glyph_masks = Dict[String, _GlyphMask]()
         self._glyph_masks_old = Dict[String, _GlyphMask]()
@@ -242,21 +246,23 @@ struct FontCache(Movable):
         self._insert_glyph_mask(key, entry^, cost)
 
     def _face_for_path(
-        mut self, path: String, size: Float64
+        mut self, path: String, size: Float64, collection_index: Int = 0
     ) raises -> ArcPointer[TTFFace]:
         """Turns an already-resolved font *path* into a cached, shared
         face; resolve_face and resolve_face_for_char both land here.
 
-        Keyed on `path + "@" + pixel_size`, not path alone: two callers
-        wanting the same font at different sizes need different
-        entries, since `set_pixel_size` (called once, here, on insert)
-        mutates the instance they'd otherwise share.
+        Keyed on path, collection index and pixel size: two callers
+        wanting different faces in one collection or different sizes
+        need different entries, since `set_pixel_size` mutates the
+        instance once on insert.
         """
         var pixel_size = Int(ceil(size))
-        var key = path + "@" + String(pixel_size)
+        var key = (
+            path + "#" + String(collection_index) + "@" + String(pixel_size)
+        )
         if key in self._faces:
             return self._faces[key]
-        var face = TTFFace(path)
+        var face = TTFFace(path, collection_index)
         face.set_pixel_size(pixel_size)
         var arc = ArcPointer(face^)
         self._faces[key] = arc
@@ -284,9 +290,10 @@ struct FontCache(Movable):
         if key in self._paths:
             return self._paths[key]
         self._scan_if_needed()
-        var path = self._database.resolve(family, slant, weight)
-        self._paths[key] = path
-        return path
+        var selection = self._database.resolve_selection(family, slant, weight)
+        self._paths[key] = selection[0]
+        self._indices[key] = selection[1]
+        return selection[0]
 
     def resolve_for_char(
         mut self,
@@ -316,9 +323,12 @@ struct FontCache(Movable):
         if key in self._paths_for_char:
             return self._paths_for_char[key]
         self._scan_if_needed()
-        var path = self._database.resolve(family, slant, weight, codepoint)
-        self._paths_for_char[key] = path
-        return path
+        var selection = self._database.resolve_selection(
+            family, slant, weight, codepoint
+        )
+        self._paths_for_char[key] = selection[0]
+        self._indices_for_char[key] = selection[1]
+        return selection[0]
 
     def resolve_face(
         mut self,
@@ -346,7 +356,8 @@ struct FontCache(Movable):
                 resolved file can't be parsed.
         """
         var path = self.resolve(family, slant, weight)
-        return self._face_for_path(path, size)
+        var key = _cache_key(family, slant, weight)
+        return self._face_for_path(path, size, self._indices[key])
 
     def resolve_face_for_char(
         mut self,
@@ -377,4 +388,5 @@ struct FontCache(Movable):
                 resolved file can't be parsed.
         """
         var path = self.resolve_for_char(family, slant, weight, codepoint)
-        return self._face_for_path(path, size)
+        var key = _cache_key(family, slant, weight) + "|" + String(codepoint)
+        return self._face_for_path(path, size, self._indices_for_char[key])

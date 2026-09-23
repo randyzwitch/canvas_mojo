@@ -18,11 +18,13 @@ from std.testing import assert_equal, assert_false, assert_true, TestSuite
 
 from canvas.text.font_discovery import (
     FontDatabase,
+    FontFace,
     FontSlant,
     FontWeight,
     _cache_path,
     _escape_field,
     _read_cache,
+    _write_cache,
     _search_key,
     _unescape_field,
     _font_directories,
@@ -88,6 +90,22 @@ def test_fields_survive_escaping() raises:
     assert_false("\n" in _escape_field("new\nline"), "no raw newline escapes")
 
 
+def test_collection_index_survives_cache_round_trip() raises:
+    var path = String("tests/_test_font_cache_collection.txt")
+    var names: List[String] = ["Synthetic CJK"]
+    var faces = List[FontFace]()
+    faces.append(
+        FontFace(
+            "/tmp/example.ttc", names^, 400, 0, 5, False, True, 3, 100, 200
+        )
+    )
+    _write_cache(path, "synthetic", List[String](), faces)
+    var loaded = _read_cache(path, "synthetic")
+    assert_equal(len(loaded), 1)
+    assert_equal(loaded[0].collection_index, 3)
+    remove(path)
+
+
 def test_disabled_cache_writes_nothing() raises:
     var path = String("tests/_test_font_cache_disabled.txt")
     if exists(path):
@@ -135,6 +153,7 @@ def test_round_trip_matches_a_scan() raises:
     assert_equal(a.slant, b.slant, "slant")
     assert_equal(a.width, b.width, "width")
     assert_equal(a.monospace, b.monospace, "monospace")
+    assert_equal(a.collection_index, b.collection_index, "collection index")
     assert_equal(a.renderable, b.renderable, "renderable")
     assert_equal(a.cmap_offset, b.cmap_offset, "cmap offset")
     assert_equal(a.cmap_length, b.cmap_length, "cmap length")
