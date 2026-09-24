@@ -148,7 +148,9 @@ page walks through each path and the rendering model behind it.
 ## Limitations
 
 - Text needs fonts installed on the machine, as any text stack does.
-  The package finds them itself; it does not ship any.
+  The package finds them itself; it does not ship any. Font packages
+  installed into a Pixi/Conda environment are discovered in its `fonts/`
+  directory after the machine's font directories.
 - There is no window, display or input layer. The package draws into
   buffers and files.
 - Rendering is CPU only. It parallelizes across cores; it does not use
