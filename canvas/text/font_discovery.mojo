@@ -34,8 +34,10 @@ Where it looks: on Linux `~/.local/share/fonts` and `~/.fonts` plus
 on macOS `~/Library/Fonts`, `/Library/Fonts`, `/System/Library/Fonts`
 (and its `Supplemental`) plus Homebrew's font prefixes.
 **`CANVAS_MOJO_FONT_PATH`** (colon-separated directories) is searched
-ahead of those. Fonts have to be installed for text to render; this
-package bundles none.
+ahead of those. When `CONDA_PREFIX` is set, its `fonts/` directory is
+searched last, so font packages in a Pixi/Conda environment provide a
+fallback without replacing system fonts. Fonts have to be installed for
+text to render; this package bundles none.
 
 A scan costs a few milliseconds, most of it the directory walk, and
 its result is a pure function of which font files are installed -- the
@@ -395,6 +397,12 @@ def _font_directories() -> List[String]:
         _append_unique(dirs, "/usr/share/X11/fonts")
         # Flatpak exposes the host's fonts here.
         _append_unique(dirs, "/run/host/fonts")
+
+    # Conda font packages place faces in $CONDA_PREFIX/fonts. Keep this
+    # last so a machine's installed fonts win when they are available.
+    var conda_prefix = String(getenv("CONDA_PREFIX").strip())
+    if conda_prefix.byte_length() > 0:
+        _append_unique(dirs, String(conda_prefix, "/fonts"))
 
     return dirs^
 

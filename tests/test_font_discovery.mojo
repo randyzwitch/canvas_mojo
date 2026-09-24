@@ -42,10 +42,12 @@ assertion for reasons unrelated to the code under test -- see
 .github/workflows/ci.yml's `fonts-ubuntu` install step.
 """
 
+from std.os import getenv, setenv
 from std.testing import assert_equal, assert_true, TestSuite
 
 from canvas.text.font_discovery import (
     _decode_name,
+    _font_directories,
     _parse_font_file,
     FontDatabase,
     FontSlant,
@@ -54,6 +56,14 @@ from canvas.text.font_discovery import (
     resolve_font_file,
     resolve_font_file_for_char,
 )
+
+
+def test_conda_font_directory_follows_system_directories() raises:
+    var previous = getenv("CONDA_PREFIX", "")
+    _ = setenv("CONDA_PREFIX", "/tmp/canvas-font-prefix", overwrite=True)
+    var dirs = _font_directories()
+    _ = setenv("CONDA_PREFIX", previous, overwrite=True)
+    assert_equal(dirs[len(dirs) - 1], "/tmp/canvas-font-prefix/fonts")
 
 
 def _looks_like_a_font_file(path: String) -> Bool:
