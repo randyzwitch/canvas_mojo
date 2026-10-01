@@ -92,9 +92,10 @@ paint over the axis furniture and off the canvas, which clipping at
 the concrete backend outside that function cannot fix without
 clipping the axes too (#403). The rectangle is in user space and
 takes the current transform on every backend, as `fill_rect` does;
-only the rectangle is on the trait, since a path clip is what
-`Canvas` and `SvgCanvas` offer and `PdfCanvas` spells differently.
-Neither raises.
+`push_clip_path`/`pop_clip_path` provide the same scope for a path.
+Path clips use a fill rule, raster coverage on Canvas, and native
+clipping on SVG/PDF. BoundsTarget conservatively uses the path box.
+Pop mixed clip types in reverse order with the matching pop method.
 
 `begin_annotated_group` and `end_annotated_group` label the enclosed
 drawing. SVG and PDF preserve the label; `Canvas` treats both calls as

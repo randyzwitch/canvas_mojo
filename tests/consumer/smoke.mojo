@@ -9,7 +9,7 @@ hand -- enough to prove the package is wired up, not to re-test the
 renderer, which tests/ already covers under `-I .`.
 """
 
-from canvas import Canvas, Color, DrawTarget, fill_circle_aa
+from canvas import Canvas, Color, DrawTarget, DisplayList, fill_circle_aa
 from canvas.geometry import FPoint
 from canvas.io.bmp import write_bmp
 from canvas.io.png import write_png, read_png
@@ -28,6 +28,21 @@ def _clipped_mark[T: DrawTarget](mut target: T) raises:
     target.push_clip_path(clip)
     target.fill_rect(0, 0, 12, 12, Color(255, 0, 0))
     target.pop_clip_path()
+
+
+struct _RetainedWidget(Movable):
+    var drawing: DisplayList
+
+    def __init__(out self, var drawing: DisplayList):
+        self.drawing = drawing^
+
+
+def _make_widget() raises -> _RetainedWidget:
+    var drawing = DisplayList()
+    var image = Canvas(2, 2, Color(255, 0, 0))
+    _clipped_mark(drawing)
+    drawing.draw_image(image, 8.5, 8.5)
+    return _RetainedWidget(drawing^)
 
 
 def main() raises:
@@ -93,5 +108,16 @@ def main() raises:
     _clipped_mark(clip_svg)
     if "clipPath" not in clip_svg.to_string():
         raise Error("smoke: generic path clipping missing from SVG")
+
+    var first_widget = _make_widget()
+    var widget = first_widget^
+    var retained_target = Canvas(12, 12, Color(0, 0, 0))
+    var retained_cache = FontCache()
+    widget.drawing.replay(retained_target, cache=retained_cache)
+    if (
+        retained_target.get_pixel(3, 3).r != 255
+        or retained_target.get_pixel(9, 9).r != 255
+    ):
+        raise Error("smoke: retained drawing lost resources after widget move")
 
     print("smoke: built package imports and draws correctly")

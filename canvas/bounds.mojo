@@ -180,13 +180,15 @@ struct BoundsTarget(DrawTarget, Movable):
     and draws nothing. See this module's docstring for what the box
     means and where it is exact.
 
-    Construct with the page size, draw the scene through the trait,
+    Construct with the page size (or no arguments for unbounded logical
+    coordinates), draw the scene through the trait,
     then read `has_ink()`, `ink_bounds()` or `ink_pixels()`. A target
     can be reused: `reset()` clears the union and every piece of state.
     """
 
     var width: Int
     var height: Int
+    var _unbounded: Bool
     var _has_ink: Bool
     var _ink: _Box
     var _clips: List[_Box]
@@ -206,6 +208,7 @@ struct BoundsTarget(DrawTarget, Movable):
         """
         self.width = width
         self.height = height
+        self._unbounded = False
         self._has_ink = False
         self._ink = _Box(0.0, 0.0, 0.0, 0.0)
         self._clips = List[_Box]()
@@ -214,6 +217,11 @@ struct BoundsTarget(DrawTarget, Movable):
         self._blend = BlendMode.SOURCE_OVER
         self._space = ColorSpace.SRGB
         self._saved = List[_BoundsState]()
+
+    def __init__(out self):
+        """Measure logical ink without a page boundary, including negatives."""
+        self = Self(0, 0)
+        self._unbounded = True
 
     # --- Reading the answer ---------------------------------------------
 
@@ -284,6 +292,11 @@ struct BoundsTarget(DrawTarget, Movable):
 
     def _page(self) -> _Box:
         """The page as a geometric box: the squares of its pixels."""
+        if self._unbounded:
+            # IEEE positive infinity leaves negative and positive logical
+            # coordinates unconstrained without an arbitrary page limit.
+            var infinity = Float64(1.0) / Float64(0.0)
+            return _Box(-infinity, -infinity, infinity, infinity)
         return _Box(
             -_PIXEL_HALF,
             -_PIXEL_HALF,
