@@ -9,6 +9,10 @@ rule the rectangle clip already follows.
 
 from std.testing import assert_equal, assert_true, TestSuite
 
+from canvas.bounds import BoundsTarget
+from canvas.vector.draw_target import DrawTarget
+from canvas.vector.svg import SvgCanvas
+from canvas.vector.pdf import PdfCanvas
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.fill_rule import FillRule
@@ -516,6 +520,155 @@ def test_gradient_fills_respect_the_clip_path() raises:
         Int(radial.get_pixel(20, 20).r) > 0, "inside the clip is painted"
     )
     assert_equal(Int(radial.get_pixel(45, 45).r), 0, "outside the clip is not")
+
+
+def _generic_clip_scene[
+    T: DrawTarget
+](mut target: T, fill_rule: FillRule) raises:
+    # Two equally wound squares: their overlap is a hole only for EVEN_ODD.
+    var path = Path()
+    _square(path, 4.0, 4.0, 24.0, 24.0)
+    _square(path, 12.0, 12.0, 32.0, 32.0)
+    target.save()
+    target.translate(3.0, 5.0)
+    target.push_clip(0, 0, 30, 30)
+    target.push_clip_path(path, fill_rule)
+    target.reset_transform()
+    target.begin_batch()
+    target.fill_rect(0, 0, 45, 45, FG)
+    target.end_batch()
+    target.pop_clip_path()
+    target.pop_clip()
+    target.restore()
+    target.fill_rect(40, 40, 2, 2, FG)
+
+
+def test_generic_path_clipping_on_all_targets() raises:
+    var even = Canvas(48, 48, BG)
+    var nonzero = Canvas(48, 48, BG)
+    _generic_clip_scene(even, FillRule.EVEN_ODD)
+    _generic_clip_scene(nonzero, FillRule.NONZERO)
+    assert_equal(even.get_pixel(10, 12).r, 255, "first square only")
+    assert_equal(even.get_pixel(20, 22).r, 0, "even-odd overlap hole")
+    assert_equal(nonzero.get_pixel(20, 22).r, 255, "nonzero overlap solid")
+    assert_equal(even.get_pixel(4, 12).r, 0, "clip remains transformed")
+    assert_equal(even.get_pixel(34, 25).r, 0, "rectangle still restricts")
+    assert_equal(even.get_pixel(40, 40).r, 255, "clips popped")
+    assert_true(even.current_transform().is_identity())
+
+    var svg = SvgCanvas(48, 48)
+    _generic_clip_scene(svg, FillRule.EVEN_ODD)
+    var markup = svg.to_string()
+    assert_true('clip-rule="evenodd"' in markup)
+    assert_true("matrix(1.000 0.000 0.000 1.000 3.000 5.000)" in markup)
+    assert_equal(markup.count("<g clip-path="), 2, "nested rectangle and path")
+    assert_equal(markup.count("</g>"), 2, "both clips closed")
+
+    var pdf = PdfCanvas(48, 48)
+    _generic_clip_scene(pdf, FillRule.EVEN_ODD)
+    assert_true("W* n" in pdf.content(), "even-odd clip")
+    assert_true("7.000 9.000 m" in pdf.content(), "mapped path start")
+    var nz_pdf = PdfCanvas(48, 48)
+    _generic_clip_scene(nz_pdf, FillRule.NONZERO)
+    assert_true("h W n" in nz_pdf.content(), "nonzero clip")
+
+    var bounds = BoundsTarget(48, 48)
+    _generic_clip_scene(bounds, FillRule.EVEN_ODD)
+    var box = bounds.ink_bounds()
+    assert_equal(box[0], 7.0, "transformed path left")
+    assert_equal(box[1], 9.0, "transformed path top")
+    assert_true(bounds.current_transform().is_identity())
+
+
+def _empty_clip[T: DrawTarget](mut target: T) raises:
+    var path = Path()
+    target.save()
+    target.push_clip_path(path)
+    target.fill_rect(0, 0, 20, 20, FG)
+    target.restore()
+    target.pop_clip_path()  # no clips active: a no-op
+
+
+def test_empty_path_clip_and_restore_through_trait() raises:
+    var raster = Canvas(24, 24, BG)
+    _empty_clip(raster)
+    assert_equal(raster.get_pixel(10, 10).r, 0)
+    raster.fill_rect(10, 10, 1, 1, FG)
+    assert_equal(raster.get_pixel(10, 10).r, 255, "restore removed mask")
+    var bounds = BoundsTarget(24, 24)
+    _empty_clip(bounds)
+    assert_true(not bounds.has_ink(), "empty clip has no area")
+    bounds.fill_rect(10, 10, 1, 1, FG)
+    assert_true(bounds.has_ink(), "restore removed bounds clip")
+    var svg = SvgCanvas(24, 24)
+    _empty_clip(svg)
+    assert_true('d=""' in svg.to_string(), "empty vector clip")
+    var pdf = PdfCanvas(24, 24)
+    _empty_clip(pdf)
+    assert_true("q W* n" in pdf.content(), "empty PDF path clip")
+
+
+def test_raster_quality_overloads_preserve_existing_calls() raises:
+    var path = Path()
+    _square(path, 3.25, 4.25, 15.25, 16.25)
+    var reference = Canvas(20, 20, BG)
+    reference.push_clip_path(path)
+    reference.fill_rect(0, 0, 20, 20, FG)
+    for variant in range(6):
+        var raster = Canvas(20, 20, BG)
+        if variant == 0:
+            raster.push_clip_path(path, FillRule.EVEN_ODD, 4, 0)
+        elif variant == 1:
+            raster.push_clip_path(path, supersample=4)
+        elif variant == 2:
+            raster.push_clip_path(path, curve_steps=0)
+        elif variant == 3:
+            raster.push_clip_path(path, FillRule.EVEN_ODD, curve_steps=0)
+        elif variant == 4:
+            raster.push_clip_path(path, supersample=4, curve_steps=0)
+        else:
+            raster.push_clip_path(
+                path, fill_rule=FillRule.EVEN_ODD, supersample=4, curve_steps=0
+            )
+        raster.fill_rect(0, 0, 20, 20, FG)
+        assert_equal(raster.pixels, reference.pixels, "same raster quality")
+
+
+def _nested_path_clips[T: DrawTarget](mut target: T) raises:
+    var outer = Path()
+    _square(outer, 2.0, 2.0, 20.0, 20.0)
+    var inner = Path()
+    _square(inner, 10.0, 10.0, 30.0, 30.0)
+    target.push_clip_path(outer)
+    target.save()
+    target.push_clip_path(inner)
+    target.push_clip(0, 0, 40, 40)
+    target.fill_rect(0, 0, 40, 40, FG)
+    target.pop_clip()
+    target.restore()
+    target.fill_rect(4, 4, 1, 1, FG)
+    target.fill_rect(25, 25, 1, 1, FG)
+    target.pop_clip_path()
+
+
+def test_nested_path_clips_and_restore_keep_parent() raises:
+    var raster = Canvas(40, 40, BG)
+    _nested_path_clips(raster)
+    assert_equal(raster.get_pixel(15, 15).r, 255, "intersection")
+    assert_equal(raster.get_pixel(4, 4).r, 255, "parent restored")
+    assert_equal(raster.get_pixel(25, 25).r, 0, "parent still restricts")
+    var bounds = BoundsTarget(40, 40)
+    _nested_path_clips(bounds)
+    var box = bounds.ink_bounds()
+    assert_equal(box[0], 3.5, "restored parent includes pixel 4")
+    assert_equal(box[2], 20.0, "outer path excludes pixel 25")
+    var svg = SvgCanvas(40, 40)
+    _nested_path_clips(svg)
+    assert_equal(svg.to_string().count("</g>"), 3, "all clips closed")
+    var pdf = PdfCanvas(40, 40)
+    _nested_path_clips(pdf)
+    assert_equal(pdf.content().count("W* n"), 2, "two path clips")
+    assert_equal(pdf.content().count("Q\n"), 6, "three clips and three marks")
 
 
 def main() raises:

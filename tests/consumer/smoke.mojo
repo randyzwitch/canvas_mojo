@@ -9,7 +9,7 @@ hand -- enough to prove the package is wired up, not to re-test the
 renderer, which tests/ already covers under `-I .`.
 """
 
-from canvas import Canvas, Color, fill_circle_aa
+from canvas import Canvas, Color, DrawTarget, fill_circle_aa
 from canvas.geometry import FPoint
 from canvas.io.bmp import write_bmp
 from canvas.io.png import write_png, read_png
@@ -17,6 +17,17 @@ from canvas.path import Path, fill_path_aa
 from canvas.shapes.rects import fill_rect
 from canvas.text.font_cache import FontCache
 from canvas.vector.svg import SvgCanvas, write_svg
+
+
+def _clipped_mark[T: DrawTarget](mut target: T) raises:
+    var clip = Path()
+    clip.move_to(2.0, 2.0)
+    clip.line_to(8.0, 2.0)
+    clip.line_to(2.0, 8.0)
+    clip.close()
+    target.push_clip_path(clip)
+    target.fill_rect(0, 0, 12, 12, Color(255, 0, 0))
+    target.pop_clip_path()
 
 
 def main() raises:
@@ -73,5 +84,14 @@ def main() raises:
     var pt = FPoint(1.5, 2.5)
     if pt.x != 1.5:
         raise Error("smoke: FPoint did not round-trip")
+
+    var clipped = Canvas(12, 12, Color(0, 0, 0))
+    _clipped_mark(clipped)
+    if clipped.get_pixel(3, 3).r != 255 or clipped.get_pixel(10, 10).r != 0:
+        raise Error("smoke: generic path clipping did not confine the mark")
+    var clip_svg = SvgCanvas(12, 12)
+    _clipped_mark(clip_svg)
+    if "clipPath" not in clip_svg.to_string():
+        raise Error("smoke: generic path clipping missing from SVG")
 
     print("smoke: built package imports and draws correctly")

@@ -866,6 +866,41 @@ trait DrawTarget:
         """
         ...
 
+    def push_clip_path(
+        mut self, path: Path, fill_rule: FillRule = FillRule.EVEN_ODD
+    ) raises:
+        """Restrict subsequent drawing to the interior of a user-space path.
+
+        The current transform is applied when the clip is pushed; later
+        transform changes do not move it. Clips intersect with all clips
+        already active. Pair with `pop_clip_path`, or use `save`/`restore`.
+        Rectangle and path clips must be popped in reverse push order,
+        using the pop matching each push, without popping a clip that
+        predates the enclosing `save`.
+
+        Raster clips use anti-aliased coverage; vector targets use their
+        renderer's native clipping, so edge pixels can differ. BoundsTarget
+        intersects with the transformed path's conservative bounding box;
+        holes and regions outside the path within that box may be included.
+        An empty path clips out all drawing.
+
+        Args:
+            path: Clip outline; open subpaths are implicitly closed.
+            fill_rule: EVEN_ODD (default) or NONZERO.
+
+        Raises:
+            Error: The backend cannot represent a malformed path.
+        """
+        ...
+
+    def pop_clip_path(mut self):
+        """Undo the matching `push_clip_path` in reverse push order.
+
+        A no-op when no clips are active. Use `pop_clip` for rectangle
+        clips; the two clip kinds may share a stack on a backend.
+        """
+        ...
+
     def begin_annotated_group(mut self, title: String):
         """Open a group labeled `title`, covering every primitive
         drawn until `end_annotated_group`. A backend that can carry the

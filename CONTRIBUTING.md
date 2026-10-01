@@ -195,8 +195,13 @@ addition:
   through it. When one appeared -- a chart whose marks are drawn by a
   single generic function, painting over the axis labels with no way
   to clip (#403) -- the reason had expired, and `push_clip`/`pop_clip`
-  went on. Only the rectangle: a path clip has no concrete caller yet,
-  so it stays off by the same rule that put the rectangle on.
+  went on. Path clipping joined for the same reason (#501): a
+  generic caller drawing hatch patterns needs to restrict strokes to
+  a curved mark.
+  `push_clip_path`/`pop_clip_path` expose native clipping on every
+  drawing backend; `BoundsTarget` conservatively intersects with the
+  transformed path's box. Mixed clips are paired in reverse push order
+  with the matching pop method, or scoped with `save`/`restore`.
 - **The ellipse is where "use `fill_path_aa`/`stroke_path_aa`" stops
   being the answer.** Every other shape left off the trait is left off
   because one of those two covers it. An ellipse is the case where

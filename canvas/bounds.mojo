@@ -52,8 +52,10 @@ laid-out block. Under a rotation or a skew three things are measured
 as the bounding box of a mapped bounding box, which is never smaller
 than the ink and can be larger: a stroke under a skew, a text block
 under any rotation of the *canvas* (the block's own `rotation` is
-exact), and a rectangular clip. A chart's tight crop is an unrotated
-page, so this is the case that matters least.
+exact), and a rectangular clip. Path clips use the transformed
+outline's box, so holes and empty regions within it may be included.
+A chart's tight crop is an unrotated page, so this is the case that
+matters least.
 
 Blend mode and color space are carried for `save`/`restore` and
 otherwise ignored: `CLEAR` or `DESTINATION_OUT` still count as ink,
@@ -1163,6 +1165,30 @@ struct BoundsTarget(DrawTarget, Movable):
         """Undo the innermost `push_clip`; a no-op with none pushed."""
         if len(self._clips) > 0:
             _ = self._clips.pop()
+
+    def push_clip_path(
+        mut self, path: Path, fill_rule: FillRule = FillRule.EVEN_ODD
+    ) raises:
+        """Intersect the active clip with the transformed path's box.
+
+        This is conservative: holes and empty regions within the outline's
+        box are included, regardless of fill rule. An empty path excludes
+        all drawing. The box stays in device space until popped.
+
+        Args:
+            path: User-space clip outline.
+            fill_rule: Ignored; either rule stays within the same box.
+        """
+        var b: Tuple[Float64, Float64, Float64, Float64]
+        if self._transformed:
+            b = _through(path, self._transform).bounds()
+        else:
+            b = path.bounds()
+        self._clips.append(_Box(b[0], b[1], b[2], b[3]).intersect(self._clip()))
+
+    def pop_clip_path(mut self):
+        """Undo the innermost path clip; shares the rectangle clip stack."""
+        self.pop_clip()
 
     def begin_annotated_group(mut self, title: String):
         """A label, which draws nothing here.
