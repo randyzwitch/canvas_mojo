@@ -198,3 +198,15 @@ def main() raises:
 Gradient path fills, outlined text and text on a path are backend
 methods rather than part of `DrawTarget`. Use the relevant backend
 method when a shared trait operation is unavailable.
+
+## Retained drawing
+
+`DisplayList` conforms to `DrawTarget` and owns commands and shared resource
+snapshots. Use `scene.replay(target, cache=cache)` for repeated playback.
+Set/reset transforms are relative to the destination baseline; incoming clips
+remain active and graphics state is restored on success or error. Balance
+recording scopes, and end any destination annotated group before replay.
+Fonts resolve at playback; caches are not retained. `scene.bounds(cache=cache)`
+returns conservative logical ink with `known`/`has_ink`; unknown bounds require
+repainting the widget. Scaling replays a fixed layout; responsive chart layout
+requires recording again. Direct rendering remains available without capture.

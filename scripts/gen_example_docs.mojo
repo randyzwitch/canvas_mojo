@@ -53,6 +53,7 @@ def _titles() -> Dict[String, String]:
     d["draw_image"] = "Drawing a Canvas Scaled & Rotated"
     d["shadows"] = "Shadows & Blur"
     d["clip_path"] = "Clipping to a Path"
+    d["display_list"] = "Retained Drawing"
     d["masks"] = "Alpha Masks"
     d["joins"] = "Caps & Joins"
     d["png_output"] = "PNG I/O"
@@ -103,6 +104,9 @@ def _descriptions() -> Dict[String, String]:
     d["draw_image"] = "Place a scaled and rotated canvas through a matrix."
     d["shadows"] = "Blur pixels and draw a reusable shadowed shape."
     d["clip_path"] = "Restrict drawing to an arbitrary path."
+    d[
+        "display_list"
+    ] = "Record an owned scene and replay it at different scales."
     d["masks"] = "Control per-pixel coverage with alpha masks."
     d["joins"] = "Compare stroke caps, joins, and miter limits."
     d["png_output"] = "Write a PNG and read its pixels back."
@@ -191,6 +195,7 @@ def _categories() -> List[Category]:
                 "canvas_state",
                 "clipping",
                 "clip_path",
+                "display_list",
                 "masks",
                 "layers",
                 "draw_image",
