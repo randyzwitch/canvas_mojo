@@ -1290,10 +1290,40 @@ struct Canvas(Copyable, DrawTarget, Movable):
                 self.pop_clip_path()
 
     def push_clip_path(
+        mut self, path: Path, fill_rule: FillRule = FillRule.EVEN_ODD
+    ):
+        """Clip to a user-space path with the default raster quality.
+
+        This is the DrawTarget operation. The overload with `supersample`
+        and `curve_steps` exposes raster-specific quality controls.
+
+        Args:
+            path: Clip outline.
+            fill_rule: EVEN_ODD (default) or NONZERO.
+        """
+        self.push_clip_path(path, fill_rule, 4, 0)
+
+    def push_clip_path(
+        mut self, path: Path, *, supersample: Int, curve_steps: Int = 0
+    ):
+        """Clip with explicit raster sampling and the even-odd fill rule."""
+        self.push_clip_path(path, FillRule.EVEN_ODD, supersample, curve_steps)
+
+    def push_clip_path(
         mut self,
         path: Path,
         fill_rule: FillRule = FillRule.EVEN_ODD,
-        supersample: Int = 4,
+        *,
+        curve_steps: Int,
+    ):
+        """Clip with explicit curve flattening and default raster sampling."""
+        self.push_clip_path(path, fill_rule, 4, curve_steps)
+
+    def push_clip_path(
+        mut self,
+        path: Path,
+        fill_rule: FillRule,
+        supersample: Int,
         curve_steps: Int = 0,
     ):
         """Restrict subsequent drawing to `path`'s interior.

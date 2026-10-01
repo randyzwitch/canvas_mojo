@@ -65,6 +65,7 @@ from std.math import cos, pi, sin
 from std.os import getenv
 from std.testing import assert_true, TestSuite
 
+from canvas.vector.draw_target import DrawTarget
 from canvas.buffer import Canvas
 from canvas.color import Color
 from canvas.compose import draw_canvas
@@ -311,6 +312,10 @@ def test_golden_gradients_and_alpha() raises:
     _check("gradients_and_alpha", c)
 
 
+def _push_golden_path_clip[T: DrawTarget](mut target: T, path: Path) raises:
+    target.push_clip_path(path)
+
+
 def test_golden_clip_and_compose() raises:
     """A path clip over a dense pattern, a rectangle clip, and a
     translucent layer composed on top -- the three newest subsystems in
@@ -323,7 +328,7 @@ def test_golden_clip_and_compose() raises:
     blob.cubic_curve_to(20.0, 14.0, 78.0, 14.0, 78.0, 52.0)
     blob.cubic_curve_to(78.0, 100.0, 20.0, 100.0, 20.0, 60.0)
     blob.close()
-    base.push_clip_path(blob)
+    _push_golden_path_clip(base, blob)
     var s = 0
     while s < 120:
         draw_line_aa(

@@ -173,6 +173,12 @@ def main() raises:
     write_pdf(pdf, "scene.pdf")
 ```
 
+- `push_clip_path(path, fill_rule=FillRule.EVEN_ODD)` / `pop_clip_path()`
+  on any target clips to a path under the transform at push time. Clips
+  intersect; pop mixed rectangle/path clips in reverse push order with
+  the matching pop method, or enclose them in `save()` / `restore()`.
+  BoundsTarget uses a conservative path bounding box. Raster and vector
+  clip edges can differ in anti-aliasing.
 - `push_clip(x, y, width, height)` / `pop_clip()` on any target
   restrict drawing to a rectangle and undo that, intersecting with any
   clip already active. Wrap a chart's marks in one so they cannot
